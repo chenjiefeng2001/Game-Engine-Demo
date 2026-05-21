@@ -1,9 +1,10 @@
-#include "Engine/OpenGL/Resources/OpenGLShader.h"
+#include "OpenGLShader.h"
 
 #include <fstream>
 #include <sstream>
 #include <iostream>
 #include <vector>
+#include <glad/gl.h>
 
 namespace Engine {
 
@@ -68,5 +69,8 @@ namespace Engine {
 		}
 		return id;
 	}
-
+	void OpenGLShader::SetMat4(const std::string& name, const float* data) {
+		GLint location = m_GL.GetUniformLocation(m_RendererID, name.c_str());
+		m_GL.UniformMatrix4fv(location, 1, GL_FALSE, data);
+	}
 }

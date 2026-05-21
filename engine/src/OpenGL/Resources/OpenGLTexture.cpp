@@ -1,4 +1,4 @@
-#include "Engine/OpenGL/Resources/OpenGLTexture.h"
+#include "OpenGLTexture.h"
 
 #include "stb_image.h"
 #include <iostream>

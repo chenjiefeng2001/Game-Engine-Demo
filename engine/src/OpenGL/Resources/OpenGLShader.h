@@ -14,12 +14,11 @@ namespace Engine {
 
 		virtual void Bind() const override;
 		virtual void Unbind() const override;
+		virtual void SetMat4(const std::string& name, const float* data) override;
 
 	private:
 		std::string ReadFile(const std::string& filepath);
 		uint32_t CompileShader(unsigned int type, const std::string& source);
-
-	private:
 		GladGLContext& m_GL;
 		GLuint m_RendererID = 0;
 	};

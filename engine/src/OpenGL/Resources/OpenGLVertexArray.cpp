@@ -1,4 +1,4 @@
-#include "Engine/OpenGL/Resources/OpenGLVertexArray.h"
+#include "OpenGLVertexArray.h"
 #include "Engine/Core/RenderResources/VertexBuffer.h"
 #include "Engine/Core/RenderResources/IndexBuffer.h"
 
@@ -41,4 +41,4 @@ namespace Engine {
 		m_IndexBuffer = ib;
 	}
 
-} 
+}

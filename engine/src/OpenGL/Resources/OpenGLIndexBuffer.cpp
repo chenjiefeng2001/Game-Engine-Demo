@@ -1,4 +1,4 @@
-#include "Engine/OpenGL/Resources/OpenGLIndexBuffer.h"
+#include "OpenGLIndexBuffer.h"
 
 namespace Engine {
 
@@ -22,4 +22,4 @@ namespace Engine {
 		m_GL.BindBuffer(GL_ELEMENT_ARRAY_BUFFER, 0);
 	}
 
-} 
+}

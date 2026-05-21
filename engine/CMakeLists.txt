@@ -1,16 +1,6 @@
 
-file(GLOB_RECURSE ENGINE_SOURCES
-    "src/Core/*.cpp"
-    "src/OpenGL/*.cpp"
-    "src/Platform/*.cpp"
-)
-
-file(GLOB_RECURSE ENGINE_HEADERS
-    "include/Engine/Core/*.h"
-    "include/Engine/OpenGL/*.h"
-    "include/Engine/Platform/*.h"
-    "include/Engine/*.h"
-)
+file(GLOB_RECURSE ENGINE_SOURCES "src/*.cpp")
+file(GLOB_RECURSE ENGINE_HEADERS "include/*.h")
 
 add_library(EngineCore STATIC
     ${ENGINE_SOURCES}
@@ -18,8 +8,12 @@ add_library(EngineCore STATIC
 )
 
 target_include_directories(EngineCore
-    PUBLIC  "${CMAKE_CURRENT_SOURCE_DIR}/include"
+
+    PUBLIC
+    "${CMAKE_CURRENT_SOURCE_DIR}/include"
+    "${PROJECT_SOURCE_DIR}/third_party/glm"
     PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/src"
+
 )
 target_link_libraries(EngineCore PUBLIC glad2 glfw stb)
 

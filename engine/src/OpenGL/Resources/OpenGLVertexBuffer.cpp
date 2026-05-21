@@ -1,4 +1,4 @@
-#include "Engine/OpenGL/Resources/OpenGLVertexBuffer.h"
+#include "OpenGLVertexBuffer.h"
 
 namespace Engine {
 
@@ -21,4 +21,4 @@ namespace Engine {
 		m_GL.BindBuffer(GL_ARRAY_BUFFER, 0);
 	}
 
-} 
+}
