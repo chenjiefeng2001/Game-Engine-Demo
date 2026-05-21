@@ -3,11 +3,11 @@
 #include "Engine/Platform/GlfwWindow.h"
 #include "Engine/OpenGL/OpenGLContext.h"
 
-#include "Engine/OpenGL/Resources/OpenGLShader.h"
-#include "Engine/OpenGL/Resources/OpenGLTexture.h"
-#include "Engine/OpenGL/Resources/OpenGLVertexBuffer.h"
-#include "Engine/OpenGL/Resources/OpenGLIndexBuffer.h"
-#include "Engine/OpenGL/Resources/OpenGLVertexArray.h"
+#include "Resources/OpenGLShader.h"
+#include "Resources/OpenGLTexture.h"
+#include "Resources/OpenGLVertexBuffer.h"
+#include "Resources/OpenGLIndexBuffer.h"
+#include "Resources/OpenGLVertexArray.h"
 
 #include <GLFW/glfw3.h>
 #include <iostream>
@@ -42,7 +42,7 @@ namespace Engine {
 			}
 			else
 			{
-				std::cout << "[OpenGLGraphicsFactory] OpenGL " 
+				std::cout << "[OpenGLGraphicsFactory] OpenGL "
 						  << GLAD_VERSION_MAJOR(version) << "."
 						  << GLAD_VERSION_MINOR(version) << " loaded" << std::endl;
 			}
@@ -92,9 +92,8 @@ namespace Engine {
 		void* nativeWindowHandle)
 	{
 		auto* window = static_cast<GLFWwindow*>(nativeWindowHandle);
-		return std::make_unique<OpenGLContext>(window, m_GL);
+		return std::make_unique<OpenGLContext>(window);
 	}
-
 	// ---- GPU 资源 ----
 	std::shared_ptr<Shader> OpenGLGraphicsFactory::CreateShader(
 		const std::string& vertexPath,

@@ -1,6 +1,9 @@
 #pragma once
 
 #include "Engine/Core/IWindow.h"
+#include "Engine/Platform/GlfwWindow.h"
+#include "Engine/Core/IRenderContext.h"
+#include "Engine/OpenGL/OpenGLContext.h"
 
 struct GLFWwindow;
 
