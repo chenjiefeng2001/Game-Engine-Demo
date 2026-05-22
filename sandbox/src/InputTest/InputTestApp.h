@@ -6,7 +6,9 @@
 #include <Engine/Core/RenderResources/Texture.h>
 #include <Engine/Core/Renderer/OrthographicCamera.h>
 #include <Engine/Core/Input.h>
+#include <Engine/Core/InputManager.h>
 #include <memory>
+#include <glm/glm.hpp>
 
 namespace Engine {
 
@@ -19,25 +21,34 @@ namespace Engine {
     private:
         void Update(float dt);
         void Render();
+        void PrintInputState();
 
         IGraphicsFactory& m_Factory;
         std::unique_ptr<IWindow> m_Window;
 
-        // ©¤©¤ ¾«ÁéÅú´¦Àí ©¤©¤
+        // â”€â”€ è¾“å…¥ç®¡ç†å™¨ â”€â”€
+        InputManager m_InputManager;
+
+        // â”€â”€ æ¸²æŸ“èµ„æº â”€â”€
         std::shared_ptr<ISpriteBatch> m_SpriteBatch;
         std::shared_ptr<Shader> m_BatchShader;
         std::shared_ptr<Texture> m_Texture;
         std::unique_ptr<OrthographicCamera> m_Camera;
 
-        // ©¤©¤ ÇåÆÁÉ« ©¤©¤
+        // â”€â”€ èƒŒæ™¯è‰² â”€â”€
         float m_ClearColorR = 0.2f;
         float m_ClearColorG = 0.2f;
         float m_ClearColorB = 0.2f;
 
-        // ©¤©¤ Ö¡ÂÊ ©¤©¤
+        // â”€â”€ é¼ æ ‡ä¸–ç•Œåæ ‡è·Ÿè¸ª â”€â”€
+        glm::vec2 m_WorldMousePos{ 0.0f, 0.0f };
+
+        // â”€â”€ FPS â”€â”€
         float m_LastFrameTime = 0.0f;
         float m_FpsAccumulator = 0.0f;
         int   m_FrameCount = 0;
+        int   m_WindowWidth = 800;
+        int   m_WindowHeight = 600;
     };
 
 }

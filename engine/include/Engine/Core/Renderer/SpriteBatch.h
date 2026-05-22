@@ -51,7 +51,6 @@ namespace Engine {
         virtual void Flush() = 0;
 
         virtual uint32_t GetSpriteCount() const = 0;
-）
         virtual void SetCapacity(uint32_t maxSprites) = 0;
     };
 
