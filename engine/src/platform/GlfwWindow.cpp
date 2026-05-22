@@ -9,7 +9,7 @@
 namespace Engine {
 
 	GlfwWindow::GlfwWindow(GLFWwindow* nativeWindow,
-						   std::unique_ptr<IRenderContext> context)
+		std::unique_ptr<IRenderContext> context)
 		: m_Window(nativeWindow)
 		, m_Context(std::move(context))
 	{
@@ -17,8 +17,58 @@ namespace Engine {
 		{
 			std::cerr << "[GlfwWindow] Received null native window handle" << std::endl;
 		}
+		glfwSetWindowUserPointer(m_Window, this);  // 重要：将 this 传给回调
+
+		glfwSetFramebufferSizeCallback(m_Window, [](GLFWwindow* win, int w, int h) {
+			auto* self = static_cast<GlfwWindow*>(glfwGetWindowUserPointer(win));
+			self->OnResize(w, h);
+			});
+
+		glfwSetKeyCallback(m_Window, [](GLFWwindow* win, int key, int sc, int action, int mods) {
+			auto* self = static_cast<GlfwWindow*>(glfwGetWindowUserPointer(win));
+			self->OnKey(key, sc, action, mods);
+			});
+
+		// 窗口关闭 → 可以拦截/自定义行为
+		glfwSetWindowCloseCallback(m_Window, [](GLFWwindow* win) {
+			auto* self = static_cast<GlfwWindow*>(glfwGetWindowUserPointer(win));
+			self->OnClose();
+			});
+	}
+	void GlfwWindow::OnResize(int width, int height) {
+		// 例如：更新 OpenGL 视口
+		// 但最好委托给 IRenderContext
+		if (m_Context) {
+			m_Context->OnResize(width, height);  // 需要在 IRenderContext 加虚方法
+		}
+		// 或者通过事件回调通知 Application
+		if (m_EventCallback) {
+			Event e{ EventType::WindowResize };
+			e.resize.width = width;
+			e.resize.height = height;
+			m_EventCallback(e);
+		}
+	}
+	void GlfwWindow::OnKey(int key, int scancode, int action, int mods) {
+		// 通过事件回调通知 Application
+		if (m_EventCallback) {
+			Event e{ EventType::KeyPress };   // 或根据 action 区分 KeyPress/KeyRelease
+			e.key.key = key;
+			e.key.scancode = scancode;
+			e.key.action = action;
+			e.key.mods = mods;
+			m_EventCallback(e);
+		}
 	}
 
+	void GlfwWindow::OnClose() {
+		if (m_EventCallback) {
+			Event e{ EventType::WindowClose };
+			m_EventCallback(e);
+		}
+		// 默认行为：GLFW 已经设置了窗口关闭标志，不需要额外操作
+		// 如果你想阻止关闭，可以调用 glfwSetWindowShouldClose(m_Window, GLFW_FALSE);
+	}
 	GlfwWindow::~GlfwWindow()
 	{
 		m_Context.reset();
@@ -42,49 +92,8 @@ namespace Engine {
 	{
 		return m_Window ? glfwWindowShouldClose(m_Window) : true;
 	}
-	std::unique_ptr<IWindow> IWindow::Create(uint32_t width, uint32_t height, const std::string& title)
-	{
-		// 1. 初始化 GLFW
-		if (!glfwInit())
-		{
-			std::cerr << "Failed to initialize GLFW!" << std::endl;
-			return nullptr;
-		}
 
-		// 设置 OpenGL 版本 (4.6 Core)
-		glfwWindowHint(GLFW_CONTEXT_VERSION_MAJOR, 4);
-		glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, 6);
-		glfwWindowHint(GLFW_OPENGL_PROFILE, GLFW_OPENGL_CORE_PROFILE);
-
-		// 2. 调用 GLFW API 创建真实的窗口句柄
-		GLFWwindow* window = glfwCreateWindow(width, height, title.c_str(), nullptr, nullptr);
-		if (!window)
-		{
-			std::cerr << "Failed to create GLFW window!" << std::endl;
-			glfwTerminate();
-			return nullptr;
-		}
-
-        // 3. 创建对应的渲染上下文 (目前写死为 OpenGL，未来可以用 #ifdef 切换 Vulkan)
-		auto context = std::make_unique<OpenGLContext>(window);
-
-		// ⚠️ 极其关键的一步：在加载任何 GL 函数之前，首先将 GLFW 上下文设为当前并加载 GLAD
-		glfwMakeContextCurrent(window);
-		int version = gladLoadGLContext(&context->GetGL(), glfwGetProcAddress);
-		if (version == 0)
-		{
-			std::cerr << "Failed to initialize GLAD in IWindow::Create" << std::endl;
-			glfwDestroyWindow(window);
-			glfwTerminate();
-			return nullptr;
-		}
-
-		// 初始化上下文（使用已加载的 m_GL）
-		context->Init();
-
-		// 4. 将句柄和上下文注入到你的 GlfwWindow 包装类中
-		return std::make_unique<GlfwWindow>(window, std::move(context));
-	}
+	//Register the GLFW Recall
 
 
 }

@@ -12,17 +12,13 @@
 
 namespace Engine {
 
-	OpenGLContext::OpenGLContext(GLFWwindow* windowHandle)
-		: m_WindowHandle(windowHandle) // m_GL 会通过默认的 m_GL{} 自动初始化
+	OpenGLContext::OpenGLContext(GLFWwindow* windowHandle, GladGLContext& sharedGL)
+		: m_WindowHandle(windowHandle)
+		, m_GL(sharedGL)       // ← 引用必须在这里初始化
 	{
 	}
 
-	void OpenGLContext::Init()
-	{
-		m_GL.Enable(GL_DEPTH_TEST);
-		m_GL.Enable(GL_BLEND);
-		m_GL.BlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
-	}
+
 
 	void OpenGLContext::SwapBuffers()
 	{
@@ -44,23 +40,15 @@ namespace Engine {
 			m_GL.DrawElements(GL_TRIANGLES, indexBuffer->GetCount(), GL_UNSIGNED_INT, nullptr);
 		}
 	}
-	std::shared_ptr<Shader> OpenGLContext::CreateShader(const std::string& vPath, const std::string& fPath) {
-		return std::make_shared<OpenGLShader>(vPath, fPath, m_GL);
+	void OpenGLContext::OnResize(int width, int height) {
+		m_GL.Viewport(0, 0, width, height);
 	}
-
-	std::shared_ptr<Texture> OpenGLContext::CreateTexture(const std::string& path) {
-		return std::make_shared<OpenGLTexture>(path, m_GL);
-	}
-
-	std::shared_ptr<VertexArray> OpenGLContext::CreateVertexArray() {
-		return std::make_shared<OpenGLVertexArray>(m_GL);
-	}
-
-	std::shared_ptr<VertexBuffer> OpenGLContext::CreateVertexBuffer(float* vertices, uint32_t size) {
-		return std::make_shared<OpenGLVertexBuffer>(vertices, size, m_GL);
-	}
-
-	std::shared_ptr<IndexBuffer> OpenGLContext::CreateIndexBuffer(uint32_t* indices, uint32_t count) {
-		return std::make_shared<OpenGLIndexBuffer>(indices, count, m_GL);
+	//init
+	void OpenGLContext::Init()
+	{
+		m_GL.Enable(GL_DEPTH_TEST);
+		m_GL.Enable(GL_BLEND);
+		m_GL.BlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+		glfwSwapInterval(1);
 	}
 }

@@ -12,70 +12,75 @@
 #include <iostream>
 
 namespace Engine {
-	Application::Application() {
-		m_Window = IWindow::Create(800, 600, "Final Fix");
+	Application::Application(IGraphicsFactory& factory)
+		: m_Factory(factory)
+	{
+		m_Window = m_Factory.CreateWindow(800, 600, "Final Fix");  // ← 改这里
 		m_Camera = std::make_unique<OrthographicCamera>(-1.6f, 1.6f, -0.9f, 0.9f);
 
-		auto context = m_Window->GetContext();
-
-		// ── 资源初始化 ──────────────────────────────────
-
-		// 1. 着色器
-		m_Shader = context->CreateShader("assets/shaders/vertex.glsl", "assets/shaders/fragment.glsl");
-
-		// 2. 纹理
-		m_Texture = context->CreateTexture("assets/textures/test.png");
-
-		// 3. 顶点数据 — 一个矩形（position.xy, texcoord.uv）
+		// ── 顶点数据必须先定义，否则下面没法用 ──
 		float vertices[] = {
-			// 位置 (x, y, z)    纹理坐标 (u, v)
-			-0.5f, -0.5f, 0.0f,  0.0f, 0.0f,  // 左下
-			 0.5f, -0.5f, 0.0f,  1.0f, 0.0f,  // 右下
-			 0.5f,  0.5f, 0.0f,  1.0f, 1.0f,  // 右上
-			-0.5f,  0.5f, 0.0f,  0.0f, 1.0f   // 左上
+			-0.5f, -0.5f, 0.0f,  0.0f, 0.0f,   // 左下
+			 0.5f, -0.5f, 0.0f,  1.0f, 0.0f,   // 右下
+			 0.5f,  0.5f, 0.0f,  1.0f, 1.0f,   // 右上
+			-0.5f,  0.5f, 0.0f,  0.0f, 1.0f    // 左上
 		};
 		uint32_t indices[] = {
-			0, 1, 2,  // 第一个三角形
-			2, 3, 0   // 第二个三角形
+			0, 1, 2,   // 第一个三角形
+			2, 3, 0    // 第二个三角形
 		};
 
-		auto vb = context->CreateVertexBuffer(vertices, sizeof(vertices));
-		auto ib = context->CreateIndexBuffer(indices, sizeof(indices) / sizeof(uint32_t));
+		// ── 所有资源通过 m_Factory 创建 ──
+		m_Shader = m_Factory.CreateShader("assets/shaders/vertex.glsl", "assets/shaders/fragment.glsl");
+		m_Texture = m_Factory.CreateTexture("assets/textures/test.png");
 
-		m_VAO = context->CreateVertexArray();
+		auto vb = m_Factory.CreateVertexBuffer(vertices, sizeof(vertices));
+		auto ib = m_Factory.CreateIndexBuffer(indices, sizeof(indices) / sizeof(uint32_t));
+
+		m_VAO = m_Factory.CreateVertexArray();
 		m_VAO->AddVertexBuffer(vb);
 		m_VAO->SetIndexBuffer(ib);
 	}
 
 	Application::~Application() = default;
 
-	void Application::Run() {
-		while (!m_Window->ShouldClose()) {
-			float time = Time::GetTime();
-			float timestep = time - m_LastFrameTime;
-			m_LastFrameTime = time;
+    void Application::Run() {
+        const float fixedDt = 1.0f / 60.0f;  // 固定物理步长 60Hz
+        float accumulator = 0.0f;
 
-			auto context = m_Window->GetContext();
+        while (!m_Window->ShouldClose()) {
+            float time = Time::GetTime();
+            float frameTime = time - m_LastFrameTime;
+            m_LastFrameTime = time;
 
-			// 背景色清屏
-			context->ClearColor(0.2f, 0.2f, 0.2f, 1.0f);
+            // 防止螺旋式死亡（例如断点调试回来时 frameTime 极大）
+            if (frameTime > 0.25f)
+                frameTime = 0.25f;
 
-			if (m_Shader && m_VAO && m_Texture) {
-				// 1. 绑定着色器并上传摄像机矩阵
-				m_Shader->Bind();
-				m_Shader->SetMat4("u_ViewProjection", m_Camera->GetViewProjectionMatrixPtr());
+            accumulator += frameTime;
 
-				// 2. 绑定贴图 (因为 Shader 里的 sampler2D 默认是 0 号槽位)
-				m_Texture->Bind(0);
+            // ── 固定步长更新（物理/逻辑）──
+            while (accumulator >= fixedDt) {
+                // Update(fixedDt);     ← 所有物理/逻辑放这里
+                // m_Camera->Update(fixedDt);
+                // m_Scene->Update(fixedDt);
+                accumulator -= fixedDt;
+            }
 
-				// 3. 绑定几何数据
-				m_VAO->Bind();
+            // ── 渲染（用实际帧率，不受 fixedDt 限制）──
+            auto context = m_Window->GetContext();
+            context->ClearColor(0.2f, 0.2f, 0.2f, 1.0f);
 
-				// 4. ⚠️ 终极核心：发出绘制指令！
-				context->DrawIndexed(m_VAO);
-			}
+            if (m_Shader && m_VAO && m_Texture) {
+                m_Shader->Bind();
+                m_Shader->SetMat4("u_ViewProjection",
+                    m_Camera->GetViewProjectionMatrixPtr());
+                m_Texture->Bind(0);
+                m_VAO->Bind();
+                context->DrawIndexed(m_VAO);
+            }
 
-			m_Window->OnUpdate();
-		}
+            m_Window->OnUpdate();
+        }
+    }
 	}
-}

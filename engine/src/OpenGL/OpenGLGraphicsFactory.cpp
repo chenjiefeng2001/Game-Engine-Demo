@@ -64,24 +64,33 @@ namespace Engine {
 
 
 	std::unique_ptr<IWindow> OpenGLGraphicsFactory::CreateWindow(
-		int width,
-		int height,
-		const std::string& title)
+		int width, int height, const std::string& title)
 	{
 		GLFWwindow* nativeWindow = glfwCreateWindow(
 			width, height, title.c_str(), nullptr, nullptr);
 
-		if (!nativeWindow)
-		{
+		if (!nativeWindow) {
 			std::cerr << "[OpenGLGraphicsFactory] Failed to create GLFW window" << std::endl;
 			return nullptr;
 		}
 
-		// 通过工厂创建渲染上下文（依赖注入）
+		// 创建渲染上下文
 		auto context = CreateRenderContext(nativeWindow);
-		if (context)
-		{
-			context->Init();
+
+		// ═══════════════════════════════════════════════
+		// ⚠️ 修复：将新窗口的 OpenGL 上下文设为当前，并加载 GLAD
+		// ═══════════════════════════════════════════════
+		glfwMakeContextCurrent(nativeWindow);
+		GladGLContext& ctxGL = static_cast<OpenGLContext*>(context.get())->GetGL();
+		int version = gladLoadGLContext(&ctxGL, glfwGetProcAddress);
+		if (version == 0) {
+			std::cerr << "[OpenGLGraphicsFactory] Failed to initialize GLAD for window" << std::endl;
+			glfwDestroyWindow(nativeWindow);
+			return nullptr;
+		}
+
+		if (context) {
+			context->Init();  // ← 现在 m_GL 函数指针已就绪，不会崩溃
 		}
 
 		return std::make_unique<GlfwWindow>(nativeWindow, std::move(context));
@@ -92,7 +101,7 @@ namespace Engine {
 		void* nativeWindowHandle)
 	{
 		auto* window = static_cast<GLFWwindow*>(nativeWindowHandle);
-		return std::make_unique<OpenGLContext>(window);
+		return std::make_unique<OpenGLContext>(window, m_GL);
 	}
 	// ---- GPU 资源 ----
 	std::shared_ptr<Shader> OpenGLGraphicsFactory::CreateShader(
