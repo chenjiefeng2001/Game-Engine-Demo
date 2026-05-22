@@ -5,23 +5,24 @@
 #include <Engine/Core/IWindow.h>
 #include <GLFW/glfw3.h>
 #include <iostream>
+#include <iomanip>
 
 namespace Engine {
 
     InputTestApp::InputTestApp(IGraphicsFactory& factory)
         : m_Factory(factory)
     {
-        // ©¤©¤ 1. ´´½¨´°¿Ú ©¤©¤
-        m_Window = m_Factory.CreateWindow(800, 600, "Sprite Batch Demo");
+        // â”€â”€ 1. åˆ›å»ºçª—å£ â”€â”€
+        m_Window = m_Factory.CreateWindow(m_WindowWidth, m_WindowHeight, "Input Manager Demo");
 
-        // ©¤©¤ 2. ³õÊ¼»¯ÊäÈëÏµÍ³ ©¤©¤
+        // â”€â”€ 2. é€šè¿‡ InputManager åˆå§‹åŒ–è¾“å…¥ç³»ç»Ÿ â”€â”€
         auto* nativeWin = static_cast<GLFWwindow*>(m_Window->GetNativeHandle());
-        Input::Init(std::make_unique<GlfwInput>(nativeWin));
+        m_InputManager.Init(nativeWin);
 
-        // ©¤©¤ 3. ´´½¨ÉãÏñ»ú ©¤©¤
+        // â”€â”€ 3. åˆ›å»ºæ­£äº¤ç›¸æœº â”€â”€
         m_Camera = std::make_unique<OrthographicCamera>(-3.0f, 3.0f, -3.0f, 3.0f);
 
-        // ©¤©¤ 4. ´´½¨Åú´¦ÀíÏµÍ³ ©¤©¤
+        // â”€â”€ 4. åˆ›å»ºæ¸²æŸ“èµ„æº â”€â”€
         auto* context = m_Window->GetContext();
         m_SpriteBatch = m_Factory.CreateSpriteBatch(*context);
         m_BatchShader = m_Factory.CreateShader(
@@ -30,77 +31,189 @@ namespace Engine {
         );
         m_Texture = m_Factory.CreateTexture("assets/textures/test.png");
 
+        // â”€â”€ 5. æ³¨å†Œè¾“å…¥åŠ¨ä½œæ˜ å°„ â”€â”€
+        auto& actionRed = m_InputManager.CreateAction("SetRed");
+        actionRed.AddBinding(KeyBinding::FromKey(KeyCode::R));
+
+        auto& actionGreen = m_InputManager.CreateAction("SetGreen");
+        actionGreen.AddBinding(KeyBinding::FromKey(KeyCode::G));
+
+        auto& actionBlue = m_InputManager.CreateAction("SetBlue");
+        actionBlue.AddBinding(KeyBinding::FromKey(KeyCode::B));
+
+        auto& actionYellow = m_InputManager.CreateAction("SetYellow");
+        actionYellow.AddBinding(KeyBinding::FromKey(KeyCode::Space));
+
+        // é¼ æ ‡ä¾§é”®ç»‘å®š
+        auto& actionSideBack = m_InputManager.CreateAction("SideBack");
+        actionSideBack.AddBinding(KeyBinding::FromMouse(MouseCode::Button4));
+
+        auto& actionSideForward = m_InputManager.CreateAction("SideForward");
+        actionSideForward.AddBinding(KeyBinding::FromMouse(MouseCode::Button5));
+
+        // é€€å‡º
+        auto& actionExit = m_InputManager.CreateAction("Exit");
+        actionExit.AddBinding(KeyBinding::FromKey(KeyCode::Escape));
+
+        // WASD æ–¹å‘åŠ¨ä½œ
+        auto& actionMoveUp = m_InputManager.CreateAction("MoveUp");
+        actionMoveUp.AddBinding(KeyBinding::FromKey(KeyCode::W));
+
+        auto& actionMoveDown = m_InputManager.CreateAction("MoveDown");
+        actionMoveDown.AddBinding(KeyBinding::FromKey(KeyCode::S));
+
+        auto& actionMoveLeft = m_InputManager.CreateAction("MoveLeft");
+        actionMoveLeft.AddBinding(KeyBinding::FromKey(KeyCode::A));
+
+        auto& actionMoveRight = m_InputManager.CreateAction("MoveRight");
+        actionMoveRight.AddBinding(KeyBinding::FromKey(KeyCode::D));
+
+        // â”€â”€ 6. æ³¨å†Œäº‹ä»¶å›è°ƒ â”€â”€
+        actionRed.OnPressed([this]() {
+            m_ClearColorR = 0.8f; m_ClearColorG = 0.2f; m_ClearColorB = 0.2f;
+            std::cout << "[Action:SetRed] èƒŒæ™¯å˜çº¢" << std::endl;
+            });
+
+        actionGreen.OnPressed([this]() {
+            m_ClearColorR = 0.2f; m_ClearColorG = 0.8f; m_ClearColorB = 0.2f;
+            std::cout << "[Action:SetGreen] èƒŒæ™¯å˜ç»¿" << std::endl;
+            });
+
+        actionBlue.OnPressed([this]() {
+            m_ClearColorR = 0.2f; m_ClearColorG = 0.2f; m_ClearColorB = 0.8f;
+            std::cout << "[Action:SetBlue] èƒŒæ™¯å˜è“" << std::endl;
+            });
+
+        actionYellow.OnPressed([this]() {
+            m_ClearColorR = 0.8f; m_ClearColorG = 0.8f; m_ClearColorB = 0.2f;
+            std::cout << "[Action:SetYellow] èƒŒæ™¯å˜é»„" << std::endl;
+            });
+
+        actionSideBack.OnPressed([]() {
+            std::cout << "[Action:SideBack] é¼ æ ‡ä¾§é”®4ï¼ˆåé€€ï¼‰æŒ‰ä¸‹" << std::endl;
+            });
+
+        actionSideForward.OnPressed([]() {
+            std::cout << "[Action:SideForward] é¼ æ ‡ä¾§é”®5ï¼ˆå‰è¿›ï¼‰æŒ‰ä¸‹" << std::endl;
+            });
+
+        actionExit.OnPressed([this]() {
+            std::cout << "[Action:Exit] é€€å‡ºç¨‹åº" << std::endl;
+            auto* win = static_cast<GLFWwindow*>(m_Window->GetNativeHandle());
+            glfwSetWindowShouldClose(win, GLFW_TRUE);
+            });
+
+        actionMoveUp.OnPressed([]() {
+            std::cout << "[Action:MoveUp] å¼€å§‹ç§»åŠ¨" << std::endl;
+            });
+        actionMoveUp.OnReleased([]() {
+            std::cout << "[Action:MoveUp] åœæ­¢ç§»åŠ¨" << std::endl;
+            });
+
+        actionMoveDown.OnPressed([]() {
+            std::cout << "[Action:MoveDown] å¼€å§‹ç§»åŠ¨" << std::endl;
+            });
+        actionMoveDown.OnReleased([]() {
+            std::cout << "[Action:MoveDown] åœæ­¢ç§»åŠ¨" << std::endl;
+            });
+
         std::cout << "==========================================" << std::endl;
-        std::cout << "  Sprite Batch Demo Started!" << std::endl;
-        std::cout << "  Rendering 10000 sprites in 1 Draw Call" << std::endl;
+        std::cout << "  Input Manager Demo Started!" << std::endl;
+        std::cout << "  æŒ‰é”®æ˜ å°„æµ‹è¯•:" << std::endl;
+        std::cout << "    R          -> çº¢è‰²èƒŒæ™¯" << std::endl;
+        std::cout << "    G          -> ç»¿è‰²èƒŒæ™¯" << std::endl;
+        std::cout << "    B          -> è“è‰²èƒŒæ™¯" << std::endl;
+        std::cout << "    Space      -> é»„è‰²èƒŒæ™¯" << std::endl;
+        std::cout << "    W/S/A/D    -> æ–¹å‘ (Press/Release å›è°ƒ)" << std::endl;
+        std::cout << "    Escape     -> é€€å‡º" << std::endl;
+        std::cout << "    Mouse4/5   -> ä¾§é”®æµ‹è¯•" << std::endl;
+        std::cout << "    Shift+é¼ æ ‡ -> å±å¹•->ä¸–ç•Œåæ ‡æµ‹è¯•" << std::endl;
         std::cout << "==========================================" << std::endl;
     }
 
     InputTestApp::~InputTestApp() {
-        Input::Shutdown();
+        m_InputManager.Shutdown();
     }
 
     void InputTestApp::Update(float dt) {
-        // ©¤©¤©¤ IsKeyPressed£º±¾Ö¡¸Õ°´ÏÂ£¨ÊÂ¼ş·ç¸ñ£©©¤©¤©¤
-
-        if (Input::IsKeyPressed(KeyCode::R)) {
-            m_ClearColorR = 0.8f; m_ClearColorG = 0.2f; m_ClearColorB = 0.2f;
-            std::cout << "[Pressed] R ¡ú Red" << std::endl;
-        }
-        if (Input::IsKeyPressed(KeyCode::G)) {
-            m_ClearColorR = 0.2f; m_ClearColorG = 0.8f; m_ClearColorB = 0.2f;
-            std::cout << "[Pressed] G ¡ú Green" << std::endl;
-        }
-        if (Input::IsKeyPressed(KeyCode::B)) {
-            m_ClearColorR = 0.2f; m_ClearColorG = 0.2f; m_ClearColorB = 0.8f;
-            std::cout << "[Pressed] B ¡ú Blue" << std::endl;
-        }
-        if (Input::IsKeyPressed(KeyCode::Space)) {
-            m_ClearColorR = 0.8f; m_ClearColorG = 0.8f; m_ClearColorB = 0.2f;
-            std::cout << "[Pressed] Space ¡ú Yellow" << std::endl;
-        }
-        if (Input::IsKeyPressed(KeyCode::Escape)) {
-            std::cout << "[Pressed] Escape ¡ª setting close flag" << std::endl;
-            auto* win = static_cast<GLFWwindow*>(m_Window->GetNativeHandle());
-            glfwSetWindowShouldClose(win, GLFW_TRUE);
+        // â”€â”€ æ–¹å¼1: é€šè¿‡ InputManager åŠ¨ä½œæ˜ å°„æŸ¥è¯¢ â”€â”€
+        if (m_InputManager.IsActionPressed("SetRed")) {
+            std::cout << "  (ä¹Ÿå¯ä»¥é€šè¿‡ InputManager::IsActionPressed æŸ¥è¯¢)" << std::endl;
         }
 
-        // ©¤©¤©¤ IsKeyDown£ºµ±Ç°°´×¡£¨ÂÖÑ¯·ç¸ñ£©£¬Ã¿Ö¡Ë¢ÆÁ ©¤©¤©¤
+        if (m_InputManager.IsActionDown("MoveUp"))
+            std::cout << "[Action:MoveDown] W æŒ‰ä½ä¸­" << std::endl;
+        if (m_InputManager.IsActionDown("MoveDown"))
+            std::cout << "[Action:MoveDown] S æŒ‰ä½ä¸­" << std::endl;
+        if (m_InputManager.IsActionDown("MoveLeft"))
+            std::cout << "[Action:MoveDown] A æŒ‰ä½ä¸­" << std::endl;
+        if (m_InputManager.IsActionDown("MoveRight"))
+            std::cout << "[Action:MoveDown] D æŒ‰ä½ä¸­" << std::endl;
 
-        if (Input::IsKeyDown(KeyCode::W))
-            std::cout << "[Down] W is held" << std::endl;
-        if (Input::IsKeyDown(KeyCode::S))
-            std::cout << "[Down] S is held" << std::endl;
-        if (Input::IsKeyDown(KeyCode::A))
-            std::cout << "[Down] A is held" << std::endl;
-        if (Input::IsKeyDown(KeyCode::D))
-            std::cout << "[Down] D is held" << std::endl;
+        // â”€â”€ æ–¹å¼2: ç›´æ¥é€šè¿‡ InputManager æŸ¥è¯¢åŸå§‹è¾“å…¥ â”€â”€
+        float dx = m_InputManager.GetMouseDeltaX();
+        float dy = m_InputManager.GetMouseDeltaY();
+        if (dx != 0.0f || dy != 0.0f) {
+            std::cout << "[Mouse] delta: (" << dx << ", " << dy << ")"
+                << "  pos: (" << m_InputManager.GetMouseX()
+                << ", " << m_InputManager.GetMouseY() << ")" << std::endl;
+        }
 
-        // ©¤©¤©¤ Êó±ê²âÊÔ ©¤©¤©¤
-
-        float dx = Input::GetMouseDeltaX();
-        float dy = Input::GetMouseDeltaY();
-        if (dx != 0.0f || dy != 0.0f)
-            std::cout << "[Mouse] delta: (" << dx << ", " << dy << ")" << std::endl;
-
-        float scroll = Input::GetScrollDelta();
+        float scroll = m_InputManager.GetScrollDelta();
         if (scroll != 0.0f)
-            std::cout << "[Scroll] " << scroll << std::endl;
+            std::cout << "[Scroll] " << (scroll > 0 ? "å‘ä¸Šæ»š" : "å‘ä¸‹æ»š")
+            << " å¢é‡: " << scroll << std::endl;
 
-        // ©¤©¤©¤ IsKeyReleased ²âÊÔ ©¤©¤©¤
-        if (Input::IsKeyReleased(KeyCode::LeftShift))
-            std::cout << "[Released] LeftShift" << std::endl;
+        // ç›´æ¥æŸ¥è¯¢é¼ æ ‡ä¾§é”®
+        if (m_InputManager.IsMousePressed(MouseCode::Button4))
+            std::cout << "[Direct:Mouse4] ä¾§é”®4 æŒ‰ä¸‹" << std::endl;
+        if (m_InputManager.IsMousePressed(MouseCode::Button5))
+            std::cout << "[Direct:Mouse5] ä¾§é”®5 æŒ‰ä¸‹" << std::endl;
+
+        // é¼ æ ‡ä¸­é”®
+        if (m_InputManager.IsMousePressed(MouseCode::ButtonMiddle))
+            std::cout << "[Direct:MouseMiddle] ä¸­é”®æŒ‰ä¸‹" << std::endl;
+
+        // â”€â”€ å±å¹•->ä¸–ç•Œåæ ‡è½¬æ¢æµ‹è¯• â”€â”€
+        static bool wasShiftDown = false;
+        bool isShiftDown = m_InputManager.IsKeyDown(KeyCode::LeftShift);
+        if (isShiftDown) {
+            m_WorldMousePos = m_InputManager.ScreenToWorld(
+                *m_Camera,
+                static_cast<float>(m_WindowWidth),
+                static_cast<float>(m_WindowHeight)
+            );
+            std::cout << "[Screen->World] å±å¹•("
+                << m_InputManager.GetMouseX() << ", "
+                << m_InputManager.GetMouseY() << ") -> ä¸–ç•Œ("
+                << m_WorldMousePos.x << ", " << m_WorldMousePos.y << ")"
+                << std::endl;
+        }
+        if (!isShiftDown && wasShiftDown) {
+            std::cout << "[Screen->World] åœæ­¢æ˜¾ç¤ºï¼ˆæ¾å¼€ Shiftï¼‰" << std::endl;
+        }
+        wasShiftDown = isShiftDown;
+
+        // â”€â”€ æµ‹è¯•é‡Šæ”¾äº‹ä»¶ â”€â”€
+        if (m_InputManager.IsKeyReleased(KeyCode::LeftShift))
+            std::cout << "[Released] LeftShift é‡Šæ”¾" << std::endl;
+
+        // â”€â”€ å·¦é”®è½®è¯¢ â”€â”€
+        if (m_InputManager.IsMousePressed(MouseCode::ButtonLeft))
+            std::cout << "[Direct:MouseLeft] å·¦é”®ç‚¹å‡»ï¼ˆè½®è¯¢ï¼‰" << std::endl;
     }
 
     void InputTestApp::Render() {
         auto context = m_Window->GetContext();
         context->ClearColor(m_ClearColorR, m_ClearColorG, m_ClearColorB, 1.0f);
 
-        // ©¤©¤ Åú´¦ÀíäÖÈ¾ 10000 ¸ö¾«Áé ©¤©¤
+        // â”€â”€ æ¸²æŸ“ 10000 ä¸ªç²¾çµ â”€â”€
         m_BatchShader->Bind();
         m_BatchShader->SetMat4("u_ViewProjection",
             m_Camera->GetViewProjectionMatrixPtr());
         m_SpriteBatch->Begin(m_Texture);
+
+        bool showCursor = m_InputManager.IsKeyDown(KeyCode::LeftShift);
 
         for (int i = 0; i < 10000; i++) {
             SpriteData sprite;
@@ -108,10 +221,27 @@ namespace Engine {
             sprite.transform.y = (i / 100) * 0.06f - 3.0f;
             sprite.transform.scaleX = 0.05f;
             sprite.transform.scaleY = 0.05f;
-            sprite.colorR = 1.0f;
-            sprite.colorG = (float)(i % 256) / 255.0f;
-            sprite.colorB = (float)((i * 3) % 256) / 255.0f;
-            // UV Ä¬ÈÏ (0,0,1,1) = ÍêÕûÎÆÀí
+
+            if (showCursor) {
+                float dx = sprite.transform.x - m_WorldMousePos.x;
+                float dy = sprite.transform.y - m_WorldMousePos.y;
+                float dist = dx * dx + dy * dy;
+                if (dist < 0.1f) {
+                    sprite.colorR = 1.0f;
+                    sprite.colorG = 1.0f;
+                    sprite.colorB = 1.0f;
+                }
+                else {
+                    sprite.colorR = 1.0f;
+                    sprite.colorG = (float)(i % 256) / 255.0f;
+                    sprite.colorB = (float)((i * 3) % 256) / 255.0f;
+                }
+            }
+            else {
+                sprite.colorR = 1.0f;
+                sprite.colorG = (float)(i % 256) / 255.0f;
+                sprite.colorB = (float)((i * 3) % 256) / 255.0f;
+            }
             m_SpriteBatch->Draw(sprite);
         }
 
@@ -127,16 +257,16 @@ namespace Engine {
             m_LastFrameTime = time;
             if (dt > 0.25f) dt = 0.25f;
 
-            // ©¤©¤ Ö÷Ñ­»·Ë³Ğò£¨¹Ø¼ü£¡£©©¤©¤
-            glfwPollEvents();              // ¢Ù ÊÕ¼¯ÊÂ¼ş ¡ú ´¥·¢»Øµ÷ ¡ú Ìî³ä Input ×´Ì¬
-            Input::Get()->OnUpdate();      // ¢Ú Ëø¶¨±¾Ö¡×´Ì¬£¨Çå³ı changed ±êÖ¾£©
-            Update(dt);                    // ¢Û Âß¼­¸üĞÂ£¨²éÑ¯ Input£©
-            Render();                      // ¢Ü äÖÈ¾
+            // â”€â”€ ä¸»å¾ªç¯é¡ºåºï¼ˆå…³é”®ï¼ï¼‰ â”€â”€
+            glfwPollEvents();             
+            m_InputManager.OnUpdate();     
+            Update(dt);                    
+            Render();                     
 
             auto ctx = m_Window->GetContext();
-            ctx->SwapBuffers();            // ¢İ ½»»»»º³åÇø£¨¶ø²»ÊÇ m_Window->OnUpdate£©
+            ctx->SwapBuffers();
 
-            // ©¤©¤ FPS ©¤©¤
+            // â”€â”€ FPS â”€â”€
             m_FpsAccumulator += dt;
             m_FrameCount++;
             if (m_FpsAccumulator >= 1.0f) {
