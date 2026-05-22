@@ -1,33 +1,33 @@
 #pragma once
-
 #include "Engine/Core/IWindow.h"
-#include "Engine/Platform/GlfwWindow.h"
 #include "Engine/Core/IRenderContext.h"
-#include "Engine/OpenGL/OpenGLContext.h"
 
 struct GLFWwindow;
 
 namespace Engine {
-
-	// ============================================================================
-	// GlfwWindow - GLFW 窗口实现
-	// 接收外部创建的 GLFWwindow 和 IRenderContext（依赖注入）
-	// 窗口和上下文的创建逻辑由 GraphicsFactory 负责
-	// ============================================================================
-	class GlfwWindow : public IWindow
-	{
+	class GlfwWindow : public IWindow {
 	public:
 		GlfwWindow(GLFWwindow* nativeWindow,
-				   std::unique_ptr<IRenderContext> context);
+			std::unique_ptr<IRenderContext> context);
 		virtual ~GlfwWindow() override;
 
+		// ---- IWindow 接口 ----
 		virtual void OnUpdate() override;
 		virtual bool ShouldClose() const override;
 		virtual IRenderContext* GetContext() override { return m_Context.get(); }
+		virtual void SetEventCallback(const EventCallbackFn& callback) override
+		{
+			m_EventCallback = callback;
+		}
+
+		// ---- GLFW 事件回调 ----
+		void OnResize(int width, int height);
+		void OnKey(int key, int scancode, int action, int mods);
+		void OnClose();
 
 	private:
 		GLFWwindow* m_Window;
 		std::unique_ptr<IRenderContext> m_Context;
+		EventCallbackFn m_EventCallback;
 	};
-
-} // namespace Engine
+}

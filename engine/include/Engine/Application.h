@@ -24,10 +24,12 @@ namespace Engine {
 	class Application
 	{
 		public:
-		Application();
+			//Dependency Inject
+		Application(IGraphicsFactory& factory);
 		~Application();
 		void Run();
 	private:
+		IGraphicsFactory& m_Factory;
 		std::unique_ptr<class IWindow> m_Window;
 		std::shared_ptr<class Shader> m_Shader;
 		std::shared_ptr<class VertexArray> m_VAO;
