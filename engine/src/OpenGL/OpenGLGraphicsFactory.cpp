@@ -8,6 +8,7 @@
 #include "Resources/OpenGLVertexBuffer.h"
 #include "Resources/OpenGLIndexBuffer.h"
 #include "Resources/OpenGLVertexArray.h"
+#include "Resources/OpenGLSpriteBatch.h"
 
 #include <GLFW/glfw3.h>
 #include <iostream>
@@ -77,9 +78,6 @@ namespace Engine {
 		// 创建渲染上下文
 		auto context = CreateRenderContext(nativeWindow);
 
-		// ═══════════════════════════════════════════════
-		// ⚠️ 修复：将新窗口的 OpenGL 上下文设为当前，并加载 GLAD
-		// ═══════════════════════════════════════════════
 		glfwMakeContextCurrent(nativeWindow);
 		GladGLContext& ctxGL = static_cast<OpenGLContext*>(context.get())->GetGL();
 		int version = gladLoadGLContext(&ctxGL, glfwGetProcAddress);
@@ -134,6 +132,12 @@ namespace Engine {
 	std::shared_ptr<VertexArray> OpenGLGraphicsFactory::CreateVertexArray()
 	{
 		return std::make_shared<OpenGLVertexArray>(m_GL);
+	}
+
+	std::shared_ptr<ISpriteBatch> OpenGLGraphicsFactory::CreateSpriteBatch(
+		IRenderContext& renderContext)
+	{
+		return std::make_shared<OpenGLSpriteBatch>(m_GL, renderContext);
 	}
 
 } // namespace Engine

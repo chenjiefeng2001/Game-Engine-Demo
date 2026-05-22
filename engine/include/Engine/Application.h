@@ -17,14 +17,15 @@ namespace Engine {
 	class IGraphicsFactory;
 	class OrthographicCamera;
 
-	// ============================================================================
-	// Application - 应用程序主类
-	// 通过 IGraphicsFactory 创建窗口和渲染资源，不直接依赖具体实现
-	// ============================================================================
+
+	enum class LoopMode {
+		Variable,       // 可变步长：每帧 dt 取决于实际时间
+		Fixed           // 固定步长：物理/逻辑固定 60Hz，渲染按实际帧率
+	};
 	class Application
 	{
 		public:
-			//Dependency Inject
+		//Dependency Inject
 		Application(IGraphicsFactory& factory);
 		~Application();
 		void Run();
@@ -36,7 +37,12 @@ namespace Engine {
 		std::shared_ptr<class Texture> m_Texture;
 		std::unique_ptr<class OrthographicCamera> m_Camera;
 		float m_LastFrameTime = 0.0f;
+		// ── 主循环状态 ──
+		LoopMode m_LoopMode;
 
+		// ── 内部方法 ──
+		void Update(float dt);   
+		void Render();           
 	};
 
 } // namespace Engine

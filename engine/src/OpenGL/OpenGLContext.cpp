@@ -14,7 +14,7 @@ namespace Engine {
 
 	OpenGLContext::OpenGLContext(GLFWwindow* windowHandle, GladGLContext& sharedGL)
 		: m_WindowHandle(windowHandle)
-		, m_GL(sharedGL)       // ← 引用必须在这里初始化
+		, m_GL(sharedGL)
 	{
 	}
 

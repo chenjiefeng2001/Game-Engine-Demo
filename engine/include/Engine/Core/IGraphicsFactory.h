@@ -14,6 +14,7 @@ namespace Engine {
 	class VertexBuffer;
 	class IndexBuffer;
 	class VertexArray;
+	class ISpriteBatch;
 
 //RHI API
 	class IGraphicsFactory
@@ -46,6 +47,10 @@ namespace Engine {
 			uint32_t count) = 0;
 
 		virtual std::shared_ptr<VertexArray> CreateVertexArray() = 0;
+
+		// ---- 高级渲染工具 ----
+		virtual std::shared_ptr<ISpriteBatch> CreateSpriteBatch(
+			IRenderContext& renderContext) = 0;
 
 	};
 

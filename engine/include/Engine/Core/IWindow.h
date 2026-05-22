@@ -8,7 +8,7 @@ namespace Engine {
 	class IRenderContext; // 前向声明
 	enum class EventType {
 		WindowResize, KeyPress, KeyRelease,
-		MouseMove, MouseClick, WindowClose,
+		MouseMove, MouseClick, WindowClose, MouseScroll,
 	};
 	struct Event {
 		EventType type;
@@ -16,7 +16,8 @@ namespace Engine {
 			struct { int width, height; } resize;
 			struct { int key, scancode, action, mods; } key;
 			struct { double x, y; } mouseMove;
-			// ...
+			struct { int button, action, mods; } mouseButton;
+			struct { double xOffset, yOffset; } mouseScroll;
 		};
 	};
 
@@ -32,5 +33,6 @@ namespace Engine {
 		virtual bool ShouldClose() const = 0;
 		virtual IRenderContext* GetContext() = 0;
 		virtual void SetEventCallback(const EventCallbackFn& callback) = 0;
+		virtual void* GetNativeHandle() const = 0;
 	};
 }
