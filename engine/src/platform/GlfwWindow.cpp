@@ -1,4 +1,5 @@
 ﻿#include "Engine/Platform/GlfwWindow.h"
+#include "Engine/Core/Input.h"
 #include "Engine/Core/IWindow.h"
 #include "Engine/OpenGL/OpenGLContext.h"
 
@@ -34,6 +35,20 @@ namespace Engine {
 			auto* self = static_cast<GlfwWindow*>(glfwGetWindowUserPointer(win));
 			self->OnClose();
 			});
+		glfwSetCursorPosCallback(m_Window, [](GLFWwindow* win, double x, double y) {
+			auto* self = static_cast<GlfwWindow*>(glfwGetWindowUserPointer(win));
+			self->OnMouseMove(x, y);
+			});
+
+		glfwSetMouseButtonCallback(m_Window, [](GLFWwindow* win, int button, int action, int mods) {
+			auto* self = static_cast<GlfwWindow*>(glfwGetWindowUserPointer(win));
+			self->OnMouseButton(button, action, mods);
+			});
+
+		glfwSetScrollCallback(m_Window, [](GLFWwindow* win, double xOff, double yOff) {
+			auto* self = static_cast<GlfwWindow*>(glfwGetWindowUserPointer(win));
+			self->OnScroll(xOff, yOff);
+			});
 	}
 	void GlfwWindow::OnResize(int width, int height) {
 		// 例如：更新 OpenGL 视口
@@ -51,6 +66,9 @@ namespace Engine {
 	}
 	void GlfwWindow::OnKey(int key, int scancode, int action, int mods) {
 		// 通过事件回调通知 Application
+		if (auto* input = Input::Get())
+			input->OnKeyEvent(key, action);
+
 		if (m_EventCallback) {
 			Event e{ EventType::KeyPress };   // 或根据 action 区分 KeyPress/KeyRelease
 			e.key.key = key;
@@ -95,5 +113,42 @@ namespace Engine {
 
 	//Register the GLFW Recall
 
+	void GlfwWindow::OnMouseMove(double x, double y) {
+		// 1. 喂给输入系统（轮询）
+		if (auto* input = Input::Get())
+			input->OnMouseMove(static_cast<float>(x), static_cast<float>(y));
 
+		// 2. 通过事件回调通知（事件驱动）
+		if (m_EventCallback) {
+			Event e{ EventType::MouseMove };
+			e.mouseMove.x = x;
+			e.mouseMove.y = y;
+			m_EventCallback(e);
+		}
+	}
+
+	void GlfwWindow::OnMouseButton(int button, int action, int mods) {
+		if (auto* input = Input::Get())
+			input->OnMouseButtonEvent(button, action);
+
+		if (m_EventCallback) {
+			Event e{ EventType::MouseClick };
+			e.mouseButton.button = button;
+			e.mouseButton.action = action;
+			e.mouseButton.mods = mods;
+			m_EventCallback(e);
+		}
+	}
+
+	void GlfwWindow::OnScroll(double xOffset, double yOffset) {
+		if (auto* input = Input::Get())
+			input->OnScroll(static_cast<float>(xOffset), static_cast<float>(yOffset));
+
+		if (m_EventCallback) {
+			Event e{ EventType::MouseScroll };
+			e.mouseScroll.xOffset = xOffset;
+			e.mouseScroll.yOffset = yOffset;
+			m_EventCallback(e);
+		}
+	}
 }

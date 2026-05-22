@@ -5,17 +5,13 @@
 
 namespace Engine {
 
-	// ============================================================================
-	// OpenGLGraphicsFactory - OpenGL 具体工厂
-	// 使用 GLFW 创建窗口，使用 OpenGL 4.6 创建所有 GPU 资源
-	// ============================================================================
 	class OpenGLGraphicsFactory : public IGraphicsFactory
 	{
 	public:
 		OpenGLGraphicsFactory();
 		virtual ~OpenGLGraphicsFactory() override;
 
-		// ---- 窗口与上下文 ----
+		// ---- COntext with Window ----
 		virtual std::unique_ptr<IWindow> CreateWindow(
 			int width,
 			int height,
@@ -24,7 +20,7 @@ namespace Engine {
 		virtual std::unique_ptr<IRenderContext> CreateRenderContext(
 			void* nativeWindowHandle) override;
 
-		// ---- GPU 资源 ----
+		// ---- GPU Resource ----
 		virtual std::shared_ptr<Shader> CreateShader(
 			const std::string& vertexPath,
 			const std::string& fragmentPath) override;
@@ -42,7 +38,11 @@ namespace Engine {
 
 		virtual std::shared_ptr<VertexArray> CreateVertexArray() override;
 
-		// 获取共享的 OpenGL 上下文引用
+		// ---- Advanced Render Toolbox----
+		virtual std::shared_ptr<ISpriteBatch> CreateSpriteBatch(
+			IRenderContext& renderContext) override;
+
+
 		GladGLContext& GetGLContext() { return m_GL; }
 
 	private:
