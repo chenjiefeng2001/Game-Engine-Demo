@@ -46,6 +46,10 @@ jobs:
 
     steps:
     - uses: actions/checkout@v4
+        with:
+      # 关键点：添加以下两行，递归拉取所有子模块
+      submodules: recursive
+      fetch-depth: 0  # 建议加上，确保获取完整的历史记录（可选）
 
     - name: Set reusable strings
       # Turn repeated input strings (such as the build output directory) into step outputs. These step outputs can be used throughout the workflow file.
