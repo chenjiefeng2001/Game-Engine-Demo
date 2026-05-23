@@ -1,20 +1,45 @@
-name: CMake on multiple platforms
+name: Advanced C++ CI
 
 on:
   push:
     branches: [ "master" ]
+    # 高级逻辑 1：精准路径过滤
+    # 只有以下文件发生变动，才会触发自动编译
+    paths:
+      - '**.cpp'
+      - '**.h'
+      - '**.hpp'
+      - '**.cc'
+      - '**.cxx'
+      - 'CMakeLists.txt'
+      - '**.cmake'          # 包含 cmake 模块文件
+      - 'third_party/**'     # 第三方库变动也需要重新编译
+      - '.github/workflows/cmake-multi-platform.yml' # 脚本自身变动也触发
+
   pull_request:
     branches: [ "master" ]
+    paths:
+      - '**.cpp'
+      - '**.h'
+      - '**.hpp'
+      - 'CMakeLists.txt'
+      - '**.cmake'
+      - 'third_party/**'
+
+  # 高级逻辑 2：允许手动强制触发
+  # 有时候即使没改代码（比如想测试环境），也可以在 GitHub 网页手动点击运行
+  workflow_dispatch:
 
 jobs:
   build:
+    # 逻辑 3：通过 Commit Message 动态跳过
+    # 如果某次提交虽然改了代码，但你非常确定不需要编译，
+    # 可以在提交信息里加 [skip ci]，GitHub 会自动识别。
+    
     runs-on: ${{ matrix.os }}
 
     strategy:
-      # 设置为 false，即使其中一个作业失败，其他作业也会继续执行
       fail-fast: false
-
-    # 编译矩阵配置
       matrix:
         os: [ubuntu-latest, windows-latest]
         build_type: [Release]
@@ -38,37 +63,27 @@ jobs:
             c_compiler: cl
 
     steps:
-    # 1. 拉取源代码并处理子模块
-    - uses: actions/checkout@v4
+    - name: Checkout Code
+      uses: actions/checkout@v4
       with:
         submodules: recursive
         fetch-depth: 0
 
-    # 2. 只有在 Linux 环境下才安装依赖库 (解决 GLFW 编译报错)
     - name: Install Linux Dependencies
       if: runner.os == 'Linux'
       run: |
         sudo apt-get update
         sudo apt-get install -y \
-          libx11-dev \
-          libxrandr-dev \
-          libxinerama-dev \
-          libxcursor-dev \
-          libxi-dev \
-          libgl1-mesa-dev \
-          libwayland-dev \
-          wayland-protocols \
-          libxkbcommon-dev \
+          libx11-dev libxrandr-dev libxinerama-dev libxcursor-dev libxi-dev \
+          libgl1-mesa-dev libwayland-dev wayland-protocols libxkbcommon-dev \
           pkg-config
 
-    # 3. 设置构建目录路径
     - name: Set reusable strings
       id: strings
       shell: bash
       run: |
         echo "build-output-dir=${{ github.workspace }}/build" >> "$GITHUB_OUTPUT"
 
-    # 4. 配置 CMake
     - name: Configure CMake
       run: >
         cmake -B ${{ steps.strings.outputs.build-output-dir }}
@@ -77,11 +92,9 @@ jobs:
         -DCMAKE_BUILD_TYPE=${{ matrix.build_type }}
         -S ${{ github.workspace }}
 
-    # 5. 执行编译
     - name: Build
       run: cmake --build ${{ steps.strings.outputs.build-output-dir }} --config ${{ matrix.build_type }}
 
-    # 6. 运行测试（如果有配置 CTest）
     - name: Test
       working-directory: ${{ steps.strings.outputs.build-output-dir }}
       run: ctest --build-config ${{ matrix.build_type }}
