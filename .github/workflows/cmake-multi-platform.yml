@@ -11,7 +11,10 @@ jobs:
     runs-on: ${{ matrix.os }}
 
     strategy:
+      # 设置为 false，即使其中一个作业失败，其他作业也会继续执行
       fail-fast: false
+
+    # 编译矩阵配置
       matrix:
         os: [ubuntu-latest, windows-latest]
         build_type: [Release]
@@ -35,25 +38,37 @@ jobs:
             c_compiler: cl
 
     steps:
-    # 修正后的 checkout 步骤
+    # 1. 拉取源代码并处理子模块
     - uses: actions/checkout@v4
       with:
         submodules: recursive
         fetch-depth: 0
 
-    # 特别注意：Linux 下编译 GLFW 需要额外的系统依赖
+    # 2. 只有在 Linux 环境下才安装依赖库 (解决 GLFW 编译报错)
     - name: Install Linux Dependencies
       if: runner.os == 'Linux'
       run: |
         sudo apt-get update
-        sudo apt-get install -y libx11-dev libxrandr-dev libxinerama-dev libxcursor-dev libxi-dev libgl1-mesa-dev
+        sudo apt-get install -y \
+          libx11-dev \
+          libxrandr-dev \
+          libxinerama-dev \
+          libxcursor-dev \
+          libxi-dev \
+          libgl1-mesa-dev \
+          libwayland-dev \
+          wayland-protocols \
+          libxkbcommon-dev \
+          pkg-config
 
+    # 3. 设置构建目录路径
     - name: Set reusable strings
       id: strings
       shell: bash
       run: |
         echo "build-output-dir=${{ github.workspace }}/build" >> "$GITHUB_OUTPUT"
 
+    # 4. 配置 CMake
     - name: Configure CMake
       run: >
         cmake -B ${{ steps.strings.outputs.build-output-dir }}
@@ -62,9 +77,11 @@ jobs:
         -DCMAKE_BUILD_TYPE=${{ matrix.build_type }}
         -S ${{ github.workspace }}
 
+    # 5. 执行编译
     - name: Build
       run: cmake --build ${{ steps.strings.outputs.build-output-dir }} --config ${{ matrix.build_type }}
 
+    # 6. 运行测试（如果有配置 CTest）
     - name: Test
       working-directory: ${{ steps.strings.outputs.build-output-dir }}
       run: ctest --build-config ${{ matrix.build_type }}
