@@ -15,6 +15,11 @@ namespace Engine {
 
         m_World = std::move(world);
         m_Body = m_World->CreateBody(def);
+
+        // 设置组件引用，用于碰撞事件路由
+        if (m_Body) {
+            m_Body->SetComponentRef(this);
+        }
     }
 
     void PhysicsComponent::DestroyBody() {

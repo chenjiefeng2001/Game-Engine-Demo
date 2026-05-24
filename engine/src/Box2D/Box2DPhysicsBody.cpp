@@ -149,6 +149,101 @@ namespace Engine {
     }
 
     // ============================================================
+    // Fixture 管理
+    // ============================================================
+
+    b2FixtureDef Box2DPhysicsBody::ToB2FixtureDef(const FixtureDef& def) {
+        b2FixtureDef fd;
+        fd.density     = def.density;
+        fd.friction    = def.friction;
+        fd.restitution = def.restitution;
+        fd.isSensor    = def.isSensor;
+
+        b2Filter filter;
+        filter.categoryBits = def.categoryBits;
+        filter.maskBits     = def.maskBits;
+        filter.groupIndex   = def.groupIndex;
+        fd.filter = filter;
+
+        // 形状
+        b2PolygonShape   boxShape;
+        b2CircleShape    circleShape;
+        b2EdgeShape      edgeShape;
+        b2ChainShape     chainShape;
+
+        switch (def.shape.type) {
+            case ShapeType::Box:
+                boxShape.SetAsBox(def.shape.boxSize.x, def.shape.boxSize.y,
+                                  ToB2(def.shape.offset), 0.0f);
+                fd.shape = &boxShape;
+                break;
+            case ShapeType::Circle:
+                circleShape.m_radius = def.shape.circleRadius;
+                circleShape.m_p      = ToB2(def.shape.offset);
+                fd.shape = &circleShape;
+                break;
+            case ShapeType::Edge:
+                edgeShape.SetTwoSided(ToB2(def.shape.edgeStart),
+                                      ToB2(def.shape.edgeEnd));
+                fd.shape = &edgeShape;
+                break;
+            case ShapeType::Chain:
+                if (def.shape.chainVertices && def.shape.chainVertexCount > 0) {
+                    // 需要 prev/next 顶点来闭合链
+                    b2Vec2 prev = ToB2(def.shape.chainVertices[0]);
+                    b2Vec2 next = ToB2(def.shape.chainVertices[def.shape.chainVertexCount - 1]);
+                    chainShape.CreateChain(
+                        reinterpret_cast<const b2Vec2*>(def.shape.chainVertices),
+                        def.shape.chainVertexCount, prev, next);
+                    fd.shape = &chainShape;
+                }
+                break;
+        }
+
+        return fd;
+    }
+
+    void* Box2DPhysicsBody::AddFixture(const FixtureDef& def) {
+        if (!m_Body) return nullptr;
+
+        b2FixtureDef fd = ToB2FixtureDef(def);
+        b2Fixture* fixture = m_Body->CreateFixture(&fd);
+        if (!fixture) return nullptr;
+
+        FixtureEntry entry;
+        entry.fixture  = fixture;
+        entry.userData = def.userData;
+        fixture->GetUserData().pointer = reinterpret_cast<uintptr_t>(this);
+
+        m_Fixtures.push_back(entry);
+        return static_cast<void*>(fixture);
+    }
+
+    void Box2DPhysicsBody::RemoveFixture(void* fixtureId) {
+        if (!m_Body || !fixtureId) return;
+
+        b2Fixture* target = static_cast<b2Fixture*>(fixtureId);
+        for (auto it = m_Fixtures.begin(); it != m_Fixtures.end(); ++it) {
+            if (it->fixture == target) {
+                m_Body->DestroyFixture(target);
+                m_Fixtures.erase(it);
+                return;
+            }
+        }
+    }
+
+    void Box2DPhysicsBody::ClearFixtures() {
+        if (!m_Body) return;
+
+        for (auto& entry : m_Fixtures) {
+            if (entry.fixture) {
+                m_Body->DestroyFixture(entry.fixture);
+            }
+        }
+        m_Fixtures.clear();
+    }
+
+    // ============================================================
     // 碰撞滤波
     // ============================================================
 

@@ -24,7 +24,9 @@
 #include <Engine/Core/Scene/Scene.h>
 #include <Engine/Core/Physics/IPhysicsWorld.h>
 #include <Engine/Core/Physics/IPhysicsBody.h>
+#include <Engine/Core/Physics/IJoint.h>
 #include <Engine/Core/GameObject/GameObject.h>
+#include <Engine/OpenGL/OpenGLPhysicsDebugDraw.h>
 #include <memory>
 
 namespace Engine {
@@ -53,6 +55,21 @@ namespace Engine {
         std::shared_ptr<Shader> m_BatchShader;
         std::shared_ptr<Texture> m_Texture;
         std::unique_ptr<OrthographicCamera> m_Camera;
+        // 相机边界（用于 ScreenToWorld，从构造参数存储）
+        float32 m_CamLeft   = -1.0f;
+        float32 m_CamRight  =  1.0f;
+        float32 m_CamBottom = -1.0f;
+        float32 m_CamTop    =  1.0f;
+
+        // ── 鼠标拖拽状态 ──
+        std::shared_ptr<IJoint> m_MouseJoint;
+        IPhysicsBody* m_DraggedBody = nullptr;
+        Vec2  m_MouseWorldPos = {0.0f, 0.0f};
+        bool  m_MouseDown = false;
+
+        // ── 调试绘制 ──
+        std::unique_ptr<OpenGLPhysicsDebugDraw> m_DebugDraw;
+        bool  m_DebugDrawEnabled = true;
 
         // ── FPS ──
         float32 m_LastFrameTime = 0.0f;
@@ -61,6 +78,12 @@ namespace Engine {
 
         // ── 物理参数 ──
         static constexpr float32 FIXED_DT = 1.0f / 60.0f;
+
+        // ── 屏幕坐标转世界坐标 ──
+        Vec2 ScreenToWorld(float32 screenX, float32 screenY) const;
+
+        // ── 热键帮助 ──
+        void PrintDebugHelp();
     };
 
 } // namespace Engine

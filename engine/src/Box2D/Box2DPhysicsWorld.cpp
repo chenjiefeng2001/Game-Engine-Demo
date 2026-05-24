@@ -1,6 +1,9 @@
 #include "Box2DPhysicsWorld.h"   // => Engine/Box2D/Box2DPhysicsWorld.h + box2d.h
 #include "Box2DPhysicsBody.h"
+#include "Box2DJoint.h"
+#include "Box2DDebugDraw.h"
 #include "Box2DContactListener.h"
+#include "Engine/Core/Physics/PhysicsComponent.h"
 #include <algorithm>
 
 namespace Engine {
@@ -86,7 +89,8 @@ namespace Engine {
     }
 
     Box2DPhysicsWorld::~Box2DPhysicsWorld() {
-        // 清理所有刚体
+        // 清理所有关节和刚体（顺序重要：关节先于刚体）
+        m_Joints.clear();
         m_Bodies.clear();
 
         delete m_World;
@@ -147,6 +151,132 @@ namespace Engine {
                     m_World->DestroyBody(b2BodyPtr);
                 }
                 m_Bodies.erase(it);
+                return;
+            }
+        }
+    }
+
+    // ============================================================
+    // 关节管理
+    // ============================================================
+
+    static b2Joint* CreateBox2DJoint(b2World* world, const JointDef& def,
+                                     b2Body* bodyA, b2Body* bodyB) {
+        if (!world || !bodyA) return nullptr;
+        // MouseJoint 允许 bodyB 为 nullptr
+        if (def.type != JointType::Mouse && (!bodyA || !bodyB)) return nullptr;
+
+        switch (def.type) {
+            case JointType::Revolute: {
+                const auto& rd = static_cast<const RevoluteJointDef&>(def);
+                b2RevoluteJointDef jd;
+                jd.Initialize(bodyA, bodyB, ToB2(rd.localAnchorA));
+                jd.localAnchorB     = ToB2(rd.localAnchorB);
+                jd.referenceAngle   = rd.referenceAngle;
+                jd.enableLimit      = rd.enableLimit;
+                jd.lowerAngle       = rd.lowerAngle;
+                jd.upperAngle       = rd.upperAngle;
+                jd.enableMotor      = rd.enableMotor;
+                jd.motorSpeed       = rd.motorSpeed;
+                jd.maxMotorTorque   = rd.maxMotorTorque;
+                jd.collideConnected = def.collideConnected;
+                return world->CreateJoint(&jd);
+            }
+            case JointType::Prismatic: {
+                const auto& pd = static_cast<const PrismaticJointDef&>(def);
+                b2PrismaticJointDef jd;
+                jd.Initialize(bodyA, bodyB, ToB2(pd.localAnchorA), ToB2(pd.localAxisA));
+                jd.localAnchorB       = ToB2(pd.localAnchorB);
+                jd.referenceAngle     = pd.referenceAngle;
+                jd.enableLimit        = pd.enableLimit;
+                jd.lowerTranslation   = pd.lowerTranslation;
+                jd.upperTranslation   = pd.upperTranslation;
+                jd.enableMotor        = pd.enableMotor;
+                jd.motorSpeed         = pd.motorSpeed;
+                jd.maxMotorForce      = pd.maxMotorForce;
+                jd.collideConnected   = def.collideConnected;
+                return world->CreateJoint(&jd);
+            }
+            case JointType::Distance: {
+                const auto& dd = static_cast<const DistanceJointDef&>(def);
+                b2DistanceJointDef jd;
+                jd.Initialize(bodyA, bodyB, ToB2(dd.localAnchorA), ToB2(dd.localAnchorB));
+                jd.length    = dd.length;
+                jd.stiffness = dd.stiffness;
+                jd.damping   = dd.damping;
+                jd.collideConnected = def.collideConnected;
+                return world->CreateJoint(&jd);
+            }
+            case JointType::Weld: {
+                const auto& wd = static_cast<const WeldJointDef&>(def);
+                b2WeldJointDef jd;
+                jd.Initialize(bodyA, bodyB, ToB2(wd.localAnchorA));
+                jd.localAnchorB     = ToB2(wd.localAnchorB);
+                jd.referenceAngle   = wd.referenceAngle;
+                jd.collideConnected = def.collideConnected;
+                return world->CreateJoint(&jd);
+            }
+            case JointType::Wheel: {
+                const auto& wh = static_cast<const WheelJointDef&>(def);
+                b2WheelJointDef jd;
+                jd.Initialize(bodyA, bodyB, ToB2(wh.localAnchorA), ToB2(wh.localAxisA));
+                jd.localAnchorB     = ToB2(wh.localAnchorB);
+                jd.enableMotor      = wh.enableMotor;
+                jd.motorSpeed       = wh.motorSpeed;
+                jd.maxMotorTorque   = wh.maxMotorTorque;
+                jd.stiffness        = wh.stiffness;
+                jd.damping          = wh.damping;
+                jd.collideConnected = def.collideConnected;
+                return world->CreateJoint(&jd);
+            }
+            case JointType::Mouse: {
+                const auto& md = static_cast<const MouseJointDef&>(def);
+                b2MouseJointDef jd;
+                jd.bodyA        = bodyA;
+                jd.bodyB        = bodyB ? bodyB : bodyA;  // bodyB 设为自身，目标通过 target 控制
+                jd.target       = ToB2(md.target);
+                jd.maxForce     = md.maxForce;
+                jd.stiffness    = md.stiffness;
+                jd.damping      = md.damping;
+                jd.collideConnected = false;
+                return world->CreateJoint(&jd);
+            }
+            default:
+                return nullptr;
+        }
+    }
+
+    std::shared_ptr<IJoint> Box2DPhysicsWorld::CreateJoint(const JointDef& def) {
+        if (!m_World) return nullptr;
+        if (!def.bodyA) return nullptr;
+        // MouseJoint 不需要 bodyB
+        if (def.type != JointType::Mouse && !def.bodyB) return nullptr;
+
+        // 获取 Box2D 的 b2Body 指针
+        b2Body* bodyA = static_cast<b2Body*>(def.bodyA->GetNativeBody());
+        b2Body* bodyB = def.bodyB
+            ? static_cast<b2Body*>(def.bodyB->GetNativeBody())
+            : bodyA;  // MouseJoint: bodyB 指向自身
+        if (!bodyA) return nullptr;
+
+        b2Joint* joint = CreateBox2DJoint(m_World, def, bodyA, bodyB);
+        if (!joint) return nullptr;
+
+        auto jointWrapper = std::make_shared<Box2DJoint>(joint, def);
+        m_Joints.insert(jointWrapper);
+        return jointWrapper;
+    }
+
+    void Box2DPhysicsWorld::DestroyJoint(IJoint* joint) {
+        if (!joint || !m_World) return;
+
+        for (auto it = m_Joints.begin(); it != m_Joints.end(); ++it) {
+            if (it->get() == joint) {
+                b2Joint* b2JointPtr = static_cast<b2Joint*>(joint->GetNativeJoint());
+                if (b2JointPtr) {
+                    m_World->DestroyJoint(b2JointPtr);
+                }
+                m_Joints.erase(it);
                 return;
             }
         }
@@ -257,16 +387,51 @@ namespace Engine {
         m_ContactPreSolveCallback = std::move(callback);
     }
 
+    void Box2DPhysicsWorld::SetContactPersistCallback(ContactPersistCallback callback) {
+        m_ContactPersistCallback = std::move(callback);
+    }
+
+    // 内部工具：将碰撞事件路由到 PhysicsComponent 级别
+    namespace {
+        static void RouteContactEvent(const ContactInfo& info,
+                                      void (*invoke)(const PhysicsComponent*, const ContactInfo&)) {
+            if (!info.bodyA || !info.bodyB) return;
+            auto* bodyA = static_cast<const IPhysicsBody*>(info.bodyA);
+            auto* bodyB = static_cast<const IPhysicsBody*>(info.bodyB);
+            auto* compA = static_cast<PhysicsComponent*>(bodyA->GetComponentRef());
+            auto* compB = static_cast<PhysicsComponent*>(bodyB->GetComponentRef());
+            if (compA) invoke(compA, info);
+            if (compB) invoke(compB, info);
+        }
+        static void RoutePersistEvent(const ContactPersistData& data) {
+            if (!data.bodyA || !data.bodyB) return;
+            auto* bodyA = static_cast<const IPhysicsBody*>(data.bodyA);
+            auto* bodyB = static_cast<const IPhysicsBody*>(data.bodyB);
+            auto* compA = static_cast<PhysicsComponent*>(bodyA->GetComponentRef());
+            auto* compB = static_cast<PhysicsComponent*>(bodyB->GetComponentRef());
+            if (compA) compA->InvokeCollisionStay(data);
+            if (compB) compB->InvokeCollisionStay(data);
+        }
+    }
+
     void Box2DPhysicsWorld::OnContactBegin(const ContactInfo& info) {
+        // 全局回掉
         if (m_ContactBeginCallback) {
             m_ContactBeginCallback(info);
         }
+        // 路由到 PhysicsComponent
+        RouteContactEvent(info, [](const PhysicsComponent* c, const ContactInfo& i) {
+            const_cast<PhysicsComponent*>(c)->InvokeCollisionEnter(i);
+        });
     }
 
     void Box2DPhysicsWorld::OnContactEnd(const ContactInfo& info) {
         if (m_ContactEndCallback) {
             m_ContactEndCallback(info);
         }
+        RouteContactEvent(info, [](const PhysicsComponent* c, const ContactInfo& i) {
+            const_cast<PhysicsComponent*>(c)->InvokeCollisionExit(i);
+        });
     }
 
     bool Box2DPhysicsWorld::OnContactPreSolve(const void* bodyA, const void* bodyB) {
@@ -276,13 +441,36 @@ namespace Engine {
         return true; // 默认允许碰撞
     }
 
+    void Box2DPhysicsWorld::OnContactPersist(const ContactPersistData& data) {
+        if (m_ContactPersistCallback) {
+            m_ContactPersistCallback(data);
+        }
+        RoutePersistEvent(data);
+    }
+
     // ============================================================
     // 调试绘制
     // ============================================================
 
+    void Box2DPhysicsWorld::SetDebugDraw(IPhysicsDebugDraw* draw) {
+        m_UserDebugDraw = draw;
+        if (draw) {
+            m_Box2DDebugDraw = std::make_unique<Box2DDebugDraw>(*draw);
+            m_World->SetDebugDraw(m_Box2DDebugDraw.get());
+        } else {
+            m_Box2DDebugDraw.reset();
+            m_World->SetDebugDraw(nullptr);
+        }
+    }
+
     void Box2DPhysicsWorld::DebugDraw() {
-        // 预留：可集成 OpenGL 调试绘制
-        // 需要实现 b2Draw 接口并注册到 m_World->SetDebugDraw()
+        if (m_World && m_Box2DDebugDraw) {
+            // 将 IPhysicsDebugDraw 的 flags 同步到 Box2DDebugDraw
+            if (m_UserDebugDraw) {
+                m_Box2DDebugDraw->SetFlags(m_UserDebugDraw->GetFlags());
+            }
+            m_World->DebugDraw();
+        }
     }
 
     // ============================================================

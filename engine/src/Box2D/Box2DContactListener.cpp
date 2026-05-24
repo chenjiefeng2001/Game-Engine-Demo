@@ -75,4 +75,39 @@ namespace Engine {
         }
     }
 
+    void Box2DContactListener::PostSolve(b2Contact* contact,
+                                         const b2ContactImpulse* impulse) {
+        if (!contact || !impulse) return;
+
+        ContactPersistData data = MakeContactPersistData(contact, impulse);
+        m_World.OnContactPersist(data);
+    }
+
+    ContactPersistData Box2DContactListener::MakeContactPersistData(
+        b2Contact* contact, const b2ContactImpulse* impulse) {
+
+        ContactPersistData data;
+
+        b2Body* bodyA = contact->GetFixtureA()->GetBody();
+        b2Body* bodyB = contact->GetFixtureB()->GetBody();
+
+        data.bodyA = reinterpret_cast<IPhysicsBody*>(bodyA->GetUserData().pointer);
+        data.bodyB = reinterpret_cast<IPhysicsBody*>(bodyB->GetUserData().pointer);
+
+        b2WorldManifold worldManifold;
+        contact->GetWorldManifold(&worldManifold);
+        data.point  = FromB2(worldManifold.points[0]);
+        data.normal = FromB2(worldManifold.normal);
+
+        data.pointCount = impulse->count;
+        float32 totalImpulse = 0.0f;
+        for (int32 i = 0; i < impulse->count && i < 4; ++i) {
+            data.impulses[i] = impulse->normalImpulses[i];
+            totalImpulse += impulse->normalImpulses[i];
+        }
+        data.impulse = totalImpulse;
+
+        return data;
+    }
+
 } // namespace Engine
