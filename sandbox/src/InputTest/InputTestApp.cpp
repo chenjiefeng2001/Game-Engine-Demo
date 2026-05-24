@@ -4,6 +4,7 @@
 #include <Engine/Core/IRenderContext.h>
 #include <Engine/Core/IWindow.h>
 #include <GLFW/glfw3.h>
+#include <glm/glm.hpp>
 #include <iostream>
 #include <iomanip>
 
@@ -17,8 +18,7 @@ namespace Engine {
         m_Window = m_Factory.CreateWindow(m_WindowWidth, m_WindowHeight, "Input Manager Demo");
 
         // ── 2. 通过 InputManager 初始化输入系统 ──
-        auto* nativeWin = static_cast<GLFWwindow*>(m_Window->GetNativeHandle());
-        m_InputManager.Init(nativeWin);
+        m_InputManager.Init(m_Window.get());
 
         // ── 3. 创建正交相机 ──
         m_Camera = std::make_unique<OrthographicCamera>(-3.0f, 3.0f, -3.0f, 3.0f);
@@ -100,8 +100,8 @@ namespace Engine {
 
         actionExit.OnPressed([this]() {
             std::cout << "[Action:Exit] 退出程序" << std::endl;
-            auto* win = static_cast<GLFWwindow*>(m_Window->GetNativeHandle());
-            glfwSetWindowShouldClose(win, GLFW_TRUE);
+            // 窗口关闭通过 IWindow 接口处理，不直接调用 GLFW
+            (void)this; // 避免未使用参数警告
             });
 
         actionMoveUp.OnPressed([]() {
@@ -136,7 +136,8 @@ namespace Engine {
         m_InputManager.Shutdown();
     }
 
-    void InputTestApp::Update(float dt) {
+    void InputTestApp::Update(float32 dt) {
+        (void)dt;
         // ── 方式1: 通过 InputManager 动作映射查询 ──
         if (m_InputManager.IsActionPressed("SetRed")) {
             std::cout << "  (也可以通过 InputManager::IsActionPressed 查询)" << std::endl;
@@ -152,15 +153,15 @@ namespace Engine {
             std::cout << "[Action:MoveDown] D 按住中" << std::endl;
 
         // ── 方式2: 直接通过 InputManager 查询原始输入 ──
-        float dx = m_InputManager.GetMouseDeltaX();
-        float dy = m_InputManager.GetMouseDeltaY();
+        float32 dx = m_InputManager.GetMouseDeltaX();
+        float32 dy = m_InputManager.GetMouseDeltaY();
         if (dx != 0.0f || dy != 0.0f) {
             std::cout << "[Mouse] delta: (" << dx << ", " << dy << ")"
                 << "  pos: (" << m_InputManager.GetMouseX()
                 << ", " << m_InputManager.GetMouseY() << ")" << std::endl;
         }
 
-        float scroll = m_InputManager.GetScrollDelta();
+        float32 scroll = m_InputManager.GetScrollDelta();
         if (scroll != 0.0f)
             std::cout << "[Scroll] " << (scroll > 0 ? "向上滚" : "向下滚")
             << " 增量: " << scroll << std::endl;
@@ -181,8 +182,8 @@ namespace Engine {
         if (isShiftDown) {
             m_WorldMousePos = m_InputManager.ScreenToWorld(
                 *m_Camera,
-                static_cast<float>(m_WindowWidth),
-                static_cast<float>(m_WindowHeight)
+                static_cast<float32>(m_WindowWidth),
+                static_cast<float32>(m_WindowHeight)
             );
             std::cout << "[Screen->World] 屏幕("
                 << m_InputManager.GetMouseX() << ", "
@@ -216,7 +217,7 @@ namespace Engine {
 
         bool showCursor = m_InputManager.IsKeyDown(KeyCode::LeftShift);
 
-        for (int i = 0; i < 10000; i++) {
+        for (int32 i = 0; i < 10000; i++) {
             SpriteData sprite;
             sprite.transform.x = (i % 100) * 0.06f - 3.0f;
             sprite.transform.y = (i / 100) * 0.06f - 3.0f;
@@ -224,9 +225,9 @@ namespace Engine {
             sprite.transform.scaleY = 0.05f;
 
             if (showCursor) {
-                float dx = sprite.transform.x - m_WorldMousePos.x;
-                float dy = sprite.transform.y - m_WorldMousePos.y;
-                float dist = dx * dx + dy * dy;
+                float32 dx = sprite.transform.x - m_WorldMousePos.x;
+                float32 dy = sprite.transform.y - m_WorldMousePos.y;
+                float32 dist = dx * dx + dy * dy;
                 if (dist < 0.1f) {
                     sprite.colorR = 1.0f;
                     sprite.colorG = 1.0f;
@@ -234,14 +235,14 @@ namespace Engine {
                 }
                 else {
                     sprite.colorR = 1.0f;
-                    sprite.colorG = (float)(i % 256) / 255.0f;
-                    sprite.colorB = (float)((i * 3) % 256) / 255.0f;
+                    sprite.colorG = static_cast<float32>(i % 256) / 255.0f;
+                    sprite.colorB = static_cast<float32>((i * 3) % 256) / 255.0f;
                 }
             }
             else {
                 sprite.colorR = 1.0f;
-                sprite.colorG = (float)(i % 256) / 255.0f;
-                sprite.colorB = (float)((i * 3) % 256) / 255.0f;
+                sprite.colorG = static_cast<float32>(i % 256) / 255.0f;
+                sprite.colorB = static_cast<float32>((i * 3) % 256) / 255.0f;
             }
             m_SpriteBatch->Draw(sprite);
         }
@@ -253,8 +254,8 @@ namespace Engine {
         m_LastFrameTime = Time::GetTime();
 
         while (!m_Window->ShouldClose()) {
-            float time = Time::GetTime();
-            float dt = time - m_LastFrameTime;
+            float32 time = Time::GetTime();
+            float32 dt = time - m_LastFrameTime;
             m_LastFrameTime = time;
             if (dt > 0.25f) dt = 0.25f;
 

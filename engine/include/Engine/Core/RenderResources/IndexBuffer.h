@@ -1,6 +1,6 @@
 #pragma once
 
-#include <stdint.h>
+#include "Engine/Types.h"
 
 namespace Engine {
 
@@ -11,7 +11,7 @@ namespace Engine {
 
 		virtual void Bind() const = 0;
 		virtual void Unbind() const = 0;
-		virtual uint32_t GetCount() const = 0;
+		virtual uint32 GetCount() const = 0;
 	};
 
 } // namespace Engine

@@ -46,7 +46,7 @@ namespace Engine {
         m_GL.DeleteBuffers(1, &m_EBO);
     }
 
-    void OpenGLSpriteBatch::SetCapacity(uint32_t maxSprites) {
+    void OpenGLSpriteBatch::SetCapacity(uint32 maxSprites) {
         m_MaxSprites = maxSprites;
         m_VertexBuffer.resize(m_MaxSprites * 4);
         GenerateIndices(m_MaxSprites);
@@ -54,20 +54,20 @@ namespace Engine {
         // 上传预生成的索引到 GPU
         m_GL.BindBuffer(GL_ELEMENT_ARRAY_BUFFER, m_EBO);
         m_GL.BufferData(GL_ELEMENT_ARRAY_BUFFER,
-                        m_MaxSprites * 6 * sizeof(uint32_t),
+                        m_MaxSprites * 6 * sizeof(uint32),
                         m_IndexBuffer.data(),
                         GL_STATIC_DRAW);
         m_GL.BindBuffer(GL_ELEMENT_ARRAY_BUFFER, 0);
     }
 
-    void OpenGLSpriteBatch::GenerateIndices(uint32_t maxSprites) {
+    void OpenGLSpriteBatch::GenerateIndices(uint32 maxSprites) {
         if (m_IndicesGenerated && m_IndexBuffer.size() >= maxSprites * 6)
             return;
 
         m_IndexBuffer.resize(maxSprites * 6);
-        for (uint32_t i = 0; i < maxSprites; i++) {
-            uint32_t offset = i * 4;  // 第 i 个精灵的顶点起始索引
-            uint32_t* idx = &m_IndexBuffer[i * 6];
+        for (uint32 i = 0; i < maxSprites; i++) {
+            uint32 offset = i * 4;  // 第 i 个精灵的顶点起始索引
+            uint32* idx = &m_IndexBuffer[i * 6];
             idx[0] = offset + 0;
             idx[1] = offset + 1;
             idx[2] = offset + 2;
@@ -173,8 +173,8 @@ namespace Engine {
     void OpenGLSpriteBatch::SubmitBatch() {
         if (m_SpriteCount == 0) return;
 
-        uint32_t vertexCount = m_SpriteCount * 4;
-        uint32_t indexCount  = m_SpriteCount * 6;
+        uint32 vertexCount = m_SpriteCount * 4;
+        uint32 indexCount  = m_SpriteCount * 6;
 
         // 1. 上传顶点数据到 VBO
         m_GL.BindBuffer(GL_ARRAY_BUFFER, m_VBO);

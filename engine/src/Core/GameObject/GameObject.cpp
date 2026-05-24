@@ -1,9 +1,7 @@
 #include "Engine/Core/GameObject/GameObject.h"
 #include "Engine/Core/RHI/IRenderQueue.h"
 #include "Engine/Core/Renderer/SpriteBatch.h"
-#include <glm/gtc/type_ptr.hpp>
 #include <algorithm>
-#include <stack>
 #include <cstring>
 
 namespace Engine {
@@ -94,7 +92,7 @@ namespace Engine {
         return nullptr;
     }
 
-    void GameObject::Update(float dt) {
+    void GameObject::Update(float32 dt) {
         // 默认递归更新所有子对象
         // 子类重写 Update 时应调用 GameObject::Update(dt) 来确保子对象得到更新
         for (auto& child : m_Children) {
@@ -109,9 +107,9 @@ namespace Engine {
         // 构建 RenderCommand（纯数据，无 glm 依赖）
         RenderCommand cmd;
 
-        // 复制 4×4 世界矩阵到 float[16]
-        const glm::mat4& world = m_Transform.GetWorldMatrix();
-        std::memcpy(cmd.worldMatrix, glm::value_ptr(world), sizeof(cmd.worldMatrix));
+        // 复制 4×4 世界矩阵到 float[16]（RHI：通过 float* 传递）
+        const Mat4& world = m_Transform.GetWorldMatrix();
+        std::memcpy(cmd.worldMatrix, world.Data(), sizeof(cmd.worldMatrix));
 
         // UV
         cmd.uv[0] = m_Sprite.GetUVX();
@@ -121,10 +119,10 @@ namespace Engine {
 
         // 颜色
         const auto& color = m_Sprite.GetColor();
-        cmd.color[0] = color.r;
-        cmd.color[1] = color.g;
-        cmd.color[2] = color.b;
-        cmd.color[3] = color.a;
+        cmd.color[0] = color.x;
+        cmd.color[1] = color.y;
+        cmd.color[2] = color.z;
+        cmd.color[3] = color.w;
 
         // 纹理
         cmd.texture = m_Sprite.GetTexture();
@@ -140,11 +138,11 @@ namespace Engine {
         if (!m_Active) return;
         if (!m_Sprite.IsVisible()) return;
 
-        // 获取世界矩阵
-        const glm::mat4& world = m_Transform.GetWorldMatrix();
+        // 获取世界矩阵数据指针（RHI 接口）
+        const float32* worldData = m_Transform.GetWorldMatrixData();
 
         // 将 SpriteComponent 转换为 SpriteData 并提交
-        SpriteData data = m_Sprite.ToSpriteData(world);
+        SpriteData data = m_Sprite.ToSpriteData(worldData);
         batch.Draw(data);
     }
 

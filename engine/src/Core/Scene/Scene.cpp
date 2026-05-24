@@ -109,7 +109,7 @@ namespace Engine {
         }
     }
 
-    void Scene::Update(float dt) {
+    void Scene::Update(float32 dt) {
         for (auto& obj : m_Objects) {
             obj->Update(dt);
         }

@@ -14,8 +14,8 @@ namespace Engine {
 		std::string vSource = ReadFile(vertexPath);
 		std::string fSource = ReadFile(fragmentPath);
 
-		uint32_t vs = CompileShader(GL_VERTEX_SHADER, vSource);
-		uint32_t fs = CompileShader(GL_FRAGMENT_SHADER, fSource);
+		uint32 vs = CompileShader(GL_VERTEX_SHADER, vSource);
+		uint32 fs = CompileShader(GL_FRAGMENT_SHADER, fSource);
 
 		m_RendererID = m_GL.CreateProgram();
 		m_GL.AttachShader(m_RendererID, vs);
@@ -52,8 +52,8 @@ namespace Engine {
 		return ss.str();
 	}
 
-	uint32_t OpenGLShader::CompileShader(unsigned int type, const std::string& source) {
-		uint32_t id = m_GL.CreateShader(type);
+	uint32 OpenGLShader::CompileShader(unsigned int type, const std::string& source) {
+		uint32 id = m_GL.CreateShader(type);
 		const char* src = source.c_str();
 		m_GL.ShaderSource(id, 1, &src, nullptr);
 		m_GL.CompileShader(id);

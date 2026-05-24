@@ -1,6 +1,7 @@
 #pragma once
 
 #include "Engine/Core/RenderResources/VertexArray.h"
+#include "Engine/Types.h"
 #include <glad/gl.h>
 #include <vector>
 #include <memory>

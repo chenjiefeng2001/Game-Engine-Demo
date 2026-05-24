@@ -1,7 +1,7 @@
 #pragma once
 
 #include <memory>
-#include <stdint.h>
+#include "Engine/Types.h"
 
 namespace Engine {
 

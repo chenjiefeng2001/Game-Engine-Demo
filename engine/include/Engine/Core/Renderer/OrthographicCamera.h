@@ -1,20 +1,29 @@
 ﻿#pragma once
-#include <glm/glm.hpp>
+
+#include "Engine/Core/RHI/MathTypes.h"
 
 namespace Engine {
+
+	/**
+	 * @brief 正交相机
+	 *
+	 * RHI 原则：头文件只依赖 RHI/MathTypes.h（纯数据），不依赖 glm。
+	 * 所有数学运算在 .cpp 中使用 glm 实现。
+	 */
 	class OrthographicCamera {
 	public:
-		OrthographicCamera(float left, float right, float bottom, float top);
+		OrthographicCamera(float32 left, float32 right, float32 bottom, float32 top);
 
-		// RHI 接口：通过指针返回矩阵，Shader.h 就能直接用
-		const float* GetViewProjectionMatrixPtr() const;
+		/** RHI 接口：通过 float* 返回矩阵，Shader.h 就能直接用 */
+		const float32* GetViewProjectionMatrixPtr() const;
 
 	private:
 		void RecalculateViewMatrix();
 
-		glm::mat4 m_ProjectionMatrix;
-		glm::mat4 m_ViewMatrix;
-		glm::mat4 m_ViewProjectionMatrix;
-		glm::vec3 m_Position = { 0.0f, 0.0f, 0.0f };
+		Mat4 m_ProjectionMatrix;
+		Mat4 m_ViewMatrix;
+		Mat4 m_ViewProjectionMatrix;
+		Vec3 m_Position = { 0.0f, 0.0f, 0.0f };
 	};
+
 }

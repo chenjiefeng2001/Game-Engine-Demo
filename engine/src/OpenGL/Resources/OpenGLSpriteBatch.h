@@ -5,9 +5,9 @@
 #include "Engine/Core/RenderResources/VertexBuffer.h"
 #include "Engine/Core/RenderResources/IndexBuffer.h"
 #include "Engine/Core/IRenderContext.h"
+#include "Engine/Types.h"
 #include <glad/gl.h>
 #include <vector>
-#include <cstdint>
 
 namespace Engine {
 
@@ -15,9 +15,9 @@ namespace Engine {
     public:
         // 每个顶点的数据布局（32 字节）
         struct SpriteVertex {
-            float x, y;
-            float u, v;
-            float r, g, b, a;
+            float32 x, y;
+            float32 u, v;
+            float32 r, g, b, a;
         };
 
         OpenGLSpriteBatch(GladGLContext& gl, IRenderContext& renderContext);
@@ -28,8 +28,8 @@ namespace Engine {
         virtual void Draw(const SpriteData& sprite) override;
         virtual void End() override;
         virtual void Flush() override;
-        virtual uint32_t GetSpriteCount() const override { return m_SpriteCount; }
-        virtual void SetCapacity(uint32_t maxSprites) override;
+        virtual uint32 GetSpriteCount() const override { return m_SpriteCount; }
+        virtual void SetCapacity(uint32 maxSprites) override;
 
     private:
         // 内部提交：将当前 CPU 缓冲区数据上传 GPU 并绘制
@@ -51,18 +51,18 @@ namespace Engine {
 
         // ── 当前批次状态 ──
         std::shared_ptr<Texture> m_CurrentTexture;
-        uint32_t m_MaxSprites = 1000;
-        uint32_t m_SpriteCount = 0;
+        uint32 m_MaxSprites = 1000;
+        uint32 m_SpriteCount = 0;
         bool m_Began = false;
 
         // ── CPU 暂存缓冲区 ──
         std::vector<SpriteVertex> m_VertexBuffer;
-        std::vector<uint32_t>     m_IndexBuffer;
+        std::vector<uint32>     m_IndexBuffer;
 
         // ── 预生成的索引数据（所有精灵共享） ──
         // 每个精灵 6 个索引: 0,1,2, 2,3,0
         // 第 i 个精灵的索引偏移 = i*4
-        void GenerateIndices(uint32_t maxSprites);
+        void GenerateIndices(uint32 maxSprites);
         bool m_IndicesGenerated = false;
     };
 

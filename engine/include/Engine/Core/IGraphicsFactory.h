@@ -2,7 +2,7 @@
 
 #include <memory>
 #include <string>
-#include <cstdint>
+#include "Engine/Types.h"
 
 namespace Engine {
 
@@ -40,11 +40,11 @@ namespace Engine {
 
 		virtual std::shared_ptr<VertexBuffer> CreateVertexBuffer(
 			float* vertices,
-			uint32_t size) = 0;
+			uint32 size) = 0;
 
 		virtual std::shared_ptr<IndexBuffer> CreateIndexBuffer(
-			uint32_t* indices,
-			uint32_t count) = 0;
+			uint32* indices,
+			uint32 count) = 0;
 
 		virtual std::shared_ptr<VertexArray> CreateVertexArray() = 0;
 

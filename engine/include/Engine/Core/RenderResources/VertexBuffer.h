@@ -1,6 +1,6 @@
 #pragma once
 
-#include <stdint.h>
+#include "Engine/Types.h"
 
 namespace Engine {
 

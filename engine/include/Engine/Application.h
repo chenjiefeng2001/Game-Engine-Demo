@@ -7,6 +7,7 @@
 #include "Engine/Core/RenderResources/VertexArray.h"
 #include "Engine/Core/IGraphicsFactory.h"
 #include "Engine/Core/Renderer/OrthographicCamera.h"
+#include "Engine/Types.h"
 #include <memory>
 
 namespace Engine {
@@ -42,12 +43,12 @@ namespace Engine {
 		std::shared_ptr<class VertexArray> m_VAO;
 		std::shared_ptr<class Texture> m_Texture;
 		std::unique_ptr<class OrthographicCamera> m_Camera;
-		float m_LastFrameTime = 0.0f;
+		float32 m_LastFrameTime = 0.0f;
 		// ── 主循环状态 ──
 		LoopMode m_LoopMode;
 
 		// ── 内部方法 ──
-		void Update(float dt);   
+		void Update(float32 dt);
 		void Render();           
 	};
 

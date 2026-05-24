@@ -14,8 +14,8 @@ namespace Engine {
 		unsigned char* data = stbi_load(path.c_str(), &width, &height, &channels, 0);
 
 		if (data) {
-			m_Width = static_cast<uint32_t>(width);
-			m_Height = static_cast<uint32_t>(height);
+			m_Width = static_cast<uint32>(width);
+			m_Height = static_cast<uint32>(height);
 
 			GLenum internalFormat = 0, dataFormat = 0;
 			if (channels == 4) {

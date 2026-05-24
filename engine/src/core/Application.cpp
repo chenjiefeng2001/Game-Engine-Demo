@@ -24,7 +24,7 @@ namespace Engine {
 			 0.5f,  0.5f, 0.0f,  1.0f, 1.0f,
 			-0.5f,  0.5f, 0.0f,  0.0f, 1.0f
 		};
-		uint32_t indices[] = {
+		uint32 indices[] = {
 			0, 1, 2,
 			2, 3, 0
 		};
@@ -34,7 +34,7 @@ namespace Engine {
 		m_Texture = m_TextureManager.Load("assets/textures/test.png");
 
 		auto vb = m_Factory.CreateVertexBuffer(vertices, sizeof(vertices));
-		auto ib = m_Factory.CreateIndexBuffer(indices, sizeof(indices) / sizeof(uint32_t));
+		auto ib = m_Factory.CreateIndexBuffer(indices, sizeof(indices) / sizeof(uint32));
 
 		m_VAO = m_Factory.CreateVertexArray();
 		m_VAO->AddVertexBuffer(vb);
@@ -42,21 +42,21 @@ namespace Engine {
 	}
 
 	Application::~Application() = default;
-	void Application::Update(float dt) {
+	void Application::Update(float32 dt) {
 		if (Input::IsKeyDown(KeyCode::W)) {
-			 m_Camera->MoveForward(dt);
+			// m_Camera->MoveForward(dt);
 		}
 		if (Input::IsKeyDown(KeyCode::A)) {
-			 m_Camera->MoveLeft(dt);
+			// m_Camera->MoveLeft(dt);
 		}
 
 		if (Input::IsKeyPressed(KeyCode::Space)) {
-			 m_Player->Jump();
+			// m_Player->Jump();
 		}
 
-		float dx = Input::GetMouseDeltaX();
-		float dy = Input::GetMouseDeltaY();
-		 m_Camera->Rotate(dx, dy);
+		float32 dx = Input::GetMouseDeltaX();
+		float32 dy = Input::GetMouseDeltaY();
+		// m_Camera->Rotate(dx, dy);
 	}
 
 	void Application::Render() {
@@ -76,8 +76,8 @@ namespace Engine {
 		m_LastFrameTime = Time::GetTime();
 
 		while (!m_Window->ShouldClose()) {
-			float time = Time::GetTime();
-			float dt = time - m_LastFrameTime;
+			float32 time = Time::GetTime();
+			float32 dt = time - m_LastFrameTime;
 			m_LastFrameTime = time;
 
 			if (dt > 0.25f) dt = 0.25f;
@@ -90,8 +90,8 @@ namespace Engine {
 			}
 			else {
 				// ── 固定步长模式 (Fixed 60Hz) ──
-				static const float fixedDt = 1.0f / 60.0f;
-				static float accumulator = 0.0f;
+				static const float32 fixedDt = 1.0f / 60.0f;
+				static float32 accumulator = 0.0f;
 
 				accumulator += dt;
 
