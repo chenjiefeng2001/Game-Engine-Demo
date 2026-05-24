@@ -126,16 +126,16 @@ namespace Engine {
     }
     GameObjectTest::GameObjectTest(IGraphicsFactory& factory)
         : m_Factory(factory)
+        , m_TextureManager(factory)
+        , m_SceneRenderer(factory, m_TextureManager)
     {
-        // ── 1. 创建窗口 ──
+
         m_Window = m_Factory.CreateWindow(WINDOW_WIDTH, WINDOW_HEIGHT,
             "GameObject Test");
 
-        // ── 2. 初始化输入系统 ──
         auto* nativeWin = static_cast<GLFWwindow*>(m_Window->GetNativeHandle());
         m_InputManager.Init(nativeWin);
 
-        // ── 3. 创建相机 ──
         float aspect = static_cast<float>(WINDOW_WIDTH) / WINDOW_HEIGHT;
         float viewHeight = 10.0f;
         float viewWidth = viewHeight * aspect;
@@ -146,14 +146,20 @@ namespace Engine {
 
         // ── 4. 创建渲染资源 ──
         auto* ctx = m_Window->GetContext();
-        m_SpriteBatch = m_Factory.CreateSpriteBatch(*ctx);
-        m_BatchShader = m_Factory.CreateShader(
+
+        // 初始化 SceneRenderer（传入渲染上下文用于创建 SpriteBatch）
+        m_SceneRenderer.SetRenderContext(*ctx);
+        m_SceneRenderer.SetCamera(m_Camera.get());
+
+        auto batchShader = m_Factory.CreateShader(
             "assets/shaders/sprite_batch.vert",
             "assets/shaders/sprite_batch.frag"
         );
-        m_Texture = m_Factory.CreateTexture("assets/textures/test.png");
+        m_SceneRenderer.SetShader(batchShader);
 
-        // ── 5. 注册输入动作 ──
+        m_Texture = m_TextureManager.Load("assets/textures/test.png");
+
+        // ── 注册输入动作 ──
         // Escape 按下时标记退出，不直接调用 GLFW API
         auto& actionExit = m_InputManager.CreateAction("Exit");
         actionExit.AddBinding(KeyBinding::FromKey(KeyCode::Escape));
@@ -164,14 +170,14 @@ namespace Engine {
 
         // ── 6. 构建游戏对象层次 ──
         {
-            // ── 6a. 根对象：居中的静态精灵 ──
+            // ── 根对象：居中的静态精灵 ──
             auto root = std::make_shared<GameObject>("Root");
             root->GetSprite().SetTexture(m_Texture);
             root->GetSprite().SetColor(0.6f, 0.6f, 0.8f, 1.0f);
             root->GetSprite().SetUV(0.0f, 0.0f, 1.0f, 1.0f);
             root->GetTransform().SetScale(1.2f);
 
-            // ── 6b. 子对象：绕根公转的卫星 ──
+            // ── 子对象：绕根公转的卫星 ──
             auto orbiter = std::make_shared<Orbiter>("Orbiter");
             orbiter->GetSprite().SetTexture(m_Texture);
             orbiter->SetOrbitSpeed(1.2f);
@@ -180,7 +186,7 @@ namespace Engine {
             orbiter->SetPulseSpeed(2.0f);
             root->AddChild(orbiter);
 
-            // ── 6c. 孙对象：卫星的卫星（二级层级） ──
+            // ── 孙对象：卫星的卫星（二级层级） ──
             auto moon = std::make_shared<Orbiter>("Moon");
             moon->GetSprite().SetTexture(m_Texture);
             moon->SetOrbitSpeed(3.0f);
@@ -191,31 +197,31 @@ namespace Engine {
             moon->GetSprite().SetColor(1.0f, 0.4f, 0.4f, 1.0f);
             orbiter->AddChild(moon);
 
-            m_RootObjects.push_back(std::move(root));
+            m_Scene.AddObject(std::move(root));
         }
 
         {
-            // ── 6d. 玩家控制对象 ──
+            // ── 玩家控制对象 ──
             auto player = std::make_shared<PlayerObject>("Player");
             player->GetSprite().SetTexture(m_Texture);
             player->GetTransform().SetPosition(-3.0f, -2.0f, 0.0f);
             m_PlayerObj = player.get();
-            m_RootObjects.push_back(std::move(player));
+            m_Scene.AddObject(std::move(player));
         }
 
         {
-            // ── 6e. 脉冲精灵（呼吸效果） ──
+            // ── 脉冲精灵（呼吸效果） ──
             auto pulser = std::make_shared<PulseSprite>("Pulser");
             pulser->GetSprite().SetTexture(m_Texture);
             pulser->GetTransform().SetPosition(4.0f, 2.0f, 0.0f);
             pulser->SetPulseSpeed(1.8f);
             pulser->SetMinScale(0.3f);
             pulser->SetMaxScale(1.2f);
-            m_RootObjects.push_back(std::move(pulser));
+            m_Scene.AddObject(std::move(pulser));
         }
 
         {
-            // ── 6f. 位于层次树深处的一个对象 —— 演示 FindChild ──
+            // ── 位于层次树深处的一个对象 —— 演示 FindChild ──
             auto container = std::make_shared<GameObject>("Container");
             container->GetTransform().SetPosition(0.0f, 3.5f, 0.0f);
             container->GetSprite().SetColor(0.5f, 0.5f, 0.5f, 0.6f);
@@ -227,48 +233,25 @@ namespace Engine {
             inner->SetMaxScale(0.9f);
             container->AddChild(inner);
 
-            m_RootObjects.push_back(std::move(container));
+            m_Scene.AddObject(std::move(container));
 
-            // 演示 FindChild 查找深层对象
-            auto* found = m_RootObjects.back()->FindChild("InnerPulser");
+            // 演示 Scene::FindObject 查找深层对象
+            auto* found = m_Scene.FindObject("InnerPulser");
             if (found) {
-                std::cout << "[FindChild] 在 Container 下找到 \""
+                std::cout << "[FindObject] 找到 \""
                     << found->GetName() << "\"" << std::endl;
             }
         }
 
-        // ── 7. 调用所有对象的 OnCreate ──
-        for (auto& obj : m_RootObjects) {
-            obj->OnCreate();
-            // 递归调用子对象的 OnCreate
-            std::function<void(GameObject&)> recCreate =
-                [&](GameObject& o) {
-                    for (auto& c : o.GetChildren()) {
-                        c->OnCreate();
-                        recCreate(*c);
-                    }
-                };
-            recCreate(*obj);
-        }
+        // ── 调用所有对象的 OnCreate（Scene 自动递归） ──
+        m_Scene.OnCreate();
 
-        // ── 8. 输出帮助信息 ──
+        // ── 输出帮助信息 ──
         PrintHelp();
     }
 
     GameObjectTest::~GameObjectTest() {
-        // 调用所有对象的 OnDestroy
-        for (auto& obj : m_RootObjects) {
-            obj->OnDestroy();
-            std::function<void(GameObject&)> recDestroy =
-                [&](GameObject& o) {
-                    for (auto& c : o.GetChildren()) {
-                        c->OnDestroy();
-                        recDestroy(*c);
-                    }
-                };
-            recDestroy(*obj);
-        }
-
+        // Scene 析构时会自动调用 OnDestroy
         m_InputManager.Shutdown();
     }
 
@@ -295,69 +278,41 @@ namespace Engine {
 
 
     void GameObjectTest::Update(float dt) {
-        // 更新所有根对象的 Update（递归）
-        for (auto& obj : m_RootObjects) {
-            obj->Update(dt);
-        }
+        m_Scene.Update(dt);
     }
 
     void GameObjectTest::Render() {
         auto ctx = m_Window->GetContext();
         ctx->ClearColor(m_ClearColorR, m_ClearColorG, m_ClearColorB, 1.0f);
 
-        m_BatchShader->Bind();
-        m_BatchShader->SetMat4("u_ViewProjection",
-            m_Camera->GetViewProjectionMatrixPtr());
 
-        // 开始批渲染
-        m_SpriteBatch->Begin(m_Texture);
-
-        // 递归提交所有对象的精灵
-        std::function<void(GameObject&)> submitRecursive =
-            [&](GameObject& obj) {
-                // 提交当前对象的精灵
-                obj.SubmitSprite(*m_SpriteBatch);
-
-                // 递归提交子对象
-                for (auto& child : obj.GetChildren()) {
-                    submitRecursive(*child);
-                }
-            };
-
-        for (auto& obj : m_RootObjects) {
-            submitRecursive(*obj);
-        }
-
-        m_SpriteBatch->End();
+        auto defaultTex = m_TextureManager.Load("assets/textures/default.png");
+        m_SceneRenderer.Render(m_Scene, defaultTex);
     }
 
 
     void GameObjectTest::Run() {
         m_LastFrameTime = Time::GetTime();
 
-        // 同时检查窗口原生关闭标志和内部退出标志
         while (!m_Window->ShouldClose() && !m_ShouldClose) {
             float time = Time::GetTime();
             float dt = time - m_LastFrameTime;
             m_LastFrameTime = time;
             if (dt > 0.25f) dt = 0.25f;
 
-            // 先更新输入状态（由 InputManager 在构造函数中通过 GetNativeHandle 初始化）
+
             m_InputManager.OnUpdate();
 
             Update(dt);
             Render();
 
-            // OnUpdate 内部调用 glfwPollEvents + SwapBuffers，
-            // 通过 IWindow 接口屏蔽平台细节
             m_Window->OnUpdate();
 
-            // FPS 统计
             m_FpsAccumulator += dt;
             m_FrameCount++;
             if (m_FpsAccumulator >= 1.0f) {
                 std::cout << "[FPS] " << m_FrameCount
-                    << " | Objects: " << (m_RootObjects.size() + 4)
+                    << " | Objects: " << (m_Scene.GetObjects().size() + 4)
                     << std::endl;
                 m_FpsAccumulator = 0.0f;
                 m_FrameCount = 0;

@@ -2,13 +2,14 @@
 
 #include <Engine/Core/IWindow.h>
 #include <Engine/Core/IGraphicsFactory.h>
-#include <Engine/Core/Renderer/SpriteBatch.h>
-#include <Engine/Core/RenderResources/Shader.h>
-#include <Engine/Core/RenderResources/Texture.h>
 #include <Engine/Core/Renderer/OrthographicCamera.h>
+#include <Engine/Core/RenderResources/Texture.h>
+#include <Engine/Core/RenderResources/TextureManager.h>
+#include <Engine/Core/RHI/SceneRenderer.h>
 #include <Engine/Core/Input.h>
 #include <Engine/Core/InputManager.h>
 #include <Engine/Core/GameObject/GameObject.h>
+#include <Engine/Core/Scene/Scene.h>
 #include <memory>
 #include <vector>
 
@@ -73,17 +74,19 @@ namespace Engine {
         void PrintHelp();
 
         IGraphicsFactory& m_Factory;
+        TextureManager m_TextureManager;
         std::unique_ptr<IWindow> m_Window;
         InputManager m_InputManager;
         std::unique_ptr<OrthographicCamera> m_Camera;
 
-        // 渲染资源
-        std::shared_ptr<ISpriteBatch> m_SpriteBatch;
-        std::shared_ptr<Shader> m_BatchShader;
-        std::shared_ptr<Texture> m_Texture;
+        // 场景渲染器（RHI 封装）
+        SceneRenderer m_SceneRenderer;
 
-        // 游戏对象
-        std::vector<std::shared_ptr<GameObject>> m_RootObjects;
+        // 场景（管理所有根级游戏对象）
+        Scene m_Scene;
+
+        // 默认纹理（所有精灵共享）
+        std::shared_ptr<Texture> m_Texture;
 
         // 通过名称查找对象的快捷引用
         GameObject* m_PlayerObj  = nullptr;

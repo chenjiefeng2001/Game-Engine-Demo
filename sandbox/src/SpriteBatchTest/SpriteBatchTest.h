@@ -4,6 +4,7 @@
 #include <Engine/Core/Renderer/SpriteBatch.h>
 #include <Engine/Core/RenderResources/Shader.h>
 #include <Engine/Core/RenderResources/Texture.h>
+#include <Engine/Core/RenderResources/TextureManager.h>
 #include <Engine/Core/Renderer/OrthographicCamera.h>
 #include <memory>
 #include <vector>
@@ -27,6 +28,7 @@ namespace Engine {
         void Render();
 
         IGraphicsFactory& m_Factory;
+        TextureManager m_TextureManager;
         std::unique_ptr<IWindow> m_Window;
         std::unique_ptr<OrthographicCamera> m_Camera;
 

@@ -11,6 +11,7 @@ namespace Engine {
 
     InputTestApp::InputTestApp(IGraphicsFactory& factory)
         : m_Factory(factory)
+        , m_TextureManager(factory)
     {
         // ── 1. 创建窗口 ──
         m_Window = m_Factory.CreateWindow(m_WindowWidth, m_WindowHeight, "Input Manager Demo");
@@ -29,7 +30,7 @@ namespace Engine {
             "assets/shaders/sprite_batch.vert",
             "assets/shaders/sprite_batch.frag"
         );
-        m_Texture = m_Factory.CreateTexture("assets/textures/test.png");
+        m_Texture = m_TextureManager.Load("assets/textures/test.png");
 
         // ── 5. 注册输入动作映射 ──
         auto& actionRed = m_InputManager.CreateAction("SetRed");

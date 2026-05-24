@@ -8,7 +8,6 @@
 
 namespace Engine {
 
-    // ─── 将 HSV 转换为 RGB，用于动态颜色 ───
     static void HSVToRGB(float h, float s, float v,
         float& r, float& g, float& b) {
         int i = static_cast<int>(h * 6.0f);
@@ -26,15 +25,12 @@ namespace Engine {
         }
     }
 
-    // ─────────────────────────────────────────────
-    // 构造 & 析构
-    // ─────────────────────────────────────────────
     SpriteBatchTest::SpriteBatchTest(IGraphicsFactory& factory)
         : m_Factory(factory)
+        , m_TextureManager(factory)
     {
         m_Window = m_Factory.CreateWindow(800, 600, "Sprite Batch Test");
 
-        // 摄像机覆盖 16×12 的世界坐标范围
         float aspect = 800.0f / 600.0f;
         float viewHeight = 12.0f;
         float viewWidth = viewHeight * aspect;
@@ -43,16 +39,14 @@ namespace Engine {
             -viewHeight / 2, viewHeight / 2
         );
 
-        // 创建批处理资源
         auto* ctx = m_Window->GetContext();
         m_SpriteBatch = m_Factory.CreateSpriteBatch(*ctx);
         m_BatchShader = m_Factory.CreateShader(
             "assets/shaders/sprite_batch.vert",
             "assets/shaders/sprite_batch.frag"
         );
-        m_Texture = m_Factory.CreateTexture("assets/textures/test.png");
+        m_Texture = m_TextureManager.Load("assets/textures/test.png");
 
-        // 初始化 20×20 精灵网格
         m_Sprites.reserve(GRID_SIZE * GRID_SIZE);
         float spacing = 0.5f;
         float offsetX = -(GRID_SIZE - 1) * spacing / 2.0f;
@@ -80,9 +74,6 @@ namespace Engine {
 
     SpriteBatchTest::~SpriteBatchTest() = default;
 
-    // ─────────────────────────────────────────────
-    // 更新：每帧修改每个精灵的变换属性
-    // ─────────────────────────────────────────────
     void SpriteBatchTest::Update(float dt) {
         m_GlobalTime += dt;
 
@@ -100,9 +91,6 @@ namespace Engine {
         }
     }
 
-    // ─────────────────────────────────────────────
-    // 渲染：构建所有精灵 + 单次批量提交
-    // ─────────────────────────────────────────────
     void SpriteBatchTest::Render() {
         auto ctx = m_Window->GetContext();
         ctx->ClearColor(0.1f, 0.1f, 0.15f, 1.0f);
@@ -111,7 +99,7 @@ namespace Engine {
         m_BatchShader->SetMat4("u_ViewProjection",
             m_Camera->GetViewProjectionMatrixPtr());
 
-        // ── 开始批次 ──
+        // 锟斤拷锟斤拷 锟斤拷始锟斤拷锟斤拷 锟斤拷锟斤拷
         m_SpriteBatch->Begin(m_Texture);
 
         for (size_t i = 0; i < m_Sprites.size(); i++) {
@@ -142,13 +130,9 @@ namespace Engine {
             m_SpriteBatch->Draw(sprite);
         }
 
-        // ── 结束批次 → 1 次 Draw Call ──
         m_SpriteBatch->End();
     }
 
-    // ─────────────────────────────────────────────
-    // 主循环
-    // ─────────────────────────────────────────────
     void SpriteBatchTest::Run() {
         m_LastFrameTime = Time::GetTime();
 

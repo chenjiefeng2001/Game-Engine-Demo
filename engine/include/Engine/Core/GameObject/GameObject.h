@@ -2,6 +2,8 @@
 
 #include "Engine/Core/GameObject/TransformComponent.h"
 #include "Engine/Core/GameObject/SpriteComponent.h"
+#include "Engine/Core/RHI/IRenderable.h"
+#include "Engine/Core/RHI/RenderCommand.h"
 #include <string>
 #include <vector>
 #include <memory>
@@ -10,21 +12,30 @@ namespace Engine {
 
     class ISpriteBatch;
     class Shader;
+    class IRenderQueue;
 
 
-    class GameObject {
+    class GameObject : public IRenderable {
     public:
         GameObject();
         explicit GameObject(std::string name);
         virtual ~GameObject();
-        /** 对象创建后调用（用于初始化资源） */
         virtual void OnCreate() {}
-        /** 每帧更新（dt 为帧时间，单位秒）—— 默认递归更新所有子对象 */
+
         virtual void Update(float dt);
-        /** 每帧渲染 */
+
         virtual void Render() {}
-        /** 对象销毁前调用（用于清理资源） */
+
         virtual void OnDestroy() {}
+
+        // ── IRenderable ──
+        /**
+         * @brief 收集本对象的渲染命令到队列
+         *
+         * RHI 原则：不直接操作 ISpriteBatch，而是通过 IRenderQueue
+         * 提交纯数据 RenderCommand。SceneRenderer 负责消费这些命令。
+         */
+        void CollectRenderCommands(IRenderQueue& queue) override;
 
         // ── 变换 ──
         TransformComponent& GetTransform() noexcept { return m_Transform; }
@@ -56,8 +67,6 @@ namespace Engine {
             return m_Children;
         }
 
-        // ── 便捷方法 ──
-        /** 提交精灵到批渲染器（如果已添加精灵组件） */
         void SubmitSprite(ISpriteBatch& batch);
 
     protected:

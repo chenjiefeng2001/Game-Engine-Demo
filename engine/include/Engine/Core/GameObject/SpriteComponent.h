@@ -4,8 +4,11 @@
 #include "Engine/Core/Renderer/SpriteBatch.h"
 #include <glm/glm.hpp>
 #include <memory>
+#include <string>
 
 namespace Engine {
+
+    class TextureManager;  // 前向声明
 
     /**
      * @brief 精灵组件 — 描述一个可渲染的 2D 精灵
@@ -20,8 +23,14 @@ namespace Engine {
         SpriteComponent(std::shared_ptr<Texture> texture,
                         const glm::vec4& color);
 
+        // 通过 TextureManager 按路径加载纹理
+        explicit SpriteComponent(TextureManager& texMgr, const std::string& path);
+        SpriteComponent(TextureManager& texMgr, const std::string& path,
+                        const glm::vec4& color);
+
         // ── 纹理 ──
         void SetTexture(std::shared_ptr<Texture> texture) { m_Texture = texture; }
+        void SetTexture(TextureManager& texMgr, const std::string& path);
         std::shared_ptr<Texture> GetTexture() const noexcept { return m_Texture; }
         bool HasTexture() const noexcept { return m_Texture != nullptr; }
 
@@ -36,6 +45,10 @@ namespace Engine {
         void SetUV(float u, float v, float w, float h) {
             m_UVX = u; m_UVY = v; m_UVW = w; m_UVH = h;
         }
+        float GetUVX() const noexcept { return m_UVX; }
+        float GetUVY() const noexcept { return m_UVY; }
+        float GetUVW() const noexcept { return m_UVW; }
+        float GetUVH() const noexcept { return m_UVH; }
         void SetTiling(const glm::vec2& tiling) { m_Tiling = tiling; }
         void SetOffset(const glm::vec2& offset) { m_Offset = offset; }
         const glm::vec2& GetTiling() const noexcept { return m_Tiling; }
