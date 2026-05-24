@@ -44,6 +44,16 @@ namespace Engine {
         /** 调用所有根对象的 OnDestroy（递归） */
         void OnDestroy();
 
+        // ── 物理同步 ──
+        /**
+         * @brief 物理步进后调用：将所有物理体的位置/角度同步回 TransformComponent
+         *
+         * 遍历所有对象（递归），对每个挂载了 PhysicsComponent 的对象，
+         * 将其 IPhysicsBody 的位置和角度写回 TransformComponent。
+         * 调用时机：physicsWorld.Step(dt) 之后，Render 之前。
+         */
+        void PostPhysicsUpdate();
+
         // ── 渲染（RHI 版本） ──
         /**
          * @brief 收集所有对象的渲染命令到队列中

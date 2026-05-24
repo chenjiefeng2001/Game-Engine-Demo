@@ -2,6 +2,7 @@
 
 #include "Engine/Core/GameObject/TransformComponent.h"
 #include "Engine/Core/GameObject/SpriteComponent.h"
+#include "Engine/Core/Physics/PhysicsComponent.h"
 #include "Engine/Core/RHI/IRenderable.h"
 #include "Engine/Core/RHI/RenderCommand.h"
 #include <string>
@@ -37,25 +38,28 @@ namespace Engine {
          */
         void CollectRenderCommands(IRenderQueue& queue) override;
 
-        // ── 变换 ──
+
         TransformComponent& GetTransform() noexcept { return m_Transform; }
         const TransformComponent& GetTransform() const noexcept { return m_Transform; }
 
-        // ── 精灵 ──
+
         SpriteComponent& GetSprite() noexcept { return m_Sprite; }
         const SpriteComponent& GetSprite() const noexcept { return m_Sprite; }
         bool HasSprite() const noexcept { return m_Sprite.HasTexture() || m_Sprite.IsVisible(); }
 
-        // ── 名称 ──
+
         void SetName(const std::string& name) { m_Name = name; }
         const std::string& GetName() const noexcept { return m_Name; }
 
-        // ── 活动状态 ──
+        PhysicsComponent& GetPhysics() noexcept { return m_Physics; }
+        const PhysicsComponent& GetPhysics() const noexcept { return m_Physics; }
+        bool HasPhysics() const noexcept { return m_Physics.HasBody(); }
+
+
         void SetActive(bool active) { m_Active = active; }
         bool IsActive() const noexcept { return m_Active; }
         bool IsActiveInHierarchy() const;
 
-        // ── 父子层级 ──
         void SetParent(GameObject* parent);
         GameObject* GetParent() const noexcept { return m_Parent; }
 
@@ -72,12 +76,12 @@ namespace Engine {
     protected:
         std::string m_Name;
 
-        TransformComponent m_Transform;
-        SpriteComponent    m_Sprite;
+        TransformComponent  m_Transform;
+        SpriteComponent     m_Sprite;
+        PhysicsComponent    m_Physics;
 
         bool m_Active = true;
 
-        // ── 层级 ──
         GameObject* m_Parent = nullptr;
         std::vector<std::shared_ptr<GameObject>> m_Children;
     };

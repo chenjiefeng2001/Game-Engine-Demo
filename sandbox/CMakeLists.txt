@@ -67,3 +67,18 @@ add_custom_command(
             "$<TARGET_FILE_DIR:TextureManagerTest>/assets"
     COMMENT "Syncing assets to build directory..."
 )
+
+# PhysicsTest — 测试 Box2D 物理集成（解耦后的物理系统）
+add_executable(PhysicsTest
+    src/PhysicsTest/main.cpp
+    src/PhysicsTest/PhysicsTestApp.cpp
+)
+target_link_libraries(PhysicsTest PRIVATE EngineCore)
+add_custom_command(
+    TARGET PhysicsTest POST_BUILD
+    COMMAND ${CMAKE_COMMAND} -E remove_directory "$<TARGET_FILE_DIR:PhysicsTest>/assets"
+    COMMAND ${CMAKE_COMMAND} -E copy_directory
+            "${PROJECT_SOURCE_DIR}/assets"
+            "$<TARGET_FILE_DIR:PhysicsTest>/assets"
+    COMMENT "Syncing assets to build directory..."
+)
