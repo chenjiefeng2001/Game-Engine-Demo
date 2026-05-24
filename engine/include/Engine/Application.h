@@ -3,6 +3,7 @@
 #include "Engine/Core/IWindow.h"
 #include "Engine/Core/RenderResources/Shader.h"
 #include "Engine/Core/RenderResources/Texture.h"
+#include "Engine/Core/RenderResources/TextureManager.h"
 #include "Engine/Core/RenderResources/VertexArray.h"
 #include "Engine/Core/IGraphicsFactory.h"
 #include "Engine/Core/Renderer/OrthographicCamera.h"
@@ -14,6 +15,7 @@ namespace Engine {
 	class Shader;
 	class VertexArray;
 	class Texture;
+	class TextureManager;
 	class IGraphicsFactory;
 	class OrthographicCamera;
 
@@ -29,8 +31,12 @@ namespace Engine {
 		Application(IGraphicsFactory& factory);
 		~Application();
 		void Run();
+
+		TextureManager& GetTextureManager() { return m_TextureManager; }
+
 	private:
 		IGraphicsFactory& m_Factory;
+		TextureManager    m_TextureManager;
 		std::unique_ptr<class IWindow> m_Window;
 		std::shared_ptr<class Shader> m_Shader;
 		std::shared_ptr<class VertexArray> m_VAO;

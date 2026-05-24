@@ -1,4 +1,5 @@
 #include "Engine/Core/GameObject/SpriteComponent.h"
+#include "Engine/Core/RenderResources/TextureManager.h"
 #include <glm/gtc/matrix_transform.hpp>
 
 namespace Engine {
@@ -18,6 +19,20 @@ namespace Engine {
                                      const glm::vec4& color)
         : m_Texture(std::move(texture))
         , m_Color(color) {
+    }
+
+    SpriteComponent::SpriteComponent(TextureManager& texMgr, const std::string& path)
+        : m_Texture(texMgr.Load(path)) {
+    }
+
+    SpriteComponent::SpriteComponent(TextureManager& texMgr, const std::string& path,
+                                     const glm::vec4& color)
+        : m_Texture(texMgr.Load(path))
+        , m_Color(color) {
+    }
+
+    void SpriteComponent::SetTexture(TextureManager& texMgr, const std::string& path) {
+        m_Texture = texMgr.Load(path);
     }
 
     SpriteData SpriteComponent::ToSpriteData(const glm::mat4& worldMatrix) const {
@@ -42,17 +57,16 @@ namespace Engine {
         );
         data.transform.angle = std::atan2(up.x, right.x);
 
-        // ── 缩放 ──
+
         data.transform.scaleX = sx;
         data.transform.scaleY = sy;
 
-        // ── UV ──
+
         data.uvX = m_UVX;
         data.uvY = m_UVY;
         data.uvW = m_UVW;
         data.uvH = m_UVH;
 
-        // ── 颜色 ──
         data.colorR = m_Color.r;
         data.colorG = m_Color.g;
         data.colorB = m_Color.b;

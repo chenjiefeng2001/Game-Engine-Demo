@@ -52,3 +52,18 @@ add_custom_command(
             "$<TARGET_FILE_DIR:GameObjectTest>/assets"
     COMMENT "Syncing assets to build directory..."
 )
+
+# TextureManagerTest — 验证纹理缓存功能
+add_executable(TextureManagerTest
+    src/TextureManagerTest/main.cpp
+    src/TextureManagerTest/TextureManagerTest.cpp
+)
+target_link_libraries(TextureManagerTest PRIVATE EngineCore)
+add_custom_command(
+    TARGET TextureManagerTest POST_BUILD
+    COMMAND ${CMAKE_COMMAND} -E remove_directory "$<TARGET_FILE_DIR:TextureManagerTest>/assets"
+    COMMAND ${CMAKE_COMMAND} -E copy_directory
+            "${PROJECT_SOURCE_DIR}/assets"
+            "$<TARGET_FILE_DIR:TextureManagerTest>/assets"
+    COMMENT "Syncing assets to build directory..."
+)

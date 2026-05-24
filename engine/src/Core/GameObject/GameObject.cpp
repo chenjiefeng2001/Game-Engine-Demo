@@ -1,7 +1,10 @@
 #include "Engine/Core/GameObject/GameObject.h"
+#include "Engine/Core/RHI/IRenderQueue.h"
 #include "Engine/Core/Renderer/SpriteBatch.h"
+#include <glm/gtc/type_ptr.hpp>
 #include <algorithm>
 #include <stack>
+#include <cstring>
 
 namespace Engine {
 
@@ -97,6 +100,40 @@ namespace Engine {
         for (auto& child : m_Children) {
             child->Update(dt);
         }
+    }
+
+    void GameObject::CollectRenderCommands(IRenderQueue& queue) {
+        if (!m_Active) return;
+        if (!m_Sprite.IsVisible()) return;
+
+        // 构建 RenderCommand（纯数据，无 glm 依赖）
+        RenderCommand cmd;
+
+        // 复制 4×4 世界矩阵到 float[16]
+        const glm::mat4& world = m_Transform.GetWorldMatrix();
+        std::memcpy(cmd.worldMatrix, glm::value_ptr(world), sizeof(cmd.worldMatrix));
+
+        // UV
+        cmd.uv[0] = m_Sprite.GetUVX();
+        cmd.uv[1] = m_Sprite.GetUVY();
+        cmd.uv[2] = m_Sprite.GetUVW();
+        cmd.uv[3] = m_Sprite.GetUVH();
+
+        // 颜色
+        const auto& color = m_Sprite.GetColor();
+        cmd.color[0] = color.r;
+        cmd.color[1] = color.g;
+        cmd.color[2] = color.b;
+        cmd.color[3] = color.a;
+
+        // 纹理
+        cmd.texture = m_Sprite.GetTexture();
+
+        // 排序
+        cmd.sortingLayer  = m_Sprite.GetSortingLayer();
+        cmd.orderInLayer  = m_Sprite.GetOrderInLayer();
+
+        queue.Push(cmd);
     }
 
     void GameObject::SubmitSprite(ISpriteBatch& batch) {

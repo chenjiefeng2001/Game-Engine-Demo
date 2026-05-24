@@ -1,10 +1,11 @@
 ﻿#include "Engine/Application.h"
 #include "Engine/Platform/PlatformUtils.h"
 #include "Engine/Core/RenderResources/Shader.h"
+#include "Engine/Core/RenderResources/Texture.h"
+#include "Engine/Core/RenderResources/TextureManager.h"
 #include "Engine/Core/RenderResources/VertexArray.h"
 #include "Engine/Core/RenderResources/VertexBuffer.h"
 #include "Engine/Core/RenderResources/IndexBuffer.h"
-#include "Engine/Core/RenderResources/Texture.h"
 #include "Engine/Core/IRenderContext.h"
 #include "Engine/Core/Input.h"
 #include "Engine/Core/IWindow.h"
@@ -13,8 +14,9 @@
 namespace Engine {
 	Application::Application(IGraphicsFactory& factory)
 		: m_Factory(factory)
+		, m_TextureManager(factory)
 	{
-		m_Window = m_Factory.CreateWindow(800, 600, "Final Fix");  // ← 改这里
+		m_Window = m_Factory.CreateWindow(800, 600, "Final Fix");  
 		m_Camera = std::make_unique<OrthographicCamera>(-1.6f, 1.6f, -0.9f, 0.9f);
 		float vertices[] = {
 			-0.5f, -0.5f, 0.0f,  0.0f, 0.0f,
@@ -29,7 +31,7 @@ namespace Engine {
 
 		// ── 所有资源通过 m_Factory 创建 ──
 		m_Shader = m_Factory.CreateShader("assets/shaders/vertex.glsl", "assets/shaders/fragment.glsl");
-		m_Texture = m_Factory.CreateTexture("assets/textures/test.png");
+		m_Texture = m_TextureManager.Load("assets/textures/test.png");
 
 		auto vb = m_Factory.CreateVertexBuffer(vertices, sizeof(vertices));
 		auto ib = m_Factory.CreateIndexBuffer(indices, sizeof(indices) / sizeof(uint32_t));
@@ -42,19 +44,19 @@ namespace Engine {
 	Application::~Application() = default;
 	void Application::Update(float dt) {
 		if (Input::IsKeyDown(KeyCode::W)) {
-			// m_Camera->MoveForward(dt);
+			 m_Camera->MoveForward(dt);
 		}
 		if (Input::IsKeyDown(KeyCode::A)) {
-			// m_Camera->MoveLeft(dt);
+			 m_Camera->MoveLeft(dt);
 		}
 
 		if (Input::IsKeyPressed(KeyCode::Space)) {
-			// m_Player->Jump();
+			 m_Player->Jump();
 		}
 
 		float dx = Input::GetMouseDeltaX();
 		float dy = Input::GetMouseDeltaY();
-		// m_Camera->Rotate(dx, dy);
+		 m_Camera->Rotate(dx, dy);
 	}
 
 	void Application::Render() {
@@ -95,11 +97,11 @@ namespace Engine {
 
 				// 用 while 循环追赶固定步长
 				while (accumulator >= fixedDt) {
-					Update(fixedDt);        // 每次传入固定步长
+					Update(fixedDt);        
 					accumulator -= fixedDt;
 				}
 
-				Render();                   // 渲染按实际帧率
+				Render();                 
 			}
 
 			m_Window->OnUpdate();

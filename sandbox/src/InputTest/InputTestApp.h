@@ -4,6 +4,7 @@
 #include <Engine/Core/Renderer/SpriteBatch.h>
 #include <Engine/Core/RenderResources/Shader.h>
 #include <Engine/Core/RenderResources/Texture.h>
+#include <Engine/Core/RenderResources/TextureManager.h>
 #include <Engine/Core/Renderer/OrthographicCamera.h>
 #include <Engine/Core/Input.h>
 #include <Engine/Core/InputManager.h>
@@ -24,6 +25,7 @@ namespace Engine {
         void PrintInputState();
 
         IGraphicsFactory& m_Factory;
+        TextureManager m_TextureManager;
         std::unique_ptr<IWindow> m_Window;
 
         // ── 输入管理器 ──
