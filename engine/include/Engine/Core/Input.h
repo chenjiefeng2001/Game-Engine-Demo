@@ -1,10 +1,10 @@
 #pragma once
 #include <memory>
-#include <cstdint>
+#include "Engine/Types.h"
 namespace Engine {
 
 
-	enum class KeyCode : uint16_t {
+	enum class KeyCode : uint16 {
 		A = 0, B, C, D, E, F, G, H, I, J, K, L, M,
 		N, O, P, Q, R, S, T, U, V, W, X, Y, Z,
 
@@ -21,7 +21,7 @@ namespace Engine {
 		COUNT
 	};
 
-	enum class MouseCode : uint8_t {
+	enum class MouseCode : uint8 {
 		ButtonLeft = 0,
 		ButtonRight,
 		ButtonMiddle,

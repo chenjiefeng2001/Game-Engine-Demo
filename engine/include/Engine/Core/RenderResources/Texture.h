@@ -2,7 +2,7 @@
 
 #include <string>
 #include <memory>
-#include <stdint.h>
+#include "Engine/Types.h"
 
 namespace Engine {
 
@@ -11,9 +11,9 @@ namespace Engine {
 	public:
 		virtual ~Texture() = default;
 
-		virtual void Bind(uint32_t slot = 0) const = 0;
-		virtual uint32_t GetWidth() const = 0;
-		virtual uint32_t GetHeight() const = 0;
+		virtual void Bind(uint32 slot = 0) const = 0;
+		virtual uint32 GetWidth() const = 0;
+		virtual uint32 GetHeight() const = 0;
 	};
 
 } 

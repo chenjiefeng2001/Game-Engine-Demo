@@ -2,11 +2,10 @@
 #include <Engine/Platform/PlatformUtils.h>
 #include <Engine/Core/IRenderContext.h>
 #include <Engine/Core/IWindow.h>
+#include <glm/glm.hpp>
 #include <iostream>
 #include <cmath>
 
-
-struct GLFWwindow;
 
 namespace Engine {
 
@@ -16,31 +15,31 @@ namespace Engine {
         GetSprite().SetColor(0.2f, 0.6f, 1.0f, 1.0f);
     }
 
-    void Orbiter::Update(float dt) {
+    void Orbiter::Update(float32 dt) {
         m_Time += dt;
 
         // 公转：绕父节点旋转
-        float angle = m_Time * m_OrbitSpeed;
-        float x = std::cos(angle) * m_OrbitRadius;
-        float y = std::sin(angle) * m_OrbitRadius;
+        float32 angle = m_Time * m_OrbitSpeed;
+        float32 x = std::cos(angle) * m_OrbitRadius;
+        float32 y = std::sin(angle) * m_OrbitRadius;
         GetTransform().SetPosition(x, y, 0.0f);
 
         // 自转
         GetTransform().SetRotation(0.0f, 0.0f, m_Time * m_SelfRotateSpeed);
 
         // 缩放脉冲
-        float pulse = 0.6f + 0.3f * std::sin(m_Time * m_PulseSpeed);
+        float32 pulse = 0.6f + 0.3f * std::sin(m_Time * m_PulseSpeed);
         GetTransform().SetScale(pulse);
 
         // 颜色随时间渐变
-        float hue = std::fmod(m_Time * 0.15f, 1.0f);
+        float32 hue = std::fmod(m_Time * 0.15f, 1.0f);
         // 简单的 HSV->RGB 转换
-        float r, g, b;
-        int hi = static_cast<int>(hue * 6.0f);
-        float f = hue * 6.0f - hi;
-        float p_val = 1.0f * (1.0f - 0.8f);
-        float q = 1.0f * (1.0f - f * 0.8f);
-        float t = 1.0f * (1.0f - (1.0f - f) * 0.8f);
+        float32 r, g, b;
+        int32 hi = static_cast<int32>(hue * 6.0f);
+        float32 f = hue * 6.0f - hi;
+        float32 p_val = 1.0f * (1.0f - 0.8f);
+        float32 q = 1.0f * (1.0f - f * 0.8f);
+        float32 t = 1.0f * (1.0f - (1.0f - f) * 0.8f);
         switch (hi % 6) {
             case 0: r = 1.0f; g = t; b = p_val; break;
             case 1: r = q; g = 1.0f; b = p_val; break;
@@ -64,8 +63,8 @@ namespace Engine {
         GetTransform().SetScale(0.8f);
     }
 
-    void PlayerObject::Update(float dt) {
-        // WASD 移动
+    void PlayerObject::Update(float32 dt) {
+        // WASD 移动（使用 glm 做向量运算，再转成 Engine 类型）
         glm::vec3 move(0.0f);
         if (Input::IsKeyDown(KeyCode::W))      move.y += 1.0f;
         if (Input::IsKeyDown(KeyCode::S))      move.y -= 1.0f;
@@ -74,23 +73,27 @@ namespace Engine {
 
         if (glm::length(move) > 0.0f) {
             move = glm::normalize(move) * m_MoveSpeed * dt;
-            GetTransform().Translate(move);
+            GetTransform().Translate(Vec3(move.x, move.y, move.z));
         }
 
         // Q / E 旋转
         if (Input::IsKeyDown(KeyCode::Q))
-            GetTransform().Rotate({ 0.0f, 0.0f, -2.0f * dt });
+            GetTransform().Rotate(Vec3(0.0f, 0.0f, -2.0f * dt));
         if (Input::IsKeyDown(KeyCode::E))
-            GetTransform().Rotate({ 0.0f, 0.0f,  2.0f * dt });
+            GetTransform().Rotate(Vec3(0.0f, 0.0f,  2.0f * dt));
 
         // R / F 缩放
         if (Input::IsKeyDown(KeyCode::R)) {
-            auto s = GetTransform().GetScale();
-            GetTransform().SetScale(s * (1.0f + 1.0f * dt));
+            const Vec3& s = GetTransform().GetScale();
+            GetTransform().SetScale(Vec3(s.x * (1.0f + 1.0f * dt),
+                                         s.y * (1.0f + 1.0f * dt),
+                                         s.z * (1.0f + 1.0f * dt)));
         }
         if (Input::IsKeyDown(KeyCode::F)) {
-            auto s = GetTransform().GetScale();
-            GetTransform().SetScale(s * (1.0f - 1.0f * dt));
+            const Vec3& s = GetTransform().GetScale();
+            GetTransform().SetScale(Vec3(s.x * (1.0f - 1.0f * dt),
+                                         s.y * (1.0f - 1.0f * dt),
+                                         s.z * (1.0f - 1.0f * dt)));
         }
 
         // 子对象由基类 GameObject::Update 递归更新
@@ -104,16 +107,16 @@ namespace Engine {
         GetSprite().SetColor(0.3f, 1.0f, 0.4f, 1.0f);
     }
 
-    void PulseSprite::Update(float dt) {
+    void PulseSprite::Update(float32 dt) {
         m_Time += dt;
 
         // 呼吸式缩放
-        float t = 0.5f + 0.5f * std::sin(m_Time * m_PulseSpeed);
-        float s = m_MinScale + (m_MaxScale - m_MinScale) * t;
+        float32 t = 0.5f + 0.5f * std::sin(m_Time * m_PulseSpeed);
+        float32 s = m_MinScale + (m_MaxScale - m_MinScale) * t;
         GetTransform().SetScale(s);
 
         // 颜色交替
-        float colorPhase = 0.5f + 0.5f * std::sin(m_Time * m_PulseSpeed * 0.7f);
+        float32 colorPhase = 0.5f + 0.5f * std::sin(m_Time * m_PulseSpeed * 0.7f);
         GetSprite().SetColor(
             0.2f + 0.8f * colorPhase,
             0.8f - 0.5f * colorPhase,
@@ -133,12 +136,11 @@ namespace Engine {
         m_Window = m_Factory.CreateWindow(WINDOW_WIDTH, WINDOW_HEIGHT,
             "GameObject Test");
 
-        auto* nativeWin = static_cast<GLFWwindow*>(m_Window->GetNativeHandle());
-        m_InputManager.Init(nativeWin);
+        m_InputManager.Init(m_Window.get());
 
-        float aspect = static_cast<float>(WINDOW_WIDTH) / WINDOW_HEIGHT;
-        float viewHeight = 10.0f;
-        float viewWidth = viewHeight * aspect;
+        float32 aspect = static_cast<float32>(WINDOW_WIDTH) / WINDOW_HEIGHT;
+        float32 viewHeight = 10.0f;
+        float32 viewWidth = viewHeight * aspect;
         m_Camera = std::make_unique<OrthographicCamera>(
             -viewWidth / 2, viewWidth / 2,
             -viewHeight / 2, viewHeight / 2
@@ -277,7 +279,7 @@ namespace Engine {
     }
 
 
-    void GameObjectTest::Update(float dt) {
+    void GameObjectTest::Update(float32 dt) {
         m_Scene.Update(dt);
     }
 
@@ -295,8 +297,8 @@ namespace Engine {
         m_LastFrameTime = Time::GetTime();
 
         while (!m_Window->ShouldClose() && !m_ShouldClose) {
-            float time = Time::GetTime();
-            float dt = time - m_LastFrameTime;
+            float32 time = Time::GetTime();
+            float32 dt = time - m_LastFrameTime;
             m_LastFrameTime = time;
             if (dt > 0.25f) dt = 0.25f;
 

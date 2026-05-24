@@ -4,23 +4,25 @@
 #include "Engine/Core/RenderResources/Shader.h"
 #include "Engine/Core/RenderResources/VertexArray.h"
 #include "Engine/Core/RenderResources/Texture.h"
+#include <cstring>
 
 namespace Engine {
-	// 静态变量定义
-	struct SceneData { glm::mat4 VP; };
+	// 静态变量定义：使用 RHI 纯数据 Mat4，不依赖 glm
+	struct SceneData { Mat4 VP; };
 	static SceneData s_Data;
 
 	void Renderer::BeginScene(OrthographicCamera& camera) {
-		// 使用接口获取矩阵指针
-		s_Data.VP = *((glm::mat4*)camera.GetViewProjectionMatrixPtr());
+		// RHI 原则：通过 float* 指针复制矩阵数据
+		const float32* src = camera.GetViewProjectionMatrixPtr();
+		std::memcpy(s_Data.VP.Data(), src, sizeof(float32) * 16);
 	}
 
 	void Renderer::EndScene() {}
 
 	void Renderer::Submit(const std::shared_ptr<Shader>& shader, const std::shared_ptr<VertexArray>& va) {
 		shader->Bind();
-		// 传递 VP 矩阵
-		shader->SetMat4("u_ViewProjection", &s_Data.VP[0][0]);
+		// RHI 原则：传递 float* 指针
+		shader->SetMat4("u_ViewProjection", s_Data.VP.Data());
 		va->Bind();
 		// 这里最终调用底层的绘制，暂时留空或调用 Context
 	}

@@ -1,6 +1,6 @@
 #pragma once
 #include <memory>
-#include <cstdint>
+#include "Engine/Types.h"
 
 namespace Engine {
 	class VertexArray;
@@ -14,7 +14,6 @@ namespace Engine {
 		virtual void SwapBuffers() = 0;
 		virtual void DrawIndexed(const std::shared_ptr<VertexArray>& va) = 0;
 
-		// 窗口大小变化时更新视口等
-		virtual void OnResize(int width, int height) = 0;
+		virtual void OnResize(int32 width, int32 height) = 0;
 	};
 }

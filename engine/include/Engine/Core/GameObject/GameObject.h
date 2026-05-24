@@ -22,7 +22,7 @@ namespace Engine {
         virtual ~GameObject();
         virtual void OnCreate() {}
 
-        virtual void Update(float dt);
+        virtual void Update(float32 dt);
 
         virtual void Render() {}
 

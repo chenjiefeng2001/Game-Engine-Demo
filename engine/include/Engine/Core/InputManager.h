@@ -1,12 +1,10 @@
 #pragma once
 #include "Engine/Core/Input.h"
 #include "Engine/Core/InputAction.h"
-#include <glm/glm.hpp>
+#include "Engine/Core/RHI/MathTypes.h"
 #include <string>
 #include <unordered_map>
 #include <memory>
-
-struct GLFWwindow;
 
 namespace Engine {
 
@@ -17,10 +15,10 @@ namespace Engine {
 	public:
 		InputManager() = default;
 		~InputManager() = default;
-		void Init(GLFWwindow* window);  
+		void Init(IWindow* window);
 		void Shutdown();
 
-		void OnUpdate(); 
+		void OnUpdate();
 		bool IsKeyDown(KeyCode key) const;
 		bool IsKeyPressed(KeyCode key) const;
 		bool IsKeyReleased(KeyCode key) const;
@@ -29,11 +27,11 @@ namespace Engine {
 		bool IsMousePressed(MouseCode button) const;
 		bool IsMouseReleased(MouseCode button) const;
 
-		float GetMouseX() const;
-		float GetMouseY() const;
-		float GetMouseDeltaX() const;
-		float GetMouseDeltaY() const;
-		float GetScrollDelta() const;
+		float32 GetMouseX() const;
+		float32 GetMouseY() const;
+		float32 GetMouseDeltaX() const;
+		float32 GetMouseDeltaY() const;
+		float32 GetScrollDelta() const;
 
 
 		InputAction& CreateAction(const std::string& name);
@@ -45,11 +43,11 @@ namespace Engine {
 		bool IsActionReleased(const std::string& name) const;
 
 
-		glm::vec2 ScreenToWorld(const OrthographicCamera& camera,
-			float windowWidth, float windowHeight,
-			float mouseX, float mouseY) const;
-		glm::vec2 ScreenToWorld(const OrthographicCamera& camera,
-			float windowWidth, float windowHeight) const;
+		Vec2 ScreenToWorld(const OrthographicCamera& camera,
+			float32 windowWidth, float32 windowHeight,
+			float32 mouseX, float32 mouseY) const;
+		Vec2 ScreenToWorld(const OrthographicCamera& camera,
+			float32 windowWidth, float32 windowHeight) const;
 
 		void SaveBindings(const std::string& filePath) const;
 		void LoadBindings(const std::string& filePath);

@@ -6,15 +6,16 @@
 #include <Engine/Core/RenderResources/Texture.h>
 #include <Engine/Core/RenderResources/TextureManager.h>
 #include <Engine/Core/Renderer/OrthographicCamera.h>
+#include <Engine/Types.h>
 #include <memory>
 #include <vector>
 
 namespace Engine {
 
     struct TestSprite {
-        float baseX, baseY;   
-        float phase;         
-        float hue;           
+        float32 baseX, baseY;
+        float32 phase;
+        float32 hue;
     };
 
     class SpriteBatchTest {
@@ -24,7 +25,7 @@ namespace Engine {
         void Run();
 
     private:
-        void Update(float dt);
+        void Update(float32 dt);
         void Render();
 
         IGraphicsFactory& m_Factory;
@@ -37,12 +38,12 @@ namespace Engine {
         std::shared_ptr<Texture> m_Texture;
 
         std::vector<TestSprite> m_Sprites;
-        static constexpr int GRID_SIZE = 20; 
-        float m_GlobalTime = 0.0f;
-        float m_LastFrameTime = 0.0f;
+        static constexpr int32 GRID_SIZE = 20;
+        float32 m_GlobalTime = 0.0f;
+        float32 m_LastFrameTime = 0.0f;
 
-        float m_FpsAccumulator = 0.0f;
-        int   m_FrameCount = 0;
+        float32 m_FpsAccumulator = 0.0f;
+        int32   m_FrameCount = 0;
     };
 
 }

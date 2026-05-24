@@ -38,7 +38,7 @@ namespace Engine {
         /** 调用所有根对象的 OnCreate（递归） */
         void OnCreate();
         /** 每帧更新所有根对象（递归） */
-        void Update(float dt);
+        void Update(float32 dt);
         /** 每帧调用所有根对象的 Render（递归） */
         void Render();
         /** 调用所有根对象的 OnDestroy（递归） */

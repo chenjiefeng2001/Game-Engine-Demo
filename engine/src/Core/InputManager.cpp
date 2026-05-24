@@ -1,22 +1,31 @@
 #include "Engine/Core/InputManager.h"
+#include "Engine/Core/IWindow.h"
 #include "Engine/Platform/GlfwInput.h"
 #include "Engine/Core/Renderer/OrthographicCamera.h"
 #include <GLFW/glfw3.h>
+#include <glm/glm.hpp>
 #include <glm/gtc/matrix_transform.hpp>
 #include <glm/gtc/type_ptr.hpp>
 #include <fstream>
 #include <sstream>
 #include <iostream>
+#include <cstring>
 
 namespace Engine {
 
+    // ── 辅助：Engine Vec2 ↔ glm::vec2 ──
+    namespace {
+        inline glm::vec2 ToGlm(const Vec2& v) { return glm::vec2(v.x, v.y); }
+        inline Vec2 FromGlm(const glm::vec2& v) { return Vec2(v.x, v.y); }
+    }
 
-    void InputManager::Init(GLFWwindow* window) {
+    void InputManager::Init(IWindow* window) {
         if (m_Initialized) {
             std::cerr << "[InputManager] Already initialized, skipping." << std::endl;
             return;
         }
-        Input::Init(std::make_unique<GlfwInput>(window));
+        auto* nativeWin = static_cast<GLFWwindow*>(window->GetNativeHandle());
+        Input::Init(std::make_unique<GlfwInput>(nativeWin));
         m_Initialized = true;
         std::cout << "[InputManager] Initialized." << std::endl;
     }
@@ -60,11 +69,11 @@ namespace Engine {
         return Input::IsMouseButtonReleased(button);
     }
 
-    float InputManager::GetMouseX() const { return Input::GetMouseX(); }
-    float InputManager::GetMouseY() const { return Input::GetMouseY(); }
-    float InputManager::GetMouseDeltaX() const { return Input::GetMouseDeltaX(); }
-    float InputManager::GetMouseDeltaY() const { return Input::GetMouseDeltaY(); }
-    float InputManager::GetScrollDelta() const { return Input::GetScrollDelta(); }
+    float32 InputManager::GetMouseX() const { return Input::GetMouseX(); }
+    float32 InputManager::GetMouseY() const { return Input::GetMouseY(); }
+    float32 InputManager::GetMouseDeltaX() const { return Input::GetMouseDeltaX(); }
+    float32 InputManager::GetMouseDeltaY() const { return Input::GetMouseDeltaY(); }
+    float32 InputManager::GetScrollDelta() const { return Input::GetScrollDelta(); }
 
 
     InputAction& InputManager::CreateAction(const std::string& name) {
@@ -103,14 +112,14 @@ namespace Engine {
     }
 
     // ── 屏幕 → 世界坐标转换 ─────────────────────────────────────
-    glm::vec2 InputManager::ScreenToWorld(
+    Vec2 InputManager::ScreenToWorld(
         const OrthographicCamera& camera,
-        float windowWidth, float windowHeight,
-        float mouseX, float mouseY) const
+        float32 windowWidth, float32 windowHeight,
+        float32 mouseX, float32 mouseY) const
     {
         // 1. 屏幕坐标 → NDC [-1, 1]
-        float ndcX = (2.0f * mouseX) / windowWidth - 1.0f;
-        float ndcY = 1.0f - (2.0f * mouseY) / windowHeight;  // 翻转 Y
+        float32 ndcX = (2.0f * mouseX) / windowWidth - 1.0f;
+        float32 ndcY = 1.0f - (2.0f * mouseY) / windowHeight;  // 翻转 Y
 
         // 2. 获取视图投影矩阵的逆矩阵
         glm::mat4 viewProjection = glm::make_mat4(camera.GetViewProjectionMatrixPtr());
@@ -120,12 +129,12 @@ namespace Engine {
         glm::vec4 worldPos = invVP * glm::vec4(ndcX, ndcY, 0.0f, 1.0f);
         worldPos /= worldPos.w;
 
-        return glm::vec2(worldPos.x, worldPos.y);
+        return Vec2(worldPos.x, worldPos.y);
     }
 
-    glm::vec2 InputManager::ScreenToWorld(
+    Vec2 InputManager::ScreenToWorld(
         const OrthographicCamera& camera,
-        float windowWidth, float windowHeight) const
+        float32 windowWidth, float32 windowHeight) const
     {
         return ScreenToWorld(camera, windowWidth, windowHeight,
             Input::GetMouseX(), Input::GetMouseY());

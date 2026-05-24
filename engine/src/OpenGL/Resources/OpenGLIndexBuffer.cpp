@@ -2,12 +2,12 @@
 
 namespace Engine {
 
-	OpenGLIndexBuffer::OpenGLIndexBuffer(uint32_t* indices, uint32_t count, GladGLContext& gl)
+	OpenGLIndexBuffer::OpenGLIndexBuffer(uint32* indices, uint32 count, GladGLContext& gl)
 		: m_GL(gl), m_Count(count)
 	{
 		m_GL.GenBuffers(1, &m_RendererID);
 		m_GL.BindBuffer(GL_ELEMENT_ARRAY_BUFFER, m_RendererID);
-		m_GL.BufferData(GL_ELEMENT_ARRAY_BUFFER, count * sizeof(uint32_t), indices, GL_STATIC_DRAW);
+		m_GL.BufferData(GL_ELEMENT_ARRAY_BUFFER, count * sizeof(uint32), indices, GL_STATIC_DRAW);
 	}
 
 	OpenGLIndexBuffer::~OpenGLIndexBuffer() {

@@ -1,6 +1,6 @@
 #pragma once
 #include <memory>
-#include <cstdint>
+#include "Engine/Types.h"
 #include <string>
 
 namespace Engine {

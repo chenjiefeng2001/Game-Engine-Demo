@@ -8,13 +8,13 @@
 
 namespace Engine {
 
-    static void HSVToRGB(float h, float s, float v,
-        float& r, float& g, float& b) {
-        int i = static_cast<int>(h * 6.0f);
-        float f = h * 6.0f - i;
-        float p = v * (1.0f - s);
-        float q = v * (1.0f - f * s);
-        float t = v * (1.0f - (1.0f - f) * s);
+    static void HSVToRGB(float32 h, float32 s, float32 v,
+        float32& r, float32& g, float32& b) {
+        int32 i = static_cast<int32>(h * 6.0f);
+        float32 f = h * 6.0f - i;
+        float32 p = v * (1.0f - s);
+        float32 q = v * (1.0f - f * s);
+        float32 t = v * (1.0f - (1.0f - f) * s);
         switch (i % 6) {
         case 0: r = v; g = t; b = p; break;
         case 1: r = q; g = v; b = p; break;
@@ -57,9 +57,9 @@ namespace Engine {
                 TestSprite s;
                 s.baseX = offsetX + col * spacing;
                 s.baseY = offsetY + row * spacing;
-                s.phase = static_cast<float>(row * GRID_SIZE + col) * 0.3f;
-                s.hue = static_cast<float>(row * GRID_SIZE + col)
-                    / static_cast<float>(GRID_SIZE * GRID_SIZE);
+                s.phase = static_cast<float32>(row * GRID_SIZE + col) * 0.3f;
+                s.hue = static_cast<float32>(row * GRID_SIZE + col)
+                    / static_cast<float32>(GRID_SIZE * GRID_SIZE);
                 m_Sprites.push_back(s);
             }
         }
@@ -74,19 +74,19 @@ namespace Engine {
 
     SpriteBatchTest::~SpriteBatchTest() = default;
 
-    void SpriteBatchTest::Update(float dt) {
+    void SpriteBatchTest::Update(float32 dt) {
         m_GlobalTime += dt;
 
-        for (size_t i = 0; i < m_Sprites.size(); i++) {
+        for (SizeT i = 0; i < m_Sprites.size(); i++) {
             auto& s = m_Sprites[i];
-            float orbitR = 0.15f;
-            float orbitPhase = s.phase + m_GlobalTime * 1.5f;
-            float px = s.baseX + std::cos(orbitPhase) * orbitR;
-            float py = s.baseY + std::sin(orbitPhase * 0.7f) * orbitR;
-            float pulse = 0.5f + 0.2f * std::sin(s.phase + m_GlobalTime * 2.0f);
-            float angle = m_GlobalTime * (1.2f + 0.5f * std::sin(s.phase));
-            float hue = std::fmod(s.hue + m_GlobalTime * 0.1f, 1.0f);
-            float r, g, b;
+            float32 orbitR = 0.15f;
+            float32 orbitPhase = s.phase + m_GlobalTime * 1.5f;
+            float32 px = s.baseX + std::cos(orbitPhase) * orbitR;
+            float32 py = s.baseY + std::sin(orbitPhase * 0.7f) * orbitR;
+            float32 pulse = 0.5f + 0.2f * std::sin(s.phase + m_GlobalTime * 2.0f);
+            float32 angle = m_GlobalTime * (1.2f + 0.5f * std::sin(s.phase));
+            float32 hue = std::fmod(s.hue + m_GlobalTime * 0.1f, 1.0f);
+            float32 r, g, b;
             HSVToRGB(hue, 0.9f, 1.0f, r, g, b);
         }
     }
@@ -102,19 +102,19 @@ namespace Engine {
         // ���� ��ʼ���� ����
         m_SpriteBatch->Begin(m_Texture);
 
-        for (size_t i = 0; i < m_Sprites.size(); i++) {
+        for (SizeT i = 0; i < m_Sprites.size(); i++) {
             auto& s = m_Sprites[i];
 
-            float orbitR = 0.15f;
-            float orbitPhase = s.phase + m_GlobalTime * 1.5f;
-            float px = s.baseX + std::cos(orbitPhase) * orbitR;
-            float py = s.baseY + std::sin(orbitPhase * 0.7f) * orbitR;
+            float32 orbitR = 0.15f;
+            float32 orbitPhase = s.phase + m_GlobalTime * 1.5f;
+            float32 px = s.baseX + std::cos(orbitPhase) * orbitR;
+            float32 py = s.baseY + std::sin(orbitPhase * 0.7f) * orbitR;
 
-            float pulse = 0.3f + 0.2f * std::sin(s.phase + m_GlobalTime * 2.0f);
-            float angle = m_GlobalTime * (1.2f + 0.5f * std::sin(s.phase));
+            float32 pulse = 0.3f + 0.2f * std::sin(s.phase + m_GlobalTime * 2.0f);
+            float32 angle = m_GlobalTime * (1.2f + 0.5f * std::sin(s.phase));
 
-            float hue = std::fmod(s.hue + m_GlobalTime * 0.1f, 1.0f);
-            float r, g, b;
+            float32 hue = std::fmod(s.hue + m_GlobalTime * 0.1f, 1.0f);
+            float32 r, g, b;
             HSVToRGB(hue, 0.9f, 1.0f, r, g, b);
 
             SpriteData sprite;
@@ -137,8 +137,8 @@ namespace Engine {
         m_LastFrameTime = Time::GetTime();
 
         while (!m_Window->ShouldClose()) {
-            float time = Time::GetTime();
-            float dt = time - m_LastFrameTime;
+            float32 time = Time::GetTime();
+            float32 dt = time - m_LastFrameTime;
             m_LastFrameTime = time;
             if (dt > 0.25f) dt = 0.25f;
 

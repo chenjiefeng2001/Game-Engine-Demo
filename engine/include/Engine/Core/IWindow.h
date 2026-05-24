@@ -2,7 +2,7 @@
 #include <string>
 #include <memory>
 #include <functional>
-#include <stdint.h>
+#include "Engine/Types.h"
 
 namespace Engine {
 	class IRenderContext; // 前向声明
@@ -13,11 +13,11 @@ namespace Engine {
 	struct Event {
 		EventType type;
 		union {
-			struct { int width, height; } resize;
-			struct { int key, scancode, action, mods; } key;
-			struct { double x, y; } mouseMove;
-			struct { int button, action, mods; } mouseButton;
-			struct { double xOffset, yOffset; } mouseScroll;
+			struct { int32 width, height; } resize;
+			struct { int32 key, scancode, action, mods; } key;
+			struct { float64 x, y; } mouseMove;
+			struct { int32 button, action, mods; } mouseButton;
+			struct { float64 xOffset, yOffset; } mouseScroll;
 		};
 	};
 

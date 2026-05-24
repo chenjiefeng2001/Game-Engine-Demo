@@ -6,6 +6,7 @@
 #include <unordered_map>
 #include <memory>
 #include <string>
+#include "Engine/Types.h"
 
 namespace Engine {
 
@@ -49,7 +50,7 @@ namespace Engine {
         /**
          * @brief 获取当前缓存的纹理数量
          */
-        size_t Count() const { return m_Cache.size(); }
+SizeT Count() const { return m_Cache.size(); }
 
         /**
          * @brief 判断指定路径是否已缓存

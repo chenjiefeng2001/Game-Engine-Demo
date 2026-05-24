@@ -2,7 +2,7 @@
 
 namespace Engine {
 
-	OpenGLVertexBuffer::OpenGLVertexBuffer(float* vertices, uint32_t size, GladGLContext& gl)
+	OpenGLVertexBuffer::OpenGLVertexBuffer(float32* vertices, uint32 size, GladGLContext& gl)
 		: m_GL(gl) {
 		m_GL.GenBuffers(1, &m_RendererID);
 		m_GL.BindBuffer(GL_ARRAY_BUFFER, m_RendererID);

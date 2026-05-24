@@ -1,6 +1,7 @@
 #pragma once
 
 #include "Engine/Core/RenderResources/VertexBuffer.h"
+#include "Engine/Types.h"
 #include <glad/gl.h>
 
 namespace Engine {
@@ -8,7 +9,7 @@ namespace Engine {
 	class OpenGLVertexBuffer : public VertexBuffer
 	{
 	public:
-		OpenGLVertexBuffer(float* vertices, uint32_t size, GladGLContext& gl);
+		OpenGLVertexBuffer(float32* vertices, uint32 size, GladGLContext& gl);
 		virtual ~OpenGLVertexBuffer() override;
 
 		virtual void Bind() const override;
