@@ -20,6 +20,7 @@ namespace Engine {
 
     class Box2DPhysicsBody;
     class Box2DContactListener;
+    class Box2DDebugDraw;
 
     class Box2DPhysicsWorld : public IPhysicsWorld {
     public:
@@ -34,6 +35,9 @@ namespace Engine {
         std::shared_ptr<IPhysicsBody> CreateBody(const BodyDef& def) override;
         void DestroyBody(IPhysicsBody* body) override;
 
+        std::shared_ptr<IJoint> CreateJoint(const JointDef& def) override;
+        void DestroyJoint(IJoint* joint) override;
+
         std::vector<RayCastResult> RayCast(const Vec2& from,
                                             const Vec2& to) override;
 
@@ -46,7 +50,9 @@ namespace Engine {
         void SetContactBeginCallback(ContactCallback callback) override;
         void SetContactEndCallback(ContactCallback callback) override;
         void SetContactPreSolveCallback(ContactFilterCallback callback) override;
+        void SetContactPersistCallback(ContactPersistCallback callback) override;
 
+        void SetDebugDraw(IPhysicsDebugDraw* draw) override;
         void DebugDraw() override;
         void* GetNativeWorld() override;
 
@@ -54,18 +60,25 @@ namespace Engine {
         void OnContactBegin(const ContactInfo& info);
         void OnContactEnd(const ContactInfo& info);
         bool OnContactPreSolve(const void* bodyA, const void* bodyB);
+        void OnContactPersist(const ContactPersistData& data);
 
     private:
         b2World* m_World = nullptr;
         std::unique_ptr<Box2DContactListener> m_ContactListener;
+        std::unique_ptr<Box2DDebugDraw> m_Box2DDebugDraw;
 
-        // 持有所有刚体的所有权
+        // 持有所有刚体和关节的所有权
         std::unordered_set<std::shared_ptr<Box2DPhysicsBody>> m_Bodies;
+        std::unordered_set<std::shared_ptr<class Box2DJoint>> m_Joints;
 
         // 碰撞回调
-        ContactCallback       m_ContactBeginCallback;
-        ContactCallback       m_ContactEndCallback;
-        ContactFilterCallback m_ContactPreSolveCallback;
+        ContactCallback         m_ContactBeginCallback;
+        ContactCallback         m_ContactEndCallback;
+        ContactFilterCallback   m_ContactPreSolveCallback;
+        ContactPersistCallback  m_ContactPersistCallback;
+
+        // 调试绘制（用户提供的抽象接口）
+        IPhysicsDebugDraw* m_UserDebugDraw = nullptr;
     };
 
 } // namespace Engine

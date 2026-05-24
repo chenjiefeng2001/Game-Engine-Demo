@@ -83,6 +83,22 @@ namespace Engine {
          */
         void SyncPhysicsToTransform(Vec2& outPosition, float32& outAngle) const;
 
+        // ── 碰撞事件回调（游戏对象级别） ──
+        using CollisionEvent = std::function<void(const ContactInfo& info)>;
+        using CollisionPersistEvent = std::function<void(const ContactPersistData& data)>;
+
+        /** 设置碰撞进入回调（当本物体与其他物体开始碰撞时触发） */
+        void SetOnCollisionEnter(CollisionEvent cb) { m_OnCollisionEnter = std::move(cb); }
+        /** 设置碰撞持续回调（碰撞接触持续期间每帧触发） */
+        void SetOnCollisionStay(CollisionPersistEvent cb) { m_OnCollisionStay = std::move(cb); }
+        /** 设置碰撞离开回调（碰撞结束时触发） */
+        void SetOnCollisionExit(CollisionEvent cb) { m_OnCollisionExit = std::move(cb); }
+
+        // 以下由物理系统内部调用，用于路由碰撞事件
+        void InvokeCollisionEnter(const ContactInfo& info) const { if (m_OnCollisionEnter) m_OnCollisionEnter(info); }
+        void InvokeCollisionStay(const ContactPersistData& data) const { if (m_OnCollisionStay) m_OnCollisionStay(data); }
+        void InvokeCollisionExit(const ContactInfo& info) const { if (m_OnCollisionExit) m_OnCollisionExit(info); }
+
         // ── 便捷操作 ──
         void ApplyForce(const Vec2& force) {
             if (m_Body) m_Body->ApplyForceToCenter(force);
@@ -110,6 +126,11 @@ namespace Engine {
     private:
         std::shared_ptr<IPhysicsBody>  m_Body  = nullptr;
         std::shared_ptr<IPhysicsWorld> m_World = nullptr;
+
+        // 碰撞事件回调
+        CollisionEvent         m_OnCollisionEnter;
+        CollisionPersistEvent  m_OnCollisionStay;
+        CollisionEvent         m_OnCollisionExit;
     };
 
 } // namespace Engine

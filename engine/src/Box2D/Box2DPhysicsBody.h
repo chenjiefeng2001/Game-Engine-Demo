@@ -10,6 +10,7 @@
 
 #include "Engine/Core/Physics/IPhysicsBody.h"
 #include <box2d/box2d.h>
+#include <vector>
 
 namespace Engine {
 
@@ -50,6 +51,11 @@ namespace Engine {
         void   SetAngularDamping(float32 damping) override;
         float32 GetAngularDamping() const override;
 
+        // ── Fixture 管理 ──
+        void* AddFixture(const FixtureDef& def) override;
+        void  RemoveFixture(void* fixtureId) override;
+        void  ClearFixtures() override;
+
         // 碰撞滤波
         void SetFilterData(uint16 categoryBits, uint16 maskBits) override;
         void SetGroupIndex(int32 groupIndex) override;
@@ -61,6 +67,10 @@ namespace Engine {
         // 用户数据
         void* GetUserData() const override;
         void  SetUserData(void* data) override;
+
+        // 内部组件引用
+        void  SetComponentRef(void* ref) override { m_ComponentRef = ref; }
+        void* GetComponentRef() const override { return m_ComponentRef; }
 
         // 休眠
         void SetAwake(bool awake) override;
@@ -74,9 +84,17 @@ namespace Engine {
 
     private:
         b2Body* m_Body = nullptr;
+        void*   m_UserData = nullptr;
+        void*   m_ComponentRef = nullptr;  ///< PhysicsComponent* 内部引用
 
-        // 缓存 BodyDef 中的用户数据
-        void* m_UserData = nullptr;
+        // 缓存外部传入的 fixture userData
+        struct FixtureEntry {
+            b2Fixture* fixture;
+            void*      userData;
+        };
+        std::vector<FixtureEntry> m_Fixtures;
+
+        static b2FixtureDef ToB2FixtureDef(const FixtureDef& def);
     };
 
 } // namespace Engine

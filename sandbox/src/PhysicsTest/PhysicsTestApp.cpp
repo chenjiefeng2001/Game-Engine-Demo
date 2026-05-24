@@ -2,6 +2,7 @@
 #include <Engine/Platform/PlatformUtils.h>
 #include <Engine/Core/IRenderContext.h>
 #include <Engine/Core/IWindow.h>
+#include <Engine/OpenGL/OpenGLContext.h>
 #include <Engine/Box2D/Box2DPhysicsWorld.h>
 #include <GLFW/glfw3.h>
 #include <glm/glm.hpp>
@@ -28,9 +29,12 @@ namespace Engine {
                          static_cast<float32>(m_WindowHeight);
         float32 viewHeight = 12.0f;
         float32 viewWidth  = viewHeight * aspect;
+        m_CamLeft   = -viewWidth * 0.5f;
+        m_CamRight  =  viewWidth * 0.5f;
+        m_CamBottom = -viewHeight * 0.5f;
+        m_CamTop    =  viewHeight * 0.5f;
         m_Camera = std::make_unique<OrthographicCamera>(
-            -viewWidth * 0.5f, viewWidth * 0.5f,
-            -viewHeight * 0.5f, viewHeight * 0.5f);
+            m_CamLeft, m_CamRight, m_CamBottom, m_CamTop);
 
         // ── 3. 创建渲染资源 ──
         auto* context = m_Window->GetContext();
@@ -117,7 +121,7 @@ namespace Engine {
             }
         }
 
-        // ── 8. 创建圆形物体 ──
+        // ── 8. 创建圆形物体（演示碰撞回调 + 持久回调） ──
         {
             auto ball = std::make_shared<GameObject>("Ball");
             ball->GetTransform().SetPosition(0.0f, 4.0f, 0.0f);
@@ -130,8 +134,24 @@ namespace Engine {
             bodyDef.shape.circleRadius = 0.5f;
             bodyDef.density  = 1.0f;
             bodyDef.friction = 0.3f;
-            bodyDef.restitution = 0.6f;  // 有弹性的球
+            bodyDef.restitution = 0.6f;
             ball->GetPhysics().CreateBody(m_PhysicsWorld, bodyDef);
+
+            // 演示：碰撞回调（游戏对象级别）
+            ball->GetPhysics().SetOnCollisionEnter([](const ContactInfo& info) {
+                std::cout << "[Collision Enter] Ball collided!" << std::endl;
+                (void)info;
+            });
+            ball->GetPhysics().SetOnCollisionStay([](const ContactPersistData& data) {
+                if (data.impulse > 1.0f) {
+                    // 只在冲量较大时输出，避免刷屏
+                    std::cout << "[Collision Stay] Impulse: " << data.impulse << std::endl;
+                }
+            });
+            ball->GetPhysics().SetOnCollisionExit([](const ContactInfo& info) {
+                std::cout << "[Collision Exit] Ball collision ended" << std::endl;
+                (void)info;
+            });
 
             const auto& pos = ball->GetTransform().GetPosition();
             ball->GetPhysics().SyncTransformToPhysics(
@@ -140,14 +160,74 @@ namespace Engine {
             m_Scene.AddObject(std::move(ball));
         }
 
+        // ── 9. 距离关节演示（弹簧连接两个箱子） ──
+        {
+            // 创建两个箱子
+            auto boxA = std::make_shared<GameObject>("SpringBoxA");
+            boxA->GetTransform().SetPosition(-1.0f, 0.0f, 0.0f);
+            boxA->GetSprite().SetTexture(m_Texture);
+            boxA->GetSprite().SetColor(0.9f, 0.6f, 0.2f, 1.0f);
+            {
+                BodyDef bd;
+                bd.type = BodyType::Dynamic;
+                bd.shape.type = ShapeType::Box;
+                bd.shape.boxSize = {0.4f, 0.4f};
+                boxA->GetPhysics().CreateBody(m_PhysicsWorld, bd);
+                const auto& p = boxA->GetTransform().GetPosition();
+                boxA->GetPhysics().SyncTransformToPhysics(Vec2(p.x, p.y), 0.0f);
+            }
+
+            auto boxB = std::make_shared<GameObject>("SpringBoxB");
+            boxB->GetTransform().SetPosition(1.0f, 0.0f, 0.0f);
+            boxB->GetSprite().SetTexture(m_Texture);
+            boxB->GetSprite().SetColor(0.2f, 0.6f, 0.9f, 1.0f);
+            {
+                BodyDef bd;
+                bd.type = BodyType::Dynamic;
+                bd.shape.type = ShapeType::Box;
+                bd.shape.boxSize = {0.4f, 0.4f};
+                boxB->GetPhysics().CreateBody(m_PhysicsWorld, bd);
+                const auto& p = boxB->GetTransform().GetPosition();
+                boxB->GetPhysics().SyncTransformToPhysics(Vec2(p.x, p.y), 0.0f);
+            }
+
+            // 用距离关节（弹簧）连接它们
+            DistanceJointDef jd;
+            jd.bodyA = boxA->GetPhysics().GetBody();
+            jd.bodyB = boxB->GetPhysics().GetBody();
+            jd.localAnchorA = Vec2(0.5f, 0.0f);
+            jd.localAnchorB = Vec2(-0.5f, 0.0f);
+            jd.length = 3.0f;      // 静止长度
+            jd.stiffness = 50.0f;  // 弹簧刚度
+            jd.damping = 2.0f;     // 阻尼
+            m_PhysicsWorld->CreateJoint(jd);
+
+            m_Scene.AddObject(std::move(boxA));
+            m_Scene.AddObject(std::move(boxB));
+        }
+
+        // ── 10. 初始化调试绘制（必须在 m_PhysicsWorld 创建之后） ──
+        {
+            auto* context = m_Window->GetContext();
+            auto& glContext = static_cast<OpenGLContext*>(context)->GetGL();
+            m_DebugDraw = std::make_unique<OpenGLPhysicsDebugDraw>(glContext);
+            m_DebugDraw->SetFlags(DebugDraw_Shape | DebugDraw_Joint | DebugDraw_COM);
+            m_PhysicsWorld->SetDebugDraw(m_DebugDraw.get());
+        }
+
         std::cout << "==========================================" << std::endl;
         std::cout << "  Physics Test (Box2D) Started!" << std::endl;
         std::cout << "  测试内容:" << std::endl;
         std::cout << "    - 左右堆叠的箱子（碰撞 + 堆叠）" << std::endl;
-        std::cout << "    - 弹性球从空中掉落" << std::endl;
+        std::cout << "    - 弹性球从空中掉落（碰撞回调演示）" << std::endl;
+        std::cout << "    - 距离关节（橙色↔蓝色弹簧连接）" << std::endl;
+        std::cout << "    - 鼠标拖拽（点击拖动物体）" << std::endl;
         std::cout << "    - 物理步进后位置自动同步到精灵" << std::endl;
-        std::cout << "    - 碰撞事件回调" << std::endl;
+        std::cout << "    - 碰撞开始/持续/结束回调" << std::endl;
+        std::cout << "    - 调试绘制（F1~F5 热切换）" << std::endl;
         std::cout << "==========================================" << std::endl;
+
+        PrintDebugHelp();
     }
 
     // ============================================================
@@ -160,14 +240,132 @@ namespace Engine {
     }
 
     // ============================================================
+    // 热键处理（调试绘制开关）
+    // ============================================================
+
+    namespace {
+        // 记录按键按下状态，实现边沿触发
+        bool WasKeyPressed(GLFWwindow* window, int key, bool& lastState) {
+            bool current = glfwGetKey(window, key) == GLFW_PRESS;
+            bool pressed = current && !lastState;
+            lastState = current;
+            return pressed;
+        }
+    }
+
+    Vec2 PhysicsTestApp::ScreenToWorld(float32 screenX, float32 screenY) const {
+        // 将屏幕坐标映射到世界坐标（基于相机正交投影边界）
+        float32 ndcX = 2.0f * screenX / static_cast<float32>(m_WindowWidth) - 1.0f;
+        float32 ndcY = 1.0f - 2.0f * screenY / static_cast<float32>(m_WindowHeight);
+
+        float32 worldX = m_CamLeft + (ndcX + 1.0f) * 0.5f * (m_CamRight - m_CamLeft);
+        float32 worldY = m_CamBottom + (ndcY + 1.0f) * 0.5f * (m_CamTop - m_CamBottom);
+        return Vec2(worldX, worldY);
+    }
+
+    void PhysicsTestApp::PrintDebugHelp() {
+        std::cout << "=== 操作说明 ===" << std::endl;
+        std::cout << "  鼠标左键拖拽   : 拖动物体" << std::endl;
+        std::cout << "=== 调试绘制热键 ===" << std::endl;
+        std::cout << "  F1   : 切换所有调试绘制" << std::endl;
+        std::cout << "  F2   : 切换碰撞体形状" << std::endl;
+        std::cout << "  F3   : 切换关节" << std::endl;
+        std::cout << "  F4   : 切换包围盒(AABB)" << std::endl;
+        std::cout << "  F5   : 切换质心" << std::endl;
+        std::cout << "=======================" << std::endl;
+    }
+
+    // ============================================================
     // 每帧更新
     // ============================================================
 
     void PhysicsTestApp::Update(float32 dt) {
         (void)dt;
 
+        // ── 调试绘制热键（热重载开关） ──
+        GLFWwindow* window = static_cast<GLFWwindow*>(m_Window->GetNativeHandle());
+        if (window) {
+            static bool f1 = false, f2 = false, f3 = false, f4 = false, f5 = false;
+
+            if (WasKeyPressed(window, GLFW_KEY_F1, f1)) {
+                m_DebugDrawEnabled = !m_DebugDrawEnabled;
+                m_PhysicsWorld->SetDebugDraw(m_DebugDrawEnabled ? m_DebugDraw.get() : nullptr);
+                std::cout << (m_DebugDrawEnabled ? "[Debug] 开启" : "[Debug] 关闭") << std::endl;
+            }
+            if (WasKeyPressed(window, GLFW_KEY_F2, f2)) {
+                uint32 flags = m_DebugDraw->GetFlags();
+                flags ^= DebugDraw_Shape;
+                m_DebugDraw->SetFlags(flags);
+                std::cout << "[Debug] 形状: " << ((flags & DebugDraw_Shape) ? "ON" : "OFF") << std::endl;
+            }
+            if (WasKeyPressed(window, GLFW_KEY_F3, f3)) {
+                uint32 flags = m_DebugDraw->GetFlags();
+                flags ^= DebugDraw_Joint;
+                m_DebugDraw->SetFlags(flags);
+                std::cout << "[Debug] 关节: " << ((flags & DebugDraw_Joint) ? "ON" : "OFF") << std::endl;
+            }
+            if (WasKeyPressed(window, GLFW_KEY_F4, f4)) {
+                uint32 flags = m_DebugDraw->GetFlags();
+                flags ^= DebugDraw_AABB;
+                m_DebugDraw->SetFlags(flags);
+                std::cout << "[Debug] AABB: " << ((flags & DebugDraw_AABB) ? "ON" : "OFF") << std::endl;
+            }
+            if (WasKeyPressed(window, GLFW_KEY_F5, f5)) {
+                uint32 flags = m_DebugDraw->GetFlags();
+                flags ^= DebugDraw_COM;
+                m_DebugDraw->SetFlags(flags);
+                std::cout << "[Debug] 质心: " << ((flags & DebugDraw_COM) ? "ON" : "OFF") << std::endl;
+            }
+        }
+
+        // ── 鼠标拖拽 ──
+        if (window) {
+            // 获取鼠标屏幕位置
+            double mouseX, mouseY;
+            glfwGetCursorPos(window, &mouseX, &mouseY);
+            m_MouseWorldPos = ScreenToWorld(static_cast<float32>(mouseX),
+                                             static_cast<float32>(mouseY));
+
+            bool leftDown = glfwGetMouseButton(window, GLFW_MOUSE_BUTTON_LEFT) == GLFW_PRESS;
+
+            if (leftDown && !m_MouseDown) {
+                // 鼠标按下：光线投射寻找物体
+                m_MouseDown = true;
+                auto hits = m_PhysicsWorld->RayCast(m_MouseWorldPos, m_MouseWorldPos);
+                for (auto& hit : hits) {
+                    auto* body = const_cast<IPhysicsBody*>(
+                        static_cast<const IPhysicsBody*>(hit.body));
+                    if (body && body->GetType() == BodyType::Dynamic) {
+                        // 创建鼠标关节
+                        MouseJointDef jd;
+                        jd.bodyA = body;
+                        jd.target = m_MouseWorldPos;
+                        jd.maxForce = 500.0f;
+                        jd.stiffness = 100.0f;
+                        jd.damping = 5.0f;
+                        m_MouseJoint = m_PhysicsWorld->CreateJoint(jd);
+                        m_DraggedBody = body;
+                        std::cout << "[Mouse] 开始拖拽物体" << std::endl;
+                        break;
+                    }
+                }
+            } else if (!leftDown && m_MouseDown) {
+                // 鼠标释放：销毁鼠标关节
+                m_MouseDown = false;
+                if (m_MouseJoint) {
+                    m_PhysicsWorld->DestroyJoint(m_MouseJoint.get());
+                    m_MouseJoint.reset();
+                    m_DraggedBody = nullptr;
+                    std::cout << "[Mouse] 释放物体" << std::endl;
+                }
+            } else if (leftDown && m_MouseJoint) {
+                // 拖拽中：更新鼠标关节目标位置
+                // 通过 IJoint 的 SetTarget 实现
+                m_MouseJoint->SetTarget(m_MouseWorldPos);
+            }
+        }
+
         // ── 物理步进（固定步长 60Hz） ──
-        // 使用固定步长累加器保证物理稳定性
         static float32 accumulator = 0.0f;
         accumulator += dt;
         while (accumulator >= FIXED_DT) {
@@ -210,6 +408,12 @@ namespace Engine {
         }
 
         m_SpriteBatch->End();
+
+        // ── 调试绘制（叠加在精灵之上） ──
+        if (m_DebugDrawEnabled && m_DebugDraw) {
+            m_DebugDraw->SetViewProjection(m_Camera->GetViewProjectionMatrixPtr());
+            m_PhysicsWorld->DebugDraw();
+        }
     }
 
     // ============================================================

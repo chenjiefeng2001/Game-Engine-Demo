@@ -41,6 +41,15 @@ namespace Engine {
         virtual void  SetAngularDamping(float32 damping) = 0;
         virtual float32 GetAngularDamping() const = 0;
 
+        // ── Fixture 管理（运行时添加/移除形状） ──
+        virtual void* AddFixture(const FixtureDef& def) = 0;
+        virtual void  RemoveFixture(void* fixtureId) = 0;
+        virtual void  ClearFixtures() = 0;
+
+        // ── 内部组件引用（PhysicsComponent 在创建时自动设置，用于碰撞事件路由） ──
+        virtual void  SetComponentRef(void* ref) = 0;
+        virtual void* GetComponentRef() const = 0;
+
         virtual void SetFilterData(uint16 categoryBits, uint16 maskBits) = 0;
         virtual void SetGroupIndex(int32 groupIndex) = 0;
 

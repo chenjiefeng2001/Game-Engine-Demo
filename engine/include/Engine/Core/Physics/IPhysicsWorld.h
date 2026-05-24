@@ -11,6 +11,8 @@
  */
 
 #include "Engine/Core/Physics/PhysicsDefs.h"
+#include "Engine/Core/Physics/IJoint.h"
+#include "Engine/Core/Physics/IPhysicsDebugDraw.h"
 #include <memory>
 #include <vector>
 
@@ -36,6 +38,19 @@ namespace Engine {
         virtual std::shared_ptr<IPhysicsBody> CreateBody(const BodyDef& def) = 0;
         virtual void DestroyBody(IPhysicsBody* body) = 0;
 
+        // ── 关节管理 ──
+        /**
+         * @brief 创建关节
+         * @param def 关节定义（具体类型如 RevoluteJointDef 等）
+         * @return 关节智能指针
+         */
+        virtual std::shared_ptr<IJoint> CreateJoint(const JointDef& def) = 0;
+
+        /**
+         * @brief 销毁关节
+         */
+        virtual void DestroyJoint(IJoint* joint) = 0;
+
         // ── 查询 ──
         /**
          * @brief 光线投射
@@ -55,11 +70,27 @@ namespace Engine {
 
         virtual void SetGravity(const Vec2& gravity) = 0;
         virtual Vec2 GetGravity() const = 0;
-─
+
         virtual void SetContactBeginCallback(ContactCallback callback) = 0;
         virtual void SetContactEndCallback(ContactCallback callback) = 0;
         virtual void SetContactPreSolveCallback(ContactFilterCallback callback) = 0;
 
+        /**
+         * @brief 设置碰撞持久回调（每帧触发，用于碰撞持续接触时的冲量计算）
+         * @param callback 回调函数，参数为 ContactPersistData（包含冲量信息）
+         */
+        virtual void SetContactPersistCallback(ContactPersistCallback callback) = 0;
+
+        // ── 调试绘制 ──
+        /**
+         * @brief 设置调试绘制器
+         * @param draw 绘制器实现（由引擎渲染层提供）
+         */
+        virtual void SetDebugDraw(IPhysicsDebugDraw* draw) = 0;
+
+        /**
+         * @brief 执行调试绘制（需先调用 SetDebugDraw）
+         */
         virtual void DebugDraw() = 0;
 
         virtual void* GetNativeWorld() = 0;
