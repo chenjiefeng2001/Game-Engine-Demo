@@ -15,6 +15,11 @@ target_include_directories(EngineCore
     PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/src"
 
 )
-target_link_libraries(EngineCore PUBLIC glad2 glfw stb)
+target_link_libraries(EngineCore PUBLIC glad2 glfw stb box2d)
+
+# 确保 Box2D 的 include 路径可用
+target_include_directories(EngineCore PUBLIC
+    "${PROJECT_SOURCE_DIR}/third_party/box2d/include"
+)
 
 source_group(TREE ${CMAKE_CURRENT_SOURCE_DIR} FILES ${ENGINE_SOURCES} ${ENGINE_HEADERS})

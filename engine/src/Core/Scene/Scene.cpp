@@ -138,8 +138,35 @@ namespace Engine {
     }
 
     // ──────────────────────────────────────────────
-    // 渲染命令收集（RHI 版本）
+    // 物理同步
     // ──────────────────────────────────────────────
+
+    namespace detail {
+        static void PostPhysicsUpdateRecursive(GameObject& obj) {
+            // 如果有物理组件，同步位置/角度回 Transform
+            if (obj.HasPhysics()) {
+                Vec2 pos;
+                float32 angle;
+                obj.GetPhysics().SyncPhysicsToTransform(pos, angle);
+
+                // 仅对 Dynamic 类型的物体做同步（Static/Kinematic 由用户控制）
+                // 但为了简单，这里同步所有类型，由用户决定是否创建 PhysicsComponent
+                obj.GetTransform().SetPosition(pos.x, pos.y, 0.0f);
+                obj.GetTransform().SetRotation(0.0f, 0.0f, angle);
+            }
+
+            for (auto& child : obj.GetChildren()) {
+                PostPhysicsUpdateRecursive(*child);
+            }
+        }
+    } // namespace detail
+
+    void Scene::PostPhysicsUpdate() {
+        for (auto& obj : m_Objects) {
+            detail::PostPhysicsUpdateRecursive(*obj);
+        }
+    }
+
 
     void Scene::CollectRenderCommands(IRenderQueue& queue) {
         // 递归收集所有对象的渲染命令
