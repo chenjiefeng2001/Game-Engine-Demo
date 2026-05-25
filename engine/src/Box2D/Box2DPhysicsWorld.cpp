@@ -78,6 +78,7 @@ namespace Engine {
             shapeDef.filter.categoryBits = static_cast<uint64_t>(def.categoryBits);
             shapeDef.filter.maskBits     = static_cast<uint64_t>(def.maskBits);
             shapeDef.filter.groupIndex   = def.groupIndex;
+            shapeDef.enableContactEvents = true;
 
             switch (def.shape.type) {
                 case ShapeType::Box: {

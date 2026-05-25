@@ -97,3 +97,39 @@ add_custom_command(TARGET AudioTest POST_BUILD
         "$<TARGET_FILE_DIR:AudioTest>/$<TARGET_FILE_NAME:OpenAL>"
     COMMENT "Copying OpenAL32.dll..."
 )
+
+# CollisionAudioTest — 测试碰撞音效（不同材质不同声音）
+add_executable(CollisionAudioTest
+    src/CollisionAudioTest/main.cpp
+    src/CollisionAudioTest/CollisionAudioTestApp.cpp
+)
+target_link_libraries(CollisionAudioTest PRIVATE EngineCore)
+add_custom_command(
+    TARGET CollisionAudioTest POST_BUILD
+    COMMAND ${CMAKE_COMMAND} -E remove_directory "$<TARGET_FILE_DIR:CollisionAudioTest>/assets"
+    COMMAND ${CMAKE_COMMAND} -E copy_directory
+            "${PROJECT_SOURCE_DIR}/assets"
+            "$<TARGET_FILE_DIR:CollisionAudioTest>/assets"
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different
+        "$<TARGET_FILE_DIR:OpenAL>/$<TARGET_FILE_NAME:OpenAL>"
+        "$<TARGET_FILE_DIR:CollisionAudioTest>/$<TARGET_FILE_NAME:OpenAL>"
+    COMMENT "Syncing assets and copying OpenAL32.dll..."
+)
+
+# AudioPhysicsSandbox — 背景音乐 + 键盘音效 + 拖拽碰撞发声 + 资源追踪
+add_executable(AudioPhysicsSandbox
+    src/AudioPhysicsSandbox/main.cpp
+    src/AudioPhysicsSandbox/AudioPhysicsSandboxApp.cpp
+)
+target_link_libraries(AudioPhysicsSandbox PRIVATE EngineCore)
+add_custom_command(
+    TARGET AudioPhysicsSandbox POST_BUILD
+    COMMAND ${CMAKE_COMMAND} -E remove_directory "$<TARGET_FILE_DIR:AudioPhysicsSandbox>/assets"
+    COMMAND ${CMAKE_COMMAND} -E copy_directory
+            "${PROJECT_SOURCE_DIR}/assets"
+            "$<TARGET_FILE_DIR:AudioPhysicsSandbox>/assets"
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different
+        "$<TARGET_FILE_DIR:OpenAL>/$<TARGET_FILE_NAME:OpenAL>"
+        "$<TARGET_FILE_DIR:AudioPhysicsSandbox>/$<TARGET_FILE_NAME:OpenAL>"
+    COMMENT "Syncing assets and copying OpenAL32.dll..."
+)
