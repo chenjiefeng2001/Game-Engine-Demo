@@ -82,3 +82,18 @@ add_custom_command(
             "$<TARGET_FILE_DIR:PhysicsTest>/assets"
     COMMENT "Syncing assets to build directory..."
 )
+
+# AudioTest — 测试 OpenAL Soft 音频集成
+add_executable(AudioTest
+    src/AudioTest/main.cpp
+    src/AudioTest/AudioTestApp.cpp
+)
+target_link_libraries(AudioTest PRIVATE EngineCore)
+
+# 编译后自动复制 OpenAL32.dll 到可执行文件目录
+add_custom_command(TARGET AudioTest POST_BUILD
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different
+        "$<TARGET_FILE_DIR:OpenAL>/$<TARGET_FILE_NAME:OpenAL>"
+        "$<TARGET_FILE_DIR:AudioTest>/$<TARGET_FILE_NAME:OpenAL>"
+    COMMENT "Copying OpenAL32.dll..."
+)

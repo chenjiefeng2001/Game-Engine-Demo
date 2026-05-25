@@ -43,6 +43,7 @@ namespace Engine {
 
         // ── 物理场景 ──
         std::shared_ptr<IPhysicsWorld> m_PhysicsWorld;
+        std::shared_ptr<IPhysicsBody>  m_MouseAnchorBody;  ///< 鼠标拖拽的静态锚点
 
         // ── 游戏场景 ──
         Scene m_Scene;
@@ -55,11 +56,6 @@ namespace Engine {
         std::shared_ptr<Shader> m_BatchShader;
         std::shared_ptr<Texture> m_Texture;
         std::unique_ptr<OrthographicCamera> m_Camera;
-        // 相机边界（用于 ScreenToWorld，从构造参数存储）
-        float32 m_CamLeft   = -1.0f;
-        float32 m_CamRight  =  1.0f;
-        float32 m_CamBottom = -1.0f;
-        float32 m_CamTop    =  1.0f;
 
         // ── 鼠标拖拽状态 ──
         std::shared_ptr<IJoint> m_MouseJoint;
