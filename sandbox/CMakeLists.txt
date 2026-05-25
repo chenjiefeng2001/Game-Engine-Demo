@@ -98,6 +98,20 @@ add_custom_command(TARGET AudioTest POST_BUILD
     COMMENT "Copying OpenAL32.dll..."
 )
 
+# ImGuiDemo — 演示 Dear ImGui 集成
+add_executable(ImGuiDemo
+    src/ImGuiDemo/main.cpp
+)
+target_link_libraries(ImGuiDemo PRIVATE EngineCore)
+add_custom_command(
+    TARGET ImGuiDemo POST_BUILD
+    COMMAND ${CMAKE_COMMAND} -E remove_directory "$<TARGET_FILE_DIR:ImGuiDemo>/assets"
+    COMMAND ${CMAKE_COMMAND} -E copy_directory
+            "${PROJECT_SOURCE_DIR}/assets"
+            "$<TARGET_FILE_DIR:ImGuiDemo>/assets"
+    COMMENT "Syncing assets to build directory..."
+)
+
 # CollisionAudioTest — 测试碰撞音效（不同材质不同声音）
 add_executable(CollisionAudioTest
     src/CollisionAudioTest/main.cpp
