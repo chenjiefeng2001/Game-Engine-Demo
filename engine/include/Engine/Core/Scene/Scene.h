@@ -1,6 +1,8 @@
 #pragma once
 
 #include "Engine/Core/GameObject/GameObject.h"
+#include "Engine/Core/ECS/ECS.h"
+#include "Engine/Core/ECS/System.h"
 #include "Engine/Core/RHI/IRenderable.h"
 #include <string>
 #include <vector>
@@ -11,56 +13,51 @@ namespace Engine {
     class IRenderQueue;
 
     /**
-     * @brief 场景 — 管理游戏对象列表，负责遍历更新与渲染
+     * @brief 场景 — ECS 驱动，管理 EntityManager 和 System 列表
      *
-     * Scene 是一层的场景管理器，持有根级 GameObject 列表。
-     * 提供统一的 Add/Remove/Find 接口，并封装了每帧 Update /
-     * CollectRenderCommands / OnCreate / OnDestroy 的递归遍历逻辑。
-     *
-     * 渲染时通过 IRenderable 接口收集命令，不直接与 ISpriteBatch 耦合，
-     * 符合 RHI 原则。
+     * Scene 是 ECS 架构的核心协调者：
+     *   - 持有 EntityManager（实体/组件存储）
+     *   - 持有 System 列表（依次执行 OnUpdate）
+     *   - 同时维护 GameObject 句柄列表（向后兼容）
      */
     class Scene {
     public:
-        Scene() = default;
+        Scene();
         ~Scene();
 
-        // ── 对象管理 ──
+        // ── ECS 核心访问 ──
+        EntityManager& GetEntityManager() noexcept { return m_EntityManager; }
+        const EntityManager& GetEntityManager() const noexcept { return m_EntityManager; }
+
+        /** 设置/获取活跃 EntityManager（供 GameObject 句柄访问） */
+        static void SetActiveEntityManager(class EntityManager* em);
+        static class EntityManager* GetActiveEntityManager();
+
+        // ── System 管理 ──
+        void AddSystem(std::unique_ptr<System> system);
+        template<typename T, typename... Args>
+        T* AddSystem(Args&&... args) {
+            auto ptr = std::make_unique<T>(std::forward<Args>(args)...);
+            T* raw = ptr.get();
+            m_Systems.push_back(std::move(ptr));
+            return raw;
+        }
+        void ClearSystems();
+
+        // ── 对象管理（向后兼容） ──
         void AddObject(std::shared_ptr<GameObject> obj);
         bool RemoveObject(GameObject* obj);
         void Clear();
 
-        /** 按名称查找对象（递归搜索所有根对象及其子树） */
         GameObject* FindObject(const std::string& name);
         const GameObject* FindObject(const std::string& name) const;
 
         // ── 生命周期 ──
-        /** 调用所有根对象的 OnCreate（递归） */
         void OnCreate();
-        /** 每帧更新所有根对象（递归） */
         void Update(float32 dt);
-        /** 每帧调用所有根对象的 Render（递归） */
         void Render();
-        /** 调用所有根对象的 OnDestroy（递归） */
         void OnDestroy();
-
-        // ── 物理同步 ──
-        /**
-         * @brief 物理步进后调用：将所有物理体的位置/角度同步回 TransformComponent
-         *
-         * 遍历所有对象（递归），对每个挂载了 PhysicsComponent 的对象，
-         * 将其 IPhysicsBody 的位置和角度写回 TransformComponent。
-         * 调用时机：physicsWorld.Step(dt) 之后，Render 之前。
-         */
         void PostPhysicsUpdate();
-
-        // ── 渲染（RHI 版本） ──
-        /**
-         * @brief 收集所有对象的渲染命令到队列中
-         *
-         * 遍历所有根对象（及递归子树），对每个实现了 IRenderable 的对象
-         * 调用 CollectRenderCommands。Scene 不关心具体如何渲染。
-         */
         void CollectRenderCommands(IRenderQueue& queue);
 
         // ── 访问器 ──
@@ -69,6 +66,9 @@ namespace Engine {
         }
 
     private:
+        EntityManager m_EntityManager;
+
+        std::vector<std::unique_ptr<System>> m_Systems;
         std::vector<std::shared_ptr<GameObject>> m_Objects;
     };
 
