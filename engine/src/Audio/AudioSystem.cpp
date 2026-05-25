@@ -59,8 +59,16 @@ namespace Engine { namespace Audio {
         source->SetVolume(1.0f);
         source->SetPitch(1.0f);
 
-        // 开始播放（传 nullptr 因为 buffer 已通过 alSourcei 绑定）
-        source->Play(nullptr);
+        // 直接调用 OpenAL 播放（buffer 已通过 alSourcei 绑定，
+        // 不能传 nullptr 给 IAudioSource::Play，它会在 !buffer 处拒绝）
+        alSourcePlay(sourceHandle);
+        ALenum playErr = alGetError();
+        if (playErr != AL_NO_ERROR) {
+            std::cerr << "[Audio::PlayOneShot] Failed to play (error: "
+                      << playErr << ")" << std::endl;
+            engine.DestroySource(source.get());
+            return;
+        }
 
         // 加入跟踪列表
         s_ActiveOneShots.push_back({std::move(source), &clip});

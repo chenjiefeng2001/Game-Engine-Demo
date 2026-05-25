@@ -171,6 +171,7 @@ namespace Engine {
         shapeDef.material.friction    = def.friction;
         shapeDef.material.restitution = def.restitution;
         shapeDef.isSensor    = def.isSensor;
+        shapeDef.enableContactEvents = true;
 
         b2Filter filter = b2DefaultFilter();
         filter.categoryBits = static_cast<uint64_t>(def.categoryBits);
