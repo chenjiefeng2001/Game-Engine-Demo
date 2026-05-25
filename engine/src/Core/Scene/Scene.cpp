@@ -1,5 +1,6 @@
 #include "Engine/Core/Scene/Scene.h"
 #include "Engine/Core/RHI/IRenderQueue.h"
+#include "Engine/Core/Physics/PhysicsComponent.h"
 #include <algorithm>
 #include <functional>
 

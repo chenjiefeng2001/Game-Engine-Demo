@@ -20,6 +20,7 @@
 #include <Engine/UIManager.h>
 #include <Engine/Core/Scene/Scene.h>
 #include <Engine/Core/GameObject/GameObject.h>
+#include <Engine/Core/GameObject/SpriteComponent.h>
 #include <Engine/Core/Input.h>
 #include <Engine/Core/Physics/PhysicsComponent.h>
 #include <Engine/Core/Physics/IPhysicsWorld.h>

@@ -3,6 +3,7 @@
 #include "Engine/Core/RenderResources/Texture.h"
 #include "Engine/Core/Renderer/SpriteBatch.h"
 #include "Engine/Core/RHI/MathTypes.h"
+#include "Engine/Core/GameObject/Component.h"
 #include <memory>
 #include <string>
 
@@ -13,13 +14,16 @@ namespace Engine {
     /**
      * @brief 精灵组件 — 描述一个可渲染的 2D 精灵
      *
+     * 继承自 Component 基类，可通过 GameObject::AddComponent<SpriteComponent>()
+     * 动态挂载到任意游戏对象上。
+     *
      * RHI 原则：头文件只依赖 RHI/MathTypes.h（纯数据），不依赖 glm。
      * 所有数学运算在 .cpp 中使用 glm 实现。
      *
      * 与现有的 ISpriteBatch 系统配合使用，
      * 通过 SpriteData 结构将渲染数据提交给批渲染器。
      */
-    class SpriteComponent {
+    class SpriteComponent : public Component {
     public:
         SpriteComponent();
         explicit SpriteComponent(std::shared_ptr<Texture> texture);

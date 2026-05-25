@@ -1,6 +1,8 @@
 #include "Engine/InspectorPanel.h"
 #include "Engine/UiHelpers.h"
 #include "Engine/Core/GameObject/GameObject.h"
+#include "Engine/Core/GameObject/SpriteComponent.h"
+#include "Engine/Core/Physics/PhysicsComponent.h"
 
 #include <imgui.h>
 #include <cstring>

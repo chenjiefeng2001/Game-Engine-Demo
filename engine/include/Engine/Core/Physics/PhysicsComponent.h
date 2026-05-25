@@ -4,6 +4,9 @@
  * @file PhysicsComponent.h
  * @brief 物理组件 — 可挂载到 GameObject 上，使其受物理引擎驱动
  *
+ * 继承自 Component 基类，可通过 GameObject::AddComponent<PhysicsComponent>()
+ * 动态挂载到任意游戏对象上。
+ *
  * 设计原则：
  *   - 组件与 GameObject 生命周期解耦
  *   - 自动同步 TransformComponent <-> IPhysicsBody
@@ -17,16 +20,17 @@
  *   def.type = BodyType::Dynamic;
  *   def.shape.type = ShapeType::Box;
  *   def.shape.boxSize = {0.5f, 0.5f};
- *   obj->GetPhysics().CreateBody(physicsWorld, def);
+ *   obj->AddComponent<PhysicsComponent>()->CreateBody(physicsWorld, def);
  *
  *   // 每帧：
- *   physicsWorld->Step(dt);                          // 物理模拟
- *   obj->GetPhysics().SyncPhysicsToTransform(*obj); // Body → Transform
+ *   physicsWorld->Step(dt);
+ *   obj->GetComponent<PhysicsComponent>()->SyncPhysicsToTransform(...);
  * @endcode
  */
 
 #include "Engine/Core/Physics/IPhysicsBody.h"
 #include "Engine/Core/Physics/IPhysicsWorld.h"
+#include "Engine/Core/GameObject/Component.h"
 #include "Engine/Types.h"
 #include <memory>
 
@@ -34,7 +38,7 @@ namespace Engine {
 
     class GameObject;
 
-    class PhysicsComponent {
+    class PhysicsComponent : public Component {
     public:
         PhysicsComponent() = default;
         ~PhysicsComponent();
