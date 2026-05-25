@@ -1,4 +1,5 @@
 #include "Engine/Core/Scene/Scene.h"
+#include "Engine/Core/Scene/Serializer.h"
 #include "Engine/Core/RHI/IRenderQueue.h"
 #include "Engine/Core/Physics/PhysicsComponent.h"
 #include <algorithm>
@@ -197,6 +198,18 @@ namespace Engine {
                 };
             collectRecursive(*obj);
         }
+    }
+
+    // ──────────────────────────────────────────────
+    // 序列化/反序列化
+    // ──────────────────────────────────────────────
+
+    bool Scene::SaveToFile(const std::string& filePath) const {
+        return SceneSerializer::SaveToFile(*this, filePath);
+    }
+
+    bool Scene::LoadFromFile(const std::string& filePath) {
+        return SceneSerializer::LoadFromFile(*this, filePath);
     }
 
 } // namespace Engine

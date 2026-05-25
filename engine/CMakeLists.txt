@@ -5,6 +5,7 @@ file(GLOB_RECURSE ENGINE_HEADERS "include/*.h")
 add_library(EngineCore STATIC
     ${ENGINE_SOURCES}
     ${ENGINE_HEADERS}
+    include/Engine/Core/Scene/Serializer.h
 )
 
 target_include_directories(EngineCore
