@@ -1,46 +1,46 @@
 #include "Engine/Core/Audio/AudioClipManager.h"
+#include "Engine/Core/Resources/ResourceManager.h"
 #include <iostream>
 
 namespace Engine {
 
     // ============================================================
-    // Load — 加载音频剪辑（缓存优先）
+    // Load — 委托给统一 ResourceManager（缓存优先）
     // ============================================================
 
     std::shared_ptr<AudioClip> AudioClipManager::Load(const std::string& path) {
-        // 缓存命中直接返回
-        auto it = m_Cache.find(path);
-        if (it != m_Cache.end()) {
-            return it->second;
+        if (auto* rm = ResourceManager::Get()) {
+            return rm->LoadAudio(path);
         }
 
-        // 创建新 AudioClip 并加载
-        auto clip = std::make_shared<AudioClip>();
+        // 回退：ResourceManager 未初始化时的直接加载
+        auto clip = std::make_shared<AudioClip>(path);
         if (!clip->LoadFromFile(path)) {
             std::cerr << "[AudioClipManager] Failed to load audio: " << path << std::endl;
             return nullptr;
         }
-
-        // 加入缓存
-        m_Cache[path] = clip;
         return clip;
     }
 
     // ============================================================
-    // Get — 查询缓存
+    // Get — 从统一 ResourceManager 查询
     // ============================================================
 
     std::shared_ptr<AudioClip> AudioClipManager::Get(const std::string& path) const {
-        auto it = m_Cache.find(path);
-        return (it != m_Cache.end()) ? it->second : nullptr;
+        if (auto* rm = ResourceManager::Get()) {
+            return rm->Get<AudioClip>(path);
+        }
+        return nullptr;
     }
 
     // ============================================================
-    // Remove — 移除缓存
+    // Remove — 从统一 ResourceManager 移除
     // ============================================================
 
     void AudioClipManager::Remove(const std::string& path) {
-        m_Cache.erase(path);
+        if (auto* rm = ResourceManager::Get()) {
+            rm->Unload(path);
+        }
     }
 
     // ============================================================
@@ -48,7 +48,20 @@ namespace Engine {
     // ============================================================
 
     void AudioClipManager::Clear() {
-        m_Cache.clear();
+        if (auto* rm = ResourceManager::Get()) {
+            rm->UnloadAll();
+        }
+    }
+
+    // ============================================================
+    // Count — 从 ResourceManager 查询 AudioClip 缓存数量
+    // ============================================================
+
+    size_t AudioClipManager::Count() const {
+        if (auto* rm = ResourceManager::Get()) {
+            return rm->GetPathsByType(ResourceType::AudioClip).size();
+        }
+        return 0;
     }
 
     // ============================================================
@@ -56,7 +69,10 @@ namespace Engine {
     // ============================================================
 
     bool AudioClipManager::Has(const std::string& path) const {
-        return m_Cache.find(path) != m_Cache.end();
+        if (auto* rm = ResourceManager::Get()) {
+            return rm->Has(path);
+        }
+        return false;
     }
 
     // ============================================================
@@ -65,16 +81,17 @@ namespace Engine {
 
     std::shared_ptr<AudioClip> AudioClipManager::Reload(const std::string& path) {
         // 先移除旧缓存
-        m_Cache.erase(path);
+        if (auto* rm = ResourceManager::Get()) {
+            rm->Unload(path);
+            return rm->LoadAudio(path);
+        }
 
-        // 重新加载
-        auto clip = std::make_shared<AudioClip>();
+        // 回退
+        auto clip = std::make_shared<AudioClip>(path);
         if (!clip->LoadFromFile(path)) {
             std::cerr << "[AudioClipManager] Failed to reload audio: " << path << std::endl;
             return nullptr;
         }
-
-        m_Cache[path] = clip;
         return clip;
     }
 

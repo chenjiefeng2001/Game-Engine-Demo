@@ -9,6 +9,8 @@
 #include "Engine/Core/IRenderContext.h"
 #include "Engine/Core/Input.h"
 #include "Engine/Core/IWindow.h"
+#include "Engine/Core/Resources/ResourceManager.h"
+#include "Engine/Core/Resources/FileWatcher.h"
 #include "Engine/OpenGL/OpenGLContext.h"
 #include "Engine/UIManager.h"
 #include <GLFW/glfw3.h>
@@ -34,6 +36,22 @@ namespace Engine {
 		m_StartupQueue.Add("UI", StartupPhase::Graphics,
 			[this]() { return InitUI(); },
 			[]() { UIManager::Shutdown(); });
+
+		// ── 统一资源管理器（在窗口和图形上下文就绪后初始化） ──
+		m_StartupQueue.Add("ResourceManager", StartupPhase::Resources,
+			[this]() {
+				ResourceManager::Init(m_Factory);
+				return ResourceManager::Get() != nullptr;
+			},
+			[]() { ResourceManager::Shutdown(); });
+
+		// ── 文件监视器（用于热加载） ──
+		m_StartupQueue.Add("FileWatcher", StartupPhase::Resources,
+			[]() {
+				FileWatcher::Init();
+				return FileWatcher::Get() != nullptr;
+			},
+			[]() { FileWatcher::Shutdown(); });
 
 		m_StartupQueue.Add("Shader", StartupPhase::Resources,
 			[this]() { return InitShader(); });
@@ -176,6 +194,10 @@ namespace Engine {
 
 		OnStartup();
 
+		// ── 启动文件监视器（在资源加载完成后） ──
+		if (auto* fw = FileWatcher::Get())
+			fw->Start();
+
 		// ── 3. 主循环 ──
 		m_LastFrameTime = Time::GetTime();
 
@@ -205,6 +227,10 @@ namespace Engine {
 					accumulator -= fixedDt;
 				}
 			}
+
+			// ── 每帧检测文件变更，触发热加载 ──
+			if (auto* rm = ResourceManager::Get())
+				rm->PollHotReload();
 
 			// ── 构建 UI（仅在可见时执行） ──
 			if (auto* ui = UIManager::Get(); ui && ui->IsVisible())

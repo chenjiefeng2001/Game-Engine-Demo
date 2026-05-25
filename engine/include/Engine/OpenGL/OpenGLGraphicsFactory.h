@@ -43,6 +43,7 @@ namespace Engine {
 			IRenderContext& renderContext) override;
 
 
+		// ---- 获取内部 OpenGL 上下文（仅限 OpenGL 实现内部使用） ----
 		GladGLContext& GetGLContext() { return m_GL; }
 
 	private:

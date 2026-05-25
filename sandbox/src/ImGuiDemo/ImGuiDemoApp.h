@@ -98,6 +98,18 @@ namespace Engine {
                 ImGui::GetIO().DisplaySize.x,
                 ImGui::GetIO().DisplaySize.y);
             ImGui::Text("F1: 打开/关闭控制台");
+            ImGui::Separator();
+
+            // 全局缩放控制
+            float currentScale = UIManager::Get()->GetScale();
+            if (ImGui::SliderFloat("UI Scale", &currentScale, 0.5f, 2.0f, "%.1f"))
+            {
+                UIManager::Get()->SetScale(currentScale);
+            }
+            if (ImGui::Button("Reset Scale (1.0)"))
+            {
+                UIManager::Get()->SetScale(1.0f);
+            }
             ImGui::End();
         }
 

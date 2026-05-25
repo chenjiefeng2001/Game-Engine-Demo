@@ -1,9 +1,12 @@
 ﻿#pragma once
 #include <string>
+#include "Engine/Core/Resources/Resource.h"
 
 namespace Engine {
-	class Shader {
+	class Shader : public Resource {
 	public:
+		Shader(std::string path)
+			: Resource(std::move(path), ResourceType::Shader) {}
 		virtual ~Shader() = default;
 		virtual void Bind() const = 0;
 		virtual void Unbind() const = 0;

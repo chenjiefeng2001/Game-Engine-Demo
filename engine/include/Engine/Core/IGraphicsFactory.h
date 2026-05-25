@@ -16,7 +16,11 @@ namespace Engine {
 	class VertexArray;
 	class ISpriteBatch;
 
-//RHI API
+// ============================================================
+// RHI 抽象工厂 — 完全与具体图形 API 解耦
+// ============================================================
+// 不包含任何 OpenGL / Vulkan / DirectX 等具体 API 头文件。
+// 具体实现类（如 OpenGLGraphicsFactory）负责管理自己的 API 上下文。
 	class IGraphicsFactory
 	{
 	public:
@@ -28,7 +32,6 @@ namespace Engine {
 
 		virtual std::unique_ptr<IRenderContext> CreateRenderContext(
 			void* nativeWindowHandle) = 0;
-
 
 		// ---- GPU 资源 ----
 		virtual std::shared_ptr<Shader> CreateShader(

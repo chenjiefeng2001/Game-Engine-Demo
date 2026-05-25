@@ -14,11 +14,12 @@ AudioClip::~AudioClip() {
 }
 
 // ============================================================
-// 移动语义
+// 移动语义（需要显式移动 Resource 基类）
 // ============================================================
 
 AudioClip::AudioClip(AudioClip&& other) noexcept
-    : m_BufferID(other.m_BufferID)
+    : Resource(std::move(other))          // 移动 Resource 基类
+    , m_BufferID(other.m_BufferID)
     , m_Info(other.m_Info)
 {
     other.m_BufferID = 0;
@@ -28,6 +29,7 @@ AudioClip::AudioClip(AudioClip&& other) noexcept
 AudioClip& AudioClip::operator=(AudioClip&& other) noexcept {
     if (this != &other) {
         Release();
+        Resource::operator=(std::move(other));  // 移动 Resource 基类
         m_BufferID = other.m_BufferID;
         m_Info = other.m_Info;
         other.m_BufferID = 0;
@@ -42,15 +44,28 @@ AudioClip& AudioClip::operator=(AudioClip&& other) noexcept {
 
 bool AudioClip::LoadFromFile(const std::string& filePath) {
     Release();
+    SetState(ResourceState::Loading);
+
+    // 同步路径到 Resource 基类（若构造函数未提供路径）
+    if (GetPath().empty()) {
+        SetPath(filePath);
+    }
 
     AudioData data = AudioLoader::Load(filePath);
     if (!data.IsValid()) {
         std::cerr << "[AudioClip] Failed to load audio file: "
                   << filePath << std::endl;
+        SetState(ResourceState::Failed);
         return false;
     }
 
-    return LoadPCM(data);
+    if (!LoadPCM(data)) {
+        SetState(ResourceState::Failed);
+        return false;
+    }
+
+    SetState(ResourceState::Loaded);
+    return true;
 }
 
 // ============================================================
@@ -84,10 +99,17 @@ bool AudioClip::LoadFromMemory(const void* data, size_t dataSize,
     if (!audioData.IsValid()) {
         std::cerr << "[AudioClip] Failed to load audio from memory"
                   << std::endl;
+        SetState(ResourceState::Failed);
         return false;
     }
 
-    return LoadPCM(audioData);
+    if (!LoadPCM(audioData)) {
+        SetState(ResourceState::Failed);
+        return false;
+    }
+
+    SetState(ResourceState::Loaded);
+    return true;
 }
 
 // ============================================================
@@ -149,6 +171,7 @@ void AudioClip::Release() {
         m_BufferID = 0;
     }
     m_Info = {};
+    SetState(ResourceState::Unloaded);
 }
 
 } // namespace Engine
