@@ -211,11 +211,11 @@ struct WheelJointDef : JointDef {
 struct MouseJointDef : JointDef {
     MouseJointDef() { type = JointType::Mouse; bodyB = nullptr; }
 
-    IPhysicsBody* bodyA     = nullptr;  
+    // bodyA 继承自 JointDef（注意不要再声明 bodyA，否则会遮蔽基类成员）
     Vec2          target    = {0.0f, 0.0f};  
     float32       maxForce  = 1000.0f;  
-    float32       stiffness = 100.0f;    
-    float32       damping   = 1.0f;     
+    float32       stiffness = 100.0f;   
+    float32       damping   = 1.0f;      
 };
 
 // ============================================================

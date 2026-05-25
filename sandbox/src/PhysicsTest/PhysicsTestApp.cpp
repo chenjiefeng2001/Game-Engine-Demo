@@ -6,6 +6,7 @@
 #include <Engine/Box2D/Box2DPhysicsWorld.h>
 #include <GLFW/glfw3.h>
 #include <glm/glm.hpp>
+#include <glm/gtc/type_ptr.hpp>
 #include <iostream>
 #include <cmath>
 #include <cstdlib>
@@ -24,17 +25,35 @@ namespace Engine {
         m_Window = m_Factory.CreateWindow(m_WindowWidth, m_WindowHeight,
                                           "Physics Test (Box2D)");
 
+        // ── 窗口大小变化回调 ──
+        m_Window->SetEventCallback([this](Event& e) {
+            if (e.type == EventType::WindowResize) {
+                m_WindowWidth  = e.resize.width;
+                m_WindowHeight = e.resize.height;
+
+                // 重建相机（更新宽高比）
+                float32 aspect = static_cast<float32>(m_WindowWidth) /
+                                 static_cast<float32>(m_WindowHeight);
+                float32 viewHeight = 12.0f;
+                float32 viewWidth  = viewHeight * aspect;
+                m_Camera = std::make_unique<OrthographicCamera>(
+                    -viewWidth * 0.5f, viewWidth * 0.5f,
+                    -viewHeight * 0.5f, viewHeight * 0.5f);
+
+                // 更新 OpenGL 视口
+                auto* ctx = m_Window->GetContext();
+                if (ctx) ctx->OnResize(m_WindowWidth, m_WindowHeight);
+            }
+        });
+
         // ── 2. 创建正交相机 ──
         float32 aspect = static_cast<float32>(m_WindowWidth) /
                          static_cast<float32>(m_WindowHeight);
         float32 viewHeight = 12.0f;
         float32 viewWidth  = viewHeight * aspect;
-        m_CamLeft   = -viewWidth * 0.5f;
-        m_CamRight  =  viewWidth * 0.5f;
-        m_CamBottom = -viewHeight * 0.5f;
-        m_CamTop    =  viewHeight * 0.5f;
         m_Camera = std::make_unique<OrthographicCamera>(
-            m_CamLeft, m_CamRight, m_CamBottom, m_CamTop);
+            -viewWidth * 0.5f, viewWidth * 0.5f,
+            -viewHeight * 0.5f, viewHeight * 0.5f);
 
         // ── 3. 创建渲染资源 ──
         auto* context = m_Window->GetContext();
@@ -67,6 +86,14 @@ namespace Engine {
             groundDef.shape.boxSize = Vec2(8.0f, 0.5f);
             groundDef.friction = 0.5f;
             m_PhysicsWorld->CreateBody(groundDef);
+        }
+
+        // ── 创建鼠标锚点（隐藏的静态 body，MouseJoint 的 bodyA） ──
+        {
+            BodyDef anchorDef;
+            anchorDef.type = BodyType::Static;
+            anchorDef.position = Vec2(0.0f, 0.0f);
+            m_MouseAnchorBody = m_PhysicsWorld->CreateBody(anchorDef);
         }
 
         // ── 7. 创建多个带物理的箱子（动态刚体） ──
@@ -254,13 +281,16 @@ namespace Engine {
     }
 
     Vec2 PhysicsTestApp::ScreenToWorld(float32 screenX, float32 screenY) const {
-        // 将屏幕坐标映射到世界坐标（基于相机正交投影边界）
+        // 使用当前相机的视图投影矩阵计算（支持实时缩放/移动）
         float32 ndcX = 2.0f * screenX / static_cast<float32>(m_WindowWidth) - 1.0f;
         float32 ndcY = 1.0f - 2.0f * screenY / static_cast<float32>(m_WindowHeight);
 
-        float32 worldX = m_CamLeft + (ndcX + 1.0f) * 0.5f * (m_CamRight - m_CamLeft);
-        float32 worldY = m_CamBottom + (ndcY + 1.0f) * 0.5f * (m_CamTop - m_CamBottom);
-        return Vec2(worldX, worldY);
+        const float32* vp = m_Camera->GetViewProjectionMatrixPtr();
+        glm::mat4 viewProj = glm::make_mat4(vp);
+        glm::mat4 invVP = glm::inverse(viewProj);
+
+        glm::vec4 world = invVP * glm::vec4(ndcX, ndcY, 0.0f, 1.0f);
+        return Vec2(world.x / world.w, world.y / world.w);
     }
 
     void PhysicsTestApp::PrintDebugHelp() {
@@ -329,16 +359,18 @@ namespace Engine {
             bool leftDown = glfwGetMouseButton(window, GLFW_MOUSE_BUTTON_LEFT) == GLFW_PRESS;
 
             if (leftDown && !m_MouseDown) {
-                // 鼠标按下：光线投射寻找物体
+                // 鼠标按下：AABB 查询寻找鼠标位置下的物体
+                // (不能用 RayCast 零长度射线，Box2D 会断言失败)
                 m_MouseDown = true;
-                auto hits = m_PhysicsWorld->RayCast(m_MouseWorldPos, m_MouseWorldPos);
-                for (auto& hit : hits) {
-                    auto* body = const_cast<IPhysicsBody*>(
-                        static_cast<const IPhysicsBody*>(hit.body));
+                const float32 queryHalf = 0.1f;
+                auto hits = m_PhysicsWorld->QueryAABB(m_MouseWorldPos,
+                                                       Vec2(queryHalf, queryHalf));
+                for (auto* body : hits) {
                     if (body && body->GetType() == BodyType::Dynamic) {
-                        // 创建鼠标关节
+                        // 创建鼠标关节：bodyA = 静态锚点, bodyB = 被拖拽的物体
                         MouseJointDef jd;
-                        jd.bodyA = body;
+                        jd.bodyA = m_MouseAnchorBody.get();
+                        jd.bodyB = body;
                         jd.target = m_MouseWorldPos;
                         jd.maxForce = 500.0f;
                         jd.stiffness = 100.0f;
