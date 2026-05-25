@@ -1,149 +1,73 @@
-# ���� ԭ�е� Sandbox ����
+# ==============================================================================
+# 1. 统一的资源同步 Target (仅执行一次)
+# ==============================================================================
+# 专门负责把 assets 文件夹和 OpenAL32.dll 拷贝到当前输出目录
+add_custom_target(SyncSandboxResources ALL
+    # 删除旧的 assets 并拷贝新的 assets
+    COMMAND ${CMAKE_COMMAND} -E remove_directory "${CMAKE_CURRENT_BINARY_DIR}/assets"
+    COMMAND ${CMAKE_COMMAND} -E copy_directory "${PROJECT_SOURCE_DIR}/assets" "${CMAKE_CURRENT_BINARY_DIR}/assets"
+    
+    # 拷贝 OpenAL32.dll (使用 copy_if_different 避免重复覆盖)
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different "$<TARGET_FILE:OpenAL>" "${CMAKE_CURRENT_BINARY_DIR}/$<TARGET_FILE_NAME:OpenAL>"
+    
+    COMMENT "Syncing assets and OpenAL32.dll to sandbox directory (Single thread safe)..."
+)
+
+# ==============================================================================
+# 2. 定义各个测试可执行文件
+# ==============================================================================
+
+# Sandbox
 add_executable(Sandbox src/main.cpp)
 target_link_libraries(Sandbox PRIVATE EngineCore)
-add_custom_command(
-    TARGET Sandbox POST_BUILD
-    COMMAND ${CMAKE_COMMAND} -E remove_directory "$<TARGET_FILE_DIR:Sandbox>/assets"
-    COMMAND ${CMAKE_COMMAND} -E copy_directory
-            "${PROJECT_SOURCE_DIR}/assets"
-            "$<TARGET_FILE_DIR:Sandbox>/assets"
-    COMMENT "Syncing assets to build directory..."
-)
+add_dependencies(Sandbox SyncSandboxResources) # 添加依赖，确保编译前资源已准备好
 
-# ���� ������InputTest�������Ŀ�ִ���ļ�������
-add_executable(InputTest
-    src/InputTest/main.cpp
-    src/InputTest/InputTestApp.cpp
-)
+# InputTest
+add_executable(InputTest src/InputTest/main.cpp src/InputTest/InputTestApp.cpp)
 target_link_libraries(InputTest PRIVATE EngineCore)
-add_custom_command(
-    TARGET InputTest POST_BUILD
-    COMMAND ${CMAKE_COMMAND} -E remove_directory "$<TARGET_FILE_DIR:InputTest>/assets"
-    COMMAND ${CMAKE_COMMAND} -E copy_directory
-            "${PROJECT_SOURCE_DIR}/assets"
-            "$<TARGET_FILE_DIR:InputTest>/assets"
-    COMMENT "Syncing assets to build directory..."
-)
-add_executable(SpriteBatchTest
-    src/SpriteBatchTest/main.cpp
-    src/SpriteBatchTest/SpriteBatchTest.cpp
-)
+add_dependencies(InputTest SyncSandboxResources)
+
+# SpriteBatchTest
+add_executable(SpriteBatchTest src/SpriteBatchTest/main.cpp src/SpriteBatchTest/SpriteBatchTest.cpp)
 target_link_libraries(SpriteBatchTest PRIVATE EngineCore)
-add_custom_command(
-    TARGET SpriteBatchTest POST_BUILD
-    COMMAND ${CMAKE_COMMAND} -E remove_directory "$<TARGET_FILE_DIR:SpriteBatchTest>/assets"
-    COMMAND ${CMAKE_COMMAND} -E copy_directory
-            "${PROJECT_SOURCE_DIR}/assets"
-            "$<TARGET_FILE_DIR:SpriteBatchTest>/assets"
-    COMMENT "Syncing assets to build directory..."
-)
+add_dependencies(SpriteBatchTest SyncSandboxResources)
 
-# GameObjectTest — 测试 TransformComponent / SpriteComponent / GameObject 基类
-add_executable(GameObjectTest
-    src/GameObjectTest/main.cpp
-    src/GameObjectTest/GameObjectTest.cpp
-)
+# GameObjectTest
+add_executable(GameObjectTest src/GameObjectTest/main.cpp src/GameObjectTest/GameObjectTest.cpp)
 target_link_libraries(GameObjectTest PRIVATE EngineCore)
-add_custom_command(
-    TARGET GameObjectTest POST_BUILD
-    COMMAND ${CMAKE_COMMAND} -E remove_directory "$<TARGET_FILE_DIR:GameObjectTest>/assets"
-    COMMAND ${CMAKE_COMMAND} -E copy_directory
-            "${PROJECT_SOURCE_DIR}/assets"
-            "$<TARGET_FILE_DIR:GameObjectTest>/assets"
-    COMMENT "Syncing assets to build directory..."
-)
+add_dependencies(GameObjectTest SyncSandboxResources)
 
-# TextureManagerTest — 验证纹理缓存功能
-add_executable(TextureManagerTest
-    src/TextureManagerTest/main.cpp
-    src/TextureManagerTest/TextureManagerTest.cpp
-)
+# TextureManagerTest
+add_executable(TextureManagerTest src/TextureManagerTest/main.cpp src/TextureManagerTest/TextureManagerTest.cpp)
 target_link_libraries(TextureManagerTest PRIVATE EngineCore)
-add_custom_command(
-    TARGET TextureManagerTest POST_BUILD
-    COMMAND ${CMAKE_COMMAND} -E remove_directory "$<TARGET_FILE_DIR:TextureManagerTest>/assets"
-    COMMAND ${CMAKE_COMMAND} -E copy_directory
-            "${PROJECT_SOURCE_DIR}/assets"
-            "$<TARGET_FILE_DIR:TextureManagerTest>/assets"
-    COMMENT "Syncing assets to build directory..."
-)
+add_dependencies(TextureManagerTest SyncSandboxResources)
 
-# PhysicsTest — 测试 Box2D 物理集成（解耦后的物理系统）
-add_executable(PhysicsTest
-    src/PhysicsTest/main.cpp
-    src/PhysicsTest/PhysicsTestApp.cpp
-)
+# PhysicsTest
+add_executable(PhysicsTest src/PhysicsTest/main.cpp src/PhysicsTest/PhysicsTestApp.cpp)
 target_link_libraries(PhysicsTest PRIVATE EngineCore)
-add_custom_command(
-    TARGET PhysicsTest POST_BUILD
-    COMMAND ${CMAKE_COMMAND} -E remove_directory "$<TARGET_FILE_DIR:PhysicsTest>/assets"
-    COMMAND ${CMAKE_COMMAND} -E copy_directory
-            "${PROJECT_SOURCE_DIR}/assets"
-            "$<TARGET_FILE_DIR:PhysicsTest>/assets"
-    COMMENT "Syncing assets to build directory..."
-)
+add_dependencies(PhysicsTest SyncSandboxResources)
 
-# AudioTest — 测试 OpenAL Soft 音频集成
-add_executable(AudioTest
-    src/AudioTest/main.cpp
-    src/AudioTest/AudioTestApp.cpp
-)
+# AudioTest
+add_executable(AudioTest src/AudioTest/main.cpp src/AudioTest/AudioTestApp.cpp)
 target_link_libraries(AudioTest PRIVATE EngineCore)
+add_dependencies(AudioTest SyncSandboxResources)
 
-# 编译后自动复制 OpenAL32.dll 到可执行文件目录
-add_custom_command(TARGET AudioTest POST_BUILD
-    COMMAND ${CMAKE_COMMAND} -E copy_if_different
-        "$<TARGET_FILE_DIR:OpenAL>/$<TARGET_FILE_NAME:OpenAL>"
-        "$<TARGET_FILE_DIR:AudioTest>/$<TARGET_FILE_NAME:OpenAL>"
-    COMMENT "Copying OpenAL32.dll..."
-)
-
-# ImGuiDemo — 演示 Dear ImGui 集成
-add_executable(ImGuiDemo
-    src/ImGuiDemo/main.cpp
-)
+# ImGuiDemo
+add_executable(ImGuiDemo src/ImGuiDemo/main.cpp)
 target_link_libraries(ImGuiDemo PRIVATE EngineCore)
-add_custom_command(
-    TARGET ImGuiDemo POST_BUILD
-    COMMAND ${CMAKE_COMMAND} -E remove_directory "$<TARGET_FILE_DIR:ImGuiDemo>/assets"
-    COMMAND ${CMAKE_COMMAND} -E copy_directory
-            "${PROJECT_SOURCE_DIR}/assets"
-            "$<TARGET_FILE_DIR:ImGuiDemo>/assets"
-    COMMENT "Syncing assets to build directory..."
-)
+add_dependencies(ImGuiDemo SyncSandboxResources)
 
-# CollisionAudioTest — 测试碰撞音效（不同材质不同声音）
-add_executable(CollisionAudioTest
-    src/CollisionAudioTest/main.cpp
-    src/CollisionAudioTest/CollisionAudioTestApp.cpp
-)
+# CollisionAudioTest
+add_executable(CollisionAudioTest src/CollisionAudioTest/main.cpp src/CollisionAudioTest/CollisionAudioTestApp.cpp)
 target_link_libraries(CollisionAudioTest PRIVATE EngineCore)
-add_custom_command(
-    TARGET CollisionAudioTest POST_BUILD
-    COMMAND ${CMAKE_COMMAND} -E remove_directory "$<TARGET_FILE_DIR:CollisionAudioTest>/assets"
-    COMMAND ${CMAKE_COMMAND} -E copy_directory
-            "${PROJECT_SOURCE_DIR}/assets"
-            "$<TARGET_FILE_DIR:CollisionAudioTest>/assets"
-    COMMAND ${CMAKE_COMMAND} -E copy_if_different
-        "$<TARGET_FILE_DIR:OpenAL>/$<TARGET_FILE_NAME:OpenAL>"
-        "$<TARGET_FILE_DIR:CollisionAudioTest>/$<TARGET_FILE_NAME:OpenAL>"
-    COMMENT "Syncing assets and copying OpenAL32.dll..."
-)
+add_dependencies(CollisionAudioTest SyncSandboxResources)
 
-# AudioPhysicsSandbox — 背景音乐 + 键盘音效 + 拖拽碰撞发声 + 资源追踪
-add_executable(AudioPhysicsSandbox
-    src/AudioPhysicsSandbox/main.cpp
-    src/AudioPhysicsSandbox/AudioPhysicsSandboxApp.cpp
-)
+# ImGuiTest
+add_executable(ImGuiTest src/ImGuiTest/main.cpp)
+target_link_libraries(ImGuiTest PRIVATE EngineCore)
+add_dependencies(ImGuiTest SyncSandboxResources)
+
+# AudioPhysicsSandbox
+add_executable(AudioPhysicsSandbox src/AudioPhysicsSandbox/main.cpp src/AudioPhysicsSandbox/AudioPhysicsSandboxApp.cpp)
 target_link_libraries(AudioPhysicsSandbox PRIVATE EngineCore)
-add_custom_command(
-    TARGET AudioPhysicsSandbox POST_BUILD
-    COMMAND ${CMAKE_COMMAND} -E remove_directory "$<TARGET_FILE_DIR:AudioPhysicsSandbox>/assets"
-    COMMAND ${CMAKE_COMMAND} -E copy_directory
-            "${PROJECT_SOURCE_DIR}/assets"
-            "$<TARGET_FILE_DIR:AudioPhysicsSandbox>/assets"
-    COMMAND ${CMAKE_COMMAND} -E copy_if_different
-        "$<TARGET_FILE_DIR:OpenAL>/$<TARGET_FILE_NAME:OpenAL>"
-        "$<TARGET_FILE_DIR:AudioPhysicsSandbox>/$<TARGET_FILE_NAME:OpenAL>"
-    COMMENT "Syncing assets and copying OpenAL32.dll..."
-)
+add_dependencies(AudioPhysicsSandbox SyncSandboxResources)

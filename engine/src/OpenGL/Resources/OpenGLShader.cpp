@@ -9,7 +9,8 @@
 namespace Engine {
 
 	OpenGLShader::OpenGLShader(const std::string& vertexPath, const std::string& fragmentPath, GladGLContext& gl)
-		: m_GL(gl) {
+		: Shader(vertexPath + "|" + fragmentPath), m_GL(gl)
+		, m_VertexPath(vertexPath), m_FragmentPath(fragmentPath) {
 
 		std::string vSource = ReadFile(vertexPath);
 		std::string fSource = ReadFile(fragmentPath);
@@ -20,14 +21,11 @@ namespace Engine {
 		m_RendererID = m_GL.CreateProgram();
 		m_GL.AttachShader(m_RendererID, vs);
 		m_GL.AttachShader(m_RendererID, fs);
-		m_GL.LinkProgram(m_RendererID);
 
-		int success;
-		m_GL.GetProgramiv(m_RendererID, GL_LINK_STATUS, &success);
-		if (!success) {
-			char infoLog[512];
-			m_GL.GetProgramInfoLog(m_RendererID, 512, NULL, infoLog);
-			std::cerr << "Shader Linking Error:\n" << infoLog << std::endl;
+		if (!LinkProgram()) {
+			SetState(ResourceState::Failed);
+		} else {
+			SetState(ResourceState::Loaded);
 		}
 
 		m_GL.DeleteShader(vs);
@@ -35,7 +33,9 @@ namespace Engine {
 	}
 
 	OpenGLShader::~OpenGLShader() {
-		m_GL.DeleteProgram(m_RendererID);
+		if (m_RendererID) {
+			m_GL.DeleteProgram(m_RendererID);
+		}
 	}
 
 	void OpenGLShader::Bind() const { m_GL.UseProgram(m_RendererID); }
@@ -69,8 +69,80 @@ namespace Engine {
 		}
 		return id;
 	}
+
+	bool OpenGLShader::LinkProgram() {
+		m_GL.LinkProgram(m_RendererID);
+
+		int success;
+		m_GL.GetProgramiv(m_RendererID, GL_LINK_STATUS, &success);
+		if (!success) {
+			char infoLog[512];
+			m_GL.GetProgramInfoLog(m_RendererID, 512, NULL, infoLog);
+			std::cerr << "Shader Linking Error:\n" << infoLog << std::endl;
+			return false;
+		}
+		return true;
+	}
+
 	void OpenGLShader::SetMat4(const std::string& name, const float* data) {
 		GLint location = m_GL.GetUniformLocation(m_RendererID, name.c_str());
 		m_GL.UniformMatrix4fv(location, 1, GL_FALSE, data);
 	}
+
+	// ============================================================
+	// 热加载：重新编译着色器
+	// ============================================================
+
+	bool OpenGLShader::Reload() {
+		GLuint oldProgram = m_RendererID;
+		m_RendererID = 0;
+
+		std::string vSource = ReadFile(m_VertexPath);
+		std::string fSource = ReadFile(m_FragmentPath);
+
+		if (vSource.empty() || fSource.empty()) {
+			std::cerr << "[HotReload] Failed to read shader files" << std::endl;
+			m_RendererID = oldProgram;  // 恢复旧程序
+			return false;
+		}
+
+		uint32 vs = CompileShader(GL_VERTEX_SHADER, vSource);
+		uint32 fs = CompileShader(GL_FRAGMENT_SHADER, fSource);
+
+		if (!vs || !fs) {
+			// 编译失败，恢复旧程序
+			m_RendererID = oldProgram;
+			if (vs) m_GL.DeleteShader(vs);
+			if (fs) m_GL.DeleteShader(fs);
+			return false;
+		}
+
+		GLuint newProgram = m_GL.CreateProgram();
+		m_GL.AttachShader(newProgram, vs);
+		m_GL.AttachShader(newProgram, fs);
+		m_RendererID = newProgram;
+
+		if (!LinkProgram()) {
+			// 链接失败，恢复旧程序
+			m_GL.DeleteProgram(newProgram);
+			m_RendererID = oldProgram;
+			m_GL.DeleteShader(vs);
+			m_GL.DeleteShader(fs);
+			return false;
+		}
+
+		m_GL.DeleteShader(vs);
+		m_GL.DeleteShader(fs);
+
+		// 释放旧程序
+		if (oldProgram) {
+			m_GL.DeleteProgram(oldProgram);
+		}
+
+		SetState(ResourceState::Loaded);
+		std::cout << "[HotReload] Shader reloaded: "
+				  << m_VertexPath << " + " << m_FragmentPath << std::endl;
+		return true;
+	}
+
 }

@@ -16,9 +16,11 @@ namespace Engine {
 		virtual uint32 GetWidth() const override { return m_Width; }
 		virtual uint32 GetHeight() const override { return m_Height; }
 
+		// ── 热加载 ──
+		bool Reload() override;
+
 	private:
 		GladGLContext& m_GL;
-		std::string m_Path;
 		uint32 m_Width = 0, m_Height = 0;
 		GLuint m_RendererID = 0;
 	};

@@ -2,25 +2,25 @@
 
 /**
  * @file AudioClipManager.h
- * @brief 音频剪辑资源管理器 — 缓存已加载的 AudioClip，避免重复加载
+ * @brief 音频剪辑资源管理器 — 委托给统一 ResourceManager
  *
- * 设计原则（与 TextureManager 一致）：
- *   - 非单例，通过依赖注入使用
- *   - 内部维护路径 → AudioClip 的缓存映射
- *   - 线程安全：调用方需保证外部同步（与 TextureManager 一致）
+ * AudioClipManager 现在是 ResourceManager 的音频专用外观（Facade），
+ * 所有缓存和生命周期管理由统一的 ResourceManager 处理。
+ * 保留此类的目的是为已有代码提供向后兼容的 API。
  *
- * 使用方式：
+ * 推荐使用方式（新代码）：
+ * @code
+ *   auto clip = ResourceManager::Get()->Load<AudioClip>("sounds/explosion.wav");
+ * @endcode
+ *
+ * 兼容使用方式（已有代码）：
  * @code
  *   AudioClipManager clipMgr;
  *   auto clip = clipMgr.Load("sounds/explosion.wav");
- *
- *   AudioSourceComponent audio(engine->CreateSource());
- *   audio.Play(*clip);
  * @endcode
  */
 
 #include "Engine/Core/Audio/AudioClip.h"
-#include <unordered_map>
 #include <memory>
 #include <string>
 
@@ -35,56 +35,28 @@ namespace Engine {
         AudioClipManager& operator=(const AudioClipManager&) = delete;
 
         /**
-         * @brief 加载音频剪辑（缓存优先）
+         * @brief 加载音频剪辑（委托给 ResourceManager）
          * @param path 音频文件路径，支持 .wav / .ogg
-         * @return 若已缓存则直接返回，否则加载并缓存
-         *
-         * 内部调用 AudioLoader::Load() 解码文件，
-         * 然后将 PCM 数据上传到 OpenAL 缓冲区。
          */
         std::shared_ptr<AudioClip> Load(const std::string& path);
 
-        /**
-         * @brief 按路径查询已缓存的音频剪辑
-         * @param path 文件路径
-         * @return 若已缓存返回共享指针，否则返回 nullptr
-         */
+        /** @brief 从 ResourceManager 查询已缓存的音频剪辑 */
         std::shared_ptr<AudioClip> Get(const std::string& path) const;
 
-        /**
-         * @brief 从缓存中移除指定音频剪辑
-         * @param path 文件路径
-         *
-         * 当最后一个 shared_ptr 销毁时，AudioClip 自动释放 OpenAL 缓冲区。
-         */
+        /** @brief 从 ResourceManager 移除指定音频剪辑 */
         void Remove(const std::string& path);
 
-        /**
-         * @brief 清空所有缓存音频剪辑
-         *
-         * 所有已加载的剪辑将被释放（前提是外部没有额外的 shared_ptr 持有）。
-         */
+        /** @brief 清空 ResourceManager 的所有缓存 */
         void Clear();
 
-        /**
-         * @brief 获取当前缓存的音频剪辑数量
-         */
-        size_t Count() const { return m_Cache.size(); }
+        /** @brief 获取 ResourceManager 中 AudioClip 类型的缓存数量 */
+        size_t Count() const;
 
-        /**
-         * @brief 判断指定路径是否已缓存
-         */
+        /** @brief 判断 ResourceManager 中是否已缓存指定路径 */
         bool Has(const std::string& path) const;
 
-        /**
-         * @brief 重新加载指定音频剪辑（强制重新从磁盘加载）
-         * @param path 文件路径
-         * @return 重新加载后的 AudioClip
-         */
+        /** @brief 强制重新加载指定音频剪辑 */
         std::shared_ptr<AudioClip> Reload(const std::string& path);
-
-    private:
-        std::unordered_map<std::string, std::shared_ptr<AudioClip>> m_Cache;
     };
 
 } // namespace Engine
