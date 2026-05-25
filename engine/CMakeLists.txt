@@ -1,6 +1,41 @@
 
-file(GLOB_RECURSE ENGINE_SOURCES "src/*.cpp")
-file(GLOB_RECURSE ENGINE_HEADERS "include/*.h")
+# 精确 GLOB + CONFIGURE_DEPENDS（新文件自动发现，CMake 3.12+）
+file(GLOB ENGINE_SOURCES CONFIGURE_DEPENDS
+    src/*.cpp
+    src/Audio/*.cpp
+    src/Box2D/*.cpp
+    src/Core/*.cpp
+    src/Core/GameObject/*.cpp
+    src/Core/Physics/*.cpp
+    src/Core/RenderResources/*.cpp
+    src/Core/Resources/*.cpp
+    src/Core/Renderer/*.cpp
+    src/Core/RHI/*.cpp
+    src/Core/Scene/*.cpp
+    src/OpenAL/*.cpp
+    src/OpenGL/*.cpp
+    src/OpenGL/Resources/*.cpp
+    src/Platform/*.cpp
+    src/Platform/glfw/*.cpp
+)
+file(GLOB ENGINE_HEADERS CONFIGURE_DEPENDS
+    include/*.h
+    include/Engine/*.h
+    include/Engine/Core/*.h
+    include/Engine/Core/GameObject/*.h
+    include/Engine/Core/Physics/*.h
+    include/Engine/Core/RenderResources/*.h
+    include/Engine/Core/Resources/*.h
+    include/Engine/Core/Renderer/*.h
+    include/Engine/Core/RHI/*.h
+    include/Engine/Core/Scene/*.h
+    include/Engine/Core/Audio/*.h
+    include/Engine/Audio/*.h
+    include/Engine/OpenGL/*.h
+    include/Engine/OpenAL/*.h
+    include/Engine/Box2D/*.h
+    include/Engine/Platform/*.h
+)
 
 add_library(EngineCore STATIC
     ${ENGINE_SOURCES}
