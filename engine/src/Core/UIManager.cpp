@@ -13,6 +13,7 @@
 #include <GLFW/glfw3.h>
 
 #include <iostream>
+#include <filesystem>
 #include <string>
 #include <cstdio>
 #include <cmath>
@@ -207,10 +208,8 @@ namespace Engine {
 
         for (auto fp : fallbackPaths)
         {
-            FILE* f = fopen(fp, "r");
-            if (f)
+            if (std::filesystem::exists(fp))
             {
-                fclose(f);
                 path = fp;
                 break;
             }
