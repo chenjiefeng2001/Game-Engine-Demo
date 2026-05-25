@@ -18,8 +18,18 @@ namespace Engine {
 
         GladGLContext& GetGL() { return m_GL; }
 
+        // ── 统计 ──
+        virtual uint32 GetAndResetDrawCallCount() override
+        {
+            uint32 count = m_DrawCallCount;
+            m_DrawCallCount = 0;
+            return count;
+        }
+
     private:
+        friend class PerformanceWindow;  // 允许直接访问统计
         GLFWwindow* m_WindowHandle;
         GladGLContext& m_GL;
+        uint32 m_DrawCallCount = 0;
     };
 }

@@ -10,9 +10,9 @@
 #include "Engine/Core/Input.h"
 #include "Engine/Core/IWindow.h"
 #include "Engine/OpenGL/OpenGLContext.h"
+#include "Engine/UIManager.h"
 #include <GLFW/glfw3.h>
 #include <glad/gl.h>
-#include <imgui.h>
 #include <iostream>
 
 namespace Engine {
@@ -31,9 +31,9 @@ namespace Engine {
 			[this]() { return InitCamera(); });
 
 
-		m_StartupQueue.Add("ImGui", StartupPhase::Graphics,
-			[this]() { return InitImGui(); },
-			[this]() { m_ImGuiManager.Shutdown(); });
+		m_StartupQueue.Add("UI", StartupPhase::Graphics,
+			[this]() { return InitUI(); },
+			[]() { UIManager::Shutdown(); });
 
 		m_StartupQueue.Add("Shader", StartupPhase::Resources,
 			[this]() { return InitShader(); });
@@ -124,10 +124,11 @@ namespace Engine {
 		return true;
 	}
 
-	bool Application::InitImGui() {
+	bool Application::InitUI() {
 		GLFWwindow* nativeWindow = static_cast<GLFWwindow*>(m_Window->GetNativeHandle());
 		OpenGLContext* glContext = static_cast<OpenGLContext*>(m_Window->GetContext());
-		return m_ImGuiManager.Init(nativeWindow, glContext->GetGL());
+		UIManager::Init(nativeWindow, glContext->GetGL());
+		return UIManager::Get() != nullptr && UIManager::Get()->IsInitialized();
 	}
 
 
@@ -187,13 +188,9 @@ namespace Engine {
 
 			m_Window->PollEvents();
 
-			m_ImGuiManager.NewFrame();
-
-			{
-				ImGuiIO& io = ImGui::GetIO();
-				Input::SetBlockInput(io.WantCaptureMouse, io.WantCaptureKeyboard);
-			}
-
+			// ── UI 帧开始（内含 NewFrame + 输入抢占） ──
+			if (auto* ui = UIManager::Get())
+				ui->Begin();
 
 			if (m_LoopMode == LoopMode::Variable) {
 				InternalUpdate(dt);
@@ -209,11 +206,33 @@ namespace Engine {
 				}
 			}
 
-			OnImGui();
+			// ── 构建 UI（仅在可见时执行） ──
+			if (auto* ui = UIManager::Get(); ui && ui->IsVisible())
+			{
+				// 收集渲染统计（在构建 UI 前，让 DrawCall 计数反映上一帧的数据）
+				uint32 drawCalls = m_Window->GetContext()->GetAndResetDrawCallCount();
+
+				m_PerfWindow.FeedStats(
+					dt * 1000.0f,         
+					drawCalls,              
+					0,                      
+					0,                       
+					0,                      
+					0                        
+				);
+
+				// 绘制性能监控窗口
+				m_PerfWindow.OnImGui();
+
+				// 子类自定义 UI
+				OnImGui();
+			}
 
 			InternalRender();
 
-			m_ImGuiManager.Render();
+			// ── UI 帧结束 + 渲染 ──
+			if (auto* ui = UIManager::Get())
+				ui->End();
 
 			m_Window->OnUpdate();
 		}
