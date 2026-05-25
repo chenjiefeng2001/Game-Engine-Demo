@@ -1,4 +1,5 @@
 #include "Engine/Core/GameObject/SpriteComponent.h"
+#include "Engine/Core/GameObject/GameObject.h"
 #include "Engine/Core/RenderResources/TextureManager.h"
 #include <glm/glm.hpp>
 #include <glm/gtc/matrix_transform.hpp>
@@ -83,6 +84,46 @@ namespace Engine {
         data.colorA = m_Color.w;
 
         return data;
+    }
+
+    // ============================================================
+    // CollectRenderCommands — RHI 渲染接口
+    // ============================================================
+
+    void SpriteComponent::CollectRenderCommands(IRenderQueue& queue) {
+        if (!m_Visible || !IsEnabled())
+            return;
+
+        auto* owner = GetOwner();
+        if (!owner)
+            return;
+
+        RenderCommand cmd;
+
+        // 世界矩阵
+        const Mat4& world = owner->GetTransform().GetWorldMatrix();
+        std::memcpy(cmd.worldMatrix, world.Data(), sizeof(cmd.worldMatrix));
+
+        // UV
+        cmd.uv[0] = m_UVX;
+        cmd.uv[1] = m_UVY;
+        cmd.uv[2] = m_UVW;
+        cmd.uv[3] = m_UVH;
+
+        // 颜色
+        cmd.color[0] = m_Color.x;
+        cmd.color[1] = m_Color.y;
+        cmd.color[2] = m_Color.z;
+        cmd.color[3] = m_Color.w;
+
+        // 纹理
+        cmd.texture = m_Texture;
+
+        // 排序
+        cmd.sortingLayer = m_SortingLayer;
+        cmd.orderInLayer = m_OrderInLayer;
+
+        queue.Push(cmd);
     }
 
 } // namespace Engine

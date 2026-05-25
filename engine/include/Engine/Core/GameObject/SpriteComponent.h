@@ -3,6 +3,8 @@
 #include "Engine/Core/RenderResources/Texture.h"
 #include "Engine/Core/Renderer/SpriteBatch.h"
 #include "Engine/Core/RHI/MathTypes.h"
+#include "Engine/Core/RHI/RenderCommand.h"
+#include "Engine/Core/RHI/IRenderQueue.h"
 #include "Engine/Core/GameObject/Component.h"
 #include <memory>
 #include <string>
@@ -71,6 +73,9 @@ namespace Engine {
         // ── 可见性 ──
         void SetVisible(bool visible) { m_Visible = visible; }
         bool IsVisible() const noexcept { return m_Visible; }
+
+        // ── 渲染（RHI：通过抽象接口提交纯数据） ──
+        void CollectRenderCommands(IRenderQueue& queue) override;
 
         // ── 转换为 SpriteData（给 ISpriteBatch 使用） ──
         /**
