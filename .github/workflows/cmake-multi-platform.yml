@@ -3,8 +3,6 @@ name: Advanced C++ CI
 on:
   push:
     branches: [ "master" ]
-    # 高级逻辑 1：精准路径过滤
-    # 只有以下文件发生变动，才会触发自动编译
     paths:
       - '**.cpp'
       - '**.h'
@@ -12,9 +10,9 @@ on:
       - '**.cc'
       - '**.cxx'
       - 'CMakeLists.txt'
-      - '**.cmake'          # 包含 cmake 模块文件
-      - 'third_party/**'     # 第三方库变动也需要重新编译
-      - '.github/workflows/cmake-multi-platform.yml' # 脚本自身变动也触发
+      - '**.cmake'
+      - 'third_party/**'
+      - '.github/workflows/**' # 修改：兼容脚本重命名
 
   pull_request:
     branches: [ "master" ]
@@ -26,16 +24,10 @@ on:
       - '**.cmake'
       - 'third_party/**'
 
-  # 高级逻辑 2：允许手动强制触发
-  # 有时候即使没改代码（比如想测试环境），也可以在 GitHub 网页手动点击运行
   workflow_dispatch:
 
 jobs:
   build:
-    # 逻辑 3：通过 Commit Message 动态跳过
-    # 如果某次提交虽然改了代码，但你非常确定不需要编译，
-    # 可以在提交信息里加 [skip ci]，GitHub 会自动识别。
-    
     runs-on: ${{ matrix.os }}
 
     strategy:
@@ -66,7 +58,7 @@ jobs:
     - name: Checkout Code
       uses: actions/checkout@v4
       with:
-        submodules: recursive
+        submodules: recursive # 这里非常正确，保持不变
         fetch-depth: 0
 
     - name: Install Linux Dependencies
@@ -90,6 +82,7 @@ jobs:
         -DCMAKE_CXX_COMPILER=${{ matrix.cpp_compiler }}
         -DCMAKE_C_COMPILER=${{ matrix.c_compiler }}
         -DCMAKE_BUILD_TYPE=${{ matrix.build_type }}
+        -Wno-dev  # 修改点：添加此参数以忽略 box2d 的 CMake Deprecation 警告
         -S ${{ github.workspace }}
 
     - name: Build
