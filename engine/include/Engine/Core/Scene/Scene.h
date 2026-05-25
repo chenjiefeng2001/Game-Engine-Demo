@@ -120,6 +120,26 @@ namespace Engine {
         // ── 渲染 ──
         void CollectRenderCommands(IRenderQueue& queue);
 
+        // ── 序列化/反序列化 ──
+        /**
+         * @brief 将场景保存到文件（元数据文本格式）
+         * @param filePath 输出文件路径
+         * @return 是否成功
+         *
+         * 保存场景属性、所有 GameObject、组件数据、资源路径引用。
+         * 可通过 LoadFromFile 重建完整场景。
+         */
+        bool SaveToFile(const std::string& filePath) const;
+
+        /**
+         * @brief 从文件加载场景（重建所有 GameObject 和组件）
+         * @param filePath 输入文件路径
+         * @return 是否成功
+         *
+         * 自动通过 ResourceManager 加载引用的纹理等资源。
+         */
+        bool LoadFromFile(const std::string& filePath);
+
         // ── 访问器 ──
         const std::vector<std::shared_ptr<GameObject>>& GetObjects() const noexcept {
             return m_Objects;
