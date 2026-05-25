@@ -38,6 +38,7 @@ namespace Engine {
 		if (indexBuffer)
 		{
 			m_GL.DrawElements(GL_TRIANGLES, indexBuffer->GetCount(), GL_UNSIGNED_INT, nullptr);
+			++m_DrawCallCount;
 		}
 	}
 	void OpenGLContext::OnResize(int width, int height) {

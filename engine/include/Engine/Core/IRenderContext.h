@@ -15,5 +15,9 @@ namespace Engine {
 		virtual void DrawIndexed(const std::shared_ptr<VertexArray>& va) = 0;
 
 		virtual void OnResize(int32 width, int32 height) = 0;
+
+		// ── 统计 ──
+		/** 获取并重置本帧的 DrawCall 次数 */
+		virtual uint32 GetAndResetDrawCallCount() { return 0; }
 	};
 }
