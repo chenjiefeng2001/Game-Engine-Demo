@@ -9,105 +9,71 @@ namespace Engine {
     // 工具函数
     // ============================================================
 
-    static Vec2 FromB2(const b2Vec2& v) {
+    static Vec2 FromB2(b2Vec2 v) {
         return Vec2(v.x, v.y);
     }
 
-    ContactInfo Box2DContactListener::MakeContactInfo(b2Contact* contact) {
+    // ============================================================
+    // MakeContactInfo — 从 BeginTouch 事件构建
+    // ============================================================
+
+    ContactInfo Box2DContactListener::MakeContactInfo(const b2ContactBeginTouchEvent& event) {
         ContactInfo info;
 
-        // 获取碰撞的两个刚体
-        b2Body* bodyA = contact->GetFixtureA()->GetBody();
-        b2Body* bodyB = contact->GetFixtureB()->GetBody();
+        info.bodyA = GetBodyFromShape(event.shapeIdA);
+        info.bodyB = GetBodyFromShape(event.shapeIdB);
 
-        info.bodyA = reinterpret_cast<IPhysicsBody*>(bodyA->GetUserData().pointer);
-        info.bodyB = reinterpret_cast<IPhysicsBody*>(bodyB->GetUserData().pointer);
-
-        // 获取碰撞点和法线
-        b2Manifold* manifold = contact->GetManifold();
-        if (manifold && manifold->pointCount > 0) {
-            b2WorldManifold worldManifold;
-            contact->GetWorldManifold(&worldManifold);
-
-            info.point  = FromB2(worldManifold.points[0]);
-            info.normal = FromB2(worldManifold.normal);
-        }
+        info.point  = Vec2(0.0f, 0.0f);
+        info.normal = Vec2(0.0f, 1.0f);
 
         return info;
     }
 
-    void* Box2DContactListener::GetBodyUserData(b2Contact* contact, bool isA) {
-        b2Body* body = isA
-            ? contact->GetFixtureA()->GetBody()
-            : contact->GetFixtureB()->GetBody();
-        return body ? reinterpret_cast<void*>(body->GetUserData().pointer) : nullptr;
+    // ============================================================
+    // MakeContactInfoEnd — 从 EndTouch 事件构建
+    // ============================================================
+
+    ContactInfo Box2DContactListener::MakeContactInfoEnd(const b2ContactEndTouchEvent& event) {
+        ContactInfo info;
+
+        info.bodyA = GetBodyFromShape(event.shapeIdA);
+        info.bodyB = GetBodyFromShape(event.shapeIdB);
+
+        info.point  = Vec2(0.0f, 0.0f);
+        info.normal = Vec2(0.0f, 1.0f);
+
+        return info;
     }
 
     // ============================================================
-    // b2ContactListener 回调
+    // MakeContactPersistData — 从 HitEvent 构建（含冲量）
     // ============================================================
 
-    void Box2DContactListener::BeginContact(b2Contact* contact) {
-        if (!contact) return;
-
-        ContactInfo info = MakeContactInfo(contact);
-        m_World.OnContactBegin(info);
-    }
-
-    void Box2DContactListener::EndContact(b2Contact* contact) {
-        if (!contact) return;
-
-        ContactInfo info = MakeContactInfo(contact);
-        m_World.OnContactEnd(info);
-    }
-
-    void Box2DContactListener::PreSolve(b2Contact* contact,
-                                        const b2Manifold* /*oldManifold*/) {
-        if (!contact) return;
-
-        // 获取两个 body 的 userData（即 IPhysicsBody*）
-        void* bodyA = GetBodyUserData(contact, true);
-        void* bodyB = GetBodyUserData(contact, false);
-
-        // 调用滤波回调决定是否允许碰撞
-        if (!m_World.OnContactPreSolve(bodyA, bodyB)) {
-            contact->SetEnabled(false);
-        }
-    }
-
-    void Box2DContactListener::PostSolve(b2Contact* contact,
-                                         const b2ContactImpulse* impulse) {
-        if (!contact || !impulse) return;
-
-        ContactPersistData data = MakeContactPersistData(contact, impulse);
-        m_World.OnContactPersist(data);
-    }
-
-    ContactPersistData Box2DContactListener::MakeContactPersistData(
-        b2Contact* contact, const b2ContactImpulse* impulse) {
-
+    ContactPersistData Box2DContactListener::MakeContactPersistData(const b2ContactHitEvent& event) {
         ContactPersistData data;
 
-        b2Body* bodyA = contact->GetFixtureA()->GetBody();
-        b2Body* bodyB = contact->GetFixtureB()->GetBody();
+        data.bodyA = GetBodyFromShape(event.shapeIdA);
+        data.bodyB = GetBodyFromShape(event.shapeIdB);
 
-        data.bodyA = reinterpret_cast<IPhysicsBody*>(bodyA->GetUserData().pointer);
-        data.bodyB = reinterpret_cast<IPhysicsBody*>(bodyB->GetUserData().pointer);
+        data.point  = FromB2(event.point);
+        data.normal = FromB2(event.normal);
 
-        b2WorldManifold worldManifold;
-        contact->GetWorldManifold(&worldManifold);
-        data.point  = FromB2(worldManifold.points[0]);
-        data.normal = FromB2(worldManifold.normal);
-
-        data.pointCount = impulse->count;
-        float32 totalImpulse = 0.0f;
-        for (int32 i = 0; i < impulse->count && i < 4; ++i) {
-            data.impulses[i] = impulse->normalImpulses[i];
-            totalImpulse += impulse->normalImpulses[i];
-        }
-        data.impulse = totalImpulse;
+        data.pointCount = 1;
+        data.impulses[0] = event.approachSpeed;  // 近似
+        data.impulse = event.approachSpeed;
 
         return data;
+    }
+
+    // ============================================================
+    // GetBodyFromShape — 从 shapeId 回溯 IPhysicsBody*
+    // ============================================================
+
+    IPhysicsBody* Box2DContactListener::GetBodyFromShape(b2ShapeId shapeId) {
+        if (!b2Shape_IsValid(shapeId)) return nullptr;
+        b2BodyId bodyId = b2Shape_GetBody(shapeId);
+        if (!b2Body_IsValid(bodyId)) return nullptr;
+        return static_cast<IPhysicsBody*>(b2Body_GetUserData(bodyId));
     }
 
 } // namespace Engine

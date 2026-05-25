@@ -2,10 +2,10 @@
 
 /**
  * @file Box2DJoint.h
- * @brief Box2D 关节实现
+ * @brief Box2D 关节实现（Box2D 3.x）
  *
  * 私有头文件，仅在 Box2D 实现层使用。
- * 实现 IJoint 接口，封装 b2Joint。
+ * 实现 IJoint 接口，封装 b2JointId。
  */
 
 #include "Engine/Core/Physics/IJoint.h"
@@ -15,7 +15,7 @@ namespace Engine {
 
     class Box2DJoint : public IJoint {
     public:
-        Box2DJoint(b2Joint* joint, const JointDef& def);
+        Box2DJoint(b2JointId jointId, const JointDef& def);
         ~Box2DJoint() override;
 
         /// 更新鼠标关节的目标位置（每帧调用）
@@ -51,12 +51,12 @@ namespace Engine {
         void* GetNativeJoint() override;
 
         // ── 内部 ──
-        b2Joint* GetBox2DJoint() const { return m_Joint; }
+        b2JointId GetBox2DJointId() const { return m_JointId; }
 
     private:
-        b2Joint* m_Joint = nullptr;
-        JointDef m_Def;  // 缓存创建时的定义
-        void*    m_UserData = nullptr;
+        b2JointId m_JointId = {};
+        JointDef  m_Def;  // 缓存创建时的定义
+        void*     m_UserData = nullptr;
 
         // MouseJoint 特有方法
         void SetTarget(const Vec2& target) override;
@@ -67,14 +67,6 @@ namespace Engine {
         float32 GetStiffness() const override;
         void SetDamping(float32 damping) override;
         float32 GetDamping() const override;
-
-        // 类型安全的向下转换
-        b2RevoluteJoint*  AsRevolute()  const;
-        b2PrismaticJoint* AsPrismatic()  const;
-        b2DistanceJoint*  AsDistance()  const;
-        b2WeldJoint*      AsWeld()      const;
-        b2WheelJoint*     AsWheel()     const;
-        b2MouseJoint*     AsMouse()     const;
     };
 
 } // namespace Engine

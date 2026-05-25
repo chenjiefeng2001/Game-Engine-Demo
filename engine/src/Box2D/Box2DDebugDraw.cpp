@@ -4,78 +4,125 @@
 namespace Engine {
 
     // ============================================================
-    // 构造
+    // Create — 填充 b2DebugDraw 结构体
     // ============================================================
 
-    Box2DDebugDraw::Box2DDebugDraw(IPhysicsDebugDraw& target)
-        : m_Target(target)
-    {
+    b2DebugDraw Box2DDebugDraw::Create(IPhysicsDebugDraw& target) {
+        b2DebugDraw draw = b2DefaultDebugDraw();
+        draw.context = &target;
+
+        draw.DrawPolygonFcn     = &DrawPolygonImpl;
+        draw.DrawSolidPolygonFcn = &DrawSolidPolygonImpl;
+        draw.DrawCircleFcn      = &DrawCircleImpl;
+        draw.DrawSolidCircleFcn = &DrawSolidCircleImpl;
+        draw.DrawSolidCapsuleFcn = &DrawSolidCapsuleImpl;
+        draw.DrawLineFcn        = &DrawLineImpl;
+        draw.DrawTransformFcn   = &DrawTransformImpl;
+        draw.DrawPointFcn       = &DrawPointImpl;
+
+        draw.drawShapes  = true;
+        draw.drawJoints  = true;
+        draw.drawBounds  = false;
+        draw.drawMass    = false;
+
+        return draw;
     }
 
     // ============================================================
-    // 工具
+    // 工具函数
     // ============================================================
 
-    Vec2 Box2DDebugDraw::FromB2(const b2Vec2& v) {
+    Vec2 Box2DDebugDraw::FromB2(b2Vec2 v) {
         return Vec2(v.x, v.y);
     }
 
-    DebugColor Box2DDebugDraw::FromB2(const b2Color& c) {
-        return DebugColor(c.r, c.g, c.b, 1.0f);
+    DebugColor Box2DDebugDraw::FromB2Color(b2HexColor color) {
+        // b2HexColor 是 uint32_t ARGB 格式
+        float32 r = static_cast<float32>((color >> 16) & 0xFF) / 255.0f;
+        float32 g = static_cast<float32>((color >> 8) & 0xFF) / 255.0f;
+        float32 b = static_cast<float32>(color & 0xFF) / 255.0f;
+        return DebugColor(r, g, b, 1.0f);
     }
 
     // ============================================================
-    // b2Draw 接口实现
+    // 静态回调实现
     // ============================================================
 
-    void Box2DDebugDraw::DrawPolygon(const b2Vec2* vertices, int32 vertexCount,
-                                     const b2Color& color) {
-        // 将 b2Vec2[] 转换为 Vec2[]（栈上分配，最大 64 个顶点）
+    void Box2DDebugDraw::DrawPolygonImpl(const b2Vec2* vertices, int vertexCount,
+                                         b2HexColor color, void* context) {
+        auto* target = static_cast<IPhysicsDebugDraw*>(context);
+        if (!target) return;
+
         const int32 maxVerts = 64;
         Vec2 buffer[maxVerts];
         int32 count = vertexCount < maxVerts ? vertexCount : maxVerts;
         for (int32 i = 0; i < count; ++i) {
             buffer[i] = FromB2(vertices[i]);
         }
-        m_Target.DrawPolygon(buffer, count, FromB2(color));
+        target->DrawPolygon(buffer, count, FromB2Color(color));
     }
 
-    void Box2DDebugDraw::DrawSolidPolygon(const b2Vec2* vertices,
-                                          int32 vertexCount,
-                                          const b2Color& color) {
+    void Box2DDebugDraw::DrawSolidPolygonImpl(b2Transform transform,
+                                              const b2Vec2* vertices, int vertexCount,
+                                              float radius, b2HexColor color,
+                                              void* context) {
+        auto* target = static_cast<IPhysicsDebugDraw*>(context);
+        if (!target) return;
+
         const int32 maxVerts = 64;
         Vec2 buffer[maxVerts];
         int32 count = vertexCount < maxVerts ? vertexCount : maxVerts;
         for (int32 i = 0; i < count; ++i) {
             buffer[i] = FromB2(vertices[i]);
         }
-        m_Target.DrawSolidPolygon(buffer, count, FromB2(color));
+        target->DrawSolidPolygon(buffer, count, FromB2Color(color));
     }
 
-    void Box2DDebugDraw::DrawCircle(const b2Vec2& center, float32 radius,
-                                    const b2Color& color) {
-        m_Target.DrawCircle(FromB2(center), radius, FromB2(color));
+    void Box2DDebugDraw::DrawCircleImpl(b2Vec2 center, float radius,
+                                        b2HexColor color, void* context) {
+        auto* target = static_cast<IPhysicsDebugDraw*>(context);
+        if (!target) return;
+        target->DrawCircle(FromB2(center), radius, FromB2Color(color));
     }
 
-    void Box2DDebugDraw::DrawSolidCircle(const b2Vec2& center, float32 radius,
-                                         const b2Vec2& axis,
-                                         const b2Color& color) {
-        m_Target.DrawSolidCircle(FromB2(center), radius,
-                                 FromB2(axis), FromB2(color));
+    void Box2DDebugDraw::DrawSolidCircleImpl(b2Transform transform, float radius,
+                                              b2HexColor color, void* context) {
+        auto* target = static_cast<IPhysicsDebugDraw*>(context);
+        if (!target) return;
+
+        target->DrawSolidCircle(FromB2(transform.p), radius,
+                                Vec2(1.0f, 0.0f), FromB2Color(color));
     }
 
-    void Box2DDebugDraw::DrawSegment(const b2Vec2& p1, const b2Vec2& p2,
-                                     const b2Color& color) {
-        m_Target.DrawSegment(FromB2(p1), FromB2(p2), FromB2(color));
+    void Box2DDebugDraw::DrawSolidCapsuleImpl(b2Vec2 p1, b2Vec2 p2, float radius,
+                                               b2HexColor color, void* context) {
+        auto* target = static_cast<IPhysicsDebugDraw*>(context);
+        if (!target) return;
+        // 引擎接口没有 DrawSolidCapsule，退化为两个圆 + 线段
+        target->DrawCircle(FromB2(p1), radius, FromB2Color(color));
+        target->DrawCircle(FromB2(p2), radius, FromB2Color(color));
+        target->DrawSegment(FromB2(p1), FromB2(p2), FromB2Color(color));
     }
 
-    void Box2DDebugDraw::DrawTransform(const b2Transform& xf) {
-        m_Target.DrawTransform(FromB2(xf.p), xf.q.GetAngle());
+    void Box2DDebugDraw::DrawLineImpl(b2Vec2 p1, b2Vec2 p2,
+                                      b2HexColor color, void* context) {
+        auto* target = static_cast<IPhysicsDebugDraw*>(context);
+        if (!target) return;
+        target->DrawSegment(FromB2(p1), FromB2(p2), FromB2Color(color));
     }
 
-    void Box2DDebugDraw::DrawPoint(const b2Vec2& p, float32 size,
-                                   const b2Color& color) {
-        m_Target.DrawPoint(FromB2(p), size, FromB2(color));
+    void Box2DDebugDraw::DrawTransformImpl(b2Transform transform, void* context) {
+        auto* target = static_cast<IPhysicsDebugDraw*>(context);
+        if (!target) return;
+        target->DrawTransform(FromB2(transform.p),
+                              b2Rot_GetAngle(transform.q));
+    }
+
+    void Box2DDebugDraw::DrawPointImpl(b2Vec2 p, float size,
+                                       b2HexColor color, void* context) {
+        auto* target = static_cast<IPhysicsDebugDraw*>(context);
+        if (!target) return;
+        target->DrawPoint(FromB2(p), size, FromB2Color(color));
     }
 
 } // namespace Engine

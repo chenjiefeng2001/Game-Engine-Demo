@@ -2,10 +2,10 @@
 
 /**
  * @file Box2DPhysicsBody.h
- * @brief Box2D 物理刚体实现
+ * @brief Box2D 物理刚体实现（Box2D 3.x）
  *
  * 私有头文件，仅在 Box2D 实现层使用。
- * 实现 IPhysicsBody 接口，封装 b2Body。
+ * 实现 IPhysicsBody 接口，封装 b2BodyId。
  */
 
 #include "Engine/Core/Physics/IPhysicsBody.h"
@@ -18,7 +18,7 @@ namespace Engine {
 
     class Box2DPhysicsBody : public IPhysicsBody {
     public:
-        Box2DPhysicsBody(b2Body* body, const BodyDef& def);
+        Box2DPhysicsBody(b2BodyId bodyId, const BodyDef& def);
         ~Box2DPhysicsBody() override;
 
         // ── IPhysicsBody ──
@@ -51,7 +51,7 @@ namespace Engine {
         void   SetAngularDamping(float32 damping) override;
         float32 GetAngularDamping() const override;
 
-        // ── Fixture 管理 ──
+        // ── Shape 管理（代替 v2 的 Fixture） ──
         void* AddFixture(const FixtureDef& def) override;
         void  RemoveFixture(void* fixtureId) override;
         void  ClearFixtures() override;
@@ -80,21 +80,22 @@ namespace Engine {
         void* GetNativeBody() override;
 
         // ── 内部 ──
-        b2Body* GetBox2DBody() const { return m_Body; }
+        b2BodyId GetBox2DBodyId() const { return m_BodyId; }
 
     private:
-        b2Body* m_Body = nullptr;
-        void*   m_UserData = nullptr;
-        void*   m_ComponentRef = nullptr;  ///< PhysicsComponent* 内部引用
+        /// 在刚体上创建形状（内部由 AddFixture / 构造调用）
+        b2ShapeId CreateShapeFromDef(const FixtureDef& def);
 
-        // 缓存外部传入的 fixture userData
-        struct FixtureEntry {
-            b2Fixture* fixture;
-            void*      userData;
+        b2BodyId m_BodyId = {};
+        void*    m_UserData = nullptr;
+        void*    m_ComponentRef = nullptr;  ///< PhysicsComponent* 内部引用
+
+        // 缓存外部传入的 shape userData
+        struct ShapeEntry {
+            b2ShapeId shapeId;
+            void*     userData;
         };
-        std::vector<FixtureEntry> m_Fixtures;
-
-        static b2FixtureDef ToB2FixtureDef(const FixtureDef& def);
+        std::vector<ShapeEntry> m_Shapes;
     };
 
 } // namespace Engine
