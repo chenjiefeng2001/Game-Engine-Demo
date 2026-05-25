@@ -45,6 +45,6 @@ set(ALSOFT_INSTALL OFF CACHE BOOL "" FORCE)
 add_subdirectory(openal-soft)
 
 # =============================================================================
-# Dear ImGui — 即时模式 GUI
+# Dear ImGui — 即时模式 GUI（构建文件在 imgui_build/，源文件来自子模块 imgui/）
 # =============================================================================
-add_subdirectory(imgui)
+add_subdirectory(imgui_build)
