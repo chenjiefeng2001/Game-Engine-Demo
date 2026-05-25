@@ -1,4 +1,6 @@
 #include "Engine/Core/GameObject/GameObject.h"
+#include "Engine/Core/GameObject/SpriteComponent.h"
+#include "Engine/Core/Physics/PhysicsComponent.h"
 #include "Engine/Core/RHI/IRenderQueue.h"
 #include "Engine/Core/Renderer/SpriteBatch.h"
 #include <algorithm>
@@ -16,8 +18,30 @@ namespace Engine {
     }
 
     GameObject::~GameObject() {
+        // 通知所有组件销毁
+        for (auto& [hash, comp] : m_Components) {
+            (void)hash;
+            comp->OnDestroy();
+        }
+        m_Components.clear();
         // 递归销毁子对象
         m_Children.clear();
+    }
+
+    void GameObject::OnCreate() {
+        for (auto& [hash, comp] : m_Components) {
+            (void)hash;
+            if (comp->IsEnabled())
+                comp->OnCreate();
+        }
+    }
+
+    void GameObject::OnDestroy() {
+        for (auto& [hash, comp] : m_Components) {
+            (void)hash;
+            if (comp->IsEnabled())
+                comp->OnDestroy();
+        }
     }
 
     bool GameObject::IsActiveInHierarchy() const {
@@ -93,8 +117,16 @@ namespace Engine {
     }
 
     void GameObject::Update(float32 dt) {
-        // 默认递归更新所有子对象
-        // 子类重写 Update 时应调用 GameObject::Update(dt) 来确保子对象得到更新
+        if (!m_Active) return;
+
+        // 更新所有已启用的组件
+        for (auto& [hash, comp] : m_Components) {
+            (void)hash;
+            if (comp->IsEnabled())
+                comp->OnUpdate(dt);
+        }
+
+        // 递归更新所有子对象
         for (auto& child : m_Children) {
             child->Update(dt);
         }
@@ -102,48 +134,69 @@ namespace Engine {
 
     void GameObject::CollectRenderCommands(IRenderQueue& queue) {
         if (!m_Active) return;
-        if (!m_Sprite.IsVisible()) return;
 
-        // 构建 RenderCommand（纯数据，无 glm 依赖）
-        RenderCommand cmd;
-
-        // 复制 4×4 世界矩阵到 float[16]（RHI：通过 float* 传递）
-        const Mat4& world = m_Transform.GetWorldMatrix();
-        std::memcpy(cmd.worldMatrix, world.Data(), sizeof(cmd.worldMatrix));
-
-        // UV
-        cmd.uv[0] = m_Sprite.GetUVX();
-        cmd.uv[1] = m_Sprite.GetUVY();
-        cmd.uv[2] = m_Sprite.GetUVW();
-        cmd.uv[3] = m_Sprite.GetUVH();
-
-        // 颜色
-        const auto& color = m_Sprite.GetColor();
-        cmd.color[0] = color.x;
-        cmd.color[1] = color.y;
-        cmd.color[2] = color.z;
-        cmd.color[3] = color.w;
-
-        // 纹理
-        cmd.texture = m_Sprite.GetTexture();
-
-        // 排序
-        cmd.sortingLayer  = m_Sprite.GetSortingLayer();
-        cmd.orderInLayer  = m_Sprite.GetOrderInLayer();
-
-        queue.Push(cmd);
+        // 收集所有组件的渲染命令
+        for (auto& [hash, comp] : m_Components) {
+            (void)hash;
+            if (comp->IsEnabled())
+                comp->CollectRenderCommands(queue);
+        }
     }
 
     void GameObject::SubmitSprite(ISpriteBatch& batch) {
         if (!m_Active) return;
-        if (!m_Sprite.IsVisible()) return;
 
-        // 获取世界矩阵数据指针（RHI 接口）
-        const float32* worldData = m_Transform.GetWorldMatrixData();
+        // 遍历组件，让每个 SpriteComponent 提交
+        for (auto& [hash, comp] : m_Components) {
+            (void)hash;
+            if (!comp->IsEnabled()) continue;
 
-        // 将 SpriteComponent 转换为 SpriteData 并提交
-        SpriteData data = m_Sprite.ToSpriteData(worldData);
-        batch.Draw(data);
+            // dynamic_cast 检查是否是 SpriteComponent
+            auto* sprite = dynamic_cast<SpriteComponent*>(comp.get());
+            if (sprite && sprite->IsVisible()) {
+                const float32* worldData = m_Transform.GetWorldMatrixData();
+                SpriteData data = sprite->ToSpriteData(worldData);
+                batch.Draw(data);
+            }
+        }
+    }
+
+    // ============================================================
+    // 便捷方法：SpriteComponent
+    // ============================================================
+
+    SpriteComponent& GameObject::GetSprite() {
+        auto* existing = GetComponent<SpriteComponent>();
+        if (existing) return *existing;
+        return *AddComponent<SpriteComponent>();
+    }
+
+    const SpriteComponent* GameObject::GetSprite() const {
+        return GetComponent<SpriteComponent>();
+    }
+
+    bool GameObject::HasSprite() const noexcept {
+        auto* sprite = GetComponent<SpriteComponent>();
+        return sprite != nullptr && (sprite->HasTexture() || sprite->IsVisible());
+    }
+
+    // ============================================================
+    // 便捷方法：PhysicsComponent
+    // ============================================================
+
+    PhysicsComponent& GameObject::GetPhysics() {
+        auto* existing = GetComponent<PhysicsComponent>();
+        if (existing) return *existing;
+        return *AddComponent<PhysicsComponent>();
+    }
+
+    const PhysicsComponent* GameObject::GetPhysics() const {
+        return GetComponent<PhysicsComponent>();
+    }
+
+    bool GameObject::HasPhysics() const noexcept {
+        auto* physics = GetComponent<PhysicsComponent>();
+        return physics != nullptr && physics->HasBody();
     }
 
 } // namespace Engine

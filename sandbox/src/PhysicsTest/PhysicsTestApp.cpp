@@ -4,6 +4,8 @@
 #include <Engine/Core/IWindow.h>
 #include <Engine/OpenGL/OpenGLContext.h>
 #include <Engine/Box2D/Box2DPhysicsWorld.h>
+#include <Engine/Core/GameObject/SpriteComponent.h>
+#include <Engine/Core/Physics/PhysicsComponent.h>
 #include <GLFW/glfw3.h>
 #include <glm/glm.hpp>
 #include <glm/gtc/type_ptr.hpp>

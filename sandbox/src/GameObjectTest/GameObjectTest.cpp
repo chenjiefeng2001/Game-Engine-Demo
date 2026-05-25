@@ -2,6 +2,7 @@
 #include <Engine/Platform/PlatformUtils.h>
 #include <Engine/Core/IRenderContext.h>
 #include <Engine/Core/IWindow.h>
+#include <Engine/Core/GameObject/SpriteComponent.h>
 #include <glm/glm.hpp>
 #include <iostream>
 #include <cmath>

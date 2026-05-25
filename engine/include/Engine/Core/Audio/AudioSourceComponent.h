@@ -29,11 +29,12 @@
 
 #include "Engine/Core/Audio/IAudioSource.h"
 #include "Engine/Core/Audio/AudioClip.h"
+#include "Engine/Core/GameObject/Component.h"
 #include <memory>
 
 namespace Engine {
 
-    class AudioSourceComponent {
+    class AudioSourceComponent : public Component {
     public:
         /**
          * @brief 构造音频源组件
