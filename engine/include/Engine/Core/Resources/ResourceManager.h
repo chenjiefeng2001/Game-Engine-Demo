@@ -38,9 +38,11 @@
 #include "Engine/Types.h"
 #include "Engine/Core/Resources/Resource.h"
 #include "Engine/Core/Resources/FileWatcher.h"
+#include "Engine/Core/Resources/AsyncLoadData.h"
 #include "Engine/Core/RenderResources/Texture.h"
 #include "Engine/Core/RenderResources/Shader.h"
 #include "Engine/Core/Audio/AudioClip.h"
+#include "Engine/Core/Audio/AudioLoader.h"
 #include "Engine/Core/IGraphicsFactory.h"
 
 #include <unordered_map>
@@ -50,6 +52,11 @@
 #include <type_traits>
 #include <functional>
 #include <mutex>
+#include <thread>
+#include <atomic>
+#include <queue>
+#include <future>
+#include <condition_variable>
 
 namespace Engine {
 
@@ -59,8 +66,6 @@ namespace Engine {
         static void Init(IGraphicsFactory& factory);
         static void Shutdown();
         static ResourceManager* Get() { return s_Instance; }
-
-        // ... existing code ...
 
         // ============================================================
         // 模板加载接口（推荐使用）
@@ -269,6 +274,102 @@ namespace Engine {
          */
         void UnbindReloadCallback(uint32 id);
 
+        // ============================================================
+        // 异步加载
+        // ============================================================
+
+        /**
+         * @brief 通用资源异步加载模板（单路径版本）
+         * @tparam T 资源类型，必须继承自 Resource
+         * @param path 资源文件路径
+         * @return 资源共享指针（若已缓存则直接返回已加载的资源，
+         *         否则返回 Loading 状态的资源，后台进行 I/O）
+         *
+         * 适用类型：Texture, AudioClip
+         *
+         * 使用示例：
+         * @code
+         *   auto tex = ResourceManager::Get()->LoadAsync<Texture>("tex.png");
+         *   // tex 可能尚未加载完成
+         *   // ... 若干帧后 ...
+         *   if (tex->IsLoaded()) { OnTextureReady(tex); }
+         * @endcode
+         */
+        template<typename T>
+        std::shared_ptr<T> LoadAsync(const std::string& path) {
+            static_assert(std::is_base_of_v<Resource, T>,
+                          "T must derive from Resource");
+
+            // 检查缓存
+            auto it = m_Cache.find(path);
+            if (it != m_Cache.end()) {
+                if (auto existing = std::dynamic_pointer_cast<T>(it->second.lock())) {
+                    return existing;  // 已缓存（无论是否加载完成）
+                }
+            }
+
+            // 检查是否已有异步任务排期
+            if (HasAsyncJob(path))
+                return nullptr;  // 已在队列中
+
+            // 创建资源对象，状态设为 Loading
+            auto resource = std::make_shared<T>(path);
+            resource->SetState(ResourceState::Loading);
+            m_Cache[path] = std::weak_ptr<Resource>(resource);
+
+            // 注册文件监视（加载完成后生效）
+            if (auto* fw = GetFileWatcher())
+                fw->Watch(path);
+
+            // 创建并排入异步任务
+            EnqueueAsyncIO<T>(path, resource);
+            return resource;
+        }
+
+        template<typename T>
+        std::shared_ptr<T> LoadAsync(const std::string& pathA,
+                                     const std::string& pathB) {
+            static_assert(std::is_base_of_v<Resource, T>,
+                          "T must derive from Resource");
+
+            std::string id = pathA + "|" + pathB;
+
+            auto it = m_Cache.find(id);
+            if (it != m_Cache.end()) {
+                if (auto existing = std::dynamic_pointer_cast<T>(it->second.lock())) {
+                    return existing;
+                }
+            }
+
+            if (HasAsyncJob(id))
+                return nullptr;
+
+            auto resource = std::make_shared<T>(id);
+            resource->SetState(ResourceState::Loading);
+            m_Cache[id] = std::weak_ptr<Resource>(resource);
+
+            if (auto* fw = GetFileWatcher()) {
+                fw->Watch(pathA);
+                fw->Watch(pathB);
+            }
+
+            EnqueueAsyncIO<T>(pathA, pathB, resource);
+            return resource;
+        }
+
+        /**
+         * @brief 异步加载完成处理（每帧在主线程调用）
+         *
+         * 检查后台线程是否完成了文件 I/O，
+         * 若完成则在主线程执行 GPU/API 上传。
+         */
+        void ProcessAsyncLoads();
+
+        /**
+         * @brief 查询指定路径是否正在异步加载中
+         */
+        bool IsLoading(const std::string& path) const;
+
         /** 打印当前缓存统计到控制台 */
         void LogStats() const;
 
@@ -294,6 +395,22 @@ namespace Engine {
         /** 获取 FileWatcher 单例（内联，方便模板方法调用） */
         static FileWatcher* GetFileWatcher() { return FileWatcher::Get(); }
 
+        // ── 异步加载内部方法 ──
+        /** 创建并排入异步 I/O 任务（单路径） */
+        template<typename T>
+        void EnqueueAsyncIO(const std::string& path, std::shared_ptr<T> resource);
+
+        /** 创建并排入异步 I/O 任务（双路径，如 Shader） */
+        template<typename T>
+        void EnqueueAsyncIO(const std::string& pathA, const std::string& pathB,
+                            std::shared_ptr<T> resource);
+
+        /** 检查路径是否已有排期的异步任务 */
+        bool HasAsyncJob(const std::string& path) const;
+
+        /** 后台线程主循环 */
+        void AsyncWorkerLoop();
+
         static ResourceManager* s_Instance;
         static std::unique_ptr<ResourceManager> s_InstanceOwner;
 
@@ -306,12 +423,33 @@ namespace Engine {
         // ── 热加载回调系统 ──
         struct ReloadCallbackEntry {
             uint32         id;
-            std::string    path;       // 监听的资源路径，"" 表示全部
+            std::string    path;      
             ReloadCallback callback;
         };
         std::vector<ReloadCallbackEntry> m_ReloadCallbacks;
         mutable std::mutex               m_CallbackMutex;
         uint32                           m_NextCallbackId = 1;
+
+        // ── 异步加载系统 ──
+        struct AsyncJob {
+            std::string               path;
+            ResourceType              type;
+            std::weak_ptr<Resource>   resource;
+            // 后台线程执行：文件 I/O + 解码，返回解码数据
+            std::function<std::shared_ptr<void>()>  backgroundIO;
+            // 主线程执行：GPU/API 上传，参数为 backgroundIO 的返回值
+            std::function<bool(std::shared_ptr<void>)> finalizeOnMain;
+            std::shared_ptr<void>     decodedData;  
+            bool                      ioCompleted = false;
+        };
+
+        mutable std::mutex           m_AsyncMutex;
+        std::vector<AsyncJob>        m_AsyncJobs;      
+        std::vector<size_t>          m_CompletedJobs; 
+        std::thread                  m_AsyncThread;
+        std::atomic<bool>            m_AsyncThreadRunning{ false };
+        std::atomic<bool>            m_AsyncStopRequested{ false };
+        std::condition_variable      m_AsyncCV;
     };
 
 } // namespace Engine

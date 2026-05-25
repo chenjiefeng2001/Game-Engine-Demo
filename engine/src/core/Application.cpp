@@ -229,8 +229,10 @@ namespace Engine {
 			}
 
 			// ── 每帧检测文件变更，触发热加载 ──
-			if (auto* rm = ResourceManager::Get())
+			if (auto* rm = ResourceManager::Get()) {
 				rm->PollHotReload();
+				rm->ProcessAsyncLoads();
+			}
 
 			// ── 构建 UI（仅在可见时执行） ──
 			if (auto* ui = UIManager::Get(); ui && ui->IsVisible())
