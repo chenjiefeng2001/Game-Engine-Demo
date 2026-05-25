@@ -10,7 +10,6 @@ namespace Engine {
 		if (nativeKey >= GLFW_KEY_0 && nativeKey <= GLFW_KEY_9)
 			return static_cast<KeyCode>(nativeKey - GLFW_KEY_0 + static_cast<int>(KeyCode::Num0));
 
-		// ���ܼ��ֶ�ӳ��
 		switch (nativeKey) {
 		case GLFW_KEY_ESCAPE:       return KeyCode::Escape;
 		case GLFW_KEY_ENTER:        return KeyCode::Enter;
@@ -162,6 +161,8 @@ namespace Engine {
 	}
 	IInput* Input::s_Instance = nullptr;
 	std::unique_ptr<IInput> Input::s_InstanceOwner = nullptr;
+	bool Input::s_BlockMouse = false;
+	bool Input::s_BlockKeyboard = false;
 
 	void Input::Init(std::unique_ptr<IInput> instance) {
 		s_InstanceOwner = std::move(instance);

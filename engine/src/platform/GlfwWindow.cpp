@@ -65,9 +65,11 @@ namespace Engine {
 		}
 	}
 	void GlfwWindow::OnKey(int key, int scancode, int action, int mods) {
-		// 通过事件回调通知 Application
-		if (auto* input = Input::Get())
-			input->OnKeyEvent(key, action);
+		// 当 ImGui 捕获键盘时，不向引擎输入系统转发事件
+		if (!Input::IsKeyboardBlocked()) {
+			if (auto* input = Input::Get())
+				input->OnKeyEvent(key, action);
+		}
 
 		if (m_EventCallback) {
 			Event e{ EventType::KeyPress };   // 或根据 action 区分 KeyPress/KeyRelease
@@ -119,9 +121,11 @@ namespace Engine {
 	//Register the GLFW Recall
 
 	void GlfwWindow::OnMouseMove(double x, double y) {
-		// 1. 喂给输入系统（轮询）
-		if (auto* input = Input::Get())
-			input->OnMouseMove(static_cast<float>(x), static_cast<float>(y));
+		// 1. 喂给输入系统（轮询）— 当 ImGui 捕获鼠标时跳过
+		if (!Input::IsMouseBlocked()) {
+			if (auto* input = Input::Get())
+				input->OnMouseMove(static_cast<float>(x), static_cast<float>(y));
+		}
 
 		// 2. 通过事件回调通知（事件驱动）
 		if (m_EventCallback) {
@@ -133,8 +137,10 @@ namespace Engine {
 	}
 
 	void GlfwWindow::OnMouseButton(int button, int action, int mods) {
-		if (auto* input = Input::Get())
-			input->OnMouseButtonEvent(button, action);
+		if (!Input::IsMouseBlocked()) {
+			if (auto* input = Input::Get())
+				input->OnMouseButtonEvent(button, action);
+		}
 
 		if (m_EventCallback) {
 			Event e{ EventType::MouseClick };
@@ -146,8 +152,10 @@ namespace Engine {
 	}
 
 	void GlfwWindow::OnScroll(double xOffset, double yOffset) {
-		if (auto* input = Input::Get())
-			input->OnScroll(static_cast<float>(xOffset), static_cast<float>(yOffset));
+		if (!Input::IsMouseBlocked()) {
+			if (auto* input = Input::Get())
+				input->OnScroll(static_cast<float>(xOffset), static_cast<float>(yOffset));
+		}
 
 		if (m_EventCallback) {
 			Event e{ EventType::MouseScroll };

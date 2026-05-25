@@ -185,13 +185,16 @@ namespace Engine {
 
 			if (dt > 0.25f) dt = 0.25f;
 
-			// ① 处理事件（必须在 ImGui 新帧之前）
 			m_Window->PollEvents();
 
-			// ② ImGui 新帧
 			m_ImGuiManager.NewFrame();
 
-			// ③ 更新逻辑
+			{
+				ImGuiIO& io = ImGui::GetIO();
+				Input::SetBlockInput(io.WantCaptureMouse, io.WantCaptureKeyboard);
+			}
+
+
 			if (m_LoopMode == LoopMode::Variable) {
 				InternalUpdate(dt);
 			} else {
@@ -206,16 +209,12 @@ namespace Engine {
 				}
 			}
 
-			// ④ 构建 ImGui UI（子类可重写）
 			OnImGui();
 
-			// ⑤ 渲染场景
 			InternalRender();
 
-			// ⑥ 渲染 ImGui（叠加在场景之上）
 			m_ImGuiManager.Render();
 
-			// ⑦ 交换缓冲区
 			m_Window->OnUpdate();
 		}
 	}
