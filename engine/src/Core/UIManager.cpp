@@ -207,8 +207,8 @@ namespace Engine {
 
         for (auto fp : fallbackPaths)
         {
-            FILE* f = nullptr;
-            if (fopen_s(&f, fp, "r") == 0 && f)
+            FILE* f = fopen(fp, "r");
+            if (f)
             {
                 fclose(f);
                 path = fp;
