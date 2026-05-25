@@ -2,9 +2,11 @@
 
 /**
  * @file Box2DContactListener.h
- * @brief Box2D 碰撞事件监听器 — 将 b2ContactListener 事件桥接到引擎回调
+ * @brief Box2D 碰撞事件辅助工具（Box2D 3.x）
  *
  * 私有头文件，仅在 Box2D 实现层使用。
+ * v3 使用事件轮询（b2World_GetContactEvents）而非监听器回调。
+ * 此类提供静态工具函数，将 b2ContactEvents 转换为引擎 ContactInfo。
  */
 
 #include "Engine/Core/Physics/PhysicsDefs.h"
@@ -15,28 +17,32 @@ namespace Engine {
     class Box2DPhysicsWorld;
 
     /**
-     * @brief Box2D 接触监听器
+     * @brief Box2D 接触事件辅助类
      *
-     * 将 b2ContactListener 的 BeginContact / EndContact 事件
-     * 转换为引擎定义的 ContactCallback，并传递给 Box2DPhysicsWorld。
+     * 提供静态方法将 v3 的接触事件结构转换为引擎定义的 ContactInfo。
+     * 实际的事件轮询在 Box2DPhysicsWorld::Step() 中完成。
      */
-    class Box2DContactListener : public b2ContactListener {
+    class Box2DContactListener {
     public:
-        explicit Box2DContactListener(Box2DPhysicsWorld& world)
-            : m_World(world) {}
+        /**
+         * @brief 从 b2ContactBeginTouchEvent 构建引擎 ContactInfo
+         */
+        static ContactInfo MakeContactInfo(const b2ContactBeginTouchEvent& event);
 
-        void BeginContact(b2Contact* contact) override;
-        void EndContact(b2Contact* contact) override;
-        void PreSolve(b2Contact* contact, const b2Manifold* oldManifold) override;
+        /**
+         * @brief 从 b2ContactEndTouchEvent 构建引擎 ContactInfo
+         */
+        static ContactInfo MakeContactInfoEnd(const b2ContactEndTouchEvent& event);
 
-        void PostSolve(b2Contact* contact, const b2ContactImpulse* impulse) override;
+        /**
+         * @brief 从 b2ContactHitEvent 构建引擎 ContactPersistData
+         */
+        static ContactPersistData MakeContactPersistData(const b2ContactHitEvent& event);
 
-    private:
-        Box2DPhysicsWorld& m_World;
-
-        static ContactInfo MakeContactInfo(b2Contact* contact);
-        static ContactPersistData MakeContactPersistData(b2Contact* contact, const b2ContactImpulse* impulse);
-        static void* GetBodyUserData(b2Contact* contact, bool isA);
+        /**
+         * @brief 获取 shapeId 对应 body 上的 IPhysicsBody 指针
+         */
+        static IPhysicsBody* GetBodyFromShape(b2ShapeId shapeId);
     };
 
 } // namespace Engine

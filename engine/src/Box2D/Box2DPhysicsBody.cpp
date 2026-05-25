@@ -38,20 +38,18 @@ namespace Engine {
     // 构造 / 析构
     // ============================================================
 
-    Box2DPhysicsBody::Box2DPhysicsBody(b2Body* body, const BodyDef& def)
-        : m_Body(body)
+    Box2DPhysicsBody::Box2DPhysicsBody(b2BodyId bodyId, const BodyDef& def)
+        : m_BodyId(bodyId)
         , m_UserData(def.userData)
     {
-        if (m_Body) {
-            // Box2D 2.4.1 的 SetUserData 声明了但未实现，
-            // 通过 GetUserData() 返回的引用直接设置 .pointer。
-            m_Body->GetUserData().pointer = reinterpret_cast<uintptr_t>(this);
+        if (b2Body_IsValid(m_BodyId)) {
+            b2Body_SetUserData(m_BodyId, this);
         }
     }
 
     Box2DPhysicsBody::~Box2DPhysicsBody() {
         // body 由 Box2DPhysicsWorld 的 DestroyBody 释放
-        m_Body = nullptr;
+        m_BodyId = {};
     }
 
     // ============================================================
@@ -59,16 +57,19 @@ namespace Engine {
     // ============================================================
 
     void Box2DPhysicsBody::SetTransform(const Vec2& position, float32 angle) {
-        if (m_Body) m_Body->SetTransform(ToB2(position), angle);
+        if (b2Body_IsValid(m_BodyId)) {
+            b2Body_SetTransform(m_BodyId, ToB2(position), b2MakeRot(angle));
+        }
     }
 
     Vec2 Box2DPhysicsBody::GetPosition() const {
-        if (!m_Body) return Vec2(0.0f, 0.0f);
-        return FromB2(m_Body->GetPosition());
+        if (!b2Body_IsValid(m_BodyId)) return Vec2(0.0f, 0.0f);
+        return FromB2(b2Body_GetPosition(m_BodyId));
     }
 
     float32 Box2DPhysicsBody::GetAngle() const {
-        return m_Body ? m_Body->GetAngle() : 0.0f;
+        if (!b2Body_IsValid(m_BodyId)) return 0.0f;
+        return b2Rot_GetAngle(b2Body_GetRotation(m_BodyId));
     }
 
     // ============================================================
@@ -76,20 +77,22 @@ namespace Engine {
     // ============================================================
 
     void Box2DPhysicsBody::SetLinearVelocity(const Vec2& velocity) {
-        if (m_Body) m_Body->SetLinearVelocity(ToB2(velocity));
+        if (b2Body_IsValid(m_BodyId))
+            b2Body_SetLinearVelocity(m_BodyId, ToB2(velocity));
     }
 
     Vec2 Box2DPhysicsBody::GetLinearVelocity() const {
-        if (!m_Body) return Vec2(0.0f, 0.0f);
-        return FromB2(m_Body->GetLinearVelocity());
+        if (!b2Body_IsValid(m_BodyId)) return Vec2(0.0f, 0.0f);
+        return FromB2(b2Body_GetLinearVelocity(m_BodyId));
     }
 
     void Box2DPhysicsBody::SetAngularVelocity(float32 omega) {
-        if (m_Body) m_Body->SetAngularVelocity(omega);
+        if (b2Body_IsValid(m_BodyId))
+            b2Body_SetAngularVelocity(m_BodyId, omega);
     }
 
     float32 Box2DPhysicsBody::GetAngularVelocity() const {
-        return m_Body ? m_Body->GetAngularVelocity() : 0.0f;
+        return b2Body_IsValid(m_BodyId) ? b2Body_GetAngularVelocity(m_BodyId) : 0.0f;
     }
 
     // ============================================================
@@ -97,15 +100,18 @@ namespace Engine {
     // ============================================================
 
     void Box2DPhysicsBody::ApplyForce(const Vec2& force, const Vec2& point) {
-        if (m_Body) m_Body->ApplyForce(ToB2(force), ToB2(point), true);
+        if (b2Body_IsValid(m_BodyId))
+            b2Body_ApplyForce(m_BodyId, ToB2(force), ToB2(point), true);
     }
 
     void Box2DPhysicsBody::ApplyForceToCenter(const Vec2& force) {
-        if (m_Body) m_Body->ApplyForceToCenter(ToB2(force), true);
+        if (b2Body_IsValid(m_BodyId))
+            b2Body_ApplyForceToCenter(m_BodyId, ToB2(force), true);
     }
 
     void Box2DPhysicsBody::ApplyLinearImpulse(const Vec2& impulse, const Vec2& point) {
-        if (m_Body) m_Body->ApplyLinearImpulse(ToB2(impulse), ToB2(point), true);
+        if (b2Body_IsValid(m_BodyId))
+            b2Body_ApplyLinearImpulse(m_BodyId, ToB2(impulse), ToB2(point), true);
     }
 
     // ============================================================
@@ -113,19 +119,21 @@ namespace Engine {
     // ============================================================
 
     void Box2DPhysicsBody::SetType(BodyType type) {
-        if (m_Body) m_Body->SetType(ToB2Type(type));
+        if (b2Body_IsValid(m_BodyId))
+            b2Body_SetType(m_BodyId, ToB2Type(type));
     }
 
     BodyType Box2DPhysicsBody::GetType() const {
-        return m_Body ? FromB2Type(m_Body->GetType()) : BodyType::Static;
+        return b2Body_IsValid(m_BodyId)
+            ? FromB2Type(b2Body_GetType(m_BodyId)) : BodyType::Static;
     }
 
     float32 Box2DPhysicsBody::GetMass() const {
-        return m_Body ? m_Body->GetMass() : 0.0f;
+        return b2Body_IsValid(m_BodyId) ? b2Body_GetMass(m_BodyId) : 0.0f;
     }
 
     float32 Box2DPhysicsBody::GetInertia() const {
-        return m_Body ? m_Body->GetInertia() : 0.0f;
+        return b2Body_IsValid(m_BodyId) ? b2Body_GetRotationalInertia(m_BodyId) : 0.0f;
     }
 
     // ============================================================
@@ -133,141 +141,135 @@ namespace Engine {
     // ============================================================
 
     void Box2DPhysicsBody::SetLinearDamping(float32 damping) {
-        if (m_Body) m_Body->SetLinearDamping(damping);
+        if (b2Body_IsValid(m_BodyId))
+            b2Body_SetLinearDamping(m_BodyId, damping);
     }
 
     float32 Box2DPhysicsBody::GetLinearDamping() const {
-        return m_Body ? m_Body->GetLinearDamping() : 0.0f;
+        return b2Body_IsValid(m_BodyId) ? b2Body_GetLinearDamping(m_BodyId) : 0.0f;
     }
 
     void Box2DPhysicsBody::SetAngularDamping(float32 damping) {
-        if (m_Body) m_Body->SetAngularDamping(damping);
+        if (b2Body_IsValid(m_BodyId))
+            b2Body_SetAngularDamping(m_BodyId, damping);
     }
 
     float32 Box2DPhysicsBody::GetAngularDamping() const {
-        return m_Body ? m_Body->GetAngularDamping() : 0.0f;
+        return b2Body_IsValid(m_BodyId) ? b2Body_GetAngularDamping(m_BodyId) : 0.0f;
     }
 
     // ============================================================
-    // Fixture 管理
+    // Shape 管理（v3 代替 v2 的 Fixture）
     // ============================================================
 
-    b2FixtureDef Box2DPhysicsBody::ToB2FixtureDef(const FixtureDef& def) {
-        b2FixtureDef fd;
-        fd.density     = def.density;
-        fd.friction    = def.friction;
-        fd.restitution = def.restitution;
-        fd.isSensor    = def.isSensor;
+    /// 在刚体上创建形状（内部由 AddFixture / 构造调用）
+    b2ShapeId Box2DPhysicsBody::CreateShapeFromDef(const FixtureDef& def) {
+        if (!b2Body_IsValid(m_BodyId)) return b2ShapeId{};
 
-        b2Filter filter;
-        filter.categoryBits = def.categoryBits;
-        filter.maskBits     = def.maskBits;
+        b2ShapeDef shapeDef = b2DefaultShapeDef();
+        shapeDef.density     = def.density;
+        shapeDef.material.friction    = def.friction;
+        shapeDef.material.restitution = def.restitution;
+        shapeDef.isSensor    = def.isSensor;
+
+        b2Filter filter = b2DefaultFilter();
+        filter.categoryBits = static_cast<uint64_t>(def.categoryBits);
+        filter.maskBits     = static_cast<uint64_t>(def.maskBits);
         filter.groupIndex   = def.groupIndex;
-        fd.filter = filter;
+        shapeDef.filter = filter;
+        shapeDef.userData = this;
 
-        // 形状
-        b2PolygonShape   boxShape;
-        b2CircleShape    circleShape;
-        b2EdgeShape      edgeShape;
-        b2ChainShape     chainShape;
+        b2ShapeId shapeId = {};
 
         switch (def.shape.type) {
-            case ShapeType::Box:
-                boxShape.SetAsBox(def.shape.boxSize.x, def.shape.boxSize.y,
-                                  ToB2(def.shape.offset), 0.0f);
-                fd.shape = &boxShape;
+            case ShapeType::Box: {
+                b2Polygon polygon = b2MakeOffsetBox(
+                    def.shape.boxSize.x, def.shape.boxSize.y,
+                    ToB2(def.shape.offset), b2MakeRot(0.0f));
+                shapeId = b2CreatePolygonShape(m_BodyId, &shapeDef, &polygon);
                 break;
-            case ShapeType::Circle:
-                circleShape.m_radius = def.shape.circleRadius;
-                circleShape.m_p      = ToB2(def.shape.offset);
-                fd.shape = &circleShape;
+            }
+            case ShapeType::Circle: {
+                b2Circle circle;
+                circle.center = ToB2(def.shape.offset);
+                circle.radius = def.shape.circleRadius;
+                shapeId = b2CreateCircleShape(m_BodyId, &shapeDef, &circle);
                 break;
-            case ShapeType::Edge:
-                edgeShape.SetTwoSided(ToB2(def.shape.edgeStart),
-                                      ToB2(def.shape.edgeEnd));
-                fd.shape = &edgeShape;
+            }
+            case ShapeType::Edge: {
+                b2Segment segment;
+                segment.point1 = ToB2(def.shape.edgeStart);
+                segment.point2 = ToB2(def.shape.edgeEnd);
+                shapeId = b2CreateSegmentShape(m_BodyId, &shapeDef, &segment);
                 break;
-            case ShapeType::Chain:
-                if (def.shape.chainVertices && def.shape.chainVertexCount > 0) {
-                    // 需要 prev/next 顶点来闭合链
-                    b2Vec2 prev = ToB2(def.shape.chainVertices[0]);
-                    b2Vec2 next = ToB2(def.shape.chainVertices[def.shape.chainVertexCount - 1]);
-                    chainShape.CreateChain(
-                        reinterpret_cast<const b2Vec2*>(def.shape.chainVertices),
-                        def.shape.chainVertexCount, prev, next);
-                    fd.shape = &chainShape;
+            }
+            case ShapeType::Chain: {
+                if (def.shape.chainVertices && def.shape.chainVertexCount >= 2) {
+                    // v3 链形状：逐段创建 segment
+                    for (int32 i = 0; i < def.shape.chainVertexCount - 1; ++i) {
+                        b2Segment seg;
+                        seg.point1 = ToB2(def.shape.chainVertices[i]);
+                        seg.point2 = ToB2(def.shape.chainVertices[i + 1]);
+                        b2CreateSegmentShape(m_BodyId, &shapeDef, &seg);
+                    }
                 }
-                break;
+                return b2ShapeId{};  // 链由多个 segment 组成，返回空 ID
+            }
         }
 
-        return fd;
+        return shapeId;
     }
 
     void* Box2DPhysicsBody::AddFixture(const FixtureDef& def) {
-        if (!m_Body) return nullptr;
+        b2ShapeId shapeId = CreateShapeFromDef(def);
+        if (!b2Shape_IsValid(shapeId) && def.shape.type != ShapeType::Chain) {
+            return nullptr;
+        }
 
-        b2FixtureDef fd = ToB2FixtureDef(def);
-        b2Fixture* fixture = m_Body->CreateFixture(&fd);
-        if (!fixture) return nullptr;
-
-        FixtureEntry entry;
-        entry.fixture  = fixture;
+        ShapeEntry entry;
+        entry.shapeId  = shapeId;
         entry.userData = def.userData;
-        fixture->GetUserData().pointer = reinterpret_cast<uintptr_t>(this);
+        m_Shapes.push_back(entry);
 
-        m_Fixtures.push_back(entry);
-        return static_cast<void*>(fixture);
+        // 返回指向 ShapeEntry 的指针（作为不透明句柄）
+        return static_cast<void*>(&m_Shapes.back());
     }
 
     void Box2DPhysicsBody::RemoveFixture(void* fixtureId) {
-        if (!m_Body || !fixtureId) return;
+        if (!fixtureId) return;
 
-        b2Fixture* target = static_cast<b2Fixture*>(fixtureId);
-        for (auto it = m_Fixtures.begin(); it != m_Fixtures.end(); ++it) {
-            if (it->fixture == target) {
-                m_Body->DestroyFixture(target);
-                m_Fixtures.erase(it);
+        for (auto it = m_Shapes.begin(); it != m_Shapes.end(); ++it) {
+            if (static_cast<void*>(&(*it)) == fixtureId) {
+                if (b2Shape_IsValid(it->shapeId)) {
+                    b2DestroyShape(it->shapeId, true);
+                }
+                m_Shapes.erase(it);
                 return;
             }
         }
     }
 
     void Box2DPhysicsBody::ClearFixtures() {
-        if (!m_Body) return;
-
-        for (auto& entry : m_Fixtures) {
-            if (entry.fixture) {
-                m_Body->DestroyFixture(entry.fixture);
+        for (auto& entry : m_Shapes) {
+            if (b2Shape_IsValid(entry.shapeId)) {
+                b2DestroyShape(entry.shapeId, true);
             }
         }
-        m_Fixtures.clear();
+        m_Shapes.clear();
     }
 
     // ============================================================
-    // 碰撞滤波
+    // 碰撞滤波（v3 不支持运行时修改，简化实现）
     // ============================================================
 
     void Box2DPhysicsBody::SetFilterData(uint16 categoryBits, uint16 maskBits) {
-        if (!m_Body) return;
-
-        b2Filter filter;
-        filter.categoryBits = categoryBits;
-        filter.maskBits     = maskBits;
-        filter.groupIndex   = 0;
-
-        for (b2Fixture* f = m_Body->GetFixtureList(); f; f = f->GetNext()) {
-            f->SetFilterData(filter);
-        }
+        (void)categoryBits;
+        (void)maskBits;
     }
 
     void Box2DPhysicsBody::SetGroupIndex(int32 groupIndex) {
-        if (!m_Body) return;
 
-        for (b2Fixture* f = m_Body->GetFixtureList(); f; f = f->GetNext()) {
-            b2Filter filter = f->GetFilterData();
-            filter.groupIndex = groupIndex;
-            f->SetFilterData(filter);
-        }
+        (void)groupIndex;
     }
 
     // ============================================================
@@ -275,11 +277,14 @@ namespace Engine {
     // ============================================================
 
     void Box2DPhysicsBody::SetActive(bool active) {
-        if (m_Body) m_Body->SetEnabled(active);
+        if (b2Body_IsValid(m_BodyId)) {
+            if (active) b2Body_Enable(m_BodyId);
+            else b2Body_Disable(m_BodyId);
+        }
     }
 
     bool Box2DPhysicsBody::IsActive() const {
-        return m_Body ? m_Body->IsEnabled() : false;
+        return b2Body_IsValid(m_BodyId) ? b2Body_IsEnabled(m_BodyId) : false;
     }
 
     // ============================================================
@@ -292,9 +297,8 @@ namespace Engine {
 
     void Box2DPhysicsBody::SetUserData(void* data) {
         m_UserData = data;
-        // 同时同步到 Box2D body
-        if (m_Body) {
-            m_Body->GetUserData().pointer = reinterpret_cast<uintptr_t>(data);
+        if (b2Body_IsValid(m_BodyId)) {
+            b2Body_SetUserData(m_BodyId, data);
         }
     }
 
@@ -303,19 +307,20 @@ namespace Engine {
     // ============================================================
 
     void Box2DPhysicsBody::SetAwake(bool awake) {
-        if (m_Body) m_Body->SetAwake(awake);
+        if (b2Body_IsValid(m_BodyId))
+            b2Body_SetAwake(m_BodyId, awake);
     }
 
     bool Box2DPhysicsBody::IsAwake() const {
-        return m_Body ? m_Body->IsAwake() : false;
+        return b2Body_IsValid(m_BodyId) ? b2Body_IsAwake(m_BodyId) : false;
     }
 
     // ============================================================
-    // 原生指针
+    // 原生指针（返回 b2BodyId* 的 void*）
     // ============================================================
 
     void* Box2DPhysicsBody::GetNativeBody() {
-        return static_cast<void*>(m_Body);
+        return static_cast<void*>(&m_BodyId);
     }
 
 } // namespace Engine

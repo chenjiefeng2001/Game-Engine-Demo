@@ -5,7 +5,7 @@
  * @brief Box2D 物理世界实现（公开头文件）
  *
  * 公开头文件，sandbox 测试可直接 include 此文件创建物理世界。
- * 仅前向声明 b2World，不暴露 Box2D 内部类型。
+ * 仅包含轻量级 ID 头文件，不暴露 Box2D 内部实现类型。
  * 完整的 Box2D 包含在实现文件中。
  */
 
@@ -14,13 +14,11 @@
 #include <vector>
 #include <unordered_set>
 
-struct b2World;  // 前向声明，避免暴露 Box2D 头文件
+#include <box2d/id.h>  // b2WorldId (4 字节值类型)
 
 namespace Engine {
 
     class Box2DPhysicsBody;
-    class Box2DContactListener;
-    class Box2DDebugDraw;
 
     class Box2DPhysicsWorld : public IPhysicsWorld {
     public:
@@ -56,16 +54,33 @@ namespace Engine {
         void DebugDraw() override;
         void* GetNativeWorld() override;
 
-        // ── 内部接口（给 Box2DContactListener 调用） ──
+        // ── 内部接口（处理 Step 后的碰撞事件） ──
+
+        /**
+         * @brief 处理碰撞开始事件（由 Step 内部调用）
+         */
         void OnContactBegin(const ContactInfo& info);
+
+        /**
+         * @brief 处理碰撞结束事件（由 Step 内部调用）
+         */
         void OnContactEnd(const ContactInfo& info);
+
+        /**
+         * @brief 询问是否允许碰撞（由 PreSolve 回调触发）
+         */
         bool OnContactPreSolve(const void* bodyA, const void* bodyB);
+
+        /**
+         * @brief 处理碰撞持续数据（由 Step 内部调用）
+         */
         void OnContactPersist(const ContactPersistData& data);
 
     private:
-        b2World* m_World = nullptr;
-        std::unique_ptr<Box2DContactListener> m_ContactListener;
-        std::unique_ptr<Box2DDebugDraw> m_Box2DDebugDraw;
+        /// 处理 Step 后的碰撞事件轮询
+        void PollContactEvents();
+
+        b2WorldId m_WorldId = {};
 
         // 持有所有刚体和关节的所有权
         std::unordered_set<std::shared_ptr<Box2DPhysicsBody>> m_Bodies;
