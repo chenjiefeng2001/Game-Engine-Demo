@@ -8,6 +8,7 @@
 #include "Engine/Core/RenderResources/VertexArray.h"
 #include "Engine/Core/IGraphicsFactory.h"
 #include "Engine/Core/Renderer/OrthographicCamera.h"
+#include "Engine/ImGuiManager.h"
 #include "Engine/Types.h"
 #include <memory>
 
@@ -75,6 +76,8 @@ namespace Engine {
 		virtual void OnUpdate(float32 dt) { (void)dt; }
 		/** 每帧渲染 */
 		virtual void OnRender()  {}
+		/** 每帧 ImGui UI 构建（在 OnRender 之后调用） */
+		virtual void OnImGui()   {}
 
 		// ── 引擎成员（protected 供子类访问） ──
 		StartupQueue                            m_StartupQueue;
@@ -85,11 +88,13 @@ namespace Engine {
 		std::shared_ptr<class VertexArray>      m_VAO;
 		std::shared_ptr<class Texture>          m_Texture;
 		std::unique_ptr<class OrthographicCamera> m_Camera;
+		ImGuiManager                            m_ImGuiManager;
 
 	private:
 		// ── 引擎内置初始化步骤 ──
 		bool InitWindow();
 		bool InitCamera();
+		bool InitImGui();
 		bool InitShader();
 		bool InitVertexData();
 

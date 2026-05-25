@@ -43,3 +43,8 @@ set(ALSOFT_TESTS   OFF CACHE BOOL "" FORCE)
 set(ALSOFT_UTILS   OFF CACHE BOOL "" FORCE)
 set(ALSOFT_INSTALL OFF CACHE BOOL "" FORCE)
 add_subdirectory(openal-soft)
+
+# =============================================================================
+# Dear ImGui — 即时模式 GUI
+# =============================================================================
+add_subdirectory(imgui)

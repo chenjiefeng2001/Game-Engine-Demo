@@ -97,9 +97,14 @@ namespace Engine {
 		}
 	}
 
-	void GlfwWindow::OnUpdate()
+	void GlfwWindow::PollEvents()
 	{
 		glfwPollEvents();
+	}
+
+	void GlfwWindow::OnUpdate()
+	{
+		PollEvents();
 		if (m_Context)
 		{
 			m_Context->SwapBuffers();

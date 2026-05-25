@@ -30,6 +30,7 @@ namespace Engine {
 		virtual ~IWindow() = default;
 
 		virtual void OnUpdate() = 0;
+		virtual void PollEvents() = 0;
 		virtual bool ShouldClose() const = 0;
 		virtual IRenderContext* GetContext() = 0;
 		virtual void SetEventCallback(const EventCallbackFn& callback) = 0;

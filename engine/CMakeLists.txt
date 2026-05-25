@@ -15,7 +15,7 @@ target_include_directories(EngineCore
     PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/src"
 
 )
-target_link_libraries(EngineCore PUBLIC glad2 glfw stb box2d OpenAL::OpenAL)
+target_link_libraries(EngineCore PUBLIC glad2 glfw stb box2d OpenAL::OpenAL imgui)
 
 # 确保第三方 include 路径可用
 target_include_directories(EngineCore PUBLIC

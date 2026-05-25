@@ -13,6 +13,7 @@ namespace Engine {
 
 		// ---- IWindow 接口 ----
 		virtual void OnUpdate() override;
+		virtual void PollEvents() override;
 		virtual bool ShouldClose() const override;
 		virtual IRenderContext* GetContext() override { return m_Context.get(); }
 		virtual void SetEventCallback(const EventCallbackFn& callback) override

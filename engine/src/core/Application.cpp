@@ -9,6 +9,10 @@
 #include "Engine/Core/IRenderContext.h"
 #include "Engine/Core/Input.h"
 #include "Engine/Core/IWindow.h"
+#include "Engine/OpenGL/OpenGLContext.h"
+#include <GLFW/glfw3.h>
+#include <glad/gl.h>
+#include <imgui.h>
 #include <iostream>
 
 namespace Engine {
@@ -26,6 +30,10 @@ namespace Engine {
 		m_StartupQueue.Add("Camera", StartupPhase::Graphics,
 			[this]() { return InitCamera(); });
 
+
+		m_StartupQueue.Add("ImGui", StartupPhase::Graphics,
+			[this]() { return InitImGui(); },
+			[this]() { m_ImGuiManager.Shutdown(); });
 
 		m_StartupQueue.Add("Shader", StartupPhase::Resources,
 			[this]() { return InitShader(); });
@@ -116,6 +124,12 @@ namespace Engine {
 		return true;
 	}
 
+	bool Application::InitImGui() {
+		GLFWwindow* nativeWindow = static_cast<GLFWwindow*>(m_Window->GetNativeHandle());
+		OpenGLContext* glContext = static_cast<OpenGLContext*>(m_Window->GetContext());
+		return m_ImGuiManager.Init(nativeWindow, glContext->GetGL());
+	}
+
 
 	void Application::InternalUpdate(float32 dt) {
 		// 默认的引擎级输入处理（可被子类 OnUpdate 扩展）
@@ -171,9 +185,15 @@ namespace Engine {
 
 			if (dt > 0.25f) dt = 0.25f;
 
+			// ① 处理事件（必须在 ImGui 新帧之前）
+			m_Window->PollEvents();
+
+			// ② ImGui 新帧
+			m_ImGuiManager.NewFrame();
+
+			// ③ 更新逻辑
 			if (m_LoopMode == LoopMode::Variable) {
 				InternalUpdate(dt);
-				InternalRender();
 			} else {
 				// 固定步长模式 (Fixed 60Hz)
 				static const float32 fixedDt = 1.0f / 60.0f;
@@ -184,9 +204,18 @@ namespace Engine {
 					InternalUpdate(fixedDt);
 					accumulator -= fixedDt;
 				}
-				InternalRender();
 			}
 
+			// ④ 构建 ImGui UI（子类可重写）
+			OnImGui();
+
+			// ⑤ 渲染场景
+			InternalRender();
+
+			// ⑥ 渲染 ImGui（叠加在场景之上）
+			m_ImGuiManager.Render();
+
+			// ⑦ 交换缓冲区
 			m_Window->OnUpdate();
 		}
 	}
