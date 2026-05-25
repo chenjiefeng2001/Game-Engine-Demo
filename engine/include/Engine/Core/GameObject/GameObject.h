@@ -1,8 +1,32 @@
 #pragma once
 
+/**
+ * @file GameObject.h
+ * @brief 游戏对象 — ECS Entity 的轻量句柄（兼容层）
+ *
+ * 在 ECS 架构下，GameObject 是一个围绕 Entity ID 的轻量包装，
+ * 提供 OOP 风格的便捷接口，底层操作由 EntityManager 执行。
+ *
+ * 架构关系：
+ *   Scene
+ *    └── EntityManager（ECS 核心）
+ *          ├── Entity (uint32)
+ *          ├── TransformComponent (内置)
+ *          ├── SpriteComponent (按需)
+ *          ├── PhysicsComponent (按需)
+ *          └── ... 其他组件
+ *
+ * 新代码推荐直接使用 ECS API：
+ * @code
+ *   Entity e = scene.GetEntityManager().Create();
+ *   scene.GetEntityManager().AddComponent<SpriteComponent>(e, texture);
+ * @endcode
+ */
+
 #include "Engine/Core/GameObject/TransformComponent.h"
 #include "Engine/Core/GameObject/SpriteComponent.h"
 #include "Engine/Core/Physics/PhysicsComponent.h"
+#include "Engine/Core/ECS/ECS.h"
 #include "Engine/Core/RHI/IRenderable.h"
 #include "Engine/Core/RHI/RenderCommand.h"
 #include <string>
@@ -15,46 +39,61 @@ namespace Engine {
     class Shader;
     class IRenderQueue;
 
-
+    /**
+     * @brief 游戏对象句柄 — 封装 Entity ID + EntityManager 引用
+     *
+     * 此类保持与现有沙箱代码的向后兼容，所有 GetSprite/GetPhysics
+     * 操作委托给 EntityManager 的组件池。
+     * 新实现建议直接通过 EntityManager API 操作。
+     */
     class GameObject : public IRenderable {
     public:
         GameObject();
         explicit GameObject(std::string name);
         virtual ~GameObject();
-        virtual void OnCreate() {}
 
+        GameObject(const GameObject&) = delete;
+        GameObject& operator=(const GameObject&) = delete;
+
+        // ── 生命周期钩子（子类可重写，默认操作组件） ──
+        /** 对象添加到场景后调用 */
+        virtual void OnCreate();
+        /** 每帧更新 */
         virtual void Update(float32 dt);
+        /** 每帧渲染 */
+        virtual void Render();
+        /** 对象销毁时调用 */
+        virtual void OnDestroy();
 
-        virtual void Render() {}
-
-        virtual void OnDestroy() {}
+        // ── ECS Entity ──
+        /** 获取底层 ECS Entity ID */
+        Entity GetEntity() const noexcept { return m_Entity; }
+        /** 设置底层 ECS Entity（由 Scene 在添加到 EntityManager 时调用） */
+        void SetEntity(Entity entity) noexcept { m_Entity = entity; }
 
         // ── IRenderable ──
-        /**
-         * @brief 收集本对象的渲染命令到队列
-         *
-         * RHI 原则：不直接操作 ISpriteBatch，而是通过 IRenderQueue
-         * 提交纯数据 RenderCommand。SceneRenderer 负责消费这些命令。
-         */
         void CollectRenderCommands(IRenderQueue& queue) override;
 
+        // ── 组件访问（全部委托给 EntityManager） ──
 
-        TransformComponent& GetTransform() noexcept { return m_Transform; }
-        const TransformComponent& GetTransform() const noexcept { return m_Transform; }
+        /** 变换组件（每个 GameObject 始终拥有） */
+        TransformComponent& GetTransform();
+        const TransformComponent& GetTransform() const;
+        bool HasTransform() const noexcept;
 
+        /** 精灵组件（按需通过 AddComponent 获取） */
+        SpriteComponent& GetSprite();
+        const SpriteComponent* GetSprite() const;
+        bool HasSprite() const noexcept;
 
-        SpriteComponent& GetSprite() noexcept { return m_Sprite; }
-        const SpriteComponent& GetSprite() const noexcept { return m_Sprite; }
-        bool HasSprite() const noexcept { return m_Sprite.HasTexture() || m_Sprite.IsVisible(); }
+        /** 物理组件 */
+        PhysicsComponent& GetPhysics();
+        const PhysicsComponent* GetPhysics() const;
+        bool HasPhysics() const noexcept;
 
-
+        // ── 通用属性 ──
         void SetName(const std::string& name) { m_Name = name; }
         const std::string& GetName() const noexcept { return m_Name; }
-
-        PhysicsComponent& GetPhysics() noexcept { return m_Physics; }
-        const PhysicsComponent& GetPhysics() const noexcept { return m_Physics; }
-        bool HasPhysics() const noexcept { return m_Physics.HasBody(); }
-
 
         void SetActive(bool active) { m_Active = active; }
         bool IsActive() const noexcept { return m_Active; }
@@ -76,9 +115,8 @@ namespace Engine {
     protected:
         std::string m_Name;
 
-        TransformComponent  m_Transform;
-        SpriteComponent     m_Sprite;
-        PhysicsComponent    m_Physics;
+        // ECS 实体 ID（由 Scene 管理）
+        Entity m_Entity = ENTITY_NULL;
 
         bool m_Active = true;
 

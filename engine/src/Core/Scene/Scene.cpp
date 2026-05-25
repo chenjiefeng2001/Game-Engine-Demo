@@ -1,49 +1,66 @@
 #include "Engine/Core/Scene/Scene.h"
+#include "Engine/Core/ECS/System.h"
+#include "Engine/Core/Physics/PhysicsComponent.h"
 #include "Engine/Core/RHI/IRenderQueue.h"
 #include <algorithm>
 #include <functional>
 
 namespace Engine {
 
-    // ──────────────────────────────────────────────
-    // 构造 / 析构
-    // ──────────────────────────────────────────────
+    Scene::Scene() {
+        SetActiveEntityManager(&m_EntityManager);
+    }
 
     Scene::~Scene() {
         OnDestroy();
+        if (GetActiveEntityManager() == &m_EntityManager)
+            SetActiveEntityManager(nullptr);
         m_Objects.clear();
     }
 
     // ──────────────────────────────────────────────
-    // 对象管理
+    // System 管理
+    // ──────────────────────────────────────────────
+
+    void Scene::AddSystem(std::unique_ptr<System> system) {
+        if (system) m_Systems.push_back(std::move(system));
+    }
+
+    void Scene::ClearSystems() {
+        m_Systems.clear();
+    }
+
+    // ──────────────────────────────────────────────
+    // 对象管理（向后兼容）
     // ──────────────────────────────────────────────
 
     void Scene::AddObject(std::shared_ptr<GameObject> obj) {
         if (!obj) return;
-
-        // 避免重复添加同一指针
         auto it = std::find(m_Objects.begin(), m_Objects.end(), obj);
         if (it != m_Objects.end()) return;
+
+        // 创建 ECS Entity 并关联
+        Entity entity = m_EntityManager.Create();
+        obj->SetEntity(entity);
+        m_EntityManager.AddComponent<TransformComponent>(entity);
 
         m_Objects.push_back(std::move(obj));
     }
 
     bool Scene::RemoveObject(GameObject* obj) {
         if (!obj) return false;
-
         auto it = std::find_if(m_Objects.begin(), m_Objects.end(),
-            [obj](const std::shared_ptr<GameObject>& o) {
-                return o.get() == obj;
-            });
-
+            [obj](const std::shared_ptr<GameObject>& o) { return o.get() == obj; });
         if (it == m_Objects.end()) return false;
-
+        if (obj->GetEntity() != ENTITY_NULL)
+            m_EntityManager.Destroy(obj->GetEntity());
         m_Objects.erase(it);
         return true;
     }
 
     void Scene::Clear() {
         OnDestroy();
+        m_EntityManager.Clear();
         m_Objects.clear();
     }
 
@@ -91,96 +108,65 @@ namespace Engine {
     }
 
     // ──────────────────────────────────────────────
-    // 生命周期
+    // 生命周期 — ECS System 驱动
     // ──────────────────────────────────────────────
 
     void Scene::OnCreate() {
-        for (auto& obj : m_Objects) {
-            obj->OnCreate();
-            // 递归调用子对象的 OnCreate
-            std::function<void(GameObject&)> recCreate =
-                [&](GameObject& o) {
-                    for (auto& c : o.GetChildren()) {
-                        c->OnCreate();
-                        recCreate(*c);
-                    }
-                };
-            recCreate(*obj);
-        }
+        std::function<void(GameObject&)> recCreate = [&](GameObject& o) {
+            for (auto& c : o.GetChildren()) recCreate(*c);
+        };
+        for (auto& obj : m_Objects) recCreate(*obj);
     }
 
     void Scene::Update(float32 dt) {
-        for (auto& obj : m_Objects) {
-            obj->Update(dt);
+        std::sort(m_Systems.begin(), m_Systems.end(),
+            [](const auto& a, const auto& b) {
+                return a->GetPriority() < b->GetPriority();
+            });
+        for (auto& sys : m_Systems) {
+            sys->OnUpdate(m_EntityManager, dt);
         }
     }
 
     void Scene::Render() {
-        for (auto& obj : m_Objects) {
-            obj->Render();
-            // GameObject 基类的 Render 为空，但子类可能重写
+        for (auto& sys : m_Systems) {
+            sys->OnRender(m_EntityManager);
         }
     }
 
     void Scene::OnDestroy() {
-        for (auto& obj : m_Objects) {
-            obj->OnDestroy();
-            // 递归调用子对象的 OnDestroy
-            std::function<void(GameObject&)> recDestroy =
-                [&](GameObject& o) {
-                    for (auto& c : o.GetChildren()) {
-                        c->OnDestroy();
-                        recDestroy(*c);
-                    }
-                };
-            recDestroy(*obj);
-        }
+        std::function<void(GameObject&)> recDestroy = [&](GameObject& o) {
+            for (auto& c : o.GetChildren()) recDestroy(*c);
+        };
+        for (auto& obj : m_Objects) recDestroy(*obj);
     }
 
     // ──────────────────────────────────────────────
-    // 物理同步
+    // 物理同步（ECS ForEach 方式）
     // ──────────────────────────────────────────────
-
-    namespace detail {
-        static void PostPhysicsUpdateRecursive(GameObject& obj) {
-            // 如果有物理组件，同步位置/角度回 Transform
-            if (obj.HasPhysics()) {
-                Vec2 pos;
-                float32 angle;
-                obj.GetPhysics().SyncPhysicsToTransform(pos, angle);
-
-                // 仅对 Dynamic 类型的物体做同步（Static/Kinematic 由用户控制）
-                // 但为了简单，这里同步所有类型，由用户决定是否创建 PhysicsComponent
-                obj.GetTransform().SetPosition(pos.x, pos.y, 0.0f);
-                obj.GetTransform().SetRotation(0.0f, 0.0f, angle);
-            }
-
-            for (auto& child : obj.GetChildren()) {
-                PostPhysicsUpdateRecursive(*child);
-            }
-        }
-    } // namespace detail
 
     void Scene::PostPhysicsUpdate() {
-        for (auto& obj : m_Objects) {
-            detail::PostPhysicsUpdateRecursive(*obj);
-        }
+        m_EntityManager.ForEach<TransformComponent, PhysicsComponent>(
+            [](Entity entity, TransformComponent& transform, PhysicsComponent& physics) {
+                (void)entity;
+                Vec2 pos; float32 angle;
+                physics.SyncPhysicsToTransform(pos, angle);
+                transform.SetPosition(pos.x, pos.y, 0.0f);
+                transform.SetRotation(0.0f, 0.0f, angle);
+            }
+        );
     }
 
-
     void Scene::CollectRenderCommands(IRenderQueue& queue) {
-        // 递归收集所有对象的渲染命令
-        std::function<void(GameObject&)> collectRecursive =
-            [&](GameObject& obj) {
-                // 通过 IRenderable 接口收集（GameObject 实现了该接口）
-                obj.CollectRenderCommands(queue);
-
-                for (auto& child : obj.GetChildren()) {
-                    collectRecursive(*child);
-                }
-            };
-
         for (auto& obj : m_Objects) {
+            obj->CollectRenderCommands(queue);
+            std::function<void(GameObject&)> collectRecursive =
+                [&](GameObject& obj2) {
+                    for (auto& child : obj2.GetChildren()) {
+                        child->CollectRenderCommands(queue);
+                        collectRecursive(*child);
+                    }
+                };
             collectRecursive(*obj);
         }
     }
