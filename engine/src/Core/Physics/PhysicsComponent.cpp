@@ -1,4 +1,14 @@
 #include "Engine/Core/Physics/PhysicsComponent.h"
+#include "Engine/Core/Scene/Serializer.h"
+#include <nlohmann/json.hpp>
+
+// ── 注册到 JsonSerializer 反序列化工厂（文件作用域，静态初始化） ──
+namespace {
+    bool registerPhysics = []() -> bool {
+        Engine::JsonSerializer::RegisterComponentType<Engine::PhysicsComponent>("PhysicsComponent");
+        return true;
+    }();
+}
 
 namespace Engine {
 
@@ -46,6 +56,28 @@ namespace Engine {
             outPosition = Vec2(0.0f, 0.0f);
             outAngle    = 0.0f;
         }
+    }
+
+    // ============================================================
+    // Serialize / Deserialize — JSON
+    // ============================================================
+
+    void PhysicsComponent::Serialize(nlohmann::json& json) const {
+        json["type"] = "PhysicsComponent";
+        auto& data = json["data"];
+        data["hasBody"] = (m_Body != nullptr);
+        // TODO: 完整序列化 BodyDef（fixture 形状、密度、摩擦等）
+        // 当前仅存有/无标记，物理体重建依赖外部逻辑
+    }
+
+    bool PhysicsComponent::Deserialize(const nlohmann::json& json) {
+        if (!json.contains("data")) return true;
+        const auto& data = json["data"];
+        bool hasBody = false;
+        if (data.contains("hasBody")) hasBody = data["hasBody"];
+        (void)hasBody; // 物理体重建需要外部物理世界，此处仅标记
+        // TODO: 完整反序列化 BodyDef 并在外部物理世界中重建
+        return true;
     }
 
 } // namespace Engine

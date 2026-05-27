@@ -1,11 +1,22 @@
 #include "Engine/Core/GameObject/SpriteComponent.h"
 #include "Engine/Core/GameObject/GameObject.h"
 #include "Engine/Core/RenderResources/TextureManager.h"
+#include "Engine/Core/Resources/ResourceManager.h"
+#include "Engine/Core/Scene/Serializer.h"
+#include <nlohmann/json.hpp>
 #include <glm/glm.hpp>
 #include <glm/gtc/matrix_transform.hpp>
 #include <glm/gtc/type_ptr.hpp>
 #include <cstring>
 #include <cmath>
+
+// ── 注册到 JsonSerializer 反序列化工厂（文件作用域，静态初始化） ──
+namespace {
+    bool registerSprite = []() -> bool {
+        Engine::JsonSerializer::RegisterComponentType<Engine::SpriteComponent>("SpriteComponent");
+        return true;
+    }();
+}
 
 namespace Engine {
 
@@ -124,6 +135,70 @@ namespace Engine {
         cmd.orderInLayer = m_OrderInLayer;
 
         queue.Push(cmd);
+    }
+
+    // ============================================================
+    // Serialize / Deserialize — JSON 序列化
+    // ============================================================
+
+    void SpriteComponent::Serialize(nlohmann::json& json) const {
+        json["type"] = "SpriteComponent";
+        auto& data = json["data"];
+        if (m_Texture) {
+            data["texture"] = m_Texture->GetPath();
+        }
+        data["color"] = { m_Color.x, m_Color.y, m_Color.z, m_Color.w };
+        data["uv"] = { m_UVX, m_UVY, m_UVW, m_UVH };
+        data["tiling"] = { m_Tiling.x, m_Tiling.y };
+        data["offset"] = { m_Offset.x, m_Offset.y };
+        data["sortingLayer"] = m_SortingLayer;
+        data["orderInLayer"] = m_OrderInLayer;
+        data["visible"] = m_Visible;
+    }
+
+    bool SpriteComponent::Deserialize(const nlohmann::json& json) {
+        if (!json.contains("data")) return true;
+        const auto& data = json["data"];
+
+        // 纹理路径
+        if (data.contains("texture") && data["texture"].is_string()) {
+            std::string texPath = data["texture"];
+            if (!texPath.empty()) {
+                if (auto* rm = ResourceManager::Get()) {
+                    auto tex = rm->LoadTexture(texPath);
+                    if (tex) m_Texture = tex;
+                }
+            }
+        }
+
+        // 颜色
+        if (data.contains("color") && data["color"].is_array() && data["color"].size() >= 4) {
+            m_Color = Vec4(data["color"][0], data["color"][1], data["color"][2], data["color"][3]);
+        }
+
+        // UV
+        if (data.contains("uv") && data["uv"].is_array() && data["uv"].size() >= 4) {
+            SetUV(data["uv"][0], data["uv"][1], data["uv"][2], data["uv"][3]);
+        }
+
+        // Tiling
+        if (data.contains("tiling") && data["tiling"].is_array() && data["tiling"].size() >= 2) {
+            m_Tiling = Vec2(data["tiling"][0], data["tiling"][1]);
+        }
+
+        // Offset
+        if (data.contains("offset") && data["offset"].is_array() && data["offset"].size() >= 2) {
+            m_Offset = Vec2(data["offset"][0], data["offset"][1]);
+        }
+
+        // 排序
+        if (data.contains("sortingLayer")) m_SortingLayer = data["sortingLayer"];
+        if (data.contains("orderInLayer")) m_OrderInLayer = data["orderInLayer"];
+
+        // 可见性
+        if (data.contains("visible")) m_Visible = data["visible"];
+
+        return true;
     }
 
 } // namespace Engine

@@ -122,6 +122,21 @@ namespace Engine {
             return GetComponent<T>() != nullptr;
         }
 
+        // ── 组件迭代（供序列化器等外部模块遍历所有组件） ──
+        /** 遍历所有已挂载的组件 */
+        void ForEachComponent(std::function<void(Component&)> callback) {
+            for (auto& [hash, comp] : m_Components) {
+                (void)hash;
+                if (comp) callback(*comp);
+            }
+        }
+        void ForEachComponent(std::function<void(const Component&)> callback) const {
+            for (const auto& [hash, comp] : m_Components) {
+                (void)hash;
+                if (comp) callback(*comp);
+            }
+        }
+
         // ============================================================
         // 便捷方法（向后兼容，旧代码无需改动）
         // ============================================================

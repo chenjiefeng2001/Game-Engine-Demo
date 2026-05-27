@@ -127,6 +127,10 @@ namespace Engine {
         bool HasBody() const noexcept { return m_Body != nullptr; }
         IPhysicsBody* GetBody() const noexcept { return m_Body.get(); }
 
+        // ── 序列化 ──
+        void Serialize(nlohmann::json& json) const override;
+        bool Deserialize(const nlohmann::json& json) override;
+
     private:
         std::shared_ptr<IPhysicsBody>  m_Body  = nullptr;
         std::shared_ptr<IPhysicsWorld> m_World = nullptr;
