@@ -8,6 +8,7 @@
  *   - 每个组件有 OnCreate / OnUpdate / OnDestroy 生命周期钩子
  *   - 组件可以挂载渲染数据（CollectRenderCommands）
  *   - 组件不拥有自己的生命周期——由 GameObject 决定何时销毁
+ *   - 序列化：实现 Serialize/Deserialize 后自动纳入场景保存/加载
  *
  * 使用示例：
  * @code
@@ -16,16 +17,14 @@
  *       void OnUpdate(float dt) override {
  *           if (hp <= 0) GetOwner()->SetActive(false);
  *       }
+ *       void Serialize(nlohmann::json& j) const override { j["hp"] = hp; }
+ *       bool Deserialize(const nlohmann::json& j) override { return j.contains("hp"); }
  *   };
- *
- *   auto obj = std::make_shared<GameObject>("Enemy");
- *   auto health = obj->AddComponent<HealthComponent>();
- *   // 此时 health 是一个 std::shared_ptr<HealthComponent>
- *   // 通过 obj->GetComponent<HealthComponent>() 可随时访问
  * @endcode
  */
 
 #include "Engine/Types.h"
+#include <nlohmann/json.hpp>
 
 namespace Engine {
 
@@ -40,22 +39,18 @@ namespace Engine {
         Component& operator=(const Component&) = delete;
 
         // ── 生命周期 ──
-        /** 对象被添加到场景后调用（保证所有组件就绪后触发） */
         virtual void OnCreate() {}
-        /** 每帧更新逻辑 */
         virtual void OnUpdate(float32 dt) { (void)dt; }
-        /** 对象被销毁时调用 */
         virtual void OnDestroy() {}
 
-        // ── 渲染（可选） ──
-        /**
-         * @brief 收集本组件的渲染命令到队列（RHI 原则：只提交纯数据）
-         * @param queue 渲染命令队列
-         *
-         * 由 GameObject::CollectRenderCommands 遍历所有组件时调用。
-         * 非渲染组件不需要重写此方法。
-         */
+        // ── 渲染 ──
         virtual void CollectRenderCommands(class IRenderQueue& queue) { (void)queue; }
+
+        // ── 序列化（重写后自动纳入场景保存/加载） ──
+        /** 将组件数据写入 JSON 对象 */
+        virtual void Serialize(nlohmann::json& json) const { (void)json; }
+        /** 从 JSON 对象读取组件数据 */
+        virtual bool Deserialize(const nlohmann::json& json) { (void)json; return true; }
 
         // ── 所属对象 ──
         /** 获取挂载此组件的 GameObject */

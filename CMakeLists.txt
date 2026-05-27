@@ -1,4 +1,7 @@
-
+if(MSVC)
+    # 强制 MSVC 使用 UTF-8 编码读取源文件并生成执行文件
+    add_compile_options(/utf-8)
+endif()
 cmake_minimum_required(VERSION 3.20)
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)

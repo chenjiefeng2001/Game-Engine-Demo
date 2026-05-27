@@ -122,8 +122,8 @@ namespace Engine {
 
         // ── 序列化/反序列化 ──
         /**
-         * @brief 将场景保存到文件（元数据文本格式）
-         * @param filePath 输出文件路径
+         * @brief 将场景保存到 JSON 文件
+         * @param filePath 输出文件路径（建议 .json 后缀）
          * @return 是否成功
          *
          * 保存场景属性、所有 GameObject、组件数据、资源路径引用。
@@ -132,7 +132,7 @@ namespace Engine {
         bool SaveToFile(const std::string& filePath) const;
 
         /**
-         * @brief 从文件加载场景（重建所有 GameObject 和组件）
+         * @brief 从 JSON 文件加载场景（重建所有 GameObject 和组件）
          * @param filePath 输入文件路径
          * @return 是否成功
          *

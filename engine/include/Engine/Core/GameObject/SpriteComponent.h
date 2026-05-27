@@ -77,6 +77,10 @@ namespace Engine {
         // ── 渲染（RHI：通过抽象接口提交纯数据） ──
         void CollectRenderCommands(IRenderQueue& queue) override;
 
+        // ── 序列化 ──
+        void Serialize(nlohmann::json& json) const override;
+        bool Deserialize(const nlohmann::json& json) override;
+
         // ── 转换为 SpriteData（给 ISpriteBatch 使用） ──
         /**
          * @brief 从给定的变换矩阵构建 SpriteData

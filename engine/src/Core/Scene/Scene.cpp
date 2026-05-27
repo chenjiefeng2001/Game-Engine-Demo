@@ -205,11 +205,11 @@ namespace Engine {
     // ──────────────────────────────────────────────
 
     bool Scene::SaveToFile(const std::string& filePath) const {
-        return SceneSerializer::SaveToFile(*this, filePath);
+        return JsonSerializer::SaveToFile(*this, filePath);
     }
 
     bool Scene::LoadFromFile(const std::string& filePath) {
-        return SceneSerializer::LoadFromFile(*this, filePath);
+        return JsonSerializer::LoadFromFile(*this, filePath);
     }
 
 } // namespace Engine
