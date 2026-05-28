@@ -10,6 +10,7 @@
 #include "Resources/OpenGLIndexBuffer.h"
 #include "Resources/OpenGLVertexArray.h"
 #include "Resources/OpenGLSpriteBatch.h"
+#include "Resources/ImGuiUIManager.h"
 
 #include <GLFW/glfw3.h>
 #include <iostream>
@@ -165,6 +166,11 @@ namespace Engine {
 			return std::allocate_shared<OpenGLSpriteBatch>(adaptor, m_GL, renderContext);
 		}
 		return std::make_shared<OpenGLSpriteBatch>(m_GL, renderContext);
+	}
+
+	std::unique_ptr<IUIManager> OpenGLGraphicsFactory::CreateUIManager()
+	{
+		return std::make_unique<ImGuiUIManager>();
 	}
 
 } // namespace Engine

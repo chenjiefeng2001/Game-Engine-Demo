@@ -15,6 +15,7 @@ namespace Engine {
 	class IndexBuffer;
 	class VertexArray;
 	class ISpriteBatch;
+	class IUIManager;
 	class StackAllocator;
 
 // ============================================================
@@ -61,6 +62,9 @@ namespace Engine {
 		// ---- 高级渲染工具 ----
 		virtual std::shared_ptr<ISpriteBatch> CreateSpriteBatch(
 			IRenderContext& renderContext) = 0;
+
+		// ---- UI 管理器 ----
+		virtual std::unique_ptr<IUIManager> CreateUIManager() = 0;
 
 	protected:
 		StackAllocator* m_Allocator = nullptr;

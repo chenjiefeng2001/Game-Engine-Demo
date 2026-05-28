@@ -9,6 +9,7 @@
 #include "Engine/Core/RenderResources/VertexArray.h"
 #include "Engine/Core/Renderer/OrthographicCamera.h"
 #include "Engine/Core/SubsystemManager.h"
+#include "Engine/Core/MenuManager.h"
 #include "Engine/PerformanceWindow.h"
 #include "Engine/Types.h"
 #include "Engine/UIManager.h"
@@ -97,6 +98,7 @@ protected:
   std::shared_ptr<class Texture> m_Texture;
   OrthographicCamera m_Camera; // 直接成员，零动态分配
   PerformanceWindow m_PerfWindow;
+  MenuManager m_MenuManager;
 
   /** 是否由 Application::Run() 自动绘制性能窗口。设为 false 可交给 Editor 管理
    */
