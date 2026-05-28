@@ -6,6 +6,7 @@
 macro(add_sandbox_executable targetName)
     add_executable(${targetName} ${ARGN})
     target_link_libraries(${targetName} PRIVATE EngineCore)
+    target_precompile_headers(${targetName} REUSE_FROM EngineCore)
     add_dependencies(${targetName} SyncSandboxResources)
     set_target_properties(${targetName} PROPERTIES
         RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/${targetName}"

@@ -58,6 +58,9 @@ target_include_directories(EngineCore
 )
 target_link_libraries(EngineCore PUBLIC glad2 glfw stb box2d OpenAL::OpenAL imgui)
 
+# ── 预编译头文件加速 ──
+target_precompile_headers(EngineCore PRIVATE include/Engine/PCH.h)
+
 # 确保第三方 include 路径可用（仅添加实际需要的子目录）
 # 注：third_party/ 用于 nlohmann/json.hpp（#include <nlohmann/json.hpp> 需要父目录）
 target_include_directories(EngineCore PUBLIC
