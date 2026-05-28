@@ -250,8 +250,9 @@ namespace Engine {
 					0                        
 				);
 
-				// 绘制性能监控窗口
-				m_PerfWindow.OnImGui();
+				// 绘制性能监控窗口（可由子类通过 m_DrawPerformanceWindow=false 交给 Editor 管理）
+				if (m_DrawPerformanceWindow)
+					m_PerfWindow.OnImGui();
 
 				// 子类自定义 UI
 				OnImGui();

@@ -25,6 +25,7 @@ add_sandbox_executable(ImGuiTest src/ImGuiTest/main.cpp)
 add_sandbox_executable(AudioPhysicsSandbox src/AudioPhysicsSandbox/main.cpp src/AudioPhysicsSandbox/AudioPhysicsSandboxApp.cpp)
 add_sandbox_executable(SerializationTest src/SerializationTest/main.cpp src/SerializationTest/SerializationTest.cpp)
 add_sandbox_executable(MarioDemo src/MarioDemo/main.cpp src/MarioDemo/MarioDemoApp.cpp)
+add_sandbox_executable(EditorDemo src/EditorDemo/main.cpp)
 
 # ==============================================================================
 # 2. 资源同步 Target — 将 assets 和 OpenAL32.dll 拷贝到每个输出子目录
@@ -32,7 +33,7 @@ add_sandbox_executable(MarioDemo src/MarioDemo/main.cpp src/MarioDemo/MarioDemoA
 set(SANDBOX_TARGETS
     Sandbox InputTest SpriteBatchTest GameObjectTest
     TextureManagerTest PhysicsTest AudioTest ImGuiDemo
-    CollisionAudioTest ImGuiTest AudioPhysicsSandbox SerializationTest MarioDemo
+    CollisionAudioTest ImGuiTest AudioPhysicsSandbox SerializationTest MarioDemo EditorDemo
 )
 
 add_custom_target(SyncSandboxResources ALL
