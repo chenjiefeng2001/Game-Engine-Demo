@@ -10,11 +10,8 @@
 #include "Engine/Core/RenderResources/VertexBuffer.h"
 #include "Engine/Core/Resources/FileWatcher.h"
 #include "Engine/Core/Resources/ResourceManager.h"
-#include "Engine/OpenGL/OpenGLContext.h"
 #include "Engine/Platform/PlatformUtils.h"
 #include "Engine/UIManager.h"
-#include <GLFW/glfw3.h>
-#include <glad/gl.h>
 #include <iostream>
 
 namespace Engine {
@@ -130,12 +127,15 @@ bool Application::InitVertexData() {
 }
 
 bool Application::InitUI() {
-  GLFWwindow *nativeWindow =
-      static_cast<GLFWwindow *>(m_Window->GetNativeHandle());
-  OpenGLContext *glContext =
-      static_cast<OpenGLContext *>(m_Window->GetContext());
-  UIManager::Init(nativeWindow, glContext->GetGL());
-  return UIManager::Get() != nullptr && UIManager::Get()->IsInitialized();
+  auto ui = m_Factory.CreateUIManager();
+  if (!ui) {
+    std::cerr << "[Application] Failed to create UI manager" << std::endl;
+    return false;
+  }
+  bool ok = UIManager::Init(std::move(ui),
+                             m_Window->GetNativeHandle(),
+                             m_Window->GetContext());
+  return ok && UIManager::IsInitialized();
 }
 
 void Application::InternalUpdate(float32 dt) {
@@ -153,6 +153,19 @@ void Application::InternalUpdate(float32 dt) {
 
   // 子类扩展
   OnUpdate(dt);
+
+  // ── 更新菜单状态 ──
+  m_MenuManager.OnUpdate(dt);
+
+  // ── 转发按键到菜单系统 ──
+  if (m_MenuManager.isVisible && m_MenuManager.currentPage != MenuManager::Page::None) {
+    if (Input::IsKeyPressed(KeyCode::Up))       m_MenuManager.OnKeyPressed(KeyCode::Up);
+    if (Input::IsKeyPressed(KeyCode::Down))     m_MenuManager.OnKeyPressed(KeyCode::Down);
+    if (Input::IsKeyPressed(KeyCode::Left))     m_MenuManager.OnKeyPressed(KeyCode::Left);
+    if (Input::IsKeyPressed(KeyCode::Right))    m_MenuManager.OnKeyPressed(KeyCode::Right);
+    if (Input::IsKeyPressed(KeyCode::Escape))   m_MenuManager.OnKeyPressed(KeyCode::Escape);
+    if (Input::IsKeyPressed(KeyCode::Enter))    m_MenuManager.OnKeyPressed(KeyCode::Enter);
+  }
 }
 void Application::InternalRender() {
   auto context = m_Window->GetContext();
@@ -238,6 +251,10 @@ void Application::Run() {
 
       // 子类自定义 UI
       OnImGui();
+
+      // ── 绘制内置菜单 ──
+      if (m_MenuManager.isVisible)
+        m_MenuManager.OnImGui();
     }
 
     InternalRender();

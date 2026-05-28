@@ -42,6 +42,9 @@ namespace Engine {
 		virtual std::shared_ptr<ISpriteBatch> CreateSpriteBatch(
 			IRenderContext& renderContext) override;
 
+		// ---- UI Manager ----
+		virtual std::unique_ptr<IUIManager> CreateUIManager() override;
+
 
 		// ---- 获取内部 OpenGL 上下文（仅限 OpenGL 实现内部使用） ----
 		GladGLContext& GetGLContext() { return m_GL; }
