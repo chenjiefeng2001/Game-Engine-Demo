@@ -13,6 +13,7 @@ file(GLOB ENGINE_SOURCES CONFIGURE_DEPENDS
     src/Core/Renderer/*.cpp
     src/Core/RHI/*.cpp
     src/Core/Scene/*.cpp
+    src/Editor/*.cpp
     src/OpenAL/*.cpp
     src/OpenGL/*.cpp
     src/OpenGL/Resources/*.cpp
@@ -24,6 +25,7 @@ file(GLOB ENGINE_HEADERS CONFIGURE_DEPENDS
     include/Engine/*.h
     include/Engine/Core/*.h
     include/Engine/Core/Memory/*.h
+    include/Engine/Core/Containers/*.h
     include/Engine/Core/GameObject/*.h
     include/Engine/Core/Physics/*.h
     include/Engine/Core/RenderResources/*.h
@@ -32,6 +34,7 @@ file(GLOB ENGINE_HEADERS CONFIGURE_DEPENDS
     include/Engine/Core/RHI/*.h
     include/Engine/Core/Scene/*.h
     include/Engine/Core/Audio/*.h
+    include/Engine/Editor/*.h
     include/Engine/Audio/*.h
     include/Engine/OpenGL/*.h
     include/Engine/OpenAL/*.h

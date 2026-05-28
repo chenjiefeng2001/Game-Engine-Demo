@@ -57,6 +57,8 @@ namespace Engine {
 		// ── 访问器 ──
 		IGraphicsFactory&   GetFactory()        { return m_Factory; }
 		TextureManager&     GetTextureManager() { return m_TextureManager; }
+		IWindow&            GetWindow()         { return *m_Window; }
+		IRenderContext*      GetRenderContext() { return m_Window ? m_Window->GetContext() : nullptr; }
 
 	protected:
 		/**
@@ -92,6 +94,9 @@ namespace Engine {
 		std::shared_ptr<class Texture>          m_Texture;
 		OrthographicCamera                      m_Camera;      // 直接成员，零动态分配
 		PerformanceWindow                       m_PerfWindow;
+
+		/** 是否由 Application::Run() 自动绘制性能窗口。设为 false 可交给 Editor 管理 */
+		bool m_DrawPerformanceWindow = true;
 
 	private:
 		// ── 引擎内置初始化步骤 ──
