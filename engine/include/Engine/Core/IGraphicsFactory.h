@@ -15,6 +15,7 @@ namespace Engine {
 	class IndexBuffer;
 	class VertexArray;
 	class ISpriteBatch;
+	class StackAllocator;
 
 // ============================================================
 // RHI 抽象工厂 — 完全与具体图形 API 解耦
@@ -25,6 +26,12 @@ namespace Engine {
 	{
 	public:
 		virtual ~IGraphicsFactory() = default;
+
+		// ---- 分配器支持 ----
+		/** 设置栈分配器，工厂将使用它分配所有子系统对象 */
+		void SetAllocator(StackAllocator* alloc) noexcept { m_Allocator = alloc; }
+		/** 获取当前的栈分配器 */
+		StackAllocator* GetAllocator() const noexcept { return m_Allocator; }
 
 		// ---- 窗口与上下文 ----
 		virtual std::unique_ptr<IWindow> CreateWindow(
@@ -55,6 +62,8 @@ namespace Engine {
 		virtual std::shared_ptr<ISpriteBatch> CreateSpriteBatch(
 			IRenderContext& renderContext) = 0;
 
+	protected:
+		StackAllocator* m_Allocator = nullptr;
 	};
 
 }

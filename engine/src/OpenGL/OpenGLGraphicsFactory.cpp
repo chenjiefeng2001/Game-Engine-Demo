@@ -2,6 +2,7 @@
 
 #include "Engine/Platform/GlfwWindow.h"
 #include "Engine/OpenGL/OpenGLContext.h"
+#include "Engine/Core/Memory/StackAllocatorAdaptor.h"
 
 #include "Resources/OpenGLShader.h"
 #include "Resources/OpenGLTexture.h"
@@ -12,6 +13,7 @@
 
 #include <GLFW/glfw3.h>
 #include <iostream>
+#include <memory>
 
 namespace Engine {
 
@@ -99,6 +101,7 @@ namespace Engine {
 		void* nativeWindowHandle)
 	{
 		auto* window = static_cast<GLFWwindow*>(nativeWindowHandle);
+
 		return std::make_unique<OpenGLContext>(window, m_GL);
 	}
 	// ---- GPU 资源 ----
@@ -106,12 +109,20 @@ namespace Engine {
 		const std::string& vertexPath,
 		const std::string& fragmentPath)
 	{
+		if (m_Allocator) {
+			StackAllocatorAdaptor<OpenGLShader> adaptor(m_Allocator);
+			return std::allocate_shared<OpenGLShader>(adaptor, vertexPath, fragmentPath, m_GL);
+		}
 		return std::make_shared<OpenGLShader>(vertexPath, fragmentPath, m_GL);
 	}
 
 	std::shared_ptr<Texture> OpenGLGraphicsFactory::CreateTexture(
 		const std::string& path)
 	{
+		if (m_Allocator) {
+			StackAllocatorAdaptor<OpenGLTexture> adaptor(m_Allocator);
+			return std::allocate_shared<OpenGLTexture>(adaptor, path, m_GL);
+		}
 		return std::make_shared<OpenGLTexture>(path, m_GL);
 	}
 
@@ -119,6 +130,10 @@ namespace Engine {
 		float* vertices,
 		uint32_t size)
 	{
+		if (m_Allocator) {
+			StackAllocatorAdaptor<OpenGLVertexBuffer> adaptor(m_Allocator);
+			return std::allocate_shared<OpenGLVertexBuffer>(adaptor, vertices, size, m_GL);
+		}
 		return std::make_shared<OpenGLVertexBuffer>(vertices, size, m_GL);
 	}
 
@@ -126,17 +141,29 @@ namespace Engine {
 		uint32_t* indices,
 		uint32_t count)
 	{
+		if (m_Allocator) {
+			StackAllocatorAdaptor<OpenGLIndexBuffer> adaptor(m_Allocator);
+			return std::allocate_shared<OpenGLIndexBuffer>(adaptor, indices, count, m_GL);
+		}
 		return std::make_shared<OpenGLIndexBuffer>(indices, count, m_GL);
 	}
 
 	std::shared_ptr<VertexArray> OpenGLGraphicsFactory::CreateVertexArray()
 	{
+		if (m_Allocator) {
+			StackAllocatorAdaptor<OpenGLVertexArray> adaptor(m_Allocator);
+			return std::allocate_shared<OpenGLVertexArray>(adaptor, m_GL);
+		}
 		return std::make_shared<OpenGLVertexArray>(m_GL);
 	}
 
 	std::shared_ptr<ISpriteBatch> OpenGLGraphicsFactory::CreateSpriteBatch(
 		IRenderContext& renderContext)
 	{
+		if (m_Allocator) {
+			StackAllocatorAdaptor<OpenGLSpriteBatch> adaptor(m_Allocator);
+			return std::allocate_shared<OpenGLSpriteBatch>(adaptor, m_GL, renderContext);
+		}
 		return std::make_shared<OpenGLSpriteBatch>(m_GL, renderContext);
 	}
 

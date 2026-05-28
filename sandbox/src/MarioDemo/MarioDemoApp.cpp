@@ -18,8 +18,8 @@ MarioDemoApp::MarioDemoApp(IGraphicsFactory& factory)
     m_SceneRenderer.SetShader(shader);
     float as=float(WINDOW_WIDTH)/WINDOW_HEIGHT;
     m_ViewHeight=13.0f; m_ViewWidth=m_ViewHeight*as;
-    m_Camera=std::make_unique<OrthographicCamera>(0,m_ViewWidth,0,m_ViewHeight);
-    m_SceneRenderer.SetCamera(m_Camera.get());
+    m_Camera=OrthographicCamera(0,m_ViewWidth,0,m_ViewHeight);
+    m_SceneRenderer.SetCamera(&m_Camera);
     auto lt=[&](const std::string& n){return m_TextureManager.Load(std::string("assets/textures/mario/")+n);};
     m_Tex["ground"]=lt("ground.png"); m_Tex["brick"]=lt("brick.png"); m_Tex["question"]=lt("question.png");
     m_Tex["coin"]=lt("coin.png"); m_Tex["goomba"]=lt("goomba.png"); m_Tex["cloud"]=lt("cloud.png");
@@ -305,7 +305,7 @@ void MarioDemoApp::Run(){
             }
         }
         // ── 更新相机 ──
-        if(m_Player){float tx=m_Player->GetTransform().GetPosition().x;float hw=m_ViewWidth*0.5f;tx=std::max(hw,std::min(tx,m_LevelW-hw));m_Camera=std::make_unique<OrthographicCamera>(tx-hw,tx+hw,0,m_ViewHeight);m_SceneRenderer.SetCamera(m_Camera.get());}
+        if(m_Player){float tx=m_Player->GetTransform().GetPosition().x;float hw=m_ViewWidth*0.5f;tx=std::max(hw,std::min(tx,m_LevelW-hw));m_Camera=OrthographicCamera(tx-hw,tx+hw,0,m_ViewHeight);m_SceneRenderer.SetCamera(&m_Camera);}
         if(m_State==PlayerState::Dead){m_DeathTimer-=dt;if(m_DeathTimer<=0){if(--m_Lives>0)ResetLevel();else{m_Lives=3;m_Score=0;m_CoinsCollected=0;ResetLevel();}}}
         if(m_State==PlayerState::LevelComplete){m_LevelCompleteTimer-=dt;if(m_LevelCompleteTimer<=0)GoToNextLevel();}
         if(m_InvTimer>0)m_InvTimer-=dt;

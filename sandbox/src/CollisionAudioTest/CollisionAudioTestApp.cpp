@@ -136,7 +136,7 @@ namespace Engine {
                                  static_cast<float32>(m_WindowHeight);
                 float32 viewHeight = 12.0f;
                 float32 viewWidth  = viewHeight * aspect;
-                m_Camera = std::make_unique<OrthographicCamera>(
+                m_Camera = OrthographicCamera(
                     -viewWidth * 0.5f, viewWidth * 0.5f,
                     -viewHeight * 0.5f, viewHeight * 0.5f);
 
@@ -150,7 +150,7 @@ namespace Engine {
                          static_cast<float32>(m_WindowHeight);
         float32 viewHeight = 12.0f;
         float32 viewWidth  = viewHeight * aspect;
-        m_Camera = std::make_unique<OrthographicCamera>(
+        m_Camera = OrthographicCamera(
             -viewWidth * 0.5f, viewWidth * 0.5f,
             -viewHeight * 0.5f, viewHeight * 0.5f);
 
@@ -402,7 +402,7 @@ namespace Engine {
         m_SpriteBatch->Flush();
 
         // 物理调试绘制
-        m_DebugDraw->SetViewProjection(m_Camera->GetViewProjectionMatrixPtr());
+        m_DebugDraw->SetViewProjection(m_Camera.GetViewProjectionMatrixPtr());
         m_PhysicsWorld->DebugDraw();
     }
 

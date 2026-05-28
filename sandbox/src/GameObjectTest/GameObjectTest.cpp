@@ -142,7 +142,7 @@ namespace Engine {
         float32 aspect = static_cast<float32>(WINDOW_WIDTH) / WINDOW_HEIGHT;
         float32 viewHeight = 10.0f;
         float32 viewWidth = viewHeight * aspect;
-        m_Camera = std::make_unique<OrthographicCamera>(
+        m_Camera = OrthographicCamera(
             -viewWidth / 2, viewWidth / 2,
             -viewHeight / 2, viewHeight / 2
         );
@@ -152,7 +152,7 @@ namespace Engine {
 
         // 初始化 SceneRenderer（传入渲染上下文用于创建 SpriteBatch）
         m_SceneRenderer.SetRenderContext(*ctx);
-        m_SceneRenderer.SetCamera(m_Camera.get());
+        m_SceneRenderer.SetCamera(&m_Camera);
 
         auto batchShader = m_Factory.CreateShader(
             "assets/shaders/sprite_batch.vert",
