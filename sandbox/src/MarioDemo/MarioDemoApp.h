@@ -78,7 +78,7 @@ namespace Engine {
         InputManager            m_InputManager;
         TextureManager          m_TextureManager;
         SceneRenderer           m_SceneRenderer;
-        std::unique_ptr<OrthographicCamera> m_Camera;
+        OrthographicCamera m_Camera;
 
         std::shared_ptr<IPhysicsWorld> m_Physics;
         Scene                   m_Scene;

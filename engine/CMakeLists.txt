@@ -5,6 +5,7 @@ file(GLOB ENGINE_SOURCES CONFIGURE_DEPENDS
     src/Audio/*.cpp
     src/Box2D/*.cpp
     src/Core/*.cpp
+    src/Core/Memory/*.cpp
     src/Core/GameObject/*.cpp
     src/Core/Physics/*.cpp
     src/Core/RenderResources/*.cpp
@@ -22,6 +23,7 @@ file(GLOB ENGINE_HEADERS CONFIGURE_DEPENDS
     include/*.h
     include/Engine/*.h
     include/Engine/Core/*.h
+    include/Engine/Core/Memory/*.h
     include/Engine/Core/GameObject/*.h
     include/Engine/Core/Physics/*.h
     include/Engine/Core/RenderResources/*.h
@@ -53,7 +55,8 @@ target_include_directories(EngineCore
 )
 target_link_libraries(EngineCore PUBLIC glad2 glfw stb box2d OpenAL::OpenAL imgui)
 
-# 确保第三方 include 路径可用
+# 确保第三方 include 路径可用（仅添加实际需要的子目录）
+# 注：third_party/ 用于 nlohmann/json.hpp（#include <nlohmann/json.hpp> 需要父目录）
 target_include_directories(EngineCore PUBLIC
     "${PROJECT_SOURCE_DIR}/third_party/box2d/include"
     "${PROJECT_SOURCE_DIR}/third_party"

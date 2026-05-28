@@ -1,6 +1,6 @@
 #pragma once
 
-#include "Engine/Core/StartupQueue.h"
+#include "Engine/Core/SubsystemManager.h"
 #include "Engine/Core/IWindow.h"
 #include "Engine/Core/RenderResources/Shader.h"
 #include "Engine/Core/RenderResources/Texture.h"
@@ -8,6 +8,7 @@
 #include "Engine/Core/RenderResources/VertexArray.h"
 #include "Engine/Core/IGraphicsFactory.h"
 #include "Engine/Core/Renderer/OrthographicCamera.h"
+#include "Engine/Core/Memory/StackAllocator.h"
 #include "Engine/UIManager.h"
 #include "Engine/PerformanceWindow.h"
 #include "Engine/Types.h"
@@ -31,15 +32,15 @@ namespace Engine {
 	/**
 	 * @brief 引擎应用基类
 	 *
-	 * 使用 StartupQueue 管理初始化/关闭顺序：
-	 *   1. 子类在构造函数中通过 RegisterInitStep() 注册各系统初始化步骤
-	 *   2. Run() 调用 StartupQueue::Execute() 按阶段顺序启动
+	 * 使用 SubsystemManager 管理所有子系统的初始化/关闭顺序：
+	 *   1. 子类在构造函数中通过 RegisterSubsystem() 注册各子系统
+	 *   2. Run() 调用 SubsystemManager::Initialize() 按阶段顺序启动
 	 *   3. 析构时自动逆序关闭
 	 *
 	 * 示例：
 	 *   class MyApp : public Application {
 	 *       MyApp(IGraphicsFactory& factory) : Application(factory) {
-	 *           RegisterInitStep("MySystem", StartupPhase::Custom, [this]{ ... });
+	 *           RegisterSubsystem("MySystem", SubsystemPhase::Custom, [this]{ ... });
 	 *       }
 	 *   };
 	 */
@@ -59,16 +60,16 @@ namespace Engine {
 
 	protected:
 		/**
-		 * @brief 注册自定义初始化步骤（由子类在构造时调用）
+		 * @brief 注册自定义子系统（由子类在构造时调用）
 		 *
-		 * @param name    步骤名称
+		 * @param name    子系统名称
 		 * @param phase   所属阶段
 		 * @param init    初始化回调
 		 * @param shutdown 可选关闭回调
 		 */
-		void RegisterInitStep(std::string name, StartupPhase phase,
-		                      std::function<bool()> init,
-		                      std::function<void()> shutdown = nullptr);
+		void RegisterSubsystem(std::string name, SubsystemPhase phase,
+		                       std::function<bool()> init,
+		                       std::function<void()> shutdown = nullptr);
 
 		// ── 可被子类重写的生命周期方法 ──
 		/** 在所有系统初始化完成后调用 */
@@ -81,14 +82,15 @@ namespace Engine {
 		virtual void OnImGui()   {}
 
 		// ── 引擎成员（protected 供子类访问） ──
-		StartupQueue                            m_StartupQueue;
+		SubsystemManager                        m_SubsystemManager;
+		StackAllocator                          m_SubsystemAllocator{256 * 1024};   // 256KB 连续内存池
 		IGraphicsFactory&                       m_Factory;
 		TextureManager                          m_TextureManager;
 		std::unique_ptr<class IWindow>          m_Window;
 		std::shared_ptr<class Shader>           m_Shader;
 		std::shared_ptr<class VertexArray>      m_VAO;
 		std::shared_ptr<class Texture>          m_Texture;
-		std::unique_ptr<class OrthographicCamera> m_Camera;
+		OrthographicCamera                      m_Camera;      // 直接成员，零动态分配
 		PerformanceWindow                       m_PerfWindow;
 
 	private:

@@ -78,7 +78,7 @@ namespace Engine {
         TextureManager m_TextureManager;
         std::unique_ptr<IWindow> m_Window;
         InputManager m_InputManager;
-        std::unique_ptr<OrthographicCamera> m_Camera;
+        OrthographicCamera m_Camera;
 
         // 场景渲染器（RHI 封装）
         SceneRenderer m_SceneRenderer;

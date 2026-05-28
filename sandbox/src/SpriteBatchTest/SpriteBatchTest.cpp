@@ -34,7 +34,7 @@ namespace Engine {
         float aspect = 800.0f / 600.0f;
         float viewHeight = 12.0f;
         float viewWidth = viewHeight * aspect;
-        m_Camera = std::make_unique<OrthographicCamera>(
+        m_Camera = OrthographicCamera(
             -viewWidth / 2, viewWidth / 2,
             -viewHeight / 2, viewHeight / 2
         );
@@ -97,7 +97,7 @@ namespace Engine {
 
         m_BatchShader->Bind();
         m_BatchShader->SetMat4("u_ViewProjection",
-            m_Camera->GetViewProjectionMatrixPtr());
+            m_Camera.GetViewProjectionMatrixPtr());
 
         // ���� ��ʼ���� ����
         m_SpriteBatch->Begin(m_Texture);

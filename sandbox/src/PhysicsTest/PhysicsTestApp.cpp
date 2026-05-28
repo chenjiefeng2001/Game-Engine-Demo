@@ -38,7 +38,7 @@ namespace Engine {
                                  static_cast<float32>(m_WindowHeight);
                 float32 viewHeight = 12.0f;
                 float32 viewWidth  = viewHeight * aspect;
-                m_Camera = std::make_unique<OrthographicCamera>(
+                m_Camera = OrthographicCamera(
                     -viewWidth * 0.5f, viewWidth * 0.5f,
                     -viewHeight * 0.5f, viewHeight * 0.5f);
 
@@ -53,7 +53,7 @@ namespace Engine {
                          static_cast<float32>(m_WindowHeight);
         float32 viewHeight = 12.0f;
         float32 viewWidth  = viewHeight * aspect;
-        m_Camera = std::make_unique<OrthographicCamera>(
+        m_Camera = OrthographicCamera(
             -viewWidth * 0.5f, viewWidth * 0.5f,
             -viewHeight * 0.5f, viewHeight * 0.5f);
 
@@ -287,7 +287,7 @@ namespace Engine {
         float32 ndcX = 2.0f * screenX / static_cast<float32>(m_WindowWidth) - 1.0f;
         float32 ndcY = 1.0f - 2.0f * screenY / static_cast<float32>(m_WindowHeight);
 
-        const float32* vp = m_Camera->GetViewProjectionMatrixPtr();
+        const float32* vp = m_Camera.GetViewProjectionMatrixPtr();
         glm::mat4 viewProj = glm::make_mat4(vp);
         glm::mat4 invVP = glm::inverse(viewProj);
 
@@ -422,7 +422,7 @@ namespace Engine {
         // ── 使用 SceneRenderer 风格渲染每个对象 ──
         m_BatchShader->Bind();
         m_BatchShader->SetMat4("u_ViewProjection",
-            m_Camera->GetViewProjectionMatrixPtr());
+            m_Camera.GetViewProjectionMatrixPtr());
 
         // 遍历场景中所有对象并提交精灵
         m_SpriteBatch->Begin(m_Texture);
@@ -445,7 +445,7 @@ namespace Engine {
 
         // ── 调试绘制（叠加在精灵之上） ──
         if (m_DebugDrawEnabled && m_DebugDraw) {
-            m_DebugDraw->SetViewProjection(m_Camera->GetViewProjectionMatrixPtr());
+            m_DebugDraw->SetViewProjection(m_Camera.GetViewProjectionMatrixPtr());
             m_PhysicsWorld->DebugDraw();
         }
     }

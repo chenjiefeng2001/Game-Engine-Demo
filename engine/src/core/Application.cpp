@@ -25,20 +25,20 @@ namespace Engine {
 		, m_TextureManager(factory)
 	{
 
-		m_StartupQueue.Add("Window", StartupPhase::Platform,
+		m_SubsystemManager.Add("Window", SubsystemPhase::Platform,
 			[this]() { return InitWindow(); });
 
 
-		m_StartupQueue.Add("Camera", StartupPhase::Graphics,
+		m_SubsystemManager.Add("Camera", SubsystemPhase::Graphics,
 			[this]() { return InitCamera(); });
 
 
-		m_StartupQueue.Add("UI", StartupPhase::Graphics,
+		m_SubsystemManager.Add("UI", SubsystemPhase::Graphics,
 			[this]() { return InitUI(); },
 			[]() { UIManager::Shutdown(); });
 
 		// ── 统一资源管理器（在窗口和图形上下文就绪后初始化） ──
-		m_StartupQueue.Add("ResourceManager", StartupPhase::Resources,
+		m_SubsystemManager.Add("ResourceManager", SubsystemPhase::Resources,
 			[this]() {
 				ResourceManager::Init(m_Factory);
 				return ResourceManager::Get() != nullptr;
@@ -46,38 +46,38 @@ namespace Engine {
 			[]() { ResourceManager::Shutdown(); });
 
 		// ── 文件监视器（用于热加载） ──
-		m_StartupQueue.Add("FileWatcher", StartupPhase::Resources,
+		m_SubsystemManager.Add("FileWatcher", SubsystemPhase::Resources,
 			[]() {
 				FileWatcher::Init();
 				return FileWatcher::Get() != nullptr;
 			},
 			[]() { FileWatcher::Shutdown(); });
 
-		m_StartupQueue.Add("Shader", StartupPhase::Resources,
+		m_SubsystemManager.Add("Shader", SubsystemPhase::Resources,
 			[this]() { return InitShader(); });
 
 
-		m_StartupQueue.Add("Texture", StartupPhase::Assets,
+		m_SubsystemManager.Add("Texture", SubsystemPhase::Assets,
 			[this]() {
 				m_Texture = m_TextureManager.Load("assets/textures/test.png");
 				return m_Texture != nullptr;
 			},
 			[this]() { m_Texture.reset(); });
 
-		m_StartupQueue.Add("VertexData", StartupPhase::Assets,
+		m_SubsystemManager.Add("VertexData", SubsystemPhase::Assets,
 			[this]() { return InitVertexData(); });
 	}
 
 	Application::~Application() {
-		// StartupQueue::Shutdown() 在 m_StartupQueue 析构时自动调用
+		// SubsystemManager::Shutdown() 在 m_SubsystemManager 析构时自动调用
 	}
 
 
-	void Application::RegisterInitStep(std::string name, StartupPhase phase,
-	                                   std::function<bool()> init,
-	                                   std::function<void()> shutdown) {
-		m_StartupQueue.Add(std::move(name), phase,
-		                   std::move(init), std::move(shutdown));
+	void Application::RegisterSubsystem(std::string name, SubsystemPhase phase,
+	                                    std::function<bool()> init,
+	                                    std::function<void()> shutdown) {
+		m_SubsystemManager.Add(std::move(name), phase,
+		                       std::move(init), std::move(shutdown));
 	}
 
 
@@ -93,7 +93,7 @@ namespace Engine {
 	}
 
 	bool Application::InitCamera() {
-		m_Camera = std::make_unique<OrthographicCamera>(-1.6f, 1.6f, -0.9f, 0.9f);
+		m_Camera = OrthographicCamera(-1.6f, 1.6f, -0.9f, 0.9f);
 		return true;
 	}
 
@@ -174,7 +174,7 @@ namespace Engine {
 		if (m_Shader && m_VAO && m_Texture) {
 			m_Shader->Bind();
 			m_Shader->SetMat4("u_ViewProjection",
-				m_Camera->GetViewProjectionMatrixPtr());
+				m_Camera.GetViewProjectionMatrixPtr());
 			m_Texture->Bind(0);
 			m_VAO->Bind();
 			context->DrawIndexed(m_VAO);
@@ -187,8 +187,11 @@ namespace Engine {
 
 	void Application::Run() {
 
-		if (!m_StartupQueue.Execute()) {
-			std::cerr << "[Application] Startup failed, aborting." << std::endl;
+		// ── 将栈分配器注入工厂，所有子系统对象从连续内存池分配 ──
+		m_Factory.SetAllocator(&m_SubsystemAllocator);
+
+		if (!m_SubsystemManager.Initialize()) {
+			std::cerr << "[Application] Subsystem initialization failed, aborting." << std::endl;
 			return;
 		}
 

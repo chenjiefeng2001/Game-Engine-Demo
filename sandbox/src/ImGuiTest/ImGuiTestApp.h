@@ -55,7 +55,7 @@ namespace Engine {
             : Application(factory)
         {
             // ── 子类扩展的 init 步骤 ──
-            RegisterInitStep("PhysicsScene", StartupPhase::Scene,
+            RegisterSubsystem("PhysicsScene", SubsystemPhase::Scene,
                 [this]() { return InitPhysicsScene(); });
         }
 
@@ -71,7 +71,7 @@ namespace Engine {
             float32 aspect = static_cast<float32>(800) / static_cast<float32>(600);
             float32 viewHeight = 12.0f;
             float32 viewWidth  = viewHeight * aspect;
-            m_Camera = std::make_unique<OrthographicCamera>(
+            m_Camera = OrthographicCamera(
                 -viewWidth * 0.5f, viewWidth * 0.5f,
                 -viewHeight * 0.5f, viewHeight * 0.5f);
 
@@ -112,7 +112,7 @@ namespace Engine {
             // 绑定着色器 + 设置相机矩阵
             m_SpriteShader->Bind();
             m_SpriteShader->SetMat4("u_ViewProjection",
-                m_Camera->GetViewProjectionMatrixPtr());
+                m_Camera.GetViewProjectionMatrixPtr());
 
             // 渲染场景中的所有精灵
             m_SpriteBatch->Begin(m_SpriteTexture);
@@ -342,7 +342,7 @@ namespace Engine {
             glfwGetWindowSize(win, &w, &h);
             float ndcX = (2.0f * mx) / w - 1.0f;
             float ndcY = 1.0f - (2.0f * my) / h;
-            const float32* vp = m_Camera->GetViewProjectionMatrixPtr();
+            const float32* vp = m_Camera.GetViewProjectionMatrixPtr();
             return Vec2(ndcX * (12.0f * w / h * 0.5f),
                         ndcY * (12.0f * 0.5f));
         }

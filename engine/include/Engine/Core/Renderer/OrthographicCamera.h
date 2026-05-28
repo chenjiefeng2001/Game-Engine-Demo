@@ -12,6 +12,7 @@ namespace Engine {
 	 */
 	class OrthographicCamera {
 	public:
+		OrthographicCamera() : OrthographicCamera(-1.6f, 1.6f, -0.9f, 0.9f) {}
 		OrthographicCamera(float32 left, float32 right, float32 bottom, float32 top);
 
 		/** RHI 接口：通过 float* 返回矩阵，Shader.h 就能直接用 */

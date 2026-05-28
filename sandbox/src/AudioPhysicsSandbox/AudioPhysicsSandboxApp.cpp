@@ -317,7 +317,7 @@ namespace Engine {
         float32 ndcX = 2.0f * screenX / static_cast<float32>(m_WindowWidth) - 1.0f;
         float32 ndcY = 1.0f - 2.0f * screenY / static_cast<float32>(m_WindowHeight);
 
-        const float32* vp = m_Camera->GetViewProjectionMatrixPtr();
+        const float32* vp = m_Camera.GetViewProjectionMatrixPtr();
         glm::mat4 viewProj = glm::make_mat4(vp);
         glm::mat4 invVP = glm::inverse(viewProj);
 
@@ -345,7 +345,7 @@ namespace Engine {
                                  static_cast<float32>(m_WindowHeight);
                 float32 viewHeight = 12.0f;
                 float32 viewWidth  = viewHeight * aspect;
-                m_Camera = std::make_unique<OrthographicCamera>(
+                m_Camera = OrthographicCamera(
                     -viewWidth * 0.5f, viewWidth * 0.5f,
                     -viewHeight * 0.5f, viewHeight * 0.5f);
 
@@ -359,7 +359,7 @@ namespace Engine {
                          static_cast<float32>(m_WindowHeight);
         float32 viewHeight = 12.0f;
         float32 viewWidth  = viewHeight * aspect;
-        m_Camera = std::make_unique<OrthographicCamera>(
+        m_Camera = OrthographicCamera(
             -viewWidth * 0.5f, viewWidth * 0.5f,
             -viewHeight * 0.5f, viewHeight * 0.5f);
 
@@ -1037,7 +1037,7 @@ namespace Engine {
         // ── 使用精灵批处理渲染 ──
         m_BatchShader->Bind();
         m_BatchShader->SetMat4("u_ViewProjection",
-            m_Camera->GetViewProjectionMatrixPtr());
+            m_Camera.GetViewProjectionMatrixPtr());
 
         m_SpriteBatch->Begin(m_Texture);
 
@@ -1048,7 +1048,7 @@ namespace Engine {
 
         // ── 物理调试绘制（显示碰撞体形状） ──
         if (m_DebugDraw) {
-            m_DebugDraw->SetViewProjection(m_Camera->GetViewProjectionMatrixPtr());
+            m_DebugDraw->SetViewProjection(m_Camera.GetViewProjectionMatrixPtr());
             m_PhysicsWorld->DebugDraw();
         }
     }
