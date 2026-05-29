@@ -1,6 +1,10 @@
 #include "Engine/Core/Audio/AudioLoader.h"
-#include <iostream>
+#include "Engine/Core/Log.h"
 #include <cstring>
+
+namespace {
+    Engine::Logger s_Log("AudioLoader");
+}
 #include <string>
 #include <algorithm>
 
@@ -45,7 +49,7 @@ namespace Engine {
         );
 
         if (!pSampleData) {
-            std::cerr << "[AudioLoader] Failed to load WAV file: " << filePath << std::endl;
+            s_Log.Error("Failed to load WAV file: {}", filePath);
             return AudioData();
         }
 
@@ -88,7 +92,7 @@ namespace Engine {
         );
 
         if (!pSampleData) {
-            std::cerr << "[AudioLoader] Failed to load WAV from memory" << std::endl;
+            s_Log.Error("Failed to load WAV from memory");
             return AudioData();
         }
 
@@ -128,7 +132,7 @@ namespace Engine {
         );
 
         if (totalSamples <= 0) {
-            std::cerr << "[AudioLoader] Failed to load OGG file: " << filePath << std::endl;
+            s_Log.Error("Failed to load OGG file: {}", filePath);
             return AudioData();
         }
 
@@ -170,7 +174,7 @@ namespace Engine {
         );
 
         if (totalSamples <= 0) {
-            std::cerr << "[AudioLoader] Failed to load OGG from memory" << std::endl;
+            s_Log.Error("Failed to load OGG from memory");
             return AudioData();
         }
 
@@ -205,7 +209,7 @@ namespace Engine {
         } else if (ext == "ogg") {
             return LoadOGG(filePath);
         } else {
-            std::cerr << "[AudioLoader] Unsupported audio format: ." << ext << std::endl;
+            s_Log.Error("Unsupported audio format: .{}", ext);
             return AudioData();
         }
     }

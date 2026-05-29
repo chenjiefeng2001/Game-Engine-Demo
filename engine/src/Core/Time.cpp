@@ -44,7 +44,7 @@ static double NowD() {
 
 void Time::Init() {
     s_InitTimeD      = NowD();
-    s_LastFrameTimeD = s_InitTimeD;
+    s_LastFrameTimeD = 0.0;  // 与 GetTimeD() 单位一致：经过时间
     s_DeltaTime      = 0.0f;
     s_DeltaTimeD     = 0.0;
     s_TimeScale      = 1.0f;

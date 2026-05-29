@@ -12,9 +12,13 @@
 #include "Resources/OpenGLSpriteBatch.h"
 #include "Resources/ImGuiUIManager.h"
 
+#include "Engine/Core/Log.h"
 #include <GLFW/glfw3.h>
-#include <iostream>
 #include <memory>
+
+namespace {
+    Engine::Logger s_Log("OpenGLGraphicsFactory");
+}
 
 namespace Engine {
 
@@ -23,7 +27,7 @@ namespace Engine {
 		// 初始化 GLFW
 		if (!glfwInit())
 		{
-			std::cerr << "[OpenGLGraphicsFactory] Failed to initialize GLFW" << std::endl;
+			s_Log.Error("Failed to initialize GLFW");
 			return;
 		}
 
@@ -42,19 +46,17 @@ namespace Engine {
 			int version = gladLoadGLContext(&m_GL, glfwGetProcAddress);
 			if (version == 0)
 			{
-				std::cerr << "[OpenGLGraphicsFactory] Failed to initialize GLAD" << std::endl;
+				s_Log.Error("Failed to initialize GLAD");
 			}
 			else
 			{
-				std::cout << "[OpenGLGraphicsFactory] OpenGL "
-						  << GLAD_VERSION_MAJOR(version) << "."
-						  << GLAD_VERSION_MINOR(version) << " loaded" << std::endl;
+				s_Log.Info("OpenGL {}.{} loaded", GLAD_VERSION_MAJOR(version), GLAD_VERSION_MINOR(version));
 			}
 			glfwDestroyWindow(tempWindow);
 		}
 		else
 		{
-			std::cerr << "[OpenGLGraphicsFactory] Failed to create temporary GLAD loader window" << std::endl;
+			s_Log.Error("Failed to create temporary GLAD loader window");
 		}
 
 
@@ -74,7 +76,7 @@ namespace Engine {
 			width, height, title.c_str(), nullptr, nullptr);
 
 		if (!nativeWindow) {
-			std::cerr << "[OpenGLGraphicsFactory] Failed to create GLFW window" << std::endl;
+			s_Log.Error("Failed to create GLFW window");
 			return nullptr;
 		}
 
@@ -85,7 +87,7 @@ namespace Engine {
 		GladGLContext& ctxGL = static_cast<OpenGLContext*>(context.get())->GetGL();
 		int version = gladLoadGLContext(&ctxGL, glfwGetProcAddress);
 		if (version == 0) {
-			std::cerr << "[OpenGLGraphicsFactory] Failed to initialize GLAD for window" << std::endl;
+			s_Log.Error("Failed to initialize GLAD for window");
 			glfwDestroyWindow(nativeWindow);
 			return nullptr;
 		}

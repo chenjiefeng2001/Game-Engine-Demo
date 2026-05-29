@@ -1,7 +1,11 @@
 #include "Engine/Core/Resources/ResourcePoolAllocator.h"
-#include <iostream>
+#include "Engine/Core/Log.h"
 #include <cstdlib>
 #include <cstring>
+
+namespace {
+    Engine::Logger s_Log("PoolAllocator");
+}
 
 namespace Engine {
 
@@ -84,8 +88,7 @@ namespace Engine {
         }
 
         if (!memory) {
-            std::cerr << "[PoolAllocator] Failed to allocate block of "
-                      << allocSize << " bytes" << std::endl;
+            s_Log.Error("Failed to allocate block of {} bytes", allocSize);
             return;
         }
 
@@ -113,8 +116,7 @@ namespace Engine {
 
         auto it = m_Pools.find(type);
         if (it == m_Pools.end()) {
-            std::cerr << "[PoolAllocator] No pool for type "
-                      << static_cast<int>(type) << std::endl;
+            s_Log.Error("No pool for type {}", static_cast<int>(type));
             return nullptr;
         }
 
@@ -124,8 +126,7 @@ namespace Engine {
         if (!pool.freeList) {
             AllocateNewBlock(pool);
             if (!pool.freeList) {
-                std::cerr << "[PoolAllocator] Out of memory for type "
-                          << static_cast<int>(type) << std::endl;
+                s_Log.Error("Out of memory for type {}", static_cast<int>(type));
                 return nullptr;
             }
         }
@@ -257,23 +258,14 @@ namespace Engine {
 
     void ResourcePoolAllocator::LogStats() const {
         auto gs = GetGlobalStats();
-        std::cout << "=== PoolAllocator Stats ===" << std::endl;
-        std::cout << "Pools: " << gs.poolCount
-                  << ", Total: " << (gs.totalBytes / 1024) << "KB"
-                  << ", Used: " << gs.totalAllocated
-                  << ", Free slots: " << gs.totalFree << std::endl;
+        s_Log.Info("=== PoolAllocator Stats ===");
+        s_Log.Info("Pools: {}, Total: {}KB, Used: {}, Free slots: {}", gs.poolCount, (gs.totalBytes / 1024), gs.totalAllocated, gs.totalFree);
 
         for (const auto& [type, pool] : m_Pools) {
             auto stats = GetPoolStats(type);
-            std::cout << "  " << ResourceTypeName(type) << ": "
-                      << "slot=" << stats.slotSize << "B"
-                      << ", blocks=" << stats.blockCount
-                      << ", used=" << stats.allocatedSlots
-                      << "/" << (stats.blockCount * stats.slotsPerBlock)
-                      << " (" << (stats.totalBytes / 1024) << "KB)"
-                      << std::endl;
+            s_Log.Info("  {}: slot={}B, blocks={}, used={}/{}, ({}KB)", ResourceTypeName(type), stats.slotSize, stats.blockCount, stats.allocatedSlots, (stats.blockCount * stats.slotsPerBlock), (stats.totalBytes / 1024));
         }
-        std::cout << "============================" << std::endl;
+        s_Log.Info("============================");
     }
 
 } // namespace Engine

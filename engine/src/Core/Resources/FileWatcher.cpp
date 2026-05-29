@@ -1,8 +1,11 @@
 #include "Engine/Core/Resources/FileWatcher.h"
-
-#include <iostream>
+#include "Engine/Core/Log.h"
 #include <sys/stat.h>
 #include <algorithm>
+
+namespace {
+    Engine::Logger s_Log("FileWatcher");
+}
 
 namespace Engine {
 
@@ -17,23 +20,22 @@ namespace Engine {
     {
         if (s_Instance)
         {
-            std::cerr << "[FileWatcher] Already initialized" << std::endl;
+            s_Log.Error("Already initialized");
             return;
         }
         s_InstanceOwner = std::unique_ptr<FileWatcher>(new FileWatcher());
         s_Instance = s_InstanceOwner.get();
-        std::cout << "[FileWatcher] Initialized (poll interval: "
-                  << s_Instance->m_PollIntervalMs << "ms)" << std::endl;
+        s_Log.Info("Initialized (poll interval: {}ms)", s_Instance->m_PollIntervalMs);
     }
 
     void FileWatcher::Shutdown()
     {
         if (!s_Instance) return;
-        std::cout << "[FileWatcher] Shutting down..." << std::endl;
+        s_Log.Info("Shutting down...");
         s_Instance->Stop();
         s_Instance = nullptr;
         s_InstanceOwner.reset();
-        std::cout << "[FileWatcher] Shutdown complete" << std::endl;
+        s_Log.Info("Shutdown complete");
     }
 
     FileWatcher::~FileWatcher()
@@ -50,15 +52,14 @@ namespace Engine {
         if (m_Running.load()) return;
         if (m_WatchedFiles.empty())
         {
-            std::cout << "[FileWatcher] No files to watch, skipping thread start" << std::endl;
+            s_Log.Info("No files to watch, skipping thread start");
             return;
         }
 
         m_StopRequested = false;
         m_Running = true;
         m_WatcherThread = std::thread(&FileWatcher::ThreadLoop, this);
-        std::cout << "[FileWatcher] Watcher thread started (" << m_WatchedFiles.size()
-                  << " files, " << m_PollIntervalMs << "ms interval)" << std::endl;
+        s_Log.Info("Watcher thread started ({} files, {}ms interval)", m_WatchedFiles.size(), m_PollIntervalMs);
     }
 
     void FileWatcher::Stop()
@@ -68,7 +69,7 @@ namespace Engine {
         m_Running = false;
         if (m_WatcherThread.joinable())
             m_WatcherThread.join();
-        std::cout << "[FileWatcher] Watcher thread stopped" << std::endl;
+        s_Log.Info("Watcher thread stopped");
     }
 
     // ============================================================
@@ -83,12 +84,12 @@ namespace Engine {
         struct stat fileInfo;
         if (stat(path.c_str(), &fileInfo) != 0)
         {
-            std::cerr << "[FileWatcher] Cannot watch non-existent file: " << path << std::endl;
+            s_Log.Error("Cannot watch non-existent file: {}", path);
             return;
         }
 
         m_WatchedFiles[path] = static_cast<int64>(fileInfo.st_mtime);
-        std::cout << "[FileWatcher] Watching: " << path << std::endl;
+        s_Log.Info("Watching: {}", path);
     }
 
     void FileWatcher::Unwatch(const std::string& path)
@@ -97,7 +98,7 @@ namespace Engine {
         if (it != m_WatchedFiles.end())
         {
             m_WatchedFiles.erase(it);
-            std::cout << "[FileWatcher] Unwatched: " << path << std::endl;
+            s_Log.Info("Unwatched: {}", path);
         }
     }
 
@@ -106,7 +107,7 @@ namespace Engine {
         m_WatchedFiles.clear();
         std::lock_guard<std::mutex> lock(m_PendingMutex);
         m_PendingChanges.clear();
-        std::cout << "[FileWatcher] All watches cleared" << std::endl;
+        s_Log.Info("All watches cleared");
     }
 
     // ============================================================

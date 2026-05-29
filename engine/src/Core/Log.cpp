@@ -11,14 +11,49 @@
  */
 
 #include "Engine/Core/Log.h"
+#include "Engine/ConsoleLog.h"
 #include <spdlog/spdlog.h>
 #include <spdlog/sinks/stdout_color_sinks.h>
 #include <spdlog/sinks/rotating_file_sink.h>
+#include <spdlog/sinks/base_sink.h>
 #include <spdlog/async.h>
 #include <memory>
 #include <mutex>
 
 namespace Engine {
+
+// ============================================================
+// ConsoleLogSink — 自定义 spdlog sink，将日志输入 ImGui 控制台
+//
+// 实现 spdlog::sinks::base_sink，自动将每条日志转发到
+// ConsoleLog 的环形缓冲区，供 ConsolePanel 在 ImGui 中显示。
+// ============================================================
+
+class ConsoleLogSink final : public spdlog::sinks::base_sink<std::mutex> {
+protected:
+    void sink_it_(const spdlog::details::log_msg& msg) override {
+        // 将 spdlog 级别映射到 ConsoleLog 级别
+        LogLevel clLevel;
+        switch (msg.level) {
+            case spdlog::level::warn:    clLevel = LogLevel::Warn;  break;
+            case spdlog::level::err:
+            case spdlog::level::critical: clLevel = LogLevel::Error; break;
+            default:                     clLevel = LogLevel::Info;  break;
+        }
+
+        // 格式化消息文本
+        spdlog::memory_buf_t formatted;
+        formatter_->format(msg, formatted);
+        std::string text(formatted.data(), formatted.size());
+
+        // 写入 ConsoleLog 环形缓冲区
+        ConsoleLog::Instance().Log(clLevel, text);
+    }
+
+    void flush_() override {
+        // ConsoleLog 无需显式 flush
+    }
+};
 
 // ============================================================
 // 静态成员
@@ -47,9 +82,13 @@ void Log::Init(const std::string& filePath, Level consoleLevel, Level fileLevel)
         fileSink->set_level(static_cast<spdlog::level::level_enum>(fileLevel));
         fileSink->set_pattern("[%Y-%m-%d %H:%M:%S.%e] [%l] [%n] %v");
 
+        // ── 创建 ImGui 控制台 sink（接 ConsoleLog 环形缓冲区） ──
+        auto imGuiSink = std::make_shared<ConsoleLogSink>();
+        imGuiSink->set_level(spdlog::level::trace);
+
         // ── 创建默认 logger（标签 "Engine"） ──
         s_DefaultLogger = std::make_shared<spdlog::logger>(
-            "Engine", spdlog::sinks_init_list{consoleSink, fileSink});
+            "Engine", spdlog::sinks_init_list{consoleSink, fileSink, imGuiSink});
         s_DefaultLogger->set_level(spdlog::level::trace);
         s_DefaultLogger->flush_on(spdlog::level::warn);  // warn 及以上立即刷盘
 
@@ -84,6 +123,10 @@ std::shared_ptr<spdlog::logger> Log::GetDefaultLogger() {
         Init();
     }
     return s_DefaultLogger;
+}
+
+Logger Log::GetLogger(const std::string& name) {
+    return Logger(name);
 }
 
 std::shared_ptr<spdlog::logger> Log::Get(const std::string& name) {

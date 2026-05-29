@@ -1,9 +1,13 @@
 #include "OpenGLSpriteBatch.h"
 #include "Engine/Core/RenderResources/Texture.h"
 #include <glad/gl.h>
+#include "Engine/Core/Log.h"
 #include <cmath>
 #include <cstring>
-#include <iostream>
+
+namespace {
+    Engine::Logger s_Log("OpenGLSpriteBatch");
+}
 
 namespace Engine {
     OpenGLSpriteBatch::OpenGLSpriteBatch(GladGLContext& gl, IRenderContext& renderContext)
@@ -139,7 +143,7 @@ namespace Engine {
 
     void OpenGLSpriteBatch::Draw(const SpriteData& sprite) {
         if (!m_Began) {
-            std::cerr << "[OpenGLSpriteBatch] Draw() called without Begin()!" << std::endl;
+            s_Log.Error("Draw() called without Begin()!");
             return;
         }
 

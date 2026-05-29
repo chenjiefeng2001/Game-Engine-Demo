@@ -1,5 +1,4 @@
 #include "Engine/ConsoleLog.h"
-#include <iostream>
 #include <algorithm>
 
 namespace Engine {
@@ -34,20 +33,8 @@ namespace Engine {
         m_Buffer[index].level     = level;
         m_Buffer[index].timestamp = timestamp;
         m_Buffer[index].message   = message;
-
-        // 同步输出到 stderr（方便 IDE 控制台调试）
-        switch (level)
-        {
-            case LogLevel::Info:
-                std::cout << "[INFO] " << message << std::endl;
-                break;
-            case LogLevel::Warn:
-                std::cout << "[WARN] " << message << std::endl;
-                break;
-            case LogLevel::Error:
-                std::cerr << "[ERROR] " << message << std::endl;
-                break;
-        }
+        // 注意：不写 std::cout / std::cerr。终端输出由
+        // spdlog 的 stdout_color_sink 统一管理，避免重复。
     }
 
     void ConsoleLog::Clear()

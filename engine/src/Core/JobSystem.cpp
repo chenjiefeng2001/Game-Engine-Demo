@@ -10,7 +10,7 @@
  */
 
 #include "Engine/Core/JobSystem.h"
-#include <iostream>
+#include "Engine/Core/Log.h"
 #include <queue>
 #include <unordered_map>
 #include <mutex>
@@ -18,6 +18,10 @@
 #include <algorithm>
 
 namespace Engine {
+
+namespace {
+    Logger s_Log("JobSystem");
+}
 
 // ============================================================
 // 静态成员
@@ -32,7 +36,7 @@ const JobHandle JobHandle::Invalid{ 0 };
 
 void JobSystem::Init(uint32 threadCount, uint32 reservedForRender) {
     if (s_Instance) {
-        std::cerr << "[JobSystem] Already initialized, skipping." << std::endl;
+        s_Log.Warn("Already initialized, skipping.");
         return;
     }
 
@@ -46,16 +50,15 @@ void JobSystem::Init(uint32 threadCount, uint32 reservedForRender) {
     }
 
     s_Instance = new JobSystem(threadCount, reservedForRender);
-    std::cout << "[JobSystem] Initialized with " << threadCount
-              << " worker threads" << std::endl;
+    s_Log.Info("Initialized with {} worker threads", threadCount);
 }
 
 void JobSystem::Shutdown() {
     if (!s_Instance) return;
-    std::cout << "[JobSystem] Shutting down..." << std::endl;
+    s_Log.Info("Shutting down...");
     delete s_Instance;
     s_Instance = nullptr;
-    std::cout << "[JobSystem] Shutdown complete." << std::endl;
+    s_Log.Info("Shutdown complete.");
 }
 
 JobSystem::JobSystem(uint32 threadCount, uint32 reservedForRender)

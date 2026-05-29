@@ -1,7 +1,11 @@
 #include "Engine/Core/Config.h"
+#include "Engine/Core/Log.h"
 #include <fstream>
-#include <iostream>
 #include <sstream>
+
+namespace {
+    Engine::Logger s_Log("Config");
+}
 
 namespace Engine {
 
@@ -12,7 +16,7 @@ namespace Engine {
     bool Config::Load(const std::string& filepath) {
         std::ifstream file(filepath);
         if (!file.is_open()) {
-            std::cerr << "[Config] Failed to open: " << filepath << std::endl;
+            s_Log.Error("Failed to open: {}", filepath);
             return false;
         }
 
@@ -20,8 +24,7 @@ namespace Engine {
             nlohmann::json loaded;
             file >> loaded;
             if (!loaded.is_object()) {
-                std::cerr << "[Config] Invalid format (not an object): "
-                          << filepath << std::endl;
+                s_Log.Error("Invalid format (not an object): {}", filepath);
                 return false;
             }
 
@@ -30,11 +33,10 @@ namespace Engine {
                 m_Data[it.key()] = it.value();
             }
 
-            std::cout << "[Config] Loaded: " << filepath << std::endl;
+            s_Log.Info("Loaded: {}", filepath);
             return true;
         } catch (const nlohmann::json::exception& e) {
-            std::cerr << "[Config] JSON parse error in " << filepath
-                      << ": " << e.what() << std::endl;
+            s_Log.Error("JSON parse error in {}: {}", filepath, e.what());
             return false;
         }
     }
@@ -42,16 +44,16 @@ namespace Engine {
     bool Config::Save(const std::string& filepath) const {
         std::ofstream file(filepath);
         if (!file.is_open()) {
-            std::cerr << "[Config] Failed to write: " << filepath << std::endl;
+            s_Log.Error("Failed to write: {}", filepath);
             return false;
         }
 
         try {
             file << m_Data.dump(4);  // 缩进 4 空格，人类可读
-            std::cout << "[Config] Saved: " << filepath << std::endl;
+            s_Log.Info("Saved: {}", filepath);
             return true;
         } catch (const nlohmann::json::exception& e) {
-            std::cerr << "[Config] JSON serialize error: " << e.what() << std::endl;
+            s_Log.Error("JSON serialize error: {}", e.what());
             return false;
         }
     }
@@ -158,12 +160,12 @@ namespace Engine {
 
     void Config::RestoreDefaults() {
         if (!m_HasDefaults) {
-            std::cerr << "[Config] No defaults registered, cannot restore." << std::endl;
+            s_Log.Error("No defaults registered, cannot restore.");
             return;
         }
         // 将 m_Defaults 深拷贝到 m_Data
         m_Data = m_Defaults;
-        std::cout << "[Config] Restored defaults" << std::endl;
+        s_Log.Info("Restored defaults");
     }
 
     Config Config::GetDiff() const {

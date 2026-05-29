@@ -1,8 +1,12 @@
 #include "Engine/Core/Scene/Serializer.h"
 #include "Engine/Core/Resources/ResourceManager.h"
+#include "Engine/Core/Log.h"
 #include <nlohmann/json.hpp>
-#include <iostream>
 #include <fstream>
+
+namespace {
+    Engine::Logger s_Log("JsonSerializer");
+}
 
 namespace Engine {
 
@@ -21,20 +25,20 @@ namespace Engine {
 
         std::ofstream file(filePath);
         if (!file.is_open()) {
-            std::cerr << "[JsonSerializer] Failed to write: " << filePath << std::endl;
+            s_Log.Error("Failed to write: {}", filePath);
             return false;
         }
         file << root.dump(4); 
         file.close();
 
-        std::cout << "[JsonSerializer] Scene saved: " << filePath << std::endl;
+        s_Log.Info("Scene saved: {}", filePath);
         return true;
     }
 
     bool JsonSerializer::LoadFromFile(Scene& scene, const std::string& filePath) {
         std::ifstream file(filePath);
         if (!file.is_open()) {
-            std::cerr << "[JsonSerializer] Failed to read: " << filePath << std::endl;
+            s_Log.Error("Failed to read: {}", filePath);
             return false;
         }
 
@@ -42,14 +46,14 @@ namespace Engine {
         try {
             file >> root;
         } catch (const nlohmann::json::parse_error& e) {
-            std::cerr << "[JsonSerializer] Parse error: " << e.what() << std::endl;
+            s_Log.Error("Parse error: {}", e.what());
             return false;
         }
         file.close();
 
         bool result = Deserialize(scene, root);
         if (result) {
-            std::cout << "[JsonSerializer] Scene loaded: " << filePath << std::endl;
+            s_Log.Info("Scene loaded: {}", filePath);
         }
         return result;
     }
@@ -132,7 +136,7 @@ namespace Engine {
 
     bool JsonSerializer::Deserialize(Scene& scene, const nlohmann::json& json) {
         if (!json.contains("scene")) {
-            std::cerr << "[JsonSerializer] Missing 'scene' root" << std::endl;
+            s_Log.Error("Missing 'scene' root");
             return false;
         }
 
@@ -230,7 +234,7 @@ namespace Engine {
             if (comp) return comp->Deserialize(json);
         }
 
-        std::cerr << "[JsonSerializer] Unknown component type: " << typeName << std::endl;
+        s_Log.Error("Unknown component type: {}", typeName);
         return false;
     }
 

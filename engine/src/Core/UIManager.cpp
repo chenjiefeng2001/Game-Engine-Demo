@@ -1,5 +1,9 @@
 #include "Engine/UIManager.h"
-#include <iostream>
+#include "Engine/Core/Log.h"
+
+namespace {
+    Engine::Logger s_Log("UIManager");
+}
 
 namespace Engine {
 
@@ -9,16 +13,16 @@ namespace Engine {
     bool UIManager::Init(std::unique_ptr<IUIManager> instance,
                          void* nativeWindow, void* apiContext) {
         if (s_Instance) {
-            std::cerr << "[UIManager] Already initialized" << std::endl;
+            s_Log.Error("Already initialized");
             return true;
         }
         if (!instance) {
-            std::cerr << "[UIManager] Null instance" << std::endl;
+            s_Log.Error("Null instance");
             return false;
         }
 
         if (!instance->Init(nativeWindow, apiContext)) {
-            std::cerr << "[UIManager] Init failed" << std::endl;
+            s_Log.Error("Init failed");
             return false;
         }
 

@@ -1,7 +1,11 @@
 #include "Engine/Core/FileStream.h"
 #include "Engine/Core/FileSystem.h"
+#include "Engine/Core/Log.h"
 #include <fstream>
-#include <iostream>
+
+namespace {
+    Engine::Logger s_Log("FileStream");
+}
 
 namespace Engine {
 
@@ -44,7 +48,7 @@ namespace Engine {
         auto impl = std::make_unique<Impl>();
         impl->stream.open(realPath, std::ios::binary);
         if (!impl->stream.is_open()) {
-            std::cerr << "[FileStream] Failed to open: " << realPath << std::endl;
+            s_Log.Error("Failed to open: {}", realPath);
             return false;
         }
 

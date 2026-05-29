@@ -1,7 +1,11 @@
 #include "OpenGLTexture.h"
 
+#include "Engine/Core/Log.h"
 #include "stb_image.h"
-#include <iostream>
+
+namespace {
+    Engine::Logger s_Log("OpenGLTexture");
+}
 
 namespace Engine {
 
@@ -40,10 +44,10 @@ namespace Engine {
 			stbi_image_free(data);
 
 			SetState(ResourceState::Loaded);
-			std::cout << "Successfully loaded texture: " << path << " (" << m_Width << "x" << m_Height << ")" << std::endl;
+			s_Log.Info("Successfully loaded texture: {} ({}x{})", path, m_Width, m_Height);
 		} else {
 			SetState(ResourceState::Failed);
-			std::cerr << "Failed to load texture: " << path << std::endl;
+			s_Log.Error("Failed to load texture: {}", path);
 		}
 	}
 
@@ -109,8 +113,7 @@ namespace Engine {
 			}
 
 			SetState(ResourceState::Loaded);
-			std::cout << "[HotReload] Texture reloaded: " << path
-					  << " (" << m_Width << "x" << m_Height << ")" << std::endl;
+			s_Log.Info("[HotReload] Texture reloaded: {} ({}x{})", path, m_Width, m_Height);
 			return true;
 		} else {
 			// 加载失败——恢复旧纹理
@@ -120,7 +123,7 @@ namespace Engine {
 				m_Height = oldHeight;
 			}
 			SetState(ResourceState::Loaded);  // 保持可用状态
-			std::cerr << "[HotReload] Failed to reload texture: " << path << std::endl;
+			s_Log.Error("[HotReload] Failed to reload texture: {}", path);
 			return false;
 		}
 	}

@@ -71,7 +71,7 @@ namespace Engine {
 
         // ── 字体 ──
 
-        virtual bool LoadFont(const char* path, float size) = 0;
+        virtual void LoadFont(const char* path, float size) = 0;
         virtual const std::string& GetFontPath() const = 0;
         virtual float GetFontSize() const = 0;
     };

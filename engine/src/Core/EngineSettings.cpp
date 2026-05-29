@@ -1,5 +1,9 @@
 #include "Engine/Core/EngineSettings.h"
-#include <iostream>
+#include "Engine/Core/Log.h"
+
+namespace {
+    Engine::Logger s_Log("EngineSettings");
+}
 
 namespace Engine {
 
@@ -37,7 +41,7 @@ namespace Engine {
             // 文件不存在或加载失败，用默认值创建初始文件
             RestoreDefaults();
             Save(filepath);
-            std::cout << "[EngineSettings] Created default: " << filepath << std::endl;
+            s_Log.Info("Created default: {}", filepath);
         }
         return true;
     }

@@ -1,9 +1,13 @@
 #include "Engine/OpenAL/OpenALAudioEngine.h"
 #include "Engine/OpenAL/OpenALAudioBuffer.h"
 #include "Engine/OpenAL/OpenALAudioSource.h"
-#include <iostream>
+#include "Engine/Core/Log.h"
 #include <AL/al.h>
 #include <AL/alc.h>
+
+namespace {
+    Engine::Logger s_Log("OpenAL");
+}
 
 namespace Engine {
 
@@ -41,21 +45,21 @@ namespace Engine {
         // 打开默认音频设备
         m_Device = alcOpenDevice(nullptr);
         if (!m_Device) {
-            std::cerr << "[OpenAL] Failed to open default audio device" << std::endl;
+            s_Log.Error("Failed to open default audio device");
             return false;
         }
 
         // 创建音频上下文
         m_Context = alcCreateContext(m_Device, nullptr);
         if (!m_Context) {
-            std::cerr << "[OpenAL] Failed to create audio context" << std::endl;
+            s_Log.Error("Failed to create audio context");
             alcCloseDevice(m_Device);
             m_Device = nullptr;
             return false;
         }
 
         if (!alcMakeContextCurrent(m_Context)) {
-            std::cerr << "[OpenAL] Failed to make context current" << std::endl;
+            s_Log.Error("Failed to make context current");
             alcDestroyContext(m_Context);
             m_Context = nullptr;
             alcCloseDevice(m_Device);
@@ -66,10 +70,10 @@ namespace Engine {
         // 设置默认距离模型
         alDistanceModel(AL_INVERSE_DISTANCE_CLAMPED);
 
-        std::cout << "[OpenAL] Initialized successfully" << std::endl;
-        std::cout << "  Vendor:   " << alGetString(AL_VENDOR) << std::endl;
-        std::cout << "  Version:  " << alGetString(AL_VERSION) << std::endl;
-        std::cout << "  Renderer: " << alGetString(AL_RENDERER) << std::endl;
+        s_Log.Info("Initialized successfully");
+        s_Log.Info("  Vendor:   {}", alGetString(AL_VENDOR));
+        s_Log.Info("  Version:  {}", alGetString(AL_VERSION));
+        s_Log.Info("  Renderer: {}", alGetString(AL_RENDERER));
 
         m_Initialized = true;
         return true;

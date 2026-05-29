@@ -1,6 +1,10 @@
 #include "Engine/Audio/AudioSystem.h"
-#include <iostream>
+#include "Engine/Core/Log.h"
 #include <algorithm>
+
+namespace {
+    Engine::Logger s_Log("AudioSystem");
+}
 
 // OpenAL 头文件（用于绑定缓冲区和查询播放状态）
 #include <AL/al.h>
@@ -26,15 +30,14 @@ namespace Engine { namespace Audio {
     void PlayOneShot(IAudioEngine& engine, AudioClip& clip,
                      const Vec3& position) {
         if (!clip.IsValid()) {
-            std::cerr << "[Audio::PlayOneShot] AudioClip is not valid" << std::endl;
+            s_Log.Error("[Audio::PlayOneShot] AudioClip is not valid");
             return;
         }
 
         // 创建临时音源
         auto source = engine.CreateSource();
         if (!source) {
-            std::cerr << "[Audio::PlayOneShot] Failed to create audio source"
-                      << std::endl;
+            s_Log.Error("[Audio::PlayOneShot] Failed to create audio source");
             return;
         }
 
@@ -45,8 +48,7 @@ namespace Engine { namespace Audio {
 
         ALenum err = alGetError();
         if (err != AL_NO_ERROR) {
-            std::cerr << "[Audio::PlayOneShot] Failed to bind buffer (error: "
-                      << err << ")" << std::endl;
+            s_Log.Error("[Audio::PlayOneShot] Failed to bind buffer (error: {})", err);
             engine.DestroySource(source.get());
             return;
         }
@@ -64,8 +66,7 @@ namespace Engine { namespace Audio {
         alSourcePlay(sourceHandle);
         ALenum playErr = alGetError();
         if (playErr != AL_NO_ERROR) {
-            std::cerr << "[Audio::PlayOneShot] Failed to play (error: "
-                      << playErr << ")" << std::endl;
+            s_Log.Error("[Audio::PlayOneShot] Failed to play (error: {})", playErr);
             engine.DestroySource(source.get());
             return;
         }
