@@ -26,6 +26,7 @@
 #include "Engine/Editor/ViewportPanel.h"
 #include "Engine/Editor/ContentBrowserPanel.h"
 #include "Engine/Editor/AssetBrowserPanel.h"
+#include "Engine/Editor/DependencyGraphPanel.h"
 
 namespace Engine {
 
@@ -61,8 +62,9 @@ namespace Engine {
         MainMenuBar&        GetMenuBar()        { return m_MenuBar; }
         Toolbar&            GetToolbar()        { return m_Toolbar; }
         ViewportPanel&      GetViewport()       { return m_Viewport; }
-        ContentBrowserPanel& GetContentBrowser() { return m_ContentBrowser; }
-        AssetBrowserPanel&  GetAssetBrowser()   { return m_AssetBrowser; }
+        ContentBrowserPanel&  GetContentBrowser()   { return m_ContentBrowser; }
+        AssetBrowserPanel&    GetAssetBrowser()     { return m_AssetBrowser; }
+        DependencyGraphPanel& GetDependencyGraph()  { return m_DepGraph; }
 
         // ── 面板注册（供外部访问已有的 Engine 面板） ──
         void RegisterSceneHierarchy(SceneHierarchyPanel* panel) { m_SceneHierarchy = panel; }
@@ -81,14 +83,16 @@ namespace Engine {
         void DrawPerformanceWindow();
         void DrawContentBrowserWindow();
         void DrawAssetBrowserWindow();
+        void DrawDepGraphWindow();
         void DrawViewportPanel();
 
         // ── 拥有的面板 ──
-        MainMenuBar          m_MenuBar;
-        Toolbar              m_Toolbar;
-        ViewportPanel        m_Viewport;
-        ContentBrowserPanel  m_ContentBrowser;
-        AssetBrowserPanel    m_AssetBrowser;
+        MainMenuBar           m_MenuBar;
+        Toolbar               m_Toolbar;
+        ViewportPanel         m_Viewport;
+        ContentBrowserPanel   m_ContentBrowser;
+        AssetBrowserPanel     m_AssetBrowser;
+        DependencyGraphPanel  m_DepGraph;
 
         // ── 外部注册的引擎面板（非拥有，仅引用） ──
         SceneHierarchyPanel* m_SceneHierarchy = nullptr;

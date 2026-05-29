@@ -1,5 +1,7 @@
 #include "Engine/Core/Resources/ResourceManager.h"
 #include "Engine/Core/Resources/FileWatcher.h"
+#include "Engine/Core/Resources/ResourceRegistry.h"
+#include "Engine/Core/IGraphicsFactory.h"
 #include "Engine/Core/RenderResources/Texture.h"
 #include "Engine/Core/RenderResources/Shader.h"
 #include "Engine/Core/Audio/AudioClip.h"
@@ -25,6 +27,9 @@ namespace Engine {
         s_Instance->m_Budgets[ResourceType::Shader]    = {UINT64_MAX, UINT32_MAX};
         s_Instance->m_Budgets[ResourceType::AudioClip] = {UINT64_MAX, UINT32_MAX};
 
+        // 初始化内存池
+        s_Instance->InitPools();
+
         std::cout << "[ResourceManager] Initialized" << std::endl;
     }
 
@@ -38,6 +43,7 @@ namespace Engine {
             s_Instance->m_LoadThread.join();
 
         std::cout << "[ResourceManager] Shutting down, unloading all resources..." << std::endl;
+        s_Instance->m_Registry.Clear();
         s_Instance->UnloadAll();
         s_Instance = nullptr;
         s_InstanceOwner.reset();
@@ -46,8 +52,26 @@ namespace Engine {
 
     ResourceManager::ResourceManager(IGraphicsFactory& factory)
         : m_Factory(factory)
+        , m_Registry()
     {
         // 默认不启动后台线程——懒启动
+    }
+
+    // ============================================================
+    // 初始化内存池
+    // ============================================================
+
+    void ResourceManager::InitPools() {
+        auto& alloc = m_Registry.GetAllocator();
+
+        if (!alloc.HasPool(ResourceType::Texture))
+            alloc.CreatePool(ResourceType::Texture, sizeof(Texture), 32);
+        if (!alloc.HasPool(ResourceType::Shader))
+            alloc.CreatePool(ResourceType::Shader, sizeof(Shader), 16);
+        if (!alloc.HasPool(ResourceType::AudioClip))
+            alloc.CreatePool(ResourceType::AudioClip, sizeof(AudioClip), 32);
+
+        std::cout << "[ResourceManager] Memory pools initialized" << std::endl;
     }
 
     // ============================================================
@@ -61,6 +85,10 @@ namespace Engine {
             std::cerr << "[ResourceManager] Failed to load texture: " << path << std::endl;
             return nullptr;
         }
+        // 注册到 GUID 注册表
+        auto guid = m_Registry.Register(tex);
+        tex->SetGUID(guid);
+
         std::cout << "[ResourceManager] Texture loaded: " << path
                   << " (" << tex->GetWidth() << "x" << tex->GetHeight() << ")" << std::endl;
         return tex;
@@ -75,6 +103,10 @@ namespace Engine {
                       << vertexPath << " | " << fragmentPath << std::endl;
             return nullptr;
         }
+        // 注册到 GUID 注册表
+        auto guid = m_Registry.Register(shader);
+        shader->SetGUID(guid);
+
         std::cout << "[ResourceManager] Shader loaded: "
                   << vertexPath << " + " << fragmentPath << std::endl;
         return shader;
@@ -87,6 +119,10 @@ namespace Engine {
             std::cerr << "[ResourceManager] Failed to load audio: " << path << std::endl;
             return nullptr;
         }
+        // 注册到 GUID 注册表
+        auto guid = m_Registry.Register(clip);
+        clip->SetGUID(guid);
+
         std::cout << "[ResourceManager] AudioClip loaded: " << path
                   << " (" << clip->GetDuration() << "s, "
                   << clip->GetSampleRate() << "Hz)" << std::endl;
@@ -139,6 +175,7 @@ namespace Engine {
 
     void ResourceManager::UnloadAll() {
         size_t count = m_Cache.size();
+        m_Registry.Clear();
         m_Cache.clear();
         m_TypeStats.clear();
         std::cout << "[ResourceManager] All " << count << " resources unloaded" << std::endl;

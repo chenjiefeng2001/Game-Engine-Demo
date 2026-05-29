@@ -27,12 +27,16 @@
  */
 
 #include "Engine/Types.h"
+#include "Engine/Core/Resources/ResourceGUID.h"
 #include <string>
 #include <memory>
 #include <atomic>
 #include <functional>
 
 namespace Engine {
+
+    // 前向声明
+    class IGraphicsFactory;
 
     // ============================================================
     // 资源类型枚举
@@ -99,12 +103,14 @@ namespace Engine {
         Resource(Resource&& other) noexcept
             : m_Path(std::move(other.m_Path))
             , m_Type(other.m_Type)
+            , m_GUID(other.m_GUID)
             , m_State(other.m_State.load(std::memory_order_acquire))
             , m_ReloadVersion(other.m_ReloadVersion.load(std::memory_order_acquire)) {}
         Resource& operator=(Resource&& other) noexcept {
             if (this != &other) {
                 m_Path = std::move(other.m_Path);
                 m_Type = other.m_Type;
+                m_GUID = other.m_GUID;
                 m_State.store(other.m_State.load(std::memory_order_acquire),
                               std::memory_order_release);
                 m_ReloadVersion.store(other.m_ReloadVersion.load(std::memory_order_acquire),
@@ -120,6 +126,14 @@ namespace Engine {
         ResourceType       GetType()  const noexcept { return m_Type; }
         /** 获取资源类型名称字符串 */
         const char*        GetTypeName() const noexcept { return ResourceTypeName(m_Type); }
+
+        // ── GUID 支持 ──
+        /** 获取资源的全局唯一标识符 */
+        const ResourceGUID& GetGUID() const noexcept { return m_GUID; }
+        /** 设置资源的 GUID（应在注册时由 ResourceRegistry 调用） */
+        void SetGUID(const ResourceGUID& guid) noexcept { m_GUID = guid; }
+        /** 是否已分配 GUID */
+        bool HasGUID() const noexcept { return !m_GUID.IsNull(); }
 
         // ── 状态 ──
         /** 获取当前加载状态 */
@@ -141,7 +155,21 @@ namespace Engine {
         }
         /** 是否有外部持有者（引用计数 > 1 说明除 cache 外还有使用者） */
         bool IsReferenced() const noexcept { return RefCount() > 1; }
+        // ── 加载后初始化 ──
 
+        /**
+         * @brief 资源加载后的初始化钩子
+         * @param factory 可选的图形工厂指针（为 nullptr 时表示纯 CPU 资源）
+         * @return true 表示初始化成功
+         *
+         * 由 ResourceManager::Load<T>() 在 LoadByType 成功后自动调用。
+         * 派生类可重写此方法执行 GPU 上传、音频预处理等后处理。
+         * 默认实现返回 true（无操作）。
+         */
+        virtual bool PostLoad(IGraphicsFactory* factory) {
+            (void)factory;
+            return true;
+        }
         // ── 资源大小估算（供内存统计使用，子类可重写） ──
         virtual size_t EstimatedMemoryBytes() const noexcept { return 0; }
 
@@ -175,6 +203,7 @@ namespace Engine {
     private:
         std::string                m_Path;
         ResourceType               m_Type;
+        ResourceGUID               m_GUID;     // 全局唯一标识符
         std::atomic<ResourceState> m_State{ ResourceState::Unloaded };
         std::atomic<uint32>        m_ReloadVersion{ 0 };
     };
