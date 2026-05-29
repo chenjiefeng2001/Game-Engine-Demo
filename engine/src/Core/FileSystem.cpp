@@ -1,7 +1,7 @@
 #include "Engine/Core/FileSystem.h"
 #include <filesystem>
+#include "Engine/Core/Log.h"
 #include <fstream>
-#include <iostream>
 #include <future>
 #include <mutex>
 #include <queue>
@@ -9,6 +9,10 @@
 #include <atomic>
 #include <algorithm>
 #include <cstring>
+
+namespace {
+    Engine::Logger s_Log("FileSystem");
+}
 
 namespace fs = std::filesystem;
 
@@ -100,8 +104,7 @@ namespace Engine {
         s_Async->maxThreads = std::max(1u, threadCount);
         s_BasePath = fs::current_path().string();
         s_Initialized = true;
-        std::cout << "[FileSystem] Initialized (" << s_Async->maxThreads
-                  << " threads, base: " << s_BasePath << ")" << std::endl;
+        s_Log.Info("Initialized ({} threads, base: {})", s_Async->maxThreads, s_BasePath);
     }
 
     void FileSystem::Shutdown() {
@@ -121,14 +124,12 @@ namespace Engine {
         for (auto& mp : s_Mounts) {
             if (mp.name == name) {
                 mp.realPath = abs;
-                std::cout << "[FileSystem] Remounted '" << name
-                          << "' -> " << abs << std::endl;
+                s_Log.Info("Remounted '{}' -> {}", name, abs);
                 return;
             }
         }
         s_Mounts.push_back({name, abs});
-        std::cout << "[FileSystem] Mounted '" << name
-                  << "' -> " << abs << std::endl;
+        s_Log.Info("Mounted '{}' -> {}", name, abs);
     }
 
     void FileSystem::Unmount(const std::string& name) {
@@ -267,7 +268,7 @@ namespace Engine {
         try {
             return fs::create_directories(fs::path(ResolvePath(path)));
         } catch (const fs::filesystem_error& e) {
-            std::cerr << "[FileSystem] CreateDirectory failed: " << e.what() << std::endl;
+            s_Log.Error("CreateDirectory failed: {}", e.what());
             return false;
         }
     }
@@ -275,7 +276,7 @@ namespace Engine {
     bool FileSystem::Remove(const std::string& path) {
         try { return fs::remove(fs::path(ResolvePath(path))); }
         catch (const fs::filesystem_error& e) {
-            std::cerr << "[FileSystem] Remove failed: " << e.what() << std::endl;
+            s_Log.Error("Remove failed: {}", e.what());
             return false;
         }
     }
@@ -283,7 +284,7 @@ namespace Engine {
     bool FileSystem::RemoveAll(const std::string& path) {
         try { return fs::remove_all(fs::path(ResolvePath(path))) > 0; }
         catch (const fs::filesystem_error& e) {
-            std::cerr << "[FileSystem] RemoveAll failed: " << e.what() << std::endl;
+            s_Log.Error("RemoveAll failed: {}", e.what());
             return false;
         }
     }
@@ -293,7 +294,7 @@ namespace Engine {
             fs::rename(fs::path(ResolvePath(from)), fs::path(ResolvePath(to)));
             return true;
         } catch (const fs::filesystem_error& e) {
-            std::cerr << "[FileSystem] Rename failed: " << e.what() << std::endl;
+            s_Log.Error("Rename failed: {}", e.what());
             return false;
         }
     }
@@ -304,7 +305,7 @@ namespace Engine {
                      fs::copy_options::recursive | fs::copy_options::overwrite_existing);
             return true;
         } catch (const fs::filesystem_error& e) {
-            std::cerr << "[FileSystem] Copy failed: " << e.what() << std::endl;
+            s_Log.Error("Copy failed: {}", e.what());
             return false;
         }
     }
@@ -341,7 +342,7 @@ namespace Engine {
         fs::path p{realPath};
         std::ifstream file{p, std::ios::binary | std::ios::ate};
         if (!file.is_open()) {
-            std::cerr << "[FileSystem] ReadFile failed: " << realPath << std::endl;
+            s_Log.Error("ReadFile failed: {}", realPath);
             return {};
         }
         auto fileSize = static_cast<size_t>(file.tellg());
@@ -358,7 +359,7 @@ namespace Engine {
         fs::path p{realPath};
         std::ifstream file{p};
         if (!file.is_open()) {
-            std::cerr << "[FileSystem] ReadTextFile failed: " << realPath << std::endl;
+            s_Log.Error("ReadTextFile failed: {}", realPath);
             return {};
         }
         return std::string(std::istreambuf_iterator<char>(file),
@@ -371,7 +372,7 @@ namespace Engine {
         fs::create_directories(p.parent_path());
         std::ofstream file{p, std::ios::binary};
         if (!file.is_open()) {
-            std::cerr << "[FileSystem] WriteFile failed: " << realPath << std::endl;
+            s_Log.Error("WriteFile failed: {}", realPath);
             return false;
         }
         file.write(reinterpret_cast<const char*>(data.data()),
@@ -384,7 +385,7 @@ namespace Engine {
         fs::create_directories(p.parent_path());
         std::ofstream file{p};
         if (!file.is_open()) {
-            std::cerr << "[FileSystem] WriteTextFile failed: " << realPath << std::endl;
+            s_Log.Error("WriteTextFile failed: {}", realPath);
             return false;
         }
         file << text;
@@ -396,7 +397,7 @@ namespace Engine {
         fs::create_directories(p.parent_path());
         std::ofstream file{p, std::ios::app};
         if (!file.is_open()) {
-            std::cerr << "[FileSystem] AppendTextFile failed: " << realPath << std::endl;
+            s_Log.Error("AppendTextFile failed: {}", realPath);
             return false;
         }
         file << text;
@@ -417,7 +418,7 @@ namespace Engine {
         fs::path dir(realDir);
 
         if (!fs::exists(dir) || !fs::is_directory(dir)) {
-            std::cerr << "[FileSystem] ScanDirectory failed: " << realDir << std::endl;
+            s_Log.Error("ScanDirectory failed: {}", realDir);
             return entries;
         }
 
@@ -436,7 +437,7 @@ namespace Engine {
                 }
             }
         } catch (const fs::filesystem_error& e) {
-            std::cerr << "[FileSystem] ScanDirectory error: " << e.what() << std::endl;
+            s_Log.Error("ScanDirectory error: {}", e.what());
         }
 
         std::sort(entries.begin(), entries.end(),

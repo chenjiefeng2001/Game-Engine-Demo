@@ -1,7 +1,11 @@
 #include "Engine/Core/Audio/AudioClip.h"
-#include <iostream>
+#include "Engine/Core/Log.h"
 #include <AL/al.h>
 #include <AL/alc.h>
+
+namespace {
+    Engine::Logger s_Log("AudioClip");
+}
 
 namespace Engine {
 
@@ -53,8 +57,7 @@ bool AudioClip::LoadFromFile(const std::string& filePath) {
 
     AudioData data = AudioLoader::Load(filePath);
     if (!data.IsValid()) {
-        std::cerr << "[AudioClip] Failed to load audio file: "
-                  << filePath << std::endl;
+        s_Log.Error("Failed to load audio file: {}", filePath);
         SetState(ResourceState::Failed);
         return false;
     }
@@ -97,8 +100,7 @@ bool AudioClip::LoadFromMemory(const void* data, size_t dataSize,
     }
 
     if (!audioData.IsValid()) {
-        std::cerr << "[AudioClip] Failed to load audio from memory"
-                  << std::endl;
+        s_Log.Error("Failed to load audio from memory");
         SetState(ResourceState::Failed);
         return false;
     }
@@ -120,8 +122,7 @@ bool AudioClip::LoadPCM(const AudioData& audioData) {
     // 生成 OpenAL 缓冲区
     alGenBuffers(1, &m_BufferID);
     if (alGetError() != AL_NO_ERROR) {
-        std::cerr << "[AudioClip] Failed to generate OpenAL buffer"
-                  << std::endl;
+        s_Log.Error("Failed to generate OpenAL buffer");
         m_BufferID = 0;
         return false;
     }
@@ -136,7 +137,7 @@ bool AudioClip::LoadPCM(const AudioData& audioData) {
     }
 
     if (format == AL_NONE) {
-        std::cerr << "[AudioClip] Unsupported audio format" << std::endl;
+        s_Log.Error("Unsupported audio format");
         alDeleteBuffers(1, &m_BufferID);
         m_BufferID = 0;
         return false;
@@ -150,8 +151,7 @@ bool AudioClip::LoadPCM(const AudioData& audioData) {
 
     ALenum err = alGetError();
     if (err != AL_NO_ERROR) {
-        std::cerr << "[AudioClip] Failed to upload PCM data (error: "
-                  << err << ")" << std::endl;
+        s_Log.Error("Failed to upload PCM data (error: {})", err);
         alDeleteBuffers(1, &m_BufferID);
         m_BufferID = 0;
         return false;

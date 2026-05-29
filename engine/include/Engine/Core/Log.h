@@ -41,6 +41,9 @@
 
 namespace Engine {
 
+// 前向声明（Log::GetLogger 返回 Logger 值类型）
+class Logger;
+
 class Log {
 public:
     // ── 日志级别（映射到 spdlog 级别） ──
@@ -122,12 +125,103 @@ public:
     /** 强制刷新所有日志到磁盘 */
     static void Flush();
 
+    // ── 获取模块 Logger（不暴露 spdlog 类型） ──
+
+    /**
+     * @brief 获取或创建指定名称的模块 Logger
+     * @param name 模块名称，如 "ResourceManager"、"Audio"
+     * @return Logger 值对象（轻量，可安全复制）
+     *
+     * @code
+     *   auto log = Log::GetLogger("Physics");
+     *   log.Info("Step dt={:.6f}s", dt);
+     *   log.Warn("Body {} out of bounds", bodyId);
+     * @endcode
+     */
+    static Logger GetLogger(const std::string& name);
+
     // ── 内部 ──
     static std::shared_ptr<spdlog::logger> GetDefaultLogger();
 
 private:
     static bool s_Initialized;
     static std::shared_ptr<spdlog::logger> s_DefaultLogger;
+};
+
+// ============================================================
+// Logger — 轻量日志中间层，不暴露 spdlog 类型
+//
+// 设计要点：
+//   - 值类型，可安全复制、移动
+//   - 懒初始化：构造时不访问 spdlog，首次输出时才获取 logger
+//   - 因此可在静态初始化阶段安全创建（如文件作用域 static Logger）
+// ============================================================
+
+class Logger {
+public:
+    Logger() = default;
+
+    /// 按名称创建 Logger（懒初始化）
+    explicit Logger(const std::string& name) : m_Name(name) {}
+
+    // ── 日志输出 ──
+
+    template<typename... Args>
+    void Trace(fmt::format_string<Args...> fmt, Args&&... args) {
+        EnsureLogger();
+        if (m_Logger) m_Logger->trace(fmt, std::forward<Args>(args)...);
+    }
+
+    template<typename... Args>
+    void Debug(fmt::format_string<Args...> fmt, Args&&... args) {
+        EnsureLogger();
+        if (m_Logger) m_Logger->debug(fmt, std::forward<Args>(args)...);
+    }
+
+    template<typename... Args>
+    void Info(fmt::format_string<Args...> fmt, Args&&... args) {
+        EnsureLogger();
+        if (m_Logger) m_Logger->info(fmt, std::forward<Args>(args)...);
+    }
+
+    template<typename... Args>
+    void Warn(fmt::format_string<Args...> fmt, Args&&... args) {
+        EnsureLogger();
+        if (m_Logger) m_Logger->warn(fmt, std::forward<Args>(args)...);
+    }
+
+    template<typename... Args>
+    void Error(fmt::format_string<Args...> fmt, Args&&... args) {
+        EnsureLogger();
+        if (m_Logger) m_Logger->error(fmt, std::forward<Args>(args)...);
+    }
+
+    template<typename... Args>
+    void Critical(fmt::format_string<Args...> fmt, Args&&... args) {
+        EnsureLogger();
+        if (m_Logger) m_Logger->critical(fmt, std::forward<Args>(args)...);
+    }
+
+    // ── 控制 ──
+
+    void SetLevel(Log::Level level) {
+        EnsureLogger();
+        if (m_Logger)
+            m_Logger->set_level(static_cast<spdlog::level::level_enum>(level));
+    }
+
+    bool IsValid() const { return m_Logger != nullptr || !m_Name.empty(); }
+    const std::string& GetName() const { return m_Name; }
+
+private:
+    void EnsureLogger() {
+        if (!m_Logger && !m_Name.empty()) {
+            m_Logger = Log::Get(m_Name);
+        }
+    }
+
+    std::string m_Name;
+    std::shared_ptr<spdlog::logger> m_Logger;
 };
 
 } // namespace Engine

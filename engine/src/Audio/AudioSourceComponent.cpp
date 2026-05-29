@@ -1,5 +1,9 @@
 #include "Engine/Core/Audio/AudioSourceComponent.h"
-#include <iostream>
+#include "Engine/Core/Log.h"
+
+namespace {
+    Engine::Logger s_Log("AudioSourceComponent");
+}
 
 // OpenAL 头文件（用于将 AudioClip 的缓冲区绑定到音源）
 #include <AL/al.h>
@@ -22,11 +26,11 @@ namespace Engine {
 
     void AudioSourceComponent::Play(AudioClip& clip) {
         if (!m_Source) {
-            std::cerr << "[AudioSourceComponent] No audio source available" << std::endl;
+            s_Log.Error("No audio source available");
             return;
         }
         if (!clip.IsValid()) {
-            std::cerr << "[AudioSourceComponent] AudioClip is not valid" << std::endl;
+            s_Log.Error("AudioClip is not valid");
             return;
         }
 
@@ -37,8 +41,7 @@ namespace Engine {
 
         ALenum err = alGetError();
         if (err != AL_NO_ERROR) {
-            std::cerr << "[AudioSourceComponent] Failed to bind buffer (error: "
-                      << err << ")" << std::endl;
+            s_Log.Error("Failed to bind buffer (error: {})", err);
             return;
         }
 

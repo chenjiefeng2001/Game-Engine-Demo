@@ -66,6 +66,9 @@ Application::Application(IGraphicsFactory &factory)
 
 Application::~Application() {
   // SubsystemManager::Shutdown() 在 m_SubsystemManager 析构时自动调用
+
+  // ── 日志系统关闭（确保所有缓冲输出写入文件） ──
+  Log::Shutdown();
 }
 
 void Application::RegisterSubsystem(std::string name, SubsystemPhase phase,
@@ -221,6 +224,10 @@ void Application::DispatchSubsystemUpdates(float32 dt) {
     isActive = m_Window->IsActive() && !m_Window->IsMinimized();
   }
 
+  // ── 重入防护 ──
+  if (m_InsideDispatch) return;
+  m_InsideDispatch = true;
+
   // ── 按执行阶段分组 ──
   // 收集每个阶段需要更新的子系统
   using PhaseGroup = std::vector<uint32>;
@@ -273,60 +280,58 @@ void Application::DispatchSubsystemUpdates(float32 dt) {
       auto& entry = it->second;
       const auto& config = entry.config;
 
-      // 构造一个 Job 函数，捕获 entry 和 dt
-      auto jobFn = [&entry, dt, js]() {
+      // 安全：值捕获 updateFn / config / 指针，避免在 Job 执行期间
+      // 因 map 被修改而导致引用悬挂。
+      auto* entryPtr   = &entry;
+      auto  updateFn   = entry.updateFn;
+      auto  updateMode = config.updateMode;
+      auto  fixedDt    = config.fixedDt;
+
+      auto jobFn = [entryPtr, updateFn, updateMode, fixedDt, dt]() {
         float32 actualDt = dt;
 
-        // 根据 UpdateMode 处理
-        switch (entry.config.updateMode) {
-
+        switch (updateMode) {
           case SubsystemUpdateMode::Default:
           case SubsystemUpdateMode::Variable: {
-            if (entry.updateFn) entry.updateFn(actualDt);
+            if (updateFn) updateFn(actualDt);
             break;
           }
-
           case SubsystemUpdateMode::Fixed: {
-            entry.accumulator += actualDt;
-            float32 fixedDt = entry.config.fixedDt;
-            while (entry.accumulator >= fixedDt) {
-              if (entry.updateFn) entry.updateFn(fixedDt);
-              entry.accumulator -= fixedDt;
+            entryPtr->accumulator += actualDt;
+            while (entryPtr->accumulator >= fixedDt) {
+              if (updateFn) updateFn(fixedDt);
+              entryPtr->accumulator -= fixedDt;
             }
             break;
           }
-
           case SubsystemUpdateMode::Throttled: {
-            // Throttled 已在上层过滤，这里直接执行
-            if (entry.updateFn) entry.updateFn(entry.timeSinceLast);
-            entry.timeSinceLast = 0.0f;
+            if (updateFn) updateFn(entryPtr->timeSinceLast);
+            entryPtr->timeSinceLast = 0.0f;
             break;
           }
-
           case SubsystemUpdateMode::EventDriven: {
-            if (entry.updateFn) entry.updateFn(actualDt);
-            entry.eventPending = false;
+            if (updateFn) updateFn(actualDt);
+            entryPtr->eventPending = false;
             break;
           }
-
           default: break;
         }
       };
 
       // 通过 JobSystem 调度
       if (js && js->GetThreadCount() > 0) {
-        // 包装为 JobFunc（接收 threadIndex，这里忽略）
         JobFunc wrappedFn = [jobFn](uint32) { jobFn(); };
         JobHandle h = js->Schedule(std::move(wrappedFn));
         entry.currentJobId = h.id;
       } else {
-        // 无 Job 系统直接执行
         jobFn();
         entry.currentJobId = 0;
       }
     }
 
     // ── 等待此阶段所有并行 Job 完成 ──
+    // 完成后，worker 线程对 entry 中 accumulator / timeSinceLast /
+    // eventPending 的写入已通过 JobSystem 的 release-acquire 链对主线程可见。
     if (js && js->GetThreadCount() > 0) {
       for (uint32 id : group) {
         auto it = m_SubsystemEntries.find(id);
@@ -338,6 +343,8 @@ void Application::DispatchSubsystemUpdates(float32 dt) {
       }
     }
   }
+
+  m_InsideDispatch = false;
 }
 
 void Application::InternalUpdate(float32 dt) {
@@ -374,13 +381,9 @@ void Application::InternalUpdate(float32 dt) {
     if (Input::IsKeyPressed(KeyCode::Enter))    m_MenuManager.OnKeyPressed(KeyCode::Enter);
   }
 
-  // ── 阶段 E：确保所有并行 Job 已完成（DispatchSubsystemUpdates
-  // 内部已按阶段等待，此处作为安全检查） ──
-  if (auto* js = JobSystem::Get()) {
-    if (js->GetPendingJobCount() > 0) {
-      js->WaitAll();
-    }
-  }
+  // 注意：不在此处额外调用 WaitAll()。
+  // DispatchSubsystemUpdates 已按阶段逐一等待完成，此处的显式同步是多余的，
+  // 且在主线程 work-stealing 场景下可能导致不可预期的执行顺序。
 }
 void Application::InternalRender() {
   auto context = m_Window->GetContext();
@@ -445,14 +448,6 @@ void Application::Run() {
           continue;
         }
 
-        // 失去焦点但未最小化：限制 10fps 让后台任务继续
-        Time::UpdateDeltaTime();
-        float32 dt = Time::GetDeltaTime();
-        if (dt < 0.1f) {
-          std::this_thread::sleep_for(std::chrono::milliseconds(1));
-          continue;
-        }
-
         // ── 窗口正在被拖动调整大小 → 降帧到 ~30fps 保证窗口操作流畅 ──
         if (m_Window->IsResizing()) {
           std::this_thread::sleep_for(std::chrono::milliseconds(16));
@@ -481,6 +476,7 @@ void Application::Run() {
     if (m_LoopMode == LoopMode::Fixed) {
       // 固定步长模式 (Fixed 60Hz) 带漂移修正
       static const float32 fixedDt = 1.0f / 60.0f;
+      static const int32   maxIter = 10;     // 防止螺旋过载
       static float64 acc = 0.0;
 
       // 每 600 帧（~10 秒）用绝对时间校准一次累加器，消除累积漂移
@@ -491,9 +487,15 @@ void Application::Run() {
       }
 
       acc += dt;
-      while (acc >= fixedDt) {
+      int32 iterations = 0;
+      while (acc >= fixedDt && iterations < maxIter) {
         InternalUpdate(fixedDt);
         acc -= fixedDt;
+        ++iterations;
+      }
+      // 超过迭代上限 → 重置累加器，丢弃溢出时间以避免螺旋过载
+      if (iterations >= maxIter) {
+        acc = 0.0;
       }
       // 渲染插值因子（用于骨骼/动画视觉平滑）
       m_RenderAlpha = static_cast<float>(acc / fixedDt);  // 0~1

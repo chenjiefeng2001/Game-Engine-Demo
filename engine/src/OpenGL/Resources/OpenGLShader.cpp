@@ -1,10 +1,14 @@
 #include "OpenGLShader.h"
 
+#include "Engine/Core/Log.h"
 #include <fstream>
 #include <sstream>
-#include <iostream>
 #include <vector>
 #include <glad/gl.h>
+
+namespace {
+    Engine::Logger s_Log("OpenGLShader");
+}
 
 namespace Engine {
 
@@ -30,6 +34,7 @@ namespace Engine {
 
 		m_GL.DeleteShader(vs);
 		m_GL.DeleteShader(fs);
+
 	}
 
 	OpenGLShader::~OpenGLShader() {
@@ -44,7 +49,7 @@ namespace Engine {
 	std::string OpenGLShader::ReadFile(const std::string& filepath) {
 		std::ifstream f(filepath);
 		if (!f.is_open()) {
-			std::cerr << "Could not open shader file: " << filepath << std::endl;
+			s_Log.Error("Could not open shader file: {}", filepath);
 			return "";
 		}
 		std::stringstream ss;
@@ -63,7 +68,7 @@ namespace Engine {
 		if (!result) {
 			char infoLog[512];
 			m_GL.GetShaderInfoLog(id, 512, NULL, infoLog);
-			std::cerr << "Shader Compilation Error (" << (type == GL_VERTEX_SHADER ? "vertex" : "fragment") << "):\n" << infoLog << std::endl;
+			s_Log.Error("Shader Compilation Error ({}):\n{}", (type == GL_VERTEX_SHADER ? "vertex" : "fragment"), infoLog);
 			m_GL.DeleteShader(id);
 			return 0;
 		}
@@ -78,7 +83,7 @@ namespace Engine {
 		if (!success) {
 			char infoLog[512];
 			m_GL.GetProgramInfoLog(m_RendererID, 512, NULL, infoLog);
-			std::cerr << "Shader Linking Error:\n" << infoLog << std::endl;
+			s_Log.Error("Shader Linking Error:\n{}", infoLog);
 			return false;
 		}
 		return true;
@@ -101,7 +106,7 @@ namespace Engine {
 		std::string fSource = ReadFile(m_FragmentPath);
 
 		if (vSource.empty() || fSource.empty()) {
-			std::cerr << "[HotReload] Failed to read shader files" << std::endl;
+			s_Log.Error("[HotReload] Failed to read shader files");
 			m_RendererID = oldProgram;  // 恢复旧程序
 			return false;
 		}
@@ -140,8 +145,7 @@ namespace Engine {
 		}
 
 		SetState(ResourceState::Loaded);
-		std::cout << "[HotReload] Shader reloaded: "
-				  << m_VertexPath << " + " << m_FragmentPath << std::endl;
+		s_Log.Info("[HotReload] Shader reloaded: {} + {}", m_VertexPath, m_FragmentPath);
 		return true;
 	}
 

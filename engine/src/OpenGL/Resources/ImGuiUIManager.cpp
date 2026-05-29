@@ -8,8 +8,11 @@
 #include <imgui_impl_opengl3.h>
 #include <GLFW/glfw3.h>
 
-#include <iostream>
-#include <filesystem>
+#include "Engine/Core/Log.h"
+
+namespace {
+    Engine::Logger s_Log("ImGuiUIManager");
+}
 #include <cstdio>
 #include <cmath>
 
@@ -24,53 +27,6 @@
 #endif
 
 namespace Engine {
-
-    // ============================================================
-    // 内部帮助函数（在 LoadFont 之前定义）
-    // ============================================================
-
-    namespace {
-        bool LoadDefaultFont(float fontSize) {
-            ImGuiIO& io = ImGui::GetIO();
-            io.Fonts->AddFontDefault();
-            std::cout << "[ImGuiUIManager] Using default font ("
-                      << fontSize << "px)" << std::endl;
-            return true;
-        }
-
-        bool LoadSystemFont(float fontSize) {
-            ImGuiIO& io = ImGui::GetIO();
-
-            const char* systemFonts[] = {
-#if defined(_WIN32)
-                "C:/Windows/Fonts/msyh.ttc",
-                "C:/Windows/Fonts/simhei.ttf",
-                "C:/Windows/Fonts/simsun.ttc",
-#elif defined(__APPLE__)
-                "/System/Library/Fonts/PingFang.ttc",
-                "/System/Library/Fonts/STHeiti Light.ttc",
-#else
-                "/usr/share/fonts/truetype/droid/DroidSansFallbackFull.ttf",
-                "/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc",
-#endif
-            };
-
-            for (auto* fontPath : systemFonts) {
-                if (std::filesystem::exists(fontPath)) {
-                    auto* font = io.Fonts->AddFontFromFileTTF(
-                        fontPath, fontSize, nullptr,
-                        io.Fonts->GetGlyphRangesChineseFull());
-                    if (font) {
-                        std::cout << "[ImGuiUIManager] System font: "
-                                  << fontPath << " (" << fontSize << "px)"
-                                  << std::endl;
-                        return true;
-                    }
-                }
-            }
-            return false;
-        }
-    } // anonymous namespace
 
     // ============================================================
     // 构造 / 析构
@@ -88,13 +44,13 @@ namespace Engine {
 
     bool ImGuiUIManager::Init(void* nativeWindow, void* apiContext) {
         if (m_Initialized) {
-            std::cerr << "[ImGuiUIManager] Already initialized" << std::endl;
+            s_Log.Error("Already initialized");
             return true;
         }
 
         GLFWwindow* window = static_cast<GLFWwindow*>(nativeWindow);
         if (!window) {
-            std::cerr << "[ImGuiUIManager] Invalid window handle" << std::endl;
+            s_Log.Error("Invalid window handle");
             return false;
         }
         (void)apiContext;
@@ -112,20 +68,20 @@ namespace Engine {
         LoadFont(nullptr, 16.0f);
 
         m_Initialized = true;
-        std::cout << "[ImGuiUIManager] Dear ImGui initialized" << std::endl;
+        s_Log.Info("Dear ImGui initialized");
         return true;
     }
 
     void ImGuiUIManager::Shutdown() {
         if (!m_Initialized) return;
 
-        std::cout << "[ImGuiUIManager] Shutting down..." << std::endl;
+        s_Log.Info("Shutting down...");
         ImGui_ImplOpenGL3_Shutdown();
         ImGui_ImplGlfw_Shutdown();
         ImGui::DestroyContext();
 
         m_Initialized = false;
-        std::cout << "[ImGuiUIManager] Shutdown complete" << std::endl;
+        s_Log.Info("Shutdown complete");
     }
 
     // ============================================================
@@ -140,8 +96,7 @@ namespace Engine {
             m_PendingScale = -1.0f;
             float newSize = std::roundf(16.0f * pending);
             LoadFont(m_FontPath.empty() ? nullptr : m_FontPath.c_str(), newSize);
-            std::cout << "[ImGuiUIManager] Scale set to " << pending
-                      << " (font: " << newSize << "px)" << std::endl;
+            s_Log.Info("Scale set to {} (font: {}px)", pending, newSize);
         }
 
         ImGui_ImplOpenGL3_NewFrame();
@@ -193,39 +148,25 @@ namespace Engine {
 
     // ============================================================
     // 字体
+    //
+    // 仅将字体注册到 ImGui Atlas。不要调用 Build()/GetTexData*()——
+    // 交由后端在首次渲染时处理纹理上传。这样可以避免在后端纹理能力
+    // 尚未一致设置时触发 ImGui 的断言。
     // ============================================================
 
-    bool ImGuiUIManager::LoadFont(const char* path, float size) {
+    void ImGuiUIManager::LoadFont(const char* filePath, float sizePixels) {
         ImGuiIO& io = ImGui::GetIO();
-        io.Fonts->Clear();
 
-        float fontSize = (size > 0.0f) ? size : 16.0f;
-
-        if (path && std::filesystem::exists(path)) {
-            ImFont* font = io.Fonts->AddFontFromFileTTF(
-                path, fontSize, nullptr,
-                io.Fonts->GetGlyphRangesChineseFull());
-            if (!font) {
-                std::cerr << "[ImGuiUIManager] Failed to load font: "
-                          << path << std::endl;
-                return LoadDefaultFont(fontSize);
-            }
-            m_FontPath = path;
-            std::cout << "[ImGuiUIManager] Loaded font: " << path
-                      << " (" << fontSize << "px)" << std::endl;
-        } else if (path) {
-            std::cerr << "[ImGuiUIManager] Font file not found: "
-                      << path << std::endl;
-            return LoadDefaultFont(fontSize);
+        if (filePath && filePath[0] != '\0') {
+            // 添加自定义 TTF 字体
+            io.Fonts->AddFontFromFileTTF(filePath, sizePixels);
         } else {
-            if (!LoadSystemFont(fontSize)) {
-                return LoadDefaultFont(fontSize);
-            }
+            // 添加默认内嵌字体
+            io.Fonts->AddFontDefault();
         }
 
-        m_FontSize = fontSize;
-        io.Fonts->Build();
-        return true;
+        // 重要：不要主动调用 io.Fonts->Build() / GetTexDataAsRGBA32()
+        // 后端会在首次 ImGui_ImplOpenGL3_RenderDrawData() 时自动上传字体纹理
     }
 
     // ============================================================

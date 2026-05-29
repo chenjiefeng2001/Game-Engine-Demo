@@ -1,7 +1,11 @@
 #include "Engine/Core/Resources/AssetDatabase.h"
 #include "Engine/Core/FileSystem.h"
-#include <iostream>
+#include "Engine/Core/Log.h"
 #include <algorithm>
+
+namespace {
+    Engine::Logger s_Log("AssetDatabase");
+}
 #include <random>
 #include <sstream>
 #include <iomanip>
@@ -81,8 +85,7 @@ namespace Engine {
 
         RebuildAllIndexes();
 
-        std::cout << "[AssetDatabase] Scanned " << rootDir
-                  << ": " << count << " assets found" << std::endl;
+        s_Log.Info("Scanned {}: {} assets found", rootDir, count);
 
         // 记录审计日志
         for (const auto& entry : m_Entries)
@@ -99,7 +102,7 @@ namespace Engine {
         std::string resolved = FileSystem::ResolvePath(jsonPath);
         std::string content = FileSystem::ReadTextFile(resolved);
         if (content.empty()) {
-            std::cerr << "[AssetDatabase] Failed to load: " << resolved << std::endl;
+            s_Log.Error("Failed to load: {}", resolved);
             return false;
         }
 
@@ -128,14 +131,13 @@ namespace Engine {
             }
 
             RebuildAllIndexes();
-            std::cout << "[AssetDatabase] Loaded " << m_Entries.size()
-                      << " assets from " << resolved << std::endl;
+            s_Log.Info("Loaded {} assets from {}", m_Entries.size(), resolved);
 
             LogAudit(AuditAction::Updated, "", "database loaded from " + resolved);
             return true;
 
         } catch (const nlohmann::json::exception& e) {
-            std::cerr << "[AssetDatabase] JSON parse error: " << e.what() << std::endl;
+            s_Log.Error("JSON parse error: {}", e.what());
             return false;
         }
     }
@@ -169,8 +171,7 @@ namespace Engine {
         std::string resolved = FileSystem::ResolvePath(jsonPath);
         bool ok = FileSystem::WriteTextFile(resolved, json.dump(2));
         if (ok) {
-            std::cout << "[AssetDatabase] Saved " << m_Entries.size()
-                      << " assets to " << resolved << std::endl;
+            s_Log.Info("Saved {} assets to {}", m_Entries.size(), resolved);
         }
         return ok;
     }
@@ -408,8 +409,7 @@ namespace Engine {
         }
 
         if (fixed > 0) RebuildAllIndexes();
-        std::cout << "[AssetDatabase] Repaired " << fixed
-                  << " broken references (" << reason << ")" << std::endl;
+        s_Log.Info("Repaired {} broken references ({})", fixed, reason);
         return fixed;
     }
 

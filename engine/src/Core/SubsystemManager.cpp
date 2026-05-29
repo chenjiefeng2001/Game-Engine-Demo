@@ -1,6 +1,10 @@
 #include "Engine/Core/SubsystemManager.h"
-#include <iostream>
+#include "Engine/Core/Log.h"
 #include <algorithm>
+
+namespace {
+    Engine::Logger s_Log("SubsystemManager");
+}
 
 namespace Engine {
 
@@ -27,12 +31,12 @@ SubsystemManager& SubsystemManager::Add(std::string name, SubsystemPhase phase,
 
 bool SubsystemManager::Initialize() {
     if (m_Initialized) {
-        std::cerr << "[SubsystemManager] Already initialized, skipping." << std::endl;
+        s_Log.Warn("Already initialized, skipping.");
         return true;
     }
 
     if (m_Subsystems.empty()) {
-        std::cerr << "[SubsystemManager] No subsystems registered!" << std::endl;
+        s_Log.Error("No subsystems registered!");
         return false;
     }
 
@@ -45,9 +49,10 @@ bool SubsystemManager::Initialize() {
     // ── 2. 逐个子系统初始化 ──
     size_t total = m_Subsystems.size();
     SubsystemPhase currentPhase = m_Subsystems[0].desc.phase;
-    std::cout << "\n==============================================" << std::endl;
-    std::cout << "  Engine Subsystem Initialization — Begin" << std::endl;
-    std::cout << "==============================================" << std::endl;
+    s_Log.Info("");
+    s_Log.Info("==============================================");
+    s_Log.Info("  Engine Subsystem Initialization — Begin");
+    s_Log.Info("==============================================");
 
     for (size_t i = 0; i < total; ++i) {
         const auto& entry = m_Subsystems[i];
@@ -55,37 +60,34 @@ bool SubsystemManager::Initialize() {
         // 阶段标题
         if (entry.desc.phase != currentPhase) {
             currentPhase = entry.desc.phase;
-            std::cout << "─── Phase " << static_cast<int>(currentPhase)
-                      << " ───" << std::endl;
+            s_Log.Info("─── Phase {} ───", static_cast<int>(currentPhase));
         }
 
-        std::cout << "  [" << entry.desc.name << "] initializing... ";
+        s_Log.Info("  [{}] initializing...", entry.desc.name);
 
         if (!entry.desc.onInit) {
-            std::cout << "SKIPPED (no callback)" << std::endl;
+            s_Log.Warn("  [{}] SKIPPED (no callback)", entry.desc.name);
             continue;
         }
 
         bool ok = entry.desc.onInit();
         if (ok) {
-            std::cout << "OK" << std::endl;
+            s_Log.Info("  [{}] OK", entry.desc.name);
             m_Succeeded.push_back(i);
         } else {
-            std::cout << "FAILED!" << std::endl;
+            s_Log.Error("  [{}] FAILED", entry.desc.name);
             m_Errors.push_back(entry.desc.name + " failed at phase " +
                                std::to_string(static_cast<int>(entry.desc.phase)));
-            std::cerr << "[SubsystemManager] FATAL: " << entry.desc.name
-                      << " initialization failed. Aborting." << std::endl;
+            s_Log.Error("FATAL: {} initialization failed. Aborting.", entry.desc.name);
             Shutdown();
             return false;
         }
     }
 
     m_Initialized = true;
-    std::cout << "==============================================" << std::endl;
-    std::cout << "  Engine Subsystem Initialization — All "
-              << m_Succeeded.size() << " subsystems completed successfully" << std::endl;
-    std::cout << "==============================================\n" << std::endl;
+    s_Log.Info("==============================================");
+    s_Log.Info("  Engine Subsystem Initialization — All {} subsystems completed successfully", m_Succeeded.size());
+    s_Log.Info("==============================================");
     return true;
 }
 
@@ -97,20 +99,20 @@ void SubsystemManager::Shutdown() {
     if (!m_Initialized && m_Succeeded.empty())
         return;
 
-    std::cout << "\n--- Engine Subsystem Shutdown ---" << std::endl;
+    s_Log.Info("--- Engine Subsystem Shutdown ---");
 
     // 逆序遍历 m_Succeeded
     for (auto it = m_Succeeded.rbegin(); it != m_Succeeded.rend(); ++it) {
         const auto& entry = m_Subsystems[*it];
         if (entry.desc.onShutdown) {
-            std::cout << "  [" << entry.desc.name << "] shutting down..." << std::endl;
+            s_Log.Info("  [{}] shutting down...", entry.desc.name);
             entry.desc.onShutdown();
         }
     }
 
     m_Succeeded.clear();
     m_Initialized = false;
-    std::cout << "--- Engine Subsystem Shutdown Complete ---\n" << std::endl;
+    s_Log.Info("--- Engine Subsystem Shutdown Complete ---");
 }
 
 // ============================================================

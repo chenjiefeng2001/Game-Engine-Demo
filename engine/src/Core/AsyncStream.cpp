@@ -1,10 +1,14 @@
 #include "Engine/Core/AsyncStream.h"
 #include "Engine/Core/FileSystem.h"
+#include "Engine/Core/Log.h"
 #include <cstdio>
 #include <cstring>
 #include <cstdint>
-#include <iostream>
 #include <algorithm>
+
+namespace {
+    Engine::Logger s_Log("AsyncStream");
+}
 
 // 跨平台文件 I/O 适配
 #ifdef _WIN32
@@ -49,7 +53,7 @@ namespace Engine {
         file = fopen(realPath.c_str(), "rb");
 #endif
         if (!file) {
-            std::cerr << "[AsyncStream] Failed to open: " << realPath << std::endl;
+            s_Log.Error("Failed to open: {}", realPath);
             return false;
         }
 
@@ -71,10 +75,7 @@ namespace Engine {
         // 启动工作线程
         m_Worker = std::thread(&AsyncStream::WorkerThread, this);
 
-        std::cout << "[AsyncStream] Opened: " << realPath
-                  << " (" << m_FileSize << " bytes, cache="
-                  << (kMaxCacheBlocks * kBlockSize / 1024) << "KB)"
-                  << std::endl;
+        s_Log.Info("Opened: {} ({} bytes, cache={}KB)", realPath, m_FileSize, (kMaxCacheBlocks * kBlockSize / 1024));
         return true;
     }
 
@@ -122,10 +123,7 @@ namespace Engine {
         }
 
         // 清空待处理队列（唤醒后 WorkerThread 会处理剩余请求 + 退出）
-        std::cout << "[AsyncStream] Closed: " << m_Path
-                  << " (cache hits=" << m_CacheHits.load()
-                  << ", misses=" << m_CacheMisses.load() << ")"
-                  << std::endl;
+        s_Log.Info("Closed: {} (cache hits={}, misses={})", m_Path, m_CacheHits.load(), m_CacheMisses.load());
     }
 
     void AsyncStream::Cancel() {

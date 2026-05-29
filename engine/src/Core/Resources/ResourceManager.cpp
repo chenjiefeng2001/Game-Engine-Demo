@@ -5,8 +5,12 @@
 #include "Engine/Core/RenderResources/Texture.h"
 #include "Engine/Core/RenderResources/Shader.h"
 #include "Engine/Core/Audio/AudioClip.h"
-#include <iostream>
+#include "Engine/Core/Log.h"
 #include <algorithm>
+
+namespace {
+    Engine::Logger s_Log("ResourceManager");
+}
 
 namespace Engine {
 
@@ -30,7 +34,7 @@ namespace Engine {
         // 初始化内存池
         s_Instance->InitPools();
 
-        std::cout << "[ResourceManager] Initialized" << std::endl;
+        s_Log.Info("Initialized");
     }
 
     void ResourceManager::Shutdown() {
@@ -42,12 +46,12 @@ namespace Engine {
         if (s_Instance->m_LoadThread.joinable())
             s_Instance->m_LoadThread.join();
 
-        std::cout << "[ResourceManager] Shutting down, unloading all resources..." << std::endl;
+        s_Log.Info("Shutting down, unloading all resources...");
         s_Instance->m_Registry.Clear();
         s_Instance->UnloadAll();
         s_Instance = nullptr;
         s_InstanceOwner.reset();
-        std::cout << "[ResourceManager] Shutdown complete" << std::endl;
+        s_Log.Info("Shutdown complete");
     }
 
     ResourceManager::ResourceManager(IGraphicsFactory& factory)
@@ -71,7 +75,7 @@ namespace Engine {
         if (!alloc.HasPool(ResourceType::AudioClip))
             alloc.CreatePool(ResourceType::AudioClip, sizeof(AudioClip), 32);
 
-        std::cout << "[ResourceManager] Memory pools initialized" << std::endl;
+        s_Log.Info("Memory pools initialized");
     }
 
     // ============================================================
@@ -82,15 +86,14 @@ namespace Engine {
     std::shared_ptr<Texture> ResourceManager::LoadByType<Texture>(const std::string& path) {
         auto tex = m_Factory.CreateTexture(path);
         if (!tex || tex->GetWidth() == 0) {
-            std::cerr << "[ResourceManager] Failed to load texture: " << path << std::endl;
+            s_Log.Error("Failed to load texture: {}", path);
             return nullptr;
         }
         // 注册到 GUID 注册表
         auto guid = m_Registry.Register(tex);
         tex->SetGUID(guid);
 
-        std::cout << "[ResourceManager] Texture loaded: " << path
-                  << " (" << tex->GetWidth() << "x" << tex->GetHeight() << ")" << std::endl;
+        s_Log.Info("Texture loaded: {} ({}x{})", path, tex->GetWidth(), tex->GetHeight());
         return tex;
     }
 
@@ -99,16 +102,14 @@ namespace Engine {
         const std::string& vertexPath, const std::string& fragmentPath) {
         auto shader = m_Factory.CreateShader(vertexPath, fragmentPath);
         if (!shader) {
-            std::cerr << "[ResourceManager] Failed to create shader: "
-                      << vertexPath << " | " << fragmentPath << std::endl;
+            s_Log.Error("Failed to create shader: {} | {}", vertexPath, fragmentPath);
             return nullptr;
         }
         // 注册到 GUID 注册表
         auto guid = m_Registry.Register(shader);
         shader->SetGUID(guid);
 
-        std::cout << "[ResourceManager] Shader loaded: "
-                  << vertexPath << " + " << fragmentPath << std::endl;
+        s_Log.Info("Shader loaded: {} + {}", vertexPath, fragmentPath);
         return shader;
     }
 
@@ -116,16 +117,14 @@ namespace Engine {
     std::shared_ptr<AudioClip> ResourceManager::LoadByType<AudioClip>(const std::string& path) {
         auto clip = std::make_shared<AudioClip>(path);
         if (!clip->LoadFromFile(path)) {
-            std::cerr << "[ResourceManager] Failed to load audio: " << path << std::endl;
+            s_Log.Error("Failed to load audio: {}", path);
             return nullptr;
         }
         // 注册到 GUID 注册表
         auto guid = m_Registry.Register(clip);
         clip->SetGUID(guid);
 
-        std::cout << "[ResourceManager] AudioClip loaded: " << path
-                  << " (" << clip->GetDuration() << "s, "
-                  << clip->GetSampleRate() << "Hz)" << std::endl;
+        s_Log.Info("AudioClip loaded: {} ({}s, {}Hz)", path, clip->GetDuration(), clip->GetSampleRate());
         return clip;
     }
 
@@ -169,7 +168,7 @@ namespace Engine {
                 TrackDeallocation(res->GetType(), bytes);
             }
             m_Cache.erase(it);
-            std::cout << "[ResourceManager] Unloaded: " << path << std::endl;
+            s_Log.Info("Unloaded: {}", path);
         }
     }
 
@@ -178,7 +177,7 @@ namespace Engine {
         m_Registry.Clear();
         m_Cache.clear();
         m_TypeStats.clear();
-        std::cout << "[ResourceManager] All " << count << " resources unloaded" << std::endl;
+        s_Log.Info("All {} resources unloaded", count);
     }
 
     void ResourceManager::UnloadUnused() {
@@ -192,12 +191,11 @@ namespace Engine {
         }
         size_t after = m_Cache.size();
         if (before != after)
-            std::cout << "[ResourceManager] Cleaned " << (before - after)
-                      << " unused resources (" << after << " remaining)" << std::endl;
+            s_Log.Info("Cleaned {} unused resources ({} remaining)", (before - after), after);
     }
 
     void ResourceManager::LogStats() const {
-        std::cout << "=== ResourceManager Stats ===" << std::endl;
+        s_Log.Info("=== ResourceManager Stats ===");
         uint64 totalBytes = 0;
         for (int t = 1; t < static_cast<int>(ResourceType::COUNT); ++t) {
             ResourceType rt = static_cast<ResourceType>(t);
@@ -205,16 +203,13 @@ namespace Engine {
             auto it = m_TypeStats.find(rt);
             uint64 bytes = (it != m_TypeStats.end()) ? it->second.bytesAllocated : 0;
             if (!paths.empty() || bytes > 0) {
-                std::cout << "  " << ResourceTypeName(rt) << ": "
-                          << paths.size() << " items, "
-                          << (bytes / 1024) << "KB" << std::endl;
+                s_Log.Info("  {}: {} items, {}KB", ResourceTypeName(rt), paths.size(), (bytes / 1024));
                 totalBytes += bytes;
             }
         }
-        std::cout << "  Total cached: " << m_Cache.size()
-                  << " items, " << (totalBytes / 1024) << "KB" << std::endl;
-        std::cout << "  Pending async: " << m_LoadQueue.size() << std::endl;
-        std::cout << "=============================" << std::endl;
+        s_Log.Info("  Total cached: {} items, {}KB", m_Cache.size(), (totalBytes / 1024));
+        s_Log.Info("  Pending async: {}", m_LoadQueue.size());
+        s_Log.Info("=============================");
     }
 
     // ============================================================
@@ -235,7 +230,7 @@ namespace Engine {
         }
         bool ok = res->Reload();
         if (ok)
-            std::cout << "[ResourceManager] Hot-reloaded: " << path << std::endl;
+            s_Log.Info("Hot-reloaded: {}", path);
         return ok;
     }
 

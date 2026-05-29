@@ -1,6 +1,10 @@
 #include "Engine/Core/Resources/ResourceRegistry.h"
-#include <iostream>
+#include "Engine/Core/Log.h"
 #include <algorithm>
+
+namespace {
+    Engine::Logger s_Log("Registry");
+}
 #include <chrono>
 
 namespace Engine {
@@ -86,9 +90,7 @@ namespace Engine {
 
         // 检查引用计数
         if (it->second.refCount > 0) {
-            std::cerr << "[Registry] Cannot unregister " << guid.ToString()
-                      << ": still has " << it->second.refCount
-                      << " reference(s)" << std::endl;
+            s_Log.Error("Cannot unregister {}: still has {} reference(s)", guid.ToString(), it->second.refCount);
             return;
         }
 
@@ -101,8 +103,7 @@ namespace Engine {
         FireLifecycleEvent(LifecycleEvent::AfterUnload, guid);
 
         if (!reason.empty()) {
-            std::cout << "[Registry] Unregistered " << guid.ToString()
-                      << " (" << reason << ")" << std::endl;
+            s_Log.Info("Unregistered {} ({})", guid.ToString(), reason);
         }
     }
 
@@ -290,8 +291,8 @@ namespace Engine {
 
     void ResourceRegistry::LogStats() const {
         std::lock_guard<std::mutex> lock(m_Mutex);
-        std::cout << "=== ResourceRegistry Stats ===" << std::endl;
-        std::cout << "Registered: " << m_Entries.size() << std::endl;
+        s_Log.Info("=== ResourceRegistry Stats ===");
+        s_Log.Info("Registered: {}", m_Entries.size());
 
         size_t loaded = 0, ready = 0, failed = 0, loading = 0, unloaded = 0;
         for (const auto& [guid, entry] : m_Entries) {
@@ -304,18 +305,17 @@ namespace Engine {
                 default:                       unloaded++; break;
             }
         }
-        std::cout << "  Loaded:  " << loaded << std::endl;
-        std::cout << "  Ready:   " << ready << std::endl;
-        std::cout << "  Failed:  " << failed << std::endl;
-        std::cout << "  Loading: " << loading << std::endl;
-        std::cout << "  Unloaded:" << unloaded << std::endl;
-        std::cout << "Holders:   " << m_Holders.size() << std::endl;
+        s_Log.Info("  Loaded:  {}", loaded);
+        s_Log.Info("  Ready:   {}", ready);
+        s_Log.Info("  Failed:  {}", failed);
+        s_Log.Info("  Loading: {}", loading);
+        s_Log.Info("  Unloaded:{}", unloaded);
+        s_Log.Info("Holders:   {}", m_Holders.size());
 
         // 池统计
         auto ps = m_Allocator.GetGlobalStats();
-        std::cout << "Pool memory: " << (ps.totalBytes / 1024) << "KB"
-                  << " (" << ps.poolCount << " pools)" << std::endl;
-        std::cout << "=============================" << std::endl;
+        s_Log.Info("Pool memory: {}KB ({} pools)", (ps.totalBytes / 1024), ps.poolCount);
+        s_Log.Info("=============================");
     }
 
 } // namespace Engine

@@ -1,6 +1,10 @@
 #include "Engine/Core/Memory/StackAllocator.h"
+#include "Engine/Core/Log.h"
 #include <cstdlib>
-#include <iostream>
+
+namespace {
+    Engine::Logger s_Log("StackAllocator");
+}
 
 namespace Engine {
 
@@ -10,8 +14,7 @@ StackAllocator::StackAllocator(size_t capacity)
 {
     m_Memory = static_cast<std::byte*>(std::malloc(capacity));
     if (!m_Memory) {
-        std::cerr << "[StackAllocator] Failed to allocate "
-                  << capacity << " bytes" << std::endl;
+        s_Log.Error("Failed to allocate {} bytes", capacity);
         m_Capacity = 0;
     }
 }
@@ -30,9 +33,7 @@ void* StackAllocator::Allocate(size_t size, size_t alignment) {
     size_t aligned = (m_Offset + alignment - 1) & ~(alignment - 1);
 
     if (aligned + size > m_Capacity) {
-        std::cerr << "[StackAllocator] Out of memory: requested " << size
-                  << " aligned to " << alignment
-                  << ", used " << m_Offset << "/" << m_Capacity << std::endl;
+        s_Log.Error("Out of memory: requested {} aligned to {}, used {}/{}", size, alignment, m_Offset, m_Capacity);
         return nullptr;
     }
 

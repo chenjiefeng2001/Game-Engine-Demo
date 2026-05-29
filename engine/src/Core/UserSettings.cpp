@@ -1,5 +1,9 @@
 #include "Engine/Core/UserSettings.h"
-#include <iostream>
+#include "Engine/Core/Log.h"
+
+namespace {
+    Engine::Logger s_Log("UserSettings");
+}
 
 namespace Engine {
 
@@ -30,7 +34,7 @@ namespace Engine {
         if (!loaded) {
             RestoreDefaults();
             Save(filepath);
-            std::cout << "[UserSettings] Created default: " << filepath << std::endl;
+            s_Log.Info("Created default: {}", filepath);
         }
         return true;
     }

@@ -172,6 +172,9 @@ protected:
   bool m_DrawPerformanceWindow = true;
   bool m_RenderDefaultQuad = true;
 
+  // ── 混合驱动调度内部锁 ──
+  bool m_InsideDispatch = false;
+
 private:
   // ── 引擎内置初始化步骤 ──
   bool InitWindow();

@@ -41,7 +41,7 @@ namespace Engine {
         void SetScale(float scale) override;
         float GetScale() const override { return m_Scale; }
 
-        bool LoadFont(const char* path, float size) override;
+        void LoadFont(const char* path, float size) override;
         const std::string& GetFontPath() const override { return m_FontPath; }
         float GetFontSize() const override { return m_FontSize; }
 

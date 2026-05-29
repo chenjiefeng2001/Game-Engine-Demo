@@ -1,5 +1,7 @@
 #pragma once
 
+#include "Engine/Core/Log.h"
+
 /**
  * @file ResourceManager.h
  * @brief 统一资源管理器 — 缓存所有资源类型，统一生命周期
@@ -121,15 +123,14 @@ namespace Engine {
                 // 阶段2：递归解析依赖
                 resource->SetState(ResourceState::Resolving);
                 if (!resource->ResolveDependencies(*this)) {
-                    std::cerr << "[ResourceManager] ResolveDependencies failed: "
-                              << path << std::endl;
+                    Log::Error("[ResourceManager] ResolveDependencies failed: {}", path);
                     resource->SetState(ResourceState::Failed);
                     return nullptr;
                 }
 
                 // 阶段3：自身 GPU / API 初始化（此时所有依赖已就绪）
                 if (!resource->PostLoad(&m_Factory)) {
-                    std::cerr << "[ResourceManager] PostLoad failed: " << path << std::endl;
+                    Log::Error("[ResourceManager] PostLoad failed: {}", path);
                     resource->SetState(ResourceState::Failed);
                     return nullptr;
                 }
@@ -170,16 +171,14 @@ namespace Engine {
                 // 阶段2：递归解析依赖
                 resource->SetState(ResourceState::Resolving);
                 if (!resource->ResolveDependencies(*this)) {
-                    std::cerr << "[ResourceManager] ResolveDependencies failed: "
-                              << pathA << " | " << pathB << std::endl;
+                    Log::Error("[ResourceManager] ResolveDependencies failed: {} | {}", pathA, pathB);
                     resource->SetState(ResourceState::Failed);
                     return nullptr;
                 }
 
                 // 阶段3：自身初始化
                 if (!resource->PostLoad(&m_Factory)) {
-                    std::cerr << "[ResourceManager] PostLoad failed: "
-                              << pathA << " | " << pathB << std::endl;
+                    Log::Error("[ResourceManager] PostLoad failed: {} | {}", pathA, pathB);
                     resource->SetState(ResourceState::Failed);
                     return nullptr;
                 }

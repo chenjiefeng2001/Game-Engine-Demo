@@ -1,7 +1,11 @@
 #include "Engine/Core/Resources/AssetPipeline.h"
 #include "Engine/Core/FileSystem.h"
-#include <iostream>
+#include "Engine/Core/Log.h"
 #include <algorithm>
+
+namespace {
+    Engine::Logger s_Log("AssetPipeline");
+}
 #include <queue>
 #include <set>
 #include <chrono>
@@ -250,8 +254,7 @@ namespace Engine {
                 return std::strcmp(r->GetName(), rule->GetName()) == 0;
             });
         if (it != m_Rules.end()) {
-            std::cerr << "[AssetPipeline] Rule already registered: "
-                      << rule->GetName() << ", replacing." << std::endl;
+            s_Log.Warn("Rule already registered: {}, replacing.", rule->GetName());
             *it = rule;
             return;
         }
@@ -707,9 +710,7 @@ namespace Engine {
         report.totalElapsedSeconds = std::chrono::duration<double>(
             endTime - startTime).count();
 
-        std::cout << "[AssetPipeline] BuildAll: " << report.succeeded
-                  << " succeeded, " << report.failed << " failed in "
-                  << report.totalElapsedSeconds << "s" << std::endl;
+        s_Log.Info("BuildAll: {} succeeded, {} failed in {}s", report.succeeded, report.failed, report.totalElapsedSeconds);
 
         return report;
     }
@@ -764,9 +765,7 @@ namespace Engine {
         report.totalElapsedSeconds = std::chrono::duration<double>(
             endTime - startTime).count();
 
-        std::cout << "[AssetPipeline] BuildDirty: " << report.succeeded
-                  << " succeeded, " << report.failed << " failed in "
-                  << report.totalElapsedSeconds << "s" << std::endl;
+        s_Log.Info("BuildDirty: {} succeeded, {} failed in {}s", report.succeeded, report.failed, report.totalElapsedSeconds);
 
         return report;
     }

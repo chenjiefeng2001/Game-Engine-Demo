@@ -3,9 +3,13 @@
 #include "Engine/Core/IWindow.h"
 #include "Engine/OpenGL/OpenGLContext.h"
 
+#include "Engine/Core/Log.h"
 #include <GLFW/glfw3.h>
 #include <glad/gl.h>
-#include <iostream>
+
+namespace {
+    Engine::Logger s_Log("GlfwWindow");
+}
 
 namespace Engine {
 
@@ -16,7 +20,7 @@ namespace Engine {
 	{
 		if (!m_Window)
 		{
-			std::cerr << "[GlfwWindow] Received null native window handle" << std::endl;
+			s_Log.Error("Received null native window handle");
 		}
 		glfwSetWindowUserPointer(m_Window, this);  // 重要：将 this 传给回调
 
