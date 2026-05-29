@@ -37,6 +37,8 @@
 
 #include "Engine/Types.h"
 #include "Engine/Core/Resources/Resource.h"
+#include "Engine/Core/Resources/ResourceGUID.h"
+#include "Engine/Core/Resources/ResourceRegistry.h"
 #include "Engine/Core/Resources/FileWatcher.h"
 #include "Engine/Core/RenderResources/Texture.h"
 #include "Engine/Core/RenderResources/Shader.h"
@@ -57,7 +59,8 @@
 
 namespace Engine {
 
-    // 前向声明回调类型
+    // 前向声明
+    class IGraphicsFactory;
     struct AsyncLoadResult;
     using AsyncLoadCallback = std::function<void(const AsyncLoadResult& result)>;
 
@@ -115,6 +118,12 @@ namespace Engine {
             // 委托给具体加载函数
             auto resource = LoadByType<T>(path);
             if (resource) {
+                // 调用初始化钩子（GPU 上传、音频预处理等）
+                if (!resource->PostLoad(&m_Factory)) {
+                    std::cerr << "[ResourceManager] PostLoad failed: " << path << std::endl;
+                    resource->SetState(ResourceState::Failed);
+                    return nullptr;
+                }
                 resource->SetState(ResourceState::Loaded);
                 m_Cache[path] = std::weak_ptr<Resource>(resource);
                 // 自动加入文件监视（用于热加载）
@@ -148,6 +157,13 @@ namespace Engine {
 
             auto resource = LoadByType<T>(pathA, pathB);
             if (resource) {
+                // 调用初始化钩子
+                if (!resource->PostLoad(&m_Factory)) {
+                    std::cerr << "[ResourceManager] PostLoad failed: "
+                              << pathA << " | " << pathB << std::endl;
+                    resource->SetState(ResourceState::Failed);
+                    return nullptr;
+                }
                 resource->SetState(ResourceState::Loaded);
                 m_Cache[id] = std::weak_ptr<Resource>(resource);
                 // 自动加入文件监视两个着色器文件
@@ -301,6 +317,29 @@ namespace Engine {
         size_t GetCacheCount() const { return m_Cache.size(); }
 
         // ============================================================
+        // 注册表（GUID + 生命周期 + 交叉引用）
+        // ============================================================
+
+        /** 获取资源注册表引用 */
+        ResourceRegistry& GetRegistry() { return m_Registry; }
+        const ResourceRegistry& GetRegistry() const { return m_Registry; }
+
+        /**
+         * @brief 使用 GUID 查找资源
+         * @param guid 资源 GUID
+         * @return 资源 shared_ptr，未找到返回 nullptr
+         */
+        template<typename T = Resource>
+        std::shared_ptr<T> GetByGUID(const ResourceGUID& guid) {
+            return m_Registry.Get<T>(guid);
+        }
+
+        /**
+         * @brief 确保注册表的池已为所有资源类型初始化
+         */
+        void InitPools();
+
+        // ============================================================
         // 异步加载队列
         // ============================================================
 
@@ -443,6 +482,9 @@ namespace Engine {
         static std::unique_ptr<ResourceManager> s_InstanceOwner;
 
         IGraphicsFactory& m_Factory;
+
+        // GUID 注册表 + 交叉引用系统
+        ResourceRegistry m_Registry;
 
         // 按路径索引的弱引用缓存（资源存活由外部 shared_ptr 决定）
         std::unordered_map<std::string, std::weak_ptr<Resource>> m_Cache;

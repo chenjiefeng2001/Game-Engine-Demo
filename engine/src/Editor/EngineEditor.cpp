@@ -41,6 +41,7 @@ namespace Engine {
         vis.performance    = true;
         vis.contentBrowser = false;
         vis.assetBrowser   = false;
+        vis.depGraph       = false;
         vis.viewport       = true;
     }
 
@@ -152,6 +153,17 @@ namespace Engine {
             m_AssetBrowser.OnImGui();
         }
 
+        if (vis.depGraph) {
+            // 依赖图面板使用独立窗口（非底部条），充分利用空间
+            float depW = workW * 0.85f;
+            float depH = workH * 0.8f;
+            float depX = viewport->Pos.x + (workW - depW) * 0.5f;
+            float depY = workY + (workH - depH) * 0.5f;
+            ImGui::SetNextWindowPos(ImVec2(depX, depY));
+            ImGui::SetNextWindowSize(ImVec2(depW, depH));
+            m_DepGraph.OnImGui();
+        }
+
         // ── 5. ImGui Demo（按需） ──
         if (m_ShowDockingDemo) {
             ImGui::ShowDemoWindow(&m_ShowDockingDemo);
@@ -161,6 +173,7 @@ namespace Engine {
         if (m_SceneHierarchy) m_SceneHierarchy->SetVisible(vis.sceneHierarchy);
         if (m_Console)        m_Console->SetVisible(vis.console);
         if (m_Performance)    m_Performance->SetVisible(vis.performance);
+        m_DepGraph.SetVisible(vis.depGraph);
     }
 
     // ============================================================
@@ -205,6 +218,10 @@ namespace Engine {
 
     void EngineEditor::DrawAssetBrowserWindow() {
         m_AssetBrowser.OnImGui();
+    }
+
+    void EngineEditor::DrawDepGraphWindow() {
+        m_DepGraph.OnImGui();
     }
 
     void EngineEditor::DrawViewportPanel() {

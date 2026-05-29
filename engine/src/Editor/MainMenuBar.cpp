@@ -52,6 +52,7 @@ namespace Engine {
             ImGui::MenuItem("Performance",       "F4", &m_Visibility->performance);
             ImGui::MenuItem("Content Browser",   "F5", &m_Visibility->contentBrowser);
             ImGui::MenuItem("Asset Browser",     "F6", &m_Visibility->assetBrowser);
+            ImGui::MenuItem("Dependency Graph",  "F7", &m_Visibility->depGraph);
             ImGui::Separator();
             if (ImGui::MenuItem("Reset Layout")) {
                 // 触发布局重置（通过回调）

@@ -22,6 +22,7 @@ namespace Engine {
         bool performance     = true;
         bool contentBrowser  = false;
         bool assetBrowser    = false;
+        bool depGraph        = false;
         bool viewport        = true;
     };
 

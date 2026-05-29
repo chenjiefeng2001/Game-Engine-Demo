@@ -1,6 +1,7 @@
 #pragma once
 
 #include "Engine/Core/RenderResources/Shader.h"
+#include "Engine/Core/IGraphicsFactory.h"
 #include "Engine/Types.h"
 #include <glad/gl.h>
 #include <string>
@@ -16,6 +17,9 @@ namespace Engine {
 		virtual void Bind() const override;
 		virtual void Unbind() const override;
 		virtual void SetMat4(const std::string& name, const float32* data) override;
+
+		// ── 加载后初始化钩子 ──
+		bool PostLoad(IGraphicsFactory* factory) override;
 
 		// ── 热加载 ──
 		bool Reload() override;

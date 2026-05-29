@@ -145,4 +145,14 @@ namespace Engine {
 		return true;
 	}
 
+	// ============================================================
+	// 加载后初始化钩子：验证着色器已编译并链接
+	// ============================================================
+
+	bool OpenGLShader::PostLoad(IGraphicsFactory* factory) {
+		(void)factory;
+		// 构造函数已编译链接着色器，PostLoad 只需要验证状态
+		return m_RendererID != 0;
+	}
+
 }

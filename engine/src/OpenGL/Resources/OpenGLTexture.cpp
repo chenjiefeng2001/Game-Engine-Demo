@@ -125,4 +125,14 @@ namespace Engine {
 		}
 	}
 
+	// ============================================================
+	// 加载后初始化钩子：验证 GPU 纹理已创建
+	// ============================================================
+
+	bool OpenGLTexture::PostLoad(IGraphicsFactory* factory) {
+		(void)factory;
+		// 构造函数已负责从文件加载并上传到 GPU，PostLoad 只需要验证状态
+		return m_RendererID != 0 && m_Width > 0 && m_Height > 0;
+	}
+
 }
