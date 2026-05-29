@@ -50,8 +50,33 @@
 #include <type_traits>
 #include <functional>
 #include <mutex>
+#include <condition_variable>
+#include <thread>
+#include <atomic>
+#include <queue>
 
 namespace Engine {
+
+    // 前向声明回调类型
+    struct AsyncLoadResult;
+    using AsyncLoadCallback = std::function<void(const AsyncLoadResult& result)>;
+
+    // 异步加载结果
+    struct AsyncLoadResult {
+        bool      success = false;
+        std::string path;
+        ResourceType type = ResourceType::Unknown;
+        std::shared_ptr<Resource> resource;
+        uint64    bytesLoaded = 0;
+        std::string errorMessage;
+        AsyncLoadCallback callback;
+    };
+
+    // 内存预算配置（每资源类型）
+    struct MemoryBudget {
+        uint64 maxBytes = UINT64_MAX;   // 最大字节数（默认无限制）
+        uint32 maxCount  = UINT32_MAX;  // 最大实例数（默认无限制）
+    };
 
     class ResourceManager {
     public:
@@ -275,6 +300,126 @@ namespace Engine {
         /** 获取缓存条目总数 */
         size_t GetCacheCount() const { return m_Cache.size(); }
 
+        // ============================================================
+        // 异步加载队列
+        // ============================================================
+
+        /**
+         * @brief 异步加载资源
+         * @tparam T 资源类型
+         * @param path     资源路径
+         * @param callback 完成回调（在主线程 PollAsyncLoads 中触发）
+         * @param priority 优先级（越大越优先，默认 0）
+         * @return 请求 ID（可用于取消）
+         *
+         * 加载在主线程通过 PollAsyncLoads() 递送结果。
+         * 若该资源已在缓存中，回调会立即在主线程下一次 PollAsyncLoads 时调用。
+         */
+        template<typename T>
+        uint64 LoadAsync(const std::string& path,
+                         AsyncLoadCallback callback,
+                         int32 priority = 0) {
+            static_assert(std::is_base_of_v<Resource, T>,
+                          "T must derive from Resource");
+
+            uint64 requestId = ++m_NextRequestId;
+
+            // 检查缓存
+            auto it = m_Cache.find(path);
+            if (it != m_Cache.end()) {
+                if (auto existing = std::dynamic_pointer_cast<T>(it->second.lock())) {
+                    // 缓存命中——排入完成队列立即返回
+                    std::lock_guard<std::mutex> lock(m_ResultMutex);
+                    m_CompletedResults.push({
+                        true, path, existing->GetType(),
+                        existing, 0, ""
+                    });
+                    return requestId;
+                }
+            }
+
+            // 排入异步加载队列
+            std::lock_guard<std::mutex> lock(m_LoadMutex);
+            m_LoadQueue.push({
+                requestId, path, ResourceTypeFor<T>(),
+                priority, callback
+            });
+            m_LoadCV.notify_one();
+            return requestId;
+        }
+
+        /** 双路径版本（用于 Shader） */
+        template<typename T>
+        uint64 LoadAsync(const std::string& pathA,
+                         const std::string& pathB,
+                         AsyncLoadCallback callback,
+                         int32 priority = 0) {
+            static_assert(std::is_base_of_v<Resource, T>,
+                          "T must derive from Resource");
+
+            std::string id = pathA + "|" + pathB;
+            uint64 requestId = ++m_NextRequestId;
+
+            auto it = m_Cache.find(id);
+            if (it != m_Cache.end()) {
+                if (auto existing = std::dynamic_pointer_cast<T>(it->second.lock())) {
+                    std::lock_guard<std::mutex> lock(m_ResultMutex);
+                    m_CompletedResults.push({
+                        true, id, existing->GetType(),
+                        existing, 0, ""
+                    });
+                    return requestId;
+                }
+            }
+
+            // 对于 Shader 等双资源，使用复合路径作为加载 ID
+            std::lock_guard<std::mutex> lock(m_LoadMutex);
+            m_LoadQueue.push({
+                requestId, id,
+                ResourceTypeFor<T>(),
+                priority, callback,
+                pathA, pathB  // 存储双路径供后台加载
+            });
+            m_LoadCV.notify_one();
+            return requestId;
+        }
+
+        /**
+         * @brief 在主线程每帧调用，递送异步加载结果
+         *
+         * 后台线程加载完成后将结果排入 m_CompletedResults 队列，
+         * 此函数在 Run() 的主循环中调用，在主线程触发回调。
+         */
+        void PollAsyncLoads();
+
+        /** 等待所有异步加载完成（关闭前调用） */
+        void WaitAllAsyncLoads();
+
+        /** 取消指定请求 */
+        void CancelAsyncLoad(uint64 requestId);
+
+        // ============================================================
+        // 内存预算管理
+        // ============================================================
+
+        /**
+         * @brief 设置某类型资源的内存预算
+         * @param type     资源类型
+         * @param maxBytes 最大字节数（0 = 无限制）
+         * @param maxCount 最大实例数（0 = 无限制）
+         */
+        void SetBudget(ResourceType type, uint64 maxBytes, uint32 maxCount);
+
+        /** 获取当前内存使用统计 */
+        uint64 GetMemoryUsage(ResourceType type) const;
+        uint64 GetTotalMemoryUsage() const;
+
+        /** 获取当前各类型资源的实例数 */
+        uint32 GetResourceCount(ResourceType type) const;
+
+        /** 尝试释放内存直到低于预算（根据 LRU） */
+        void EnforceBudgets();
+
         ~ResourceManager() = default;
 
     private:
@@ -300,8 +445,54 @@ namespace Engine {
         IGraphicsFactory& m_Factory;
 
         // 按路径索引的弱引用缓存（资源存活由外部 shared_ptr 决定）
-        // key = 资源路径/ID, value = weak_ptr（过期后自动失效）
         std::unordered_map<std::string, std::weak_ptr<Resource>> m_Cache;
+
+        // ── 异步加载队列 ──
+
+        struct AsyncRequest {
+            uint64          requestId;
+            std::string     cacheKey;     // 缓存键
+            ResourceType    resourceType;
+            int32           priority      = 0;
+            AsyncLoadCallback callback;
+            // 双路径资源（Shader）用
+            std::string     extraPath;
+        };
+
+        // 后台加载线程
+        std::thread                     m_LoadThread;
+        std::mutex                      m_LoadMutex;
+        std::condition_variable         m_LoadCV;
+        std::queue<AsyncRequest>        m_LoadQueue;
+        std::atomic<bool>               m_LoadRunning{false};
+        std::atomic<uint64>             m_NextRequestId{0};
+
+        // 完成队列（后台→主线程）
+        std::mutex                      m_ResultMutex;
+        std::queue<AsyncLoadResult>     m_CompletedResults;
+
+        /** 后台线程函数 */
+        void LoadWorker();
+
+        /** 在后台线程执行实际加载 */
+        AsyncLoadResult ExecuteLoad(const AsyncRequest& req);
+
+        // ── 内存预算 ──
+
+        struct TypeStats {
+            uint64 bytesAllocated = 0;
+            uint32 count         = 0;
+            uint32 loadOrder     = 0;  // 越大越近期加载（用于 LRU 淘汰）
+        };
+
+        std::unordered_map<ResourceType, TypeStats> m_TypeStats;
+        std::unordered_map<ResourceType, MemoryBudget> m_Budgets;
+        std::atomic<uint32> m_LoadOrderCounter{0};
+
+        /** 跟踪资源分配（每次加载成功后调用） */
+        void TrackAllocation(ResourceType type, uint64 bytes);
+        /** 跟踪资源释放（每次卸载时调用） */
+        void TrackDeallocation(ResourceType type, uint64 bytes);
 
         // ── 热加载回调系统 ──
         struct ReloadCallbackEntry {
@@ -312,6 +503,15 @@ namespace Engine {
         std::vector<ReloadCallbackEntry> m_ReloadCallbacks;
         mutable std::mutex               m_CallbackMutex;
         uint32                           m_NextCallbackId = 1;
+
+        // ── 类型 → ResourceType 映射 ──
+        template<typename T>
+        static constexpr ResourceType ResourceTypeFor() {
+            if constexpr (std::is_same_v<T, Texture>)     return ResourceType::Texture;
+            if constexpr (std::is_same_v<T, Shader>)      return ResourceType::Shader;
+            if constexpr (std::is_same_v<T, AudioClip>)   return ResourceType::AudioClip;
+            return ResourceType::Unknown;
+        }
     };
 
 } // namespace Engine
