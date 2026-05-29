@@ -49,6 +49,12 @@ namespace Engine {
 			auto* self = static_cast<GlfwWindow*>(glfwGetWindowUserPointer(win));
 			self->OnScroll(xOff, yOff);
 			});
+
+		// ── 窗口焦点变化回调（用于激活/后台双模式消息泵） ──
+		glfwSetWindowFocusCallback(m_Window, [](GLFWwindow* win, int focused) {
+			auto* self = static_cast<GlfwWindow*>(glfwGetWindowUserPointer(win));
+			self->OnFocus(focused);
+			});
 	}
 	void GlfwWindow::OnResize(int width, int height) {
 		// 例如：更新 OpenGL 视口
@@ -89,6 +95,31 @@ namespace Engine {
 		// 默认行为：GLFW 已经设置了窗口关闭标志，不需要额外操作
 		// 如果你想阻止关闭，可以调用 glfwSetWindowShouldClose(m_Window, GLFW_FALSE);
 	}
+
+	void GlfwWindow::OnFocus(int focused) {
+		m_IsActive = (focused == GLFW_TRUE);
+	}
+
+	void GlfwWindow::WaitEvents(double timeoutSec) {
+		if (timeoutSec > 0.0) {
+			glfwWaitEventsTimeout(timeoutSec);
+		} else {
+			glfwWaitEvents();
+		}
+	}
+
+	bool GlfwWindow::IsActive() const {
+		return m_Window && glfwGetWindowAttrib(m_Window, GLFW_FOCUSED);
+	}
+
+	bool GlfwWindow::IsMinimized() const {
+		return m_Window && glfwGetWindowAttrib(m_Window, GLFW_ICONIFIED);
+	}
+
+	bool GlfwWindow::IsResizing() const {
+		return m_IsResizing;
+	}
+
 	GlfwWindow::~GlfwWindow()
 	{
 		m_Context.reset();

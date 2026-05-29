@@ -13,6 +13,8 @@
 #include "Engine/Platform/PlatformUtils.h"
 #include "Engine/UIManager.h"
 #include <iostream>
+#include <thread>
+#include <chrono>
 
 namespace Engine {
 
@@ -138,8 +140,150 @@ bool Application::InitUI() {
   return ok && UIManager::IsInitialized();
 }
 
+// ============================================================
+// 混合驱动 API
+// ============================================================
+
+uint32 Application::RegisterUpdateSubsystem(
+    const std::string& name,
+    std::function<void(float32)> updateFn,
+    const SubsystemConfig& config) {
+
+  // 检查名称冲突
+  auto it = m_SubsystemNameMap.find(name);
+  if (it != m_SubsystemNameMap.end()) {
+    std::cerr << "[Application] Subsystem '" << name
+              << "' already registered (ID=" << it->second
+              << "), returning existing ID." << std::endl;
+    return it->second;
+  }
+
+  uint32 id = m_NextSubsystemId++;
+  m_SubsystemNameMap[name] = id;
+
+  SubsystemUpdateEntry entry;
+  entry.id       = id;
+  entry.name     = name;
+  entry.updateFn = std::move(updateFn);
+  entry.config   = config;
+  // 运行时状态初始化为零
+  entry.accumulator   = 0.0f;
+  entry.timeSinceLast = 0.0f;
+  entry.eventPending  = false;
+
+  m_SubsystemEntries[id] = std::move(entry);
+
+  std::cout << "[Application] RegisterUpdateSubsystem: '" << name
+            << "' (ID=" << id << ", mode=" << static_cast<int>(config.updateMode)
+            << ")" << std::endl;
+  return id;
+}
+
+void Application::UnregisterUpdateSubsystem(uint32 id) {
+  auto it = m_SubsystemEntries.find(id);
+  if (it == m_SubsystemEntries.end()) {
+    std::cerr << "[Application] UnregisterUpdateSubsystem: ID=" << id
+              << " not found." << std::endl;
+    return;
+  }
+
+  // 从名称映射中删除
+  for (auto nIt = m_SubsystemNameMap.begin();
+       nIt != m_SubsystemNameMap.end(); ++nIt) {
+    if (nIt->second == id) {
+      m_SubsystemNameMap.erase(nIt);
+      break;
+    }
+  }
+
+  std::cout << "[Application] UnregisterUpdateSubsystem: '"
+            << it->second.name << "' (ID=" << id << ")" << std::endl;
+  m_SubsystemEntries.erase(it);
+}
+
+void Application::MarkSubsystemDirty(uint32 id) {
+  auto it = m_SubsystemEntries.find(id);
+  if (it != m_SubsystemEntries.end()) {
+    it->second.eventPending = true;
+  }
+}
+
+// ============================================================
+// 混合驱动调度器 — 按各子系统配置分发更新
+// ============================================================
+
+void Application::DispatchSubsystemUpdates(float32 dt) {
+  bool isActive = true;
+  if (m_LoopMode == LoopMode::Adaptive) {
+    isActive = m_Window->IsActive() && !m_Window->IsMinimized();
+  }
+
+  for (auto& [id, entry] : m_SubsystemEntries) {
+    const auto& config = entry.config;
+
+    // ── 后台模式过滤 ──
+    if (!isActive && !config.runInBackground) {
+      continue;  // 该子系统在后台不运行
+    }
+
+    // ── 根据 UpdateMode 选择调度策略 ──
+    switch (config.updateMode) {
+
+      case SubsystemUpdateMode::Default: {
+        // Default = 跟随 LoopMode 的默认策略
+        // Variable / Adaptive → 每帧更新
+        // 已有代码通过 OnUpdate() 处理
+        if (entry.updateFn) entry.updateFn(dt);
+        break;
+      }
+
+      case SubsystemUpdateMode::Variable: {
+        // 可变步长：每帧都跑
+        if (entry.updateFn) entry.updateFn(dt);
+        break;
+      }
+
+      case SubsystemUpdateMode::Fixed: {
+        // 固定步长累加器
+        entry.accumulator += dt;
+        float32 fixedDt = config.fixedDt;
+        while (entry.accumulator >= fixedDt) {
+          if (entry.updateFn) entry.updateFn(fixedDt);
+          entry.accumulator -= fixedDt;
+        }
+        break;
+      }
+
+      case SubsystemUpdateMode::Throttled: {
+        // 限频更新
+        entry.timeSinceLast += dt;
+        float32 minInterval = 1.0f / config.maxHz;
+        if (entry.timeSinceLast >= minInterval) {
+          if (entry.updateFn) entry.updateFn(entry.timeSinceLast);
+          entry.timeSinceLast = 0.0f;
+        }
+        break;
+      }
+
+      case SubsystemUpdateMode::EventDriven: {
+        // 事件驱动：仅在 markDirty 被调用时更新
+        if (entry.eventPending) {
+          if (entry.updateFn) entry.updateFn(dt);
+          entry.eventPending = false;
+        }
+        break;
+      }
+
+      case SubsystemUpdateMode::Manual: {
+        // 手动控制：Application 不自动调用
+        break;
+      }
+    }
+  }
+}
+
 void Application::InternalUpdate(float32 dt) {
-  // 默认的引擎级输入处理（可被子类 OnUpdate 扩展）
+  // ── 阶段 A：引擎级输入处理 ──
   if (Input::IsKeyDown(KeyCode::W)) {
     // m_Camera->MoveForward(dt);
   }
@@ -151,10 +295,14 @@ void Application::InternalUpdate(float32 dt) {
   float32 dy = Input::GetMouseDeltaY();
   // m_Camera->Rotate(dx, dy);
 
-  // 子类扩展
+  // ── 阶段 B：子类扩展（传统的每帧 OnUpdate 仍有效） ──
   OnUpdate(dt);
 
-  // ── 更新菜单状态 ──
+  // ── 阶段 C：混合驱动调度 ──
+  // 所有通过 RegisterUpdateSubsystem 注册的子系统按各自配置更新
+  DispatchSubsystemUpdates(dt);
+
+  // ── 阶段 D：更新菜单状态 ──
   m_MenuManager.OnUpdate(dt);
 
   // ── 转发按键到菜单系统 ──
@@ -202,42 +350,94 @@ void Application::Run() {
   if (auto *fw = FileWatcher::Get())
     fw->Start();
 
-  // ── 3. 主循环 ──
-  m_LastFrameTime = Time::GetTime();
+  // ── 初始化高精度计时器 ──
+  Time::Init();
 
   while (!m_Window->ShouldClose()) {
-    float32 time = Time::GetTime();
-    float32 dt = time - m_LastFrameTime;
-    m_LastFrameTime = time;
+    // ============================================================
+    // 阶段 1：消息泵 + 窗口状态感知的帧率控制
+    // ============================================================
+    if (m_LoopMode == LoopMode::Adaptive) {
+      // ── 自适应双模式 ──
+      if (m_Window->IsActive() && !m_Window->IsMinimized()) {
+        // 激活模式：非阻塞轮询，全速渲染
+        m_Window->PollEvents();
+      } else {
+        // ── 后台模式：阻塞等待事件，零 CPU 占用 ──
+        m_Window->WaitEvents(0.1);
 
-    if (dt > 0.25f)
-      dt = 0.25f;
+        // 窗口最小化时完全跳过这一帧
+        if (m_Window->IsMinimized()) {
+          continue;
+        }
 
-    m_Window->PollEvents();
+        // 失去焦点但未最小化：限制 10fps 让后台任务继续
+        Time::UpdateDeltaTime();
+        float32 dt = Time::GetDeltaTime();
+        if (dt < 0.1f) {
+          std::this_thread::sleep_for(std::chrono::milliseconds(1));
+          continue;
+        }
 
-    // ── UI 帧开始（内含 NewFrame + 输入抢占） ──
+        // ── 窗口正在被拖动调整大小 → 降帧到 ~30fps 保证窗口操作流畅 ──
+        if (m_Window->IsResizing()) {
+          std::this_thread::sleep_for(std::chrono::milliseconds(16));
+        }
+      }
+    } else {
+      // ── 传统模式（Variable / Fixed）：不感知窗口状态 ──
+      m_Window->PollEvents();
+    }
+
+    // ============================================================
+    // 阶段 2：Delta Time（引擎统一维护，高精度 double）
+    // ============================================================
+    Time::UpdateDeltaTime();
+    float32 dt = Time::GetDeltaTime();
+
+    // ============================================================
+    // 阶段 3：UI 帧开始（内含 NewFrame + 输入抢占）
+    // ============================================================
     if (auto *ui = UIManager::Get())
       ui->Begin();
 
-    if (m_LoopMode == LoopMode::Variable) {
-      InternalUpdate(dt);
-    } else {
-      // 固定步长模式 (Fixed 60Hz)
+    // ============================================================
+    // 阶段 4：更新（混合驱动 — 全局策略 + 子系统独立策略）
+    // ============================================================
+    if (m_LoopMode == LoopMode::Fixed) {
+      // 固定步长模式 (Fixed 60Hz) 带漂移修正
       static const float32 fixedDt = 1.0f / 60.0f;
-      static float32 accumulator = 0.0f;
+      static float64 acc = 0.0;
 
-      accumulator += dt;
-      while (accumulator >= fixedDt) {
-        InternalUpdate(fixedDt);
-        accumulator -= fixedDt;
+      // 每 600 帧（~10 秒）用绝对时间校准一次累加器，消除累积漂移
+      static uint32 calibrateCounter = 0;
+      if (++calibrateCounter >= 600) {
+        acc = Time::CalibrateAccumulator(acc, fixedDt);
+        calibrateCounter = 0;
       }
+
+      acc += dt;
+      while (acc >= fixedDt) {
+        InternalUpdate(fixedDt);
+        acc -= fixedDt;
+      }
+      // 渲染插值因子（用于骨骼/动画视觉平滑）
+      m_RenderAlpha = static_cast<float>(acc / fixedDt);  // 0~1
+    } else {
+      // Variable / Adaptive 模式都使用真实 dt
+      InternalUpdate(dt);
+      m_RenderAlpha = 1.0f;  // 无插值
     }
 
-    // ── 每帧检测文件变更，触发热加载 ──
+    // ============================================================
+    // 阶段 5：每帧检测文件变更，触发热加载
+    // ============================================================
     if (auto *rm = ResourceManager::Get())
       rm->PollHotReload();
 
-    // ── 构建 UI（仅在可见时执行） ──
+    // ============================================================
+    // 阶段 6：构建 UI（仅在可见时执行）
+    // ============================================================
     if (auto *ui = UIManager::Get(); ui && ui->IsVisible()) {
       // 收集渲染统计（在构建 UI 前，让 DrawCall 计数反映上一帧的数据）
       uint32 drawCalls = m_Window->GetContext()->GetAndResetDrawCallCount();
@@ -257,12 +457,18 @@ void Application::Run() {
         m_MenuManager.OnImGui();
     }
 
+    // ============================================================
+    // 阶段 7：渲染
+    // ============================================================
     InternalRender();
 
-    // ── UI 帧结束 + 渲染 ──
+    // ── UI 帧结束 ──
     if (auto *ui = UIManager::Get())
       ui->End();
 
+    // ============================================================
+    // 阶段 8：Swap Buffers + 帧尾消息泵
+    // ============================================================
     m_Window->OnUpdate();
   }
 }

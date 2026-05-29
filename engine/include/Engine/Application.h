@@ -9,11 +9,14 @@
 #include "Engine/Core/RenderResources/VertexArray.h"
 #include "Engine/Core/Renderer/OrthographicCamera.h"
 #include "Engine/Core/SubsystemManager.h"
+#include "Engine/Core/SubsystemConfig.h"
 #include "Engine/Core/MenuManager.h"
 #include "Engine/PerformanceWindow.h"
 #include "Engine/Types.h"
 #include "Engine/UIManager.h"
 #include <memory>
+#include <vector>
+#include <unordered_map>
 
 
 namespace Engine {
@@ -28,7 +31,8 @@ class OrthographicCamera;
 
 enum class LoopMode {
   Variable, // 可变步长：每帧 dt 取决于实际时间
-  Fixed     // 固定步长：物理/逻辑固定 60Hz，渲染按实际帧率
+  Fixed,    // 固定步长：物理/逻辑固定 60Hz，渲染按实际帧率
+  Adaptive  // 自适应：激活时正常渲染，后台时降帧/阻塞等待
 };
 
 /**
@@ -63,6 +67,68 @@ public:
   IRenderContext *GetRenderContext() {
     return m_Window ? m_Window->GetContext() : nullptr;
   }
+
+  // ── 循环模式控制 ──
+  LoopMode GetLoopMode() const { return m_LoopMode; }
+  void SetLoopMode(LoopMode mode) { m_LoopMode = mode; }
+
+  /**
+   * @brief 获取渲染插值因子（Fixed 模式下用于视觉平滑）
+   * @return 0~1 的插值 alpha，非 Fixed 模式返回 1.0f
+   */
+  float32 GetRenderAlpha() const { return m_RenderAlpha; }
+
+  // ============================================================
+  // 混合驱动 API — 每个子系统可注册独立的更新策略
+  // ============================================================
+
+  /**
+   * @brief 注册一个可独立配置更新策略的子系统
+   *
+   * @param name     子系统名称（调试/日志用）
+   * @param updateFn 更新回调 void(float32 dt)
+   * @param config   更新策略配置
+   * @return 子系统 ID（用于取消注册 / MarkDirty）
+   *
+   * 示例：
+   * @code
+   *   // 物理：固定步长
+   *   RegisterUpdateSubsystem("Physics",
+   *       [this](float32 dt) { m_World.Step(dt); },
+   *       SubsystemConfig::Fixed(1.0f/60.0f)
+   *   );
+   *
+   *   // 粒子：限频 30Hz
+   *   RegisterUpdateSubsystem("Particles",
+   *       [this](float32 dt) { m_Particles.Update(dt); },
+   *       SubsystemConfig::Throttled(30.0f)
+   *   );
+   *
+   *   // 音频：后台继续运行
+   *   RegisterUpdateSubsystem("Audio",
+   *       [this](float32 dt) { m_Audio.Update(dt); },
+   *       SubsystemConfig::Default().WithBackground(true)
+   *   );
+   * @endcode
+   */
+  uint32 RegisterUpdateSubsystem(const std::string& name,
+                                  std::function<void(float32)> updateFn,
+                                  const SubsystemConfig& config = {});
+
+  /**
+   * @brief 取消注册一个更新子系统
+   * @param id RegisterUpdateSubsystem 返回的 ID
+   */
+  void UnregisterUpdateSubsystem(uint32 id);
+
+  /**
+   * @brief 标记一个 EventDriven 子系统需要更新
+   * @param id 子系统 ID
+   *
+   * 在事件回调中调用，例如：
+   *   MarkSubsystemDirty(m_AudioSubsystemId);
+   */
+  void MarkSubsystemDirty(uint32 id);
 
 protected:
   /**
@@ -119,6 +185,17 @@ private:
 
   float32 m_LastFrameTime = 0.0f;
   LoopMode m_LoopMode = LoopMode::Variable;
+
+  // ── 混合驱动调度（按名称索引 + 按 ID 索引） ──
+  std::unordered_map<std::string, uint32> m_SubsystemNameMap;
+  std::unordered_map<uint32, SubsystemUpdateEntry> m_SubsystemEntries;
+  uint32 m_NextSubsystemId = 1000;  // 从 1000 开始，避免与零值冲突
+
+  // ── 渲染插值因子（Fixed 模式使用） ──
+  float32 m_RenderAlpha = 1.0f;
+
+  /** InternalUpdate 内部：按配置分发更新到各子系统 */
+  void DispatchSubsystemUpdates(float32 dt);
 };
 
 } // namespace Engine
