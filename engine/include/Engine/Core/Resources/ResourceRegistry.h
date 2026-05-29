@@ -341,7 +341,7 @@ namespace Engine {
         explicit operator bool() const {
             if (!m_Registry || m_GUID.IsNull()) return false;
             auto res = m_Registry->Get<T>(m_GUID);
-            return res && res->IsLoaded();
+            return res && res->IsReady();
         }
     };
 

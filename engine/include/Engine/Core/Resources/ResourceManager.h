@@ -115,16 +115,26 @@ namespace Engine {
                 }
             }
 
-            // 委托给具体加载函数
+            // 委托给具体加载函数（阶段1：自身数据加载）
             auto resource = LoadByType<T>(path);
             if (resource) {
-                // 调用初始化钩子（GPU 上传、音频预处理等）
+                // 阶段2：递归解析依赖
+                resource->SetState(ResourceState::Resolving);
+                if (!resource->ResolveDependencies(*this)) {
+                    std::cerr << "[ResourceManager] ResolveDependencies failed: "
+                              << path << std::endl;
+                    resource->SetState(ResourceState::Failed);
+                    return nullptr;
+                }
+
+                // 阶段3：自身 GPU / API 初始化（此时所有依赖已就绪）
                 if (!resource->PostLoad(&m_Factory)) {
                     std::cerr << "[ResourceManager] PostLoad failed: " << path << std::endl;
                     resource->SetState(ResourceState::Failed);
                     return nullptr;
                 }
-                resource->SetState(ResourceState::Loaded);
+
+                resource->SetState(ResourceState::Ready);
                 m_Cache[path] = std::weak_ptr<Resource>(resource);
                 // 自动加入文件监视（用于热加载）
                 if (auto* fw = GetFileWatcher())
@@ -157,14 +167,24 @@ namespace Engine {
 
             auto resource = LoadByType<T>(pathA, pathB);
             if (resource) {
-                // 调用初始化钩子
+                // 阶段2：递归解析依赖
+                resource->SetState(ResourceState::Resolving);
+                if (!resource->ResolveDependencies(*this)) {
+                    std::cerr << "[ResourceManager] ResolveDependencies failed: "
+                              << pathA << " | " << pathB << std::endl;
+                    resource->SetState(ResourceState::Failed);
+                    return nullptr;
+                }
+
+                // 阶段3：自身初始化
                 if (!resource->PostLoad(&m_Factory)) {
                     std::cerr << "[ResourceManager] PostLoad failed: "
                               << pathA << " | " << pathB << std::endl;
                     resource->SetState(ResourceState::Failed);
                     return nullptr;
                 }
-                resource->SetState(ResourceState::Loaded);
+
+                resource->SetState(ResourceState::Ready);
                 m_Cache[id] = std::weak_ptr<Resource>(resource);
                 // 自动加入文件监视两个着色器文件
                 if (auto* fw = GetFileWatcher()) {
@@ -231,7 +251,7 @@ namespace Engine {
         template<typename T>
         std::shared_ptr<T> Get(const std::string& path) const {
             auto res = GetResource(path);
-            if (res && res->GetState() == ResourceState::Loaded) {
+            if (res && res->IsReady()) {
                 return std::dynamic_pointer_cast<T>(res);
             }
             return nullptr;
