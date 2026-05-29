@@ -63,6 +63,9 @@ namespace Engine {
         /** @brief 剩余可用字节数 */
         size_t Remaining() const noexcept { return m_Capacity - m_Offset; }
 
+        /** @brief 将分配器状态转储到字符串（供崩溃报告使用） */
+        std::string DumpState() const;
+
     private:
         std::byte*  m_Memory;     // 预分配的内存块
         size_t      m_Capacity;   // 总容量

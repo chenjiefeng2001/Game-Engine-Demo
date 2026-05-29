@@ -4,6 +4,7 @@
  */
 
 #include "SystemTestApp.h"
+#include <Engine/Debug/CrashContext.h>
 #include <imgui.h>
 #include <cmath>
 #include <random>
@@ -311,7 +312,7 @@ void SystemTestApp::OnUpdate(float32 dt) {
 
 void SystemTestApp::OnImGui() {
     ImGui::SetNextWindowPos(ImVec2(10, 10), ImGuiCond_FirstUseEver);
-    ImGui::SetNextWindowSize(ImVec2(400, 350), ImGuiCond_FirstUseEver);
+    ImGui::SetNextWindowSize(ImVec2(400, 400), ImGuiCond_FirstUseEver);
 
     if (ImGui::Begin("SystemTest Dashboard", nullptr,
                      ImGuiWindowFlags_NoCollapse)) {
@@ -340,6 +341,32 @@ void SystemTestApp::OnImGui() {
         showTiming("Animation", m_AnimationTiming);
         showTiming("AI",        m_AITiming);
         showTiming("Audio",     m_AudioTiming);
+        ImGui::Separator();
+
+        // ── 崩溃测试按钮 ──
+        ImGui::Text("Crash Test:");
+        if (ImGui::Button("Trigger Nullptr Crash", ImVec2(200, 0))) {
+            // 先更新崩溃上下文
+            CrashContext::SetLevel("SystemTest_Level");
+            CrashContext::SetPosition(100.0f, 200.0f, 300.0f);
+            CrashContext::SetPlayerState("crash_test|running");
+            CrashContext::SetScriptStack({"SystemTestApp.cpp", "imgui_demo.cpp"});
+            CrashContext::SetCustom("frame_on_crash", std::to_string(m_FrameCount));
+            CrashContext::Register("OnImGui_Provider", [this]() {
+                return "Frame=" + std::to_string(m_FrameCount);
+            });
+
+            // 触发访问违例
+            volatile int* p = nullptr;
+            *p = 0xDEAD;
+        }
+        ImGui::SameLine();
+        ImGui::TextDisabled("(?)");
+        if (ImGui::IsItemHovered()) {
+            ImGui::SetTooltip("Click to trigger an intentional crash.\n"
+                              "A crash report will be generated in the crashes/\n"
+                              "directory, including a screenshot (.tga).");
+        }
     }
     ImGui::End();
 }

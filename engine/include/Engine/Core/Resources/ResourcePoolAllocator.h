@@ -125,6 +125,9 @@ namespace Engine {
         /** 打印所有池的统计到控制台 */
         void LogStats() const;
 
+        /** @brief 将分配器状态转储到字符串（供崩溃报告使用） */
+        std::string DumpState() const;
+
     private:
         // ── 内部结构 ──
 

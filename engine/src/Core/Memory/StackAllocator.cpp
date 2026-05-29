@@ -47,4 +47,11 @@ void StackAllocator::FreeTo(size_t marker) {
     }
 }
 
+std::string StackAllocator::DumpState() const {
+    return "StackAllocator: " + std::to_string(Used()) + " / "
+         + std::to_string(Capacity()) + " bytes ("
+         + std::to_string(Capacity() > 0 ? 100.0 * Used() / Capacity() : 0.0)
+         + "%)";
+}
+
 } // namespace Engine

@@ -13,6 +13,7 @@ file(GLOB ENGINE_SOURCES CONFIGURE_DEPENDS
     src/Core/Renderer/*.cpp
     src/Core/RHI/*.cpp
     src/Core/Scene/*.cpp
+    src/Debug/*.cpp
     src/Editor/*.cpp
     src/OpenAL/*.cpp
     src/OpenGL/*.cpp
@@ -34,6 +35,7 @@ file(GLOB ENGINE_HEADERS CONFIGURE_DEPENDS
     include/Engine/Core/RHI/*.h
     include/Engine/Core/Scene/*.h
     include/Engine/Core/Audio/*.h
+    include/Engine/Debug/*.h
     include/Engine/Editor/*.h
     include/Engine/Audio/*.h
     include/Engine/OpenGL/*.h
@@ -57,6 +59,10 @@ target_include_directories(EngineCore
 
 )
 target_link_libraries(EngineCore PUBLIC glad2 glfw stb box2d OpenAL::OpenAL imgui spdlog::spdlog)
+
+if(WIN32)
+    target_link_libraries(EngineCore PRIVATE dbghelp.lib)
+endif()
 
 # ── 预编译头文件加速 ──
 target_precompile_headers(EngineCore PRIVATE include/Engine/PCH.h)

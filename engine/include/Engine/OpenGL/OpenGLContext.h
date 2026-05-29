@@ -1,6 +1,8 @@
 #pragma once
 #include "Engine/Core/IRenderContext.h"
 #include <glad/gl.h>
+#include <vector>
+#include <cstdint>
 
 struct GLFWwindow;
 
@@ -17,6 +19,10 @@ namespace Engine {
         virtual void OnResize(int width, int height) override;  // ← 新增
 
         GladGLContext& GetGL() { return m_GL; }
+
+        // ── 截屏 ──
+        virtual bool CaptureFrameBuffer(int32& outWidth, int32& outHeight,
+                                        std::vector<uint8_t>& outPixels) override;
 
         // ── 统计 ──
         virtual uint32 GetAndResetDrawCallCount() override

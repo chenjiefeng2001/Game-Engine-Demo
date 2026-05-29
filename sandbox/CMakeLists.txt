@@ -28,6 +28,7 @@ add_sandbox_executable(SerializationTest src/SerializationTest/main.cpp src/Seri
 add_sandbox_executable(MarioDemo src/MarioDemo/main.cpp src/MarioDemo/MarioDemoApp.cpp)
 add_sandbox_executable(EditorDemo src/EditorDemo/main.cpp)
 add_sandbox_executable(SystemTest src/SystemTest/main.cpp src/SystemTest/SystemTestApp.cpp)
+add_sandbox_executable(CrashTest src/CrashTest/main.cpp)
 
 # ==============================================================================
 # 2. 资源同步 Target — 将 assets 和 OpenAL32.dll 拷贝到每个输出子目录
