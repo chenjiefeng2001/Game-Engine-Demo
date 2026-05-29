@@ -10,6 +10,7 @@
 #include "Engine/Core/Renderer/OrthographicCamera.h"
 #include "Engine/Core/SubsystemManager.h"
 #include "Engine/Core/SubsystemConfig.h"
+#include "Engine/Core/JobSystem.h"
 #include "Engine/Core/MenuManager.h"
 #include "Engine/PerformanceWindow.h"
 #include "Engine/Types.h"
@@ -183,7 +184,7 @@ private:
   void InternalUpdate(float32 dt);
   void InternalRender();
 
-  float32 m_LastFrameTime = 0.0f;
+
   LoopMode m_LoopMode = LoopMode::Variable;
 
   // ── 混合驱动调度（按名称索引 + 按 ID 索引） ──

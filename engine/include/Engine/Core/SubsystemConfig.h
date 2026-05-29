@@ -33,8 +33,30 @@
 
 #include "Engine/Types.h"
 #include <string>
+#include <vector>
+#include <functional>
 
 namespace Engine {
+
+/**
+ * @brief 子系统执行阶段 — 决定多线程并行时的执行顺序
+ *
+ * 同一阶段的子系统可以并行执行（共享 Job 线程池）。
+ * 不同阶段的子系统按顺序串行执行，保证依赖安全。
+ *
+ * 示例时序：
+ *   PrePhysics  [Input] [AI Decision]        ← 这两者并行
+ *   Physics     [Physics Step]                ← Box2D 单线程
+ *   PostPhysics [Particles] [Animation Blend] ← 这两者并行
+ *   LateUpdate  [Audio] [Menu] [UI]           ← 这两者并行
+ */
+enum class SubsystemExecPhase : uint8 {
+    PrePhysics  = 0,
+    Physics     = 1,
+    PostPhysics = 2,
+    LateUpdate  = 3,
+    COUNT
+};
 
 /**
  * @brief 子系统更新方式枚举
@@ -63,32 +85,36 @@ enum class SubsystemUpdateMode : uint8 {
  */
 struct SubsystemConfig {
     SubsystemUpdateMode updateMode      = SubsystemUpdateMode::Default;
-    float32             maxHz           = 60.0f;           // Throttled 上限
-    float32             fixedDt         = 1.0f / 60.0f;    // Fixed 步长
-    bool                runInBackground = true;            // 后台继续运行
-    bool                canSkipRender   = true;            // 可跳过渲染帧
+    SubsystemExecPhase  execPhase       = SubsystemExecPhase::PostPhysics;  // 默认物理后
+    float32             maxHz           = 60.0f;
+    float32             fixedDt         = 1.0f / 60.0f;
+    bool                runInBackground = true;
+    bool                canSkipRender   = true;
 
     // ── 静态工厂方法 ──
 
     static SubsystemConfig Default()    { return {}; }
 
-    static SubsystemConfig Fixed(float32 dt) {
+    static SubsystemConfig Fixed(float32 dt, SubsystemExecPhase phase = SubsystemExecPhase::Physics) {
         SubsystemConfig cfg;
         cfg.updateMode = SubsystemUpdateMode::Fixed;
         cfg.fixedDt    = dt;
+        cfg.execPhase  = phase;
         return cfg;
     }
 
-    static SubsystemConfig Throttled(float32 hz) {
+    static SubsystemConfig Throttled(float32 hz, SubsystemExecPhase phase = SubsystemExecPhase::PostPhysics) {
         SubsystemConfig cfg;
         cfg.updateMode = SubsystemUpdateMode::Throttled;
         cfg.maxHz      = hz;
+        cfg.execPhase  = phase;
         return cfg;
     }
 
-    static SubsystemConfig EventDriven() {
+    static SubsystemConfig EventDriven(SubsystemExecPhase phase = SubsystemExecPhase::LateUpdate) {
         SubsystemConfig cfg;
         cfg.updateMode = SubsystemUpdateMode::EventDriven;
+        cfg.execPhase  = phase;
         return cfg;
     }
 
@@ -98,7 +124,12 @@ struct SubsystemConfig {
         return cfg;
     }
 
-    // ── Fluent 修改器（方便链式调用） ──
+    // ── Fluent 修改器 ──
+
+    SubsystemConfig& WithPhase(SubsystemExecPhase phase) {
+        execPhase = phase;
+        return *this;
+    }
 
     SubsystemConfig& WithBackground(bool run) {
         runInBackground = run;
@@ -126,6 +157,7 @@ struct SubsystemUpdateEntry {
     float32 accumulator     = 0.0f;   // Fixed 模式累加器
     float32 timeSinceLast   = 0.0f;   // Throttled 上次更新经过时间
     bool    eventPending    = false;  // EventDriven 标记
+    uint64  currentJobId    = 0;      // 当前帧的 Job ID（用于等待完成）
 
     /** 标记 EventDriven 子系统需要更新（由外部事件触发时调用） */
     void MarkDirty() { eventPending = true; }
