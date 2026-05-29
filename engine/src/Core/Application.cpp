@@ -209,81 +209,144 @@ void Application::MarkSubsystemDirty(uint32 id) {
 }
 
 // ============================================================
-// 混合驱动调度器 — 按各子系统配置分发更新
+// 混合驱动调度器 — 按阶段并行 + 子系统独立策略
+//
+// 调度策略：
+//   1. 按 SubsystemExecPhase 分阶段串行（PrePhysics → Physics
+//      → PostPhysics → LateUpdate）
+//   2. 同一阶段内的所有子系统通过 JobSystem 并行执行
+//   3. 每个子系统内部的 UpdateMode（Fixed/Throttled 等）各自独立
+//   4. 第一阶段开始前、最后阶段结束后各有一个全局同步点
 // ============================================================
 
 void Application::DispatchSubsystemUpdates(float32 dt) {
+  auto* js = JobSystem::Get();
   bool isActive = true;
   if (m_LoopMode == LoopMode::Adaptive) {
     isActive = m_Window->IsActive() && !m_Window->IsMinimized();
   }
+
+  // ── 按执行阶段分组 ──
+  // 收集每个阶段需要更新的子系统
+  using PhaseGroup = std::vector<uint32>;
+  std::array<PhaseGroup, static_cast<size_t>(SubsystemExecPhase::COUNT)> phaseGroups;
 
   for (auto& [id, entry] : m_SubsystemEntries) {
     const auto& config = entry.config;
 
     // ── 后台模式过滤 ──
     if (!isActive && !config.runInBackground) {
-      continue;  // 该子系统在后台不运行
+      continue;
     }
 
-    // ── 根据 UpdateMode 选择调度策略 ──
-    switch (config.updateMode) {
+    // ── EventDriven 过滤 ──
+    if (config.updateMode == SubsystemUpdateMode::EventDriven && !entry.eventPending) {
+      continue;
+    }
 
-      case SubsystemUpdateMode::Default: {
-        // Default = 跟随 LoopMode 的默认策略
-        // Variable / Adaptive → 每帧更新
-        // 已有代码通过 OnUpdate() 处理
-        if (entry.updateFn) entry.updateFn(dt);
-        break;
+    // ── Manual 跳过 ──
+    if (config.updateMode == SubsystemUpdateMode::Manual) {
+      continue;
+    }
+
+    // ── Throttled 限频判断 ──
+    if (config.updateMode == SubsystemUpdateMode::Throttled) {
+      entry.timeSinceLast += dt;
+      float32 minInterval = 1.0f / config.maxHz;
+      if (entry.timeSinceLast < minInterval) {
+        continue;  // 未达到更新间隔
       }
+      // 到达更新点，重置计时器（实际 dt 传递累计值）
+    }
 
-      case SubsystemUpdateMode::Variable: {
-        // 可变步长：每帧都跑
-        if (entry.updateFn) entry.updateFn(dt);
-        break;
-      }
+    uint8 phaseIdx = static_cast<uint8>(config.execPhase);
+    if (phaseIdx < phaseGroups.size()) {
+      phaseGroups[phaseIdx].push_back(id);
+    }
+  }
 
-      case SubsystemUpdateMode::Fixed: {
-        // 固定步长累加器
-        entry.accumulator += dt;
-        float32 fixedDt = config.fixedDt;
-        while (entry.accumulator >= fixedDt) {
-          if (entry.updateFn) entry.updateFn(fixedDt);
-          entry.accumulator -= fixedDt;
+  // ── 按阶段顺序串行执行，每阶段内子系统并行 ──
+  for (size_t phase = 0; phase < phaseGroups.size(); ++phase) {
+    const auto& group = phaseGroups[phase];
+    if (group.empty()) continue;
+
+    // 同一阶段的子系统并行调度
+    for (uint32 id : group) {
+      auto it = m_SubsystemEntries.find(id);
+      if (it == m_SubsystemEntries.end()) continue;
+
+      auto& entry = it->second;
+      const auto& config = entry.config;
+
+      // 构造一个 Job 函数，捕获 entry 和 dt
+      auto jobFn = [&entry, dt, js]() {
+        float32 actualDt = dt;
+
+        // 根据 UpdateMode 处理
+        switch (entry.config.updateMode) {
+
+          case SubsystemUpdateMode::Default:
+          case SubsystemUpdateMode::Variable: {
+            if (entry.updateFn) entry.updateFn(actualDt);
+            break;
+          }
+
+          case SubsystemUpdateMode::Fixed: {
+            entry.accumulator += actualDt;
+            float32 fixedDt = entry.config.fixedDt;
+            while (entry.accumulator >= fixedDt) {
+              if (entry.updateFn) entry.updateFn(fixedDt);
+              entry.accumulator -= fixedDt;
+            }
+            break;
+          }
+
+          case SubsystemUpdateMode::Throttled: {
+            // Throttled 已在上层过滤，这里直接执行
+            if (entry.updateFn) entry.updateFn(entry.timeSinceLast);
+            entry.timeSinceLast = 0.0f;
+            break;
+          }
+
+          case SubsystemUpdateMode::EventDriven: {
+            if (entry.updateFn) entry.updateFn(actualDt);
+            entry.eventPending = false;
+            break;
+          }
+
+          default: break;
         }
-        break;
-      }
+      };
 
-      case SubsystemUpdateMode::Throttled: {
-        // 限频更新
-        entry.timeSinceLast += dt;
-        float32 minInterval = 1.0f / config.maxHz;
-        if (entry.timeSinceLast >= minInterval) {
-          if (entry.updateFn) entry.updateFn(entry.timeSinceLast);
-          entry.timeSinceLast = 0.0f;
+      // 通过 JobSystem 调度
+      if (js && js->GetThreadCount() > 0) {
+        // 包装为 JobFunc（接收 threadIndex，这里忽略）
+        JobFunc wrappedFn = [jobFn](uint32) { jobFn(); };
+        JobHandle h = js->Schedule(std::move(wrappedFn));
+        entry.currentJobId = h.id;
+      } else {
+        // 无 Job 系统直接执行
+        jobFn();
+        entry.currentJobId = 0;
+      }
+    }
+
+    // ── 等待此阶段所有并行 Job 完成 ──
+    if (js && js->GetThreadCount() > 0) {
+      for (uint32 id : group) {
+        auto it = m_SubsystemEntries.find(id);
+        if (it == m_SubsystemEntries.end()) continue;
+        if (it->second.currentJobId != 0) {
+          js->Wait(JobHandle{it->second.currentJobId});
+          it->second.currentJobId = 0;
         }
-        break;
-      }
-
-      case SubsystemUpdateMode::EventDriven: {
-        // 事件驱动：仅在 markDirty 被调用时更新
-        if (entry.eventPending) {
-          if (entry.updateFn) entry.updateFn(dt);
-          entry.eventPending = false;
-        }
-        break;
-      }
-
-      case SubsystemUpdateMode::Manual: {
-        // 手动控制：Application 不自动调用
-        break;
       }
     }
   }
 }
 
 void Application::InternalUpdate(float32 dt) {
-  // ── 阶段 A：引擎级输入处理 ──
+  // ── 阶段 A：引擎级输入处理（串行） ──
   if (Input::IsKeyDown(KeyCode::W)) {
     // m_Camera->MoveForward(dt);
   }
@@ -295,14 +358,15 @@ void Application::InternalUpdate(float32 dt) {
   float32 dy = Input::GetMouseDeltaY();
   // m_Camera->Rotate(dx, dy);
 
-  // ── 阶段 B：子类扩展（传统的每帧 OnUpdate 仍有效） ──
+  // ── 阶段 B：子类扩展 ──
   OnUpdate(dt);
 
   // ── 阶段 C：混合驱动调度 ──
   // 所有通过 RegisterUpdateSubsystem 注册的子系统按各自配置更新
+  // 内部会利用 JobSystem::ParallelFor 对可并行的任务进行调度
   DispatchSubsystemUpdates(dt);
 
-  // ── 阶段 D：更新菜单状态 ──
+  // ── 阶段 D：更新菜单状态（串行） ──
   m_MenuManager.OnUpdate(dt);
 
   // ── 转发按键到菜单系统 ──
@@ -313,6 +377,14 @@ void Application::InternalUpdate(float32 dt) {
     if (Input::IsKeyPressed(KeyCode::Right))    m_MenuManager.OnKeyPressed(KeyCode::Right);
     if (Input::IsKeyPressed(KeyCode::Escape))   m_MenuManager.OnKeyPressed(KeyCode::Escape);
     if (Input::IsKeyPressed(KeyCode::Enter))    m_MenuManager.OnKeyPressed(KeyCode::Enter);
+  }
+
+  // ── 阶段 E：确保所有并行 Job 已完成（DispatchSubsystemUpdates
+  // 内部已按阶段等待，此处作为安全检查） ──
+  if (auto* js = JobSystem::Get()) {
+    if (js->GetPendingJobCount() > 0) {
+      js->WaitAll();
+    }
   }
 }
 void Application::InternalRender() {
@@ -352,6 +424,10 @@ void Application::Run() {
 
   // ── 初始化高精度计时器 ──
   Time::Init();
+
+  // ── 初始化 Job 系统（线程池） ──
+  // 传入 hardware_concurrency 个线程，预留 1 核给未来渲染线程
+  JobSystem::Init(0, 1);
 
   while (!m_Window->ShouldClose()) {
     // ============================================================
@@ -470,7 +546,14 @@ void Application::Run() {
     // 阶段 8：Swap Buffers + 帧尾消息泵
     // ============================================================
     m_Window->OnUpdate();
+
+    // ── 阶段 9：Job 系统轮询（处理主线程回调） ──
+    if (auto* js = JobSystem::Get())
+      js->PollCompleted();
   }
+
+  // ── Job 系统关闭 ──
+  JobSystem::Shutdown();
 }
 
 } // namespace Engine
