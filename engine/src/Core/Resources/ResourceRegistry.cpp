@@ -282,7 +282,7 @@ namespace Engine {
         std::lock_guard<std::mutex> lock(m_Mutex);
         size_t count = 0;
         for (const auto& [guid, entry] : m_Entries) {
-            if (entry.state == ResourceState::Loaded)
+            if (entry.state == ResourceState::Ready)
                 count++;
         }
         return count;
@@ -293,16 +293,19 @@ namespace Engine {
         std::cout << "=== ResourceRegistry Stats ===" << std::endl;
         std::cout << "Registered: " << m_Entries.size() << std::endl;
 
-        size_t loaded = 0, failed = 0, loading = 0, unloaded = 0;
+        size_t loaded = 0, ready = 0, failed = 0, loading = 0, unloaded = 0;
         for (const auto& [guid, entry] : m_Entries) {
             switch (entry.state) {
-                case ResourceState::Loaded:   loaded++;   break;
-                case ResourceState::Failed:   failed++;   break;
-                case ResourceState::Loading:  loading++;  break;
-                default:                      unloaded++; break;
+                case ResourceState::Loaded:    loaded++;   break;
+                case ResourceState::Ready:     ready++;    break;
+                case ResourceState::Failed:    failed++;   break;
+                case ResourceState::Loading:   loading++;  break;
+                case ResourceState::Resolving: loading++;  break;
+                default:                       unloaded++; break;
             }
         }
         std::cout << "  Loaded:  " << loaded << std::endl;
+        std::cout << "  Ready:   " << ready << std::endl;
         std::cout << "  Failed:  " << failed << std::endl;
         std::cout << "  Loading: " << loading << std::endl;
         std::cout << "  Unloaded:" << unloaded << std::endl;
