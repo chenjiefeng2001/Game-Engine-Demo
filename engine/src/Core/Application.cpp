@@ -11,8 +11,8 @@
 #include "Engine/Core/Resources/FileWatcher.h"
 #include "Engine/Core/Resources/ResourceManager.h"
 #include "Engine/Platform/PlatformUtils.h"
+#include "Engine/Core/Log.h"
 #include "Engine/UIManager.h"
-#include <iostream>
 #include <thread>
 #include <chrono>
 
@@ -78,10 +78,10 @@ void Application::RegisterSubsystem(std::string name, SubsystemPhase phase,
 bool Application::InitWindow() {
   m_Window = m_Factory.CreateWindow(800, 600, "Engine");
   if (!m_Window) {
-    std::cerr << "[Application] Failed to create window" << std::endl;
+    Log::Error("Failed to create window");
     return false;
   }
-  std::cout << "[Application] Window created (800x600)" << std::endl;
+  Log::Info("Window created {}x{}", 800, 600);
   return true;
 }
 
@@ -94,7 +94,7 @@ bool Application::InitShader() {
   m_Shader = m_Factory.CreateShader("assets/shaders/vertex.glsl",
                                     "assets/shaders/fragment.glsl");
   if (!m_Shader) {
-    std::cerr << "[Application] Failed to create shader" << std::endl;
+    Log::Error("Failed to create shader");
     return false;
   }
   return true;
@@ -108,14 +108,14 @@ bool Application::InitVertexData() {
 
   auto vb = m_Factory.CreateVertexBuffer(vertices, sizeof(vertices));
   if (!vb) {
-    std::cerr << "[Application] Failed to create vertex buffer" << std::endl;
+    Log::Error("Failed to create vertex buffer");
     return false;
   }
 
   auto ib =
       m_Factory.CreateIndexBuffer(indices, sizeof(indices) / sizeof(uint32));
   if (!ib) {
-    std::cerr << "[Application] Failed to create index buffer" << std::endl;
+    Log::Error("Failed to create index buffer");
     return false;
   }
 
@@ -123,15 +123,14 @@ bool Application::InitVertexData() {
   m_VAO->AddVertexBuffer(vb);
   m_VAO->SetIndexBuffer(ib);
 
-  std::cout << "[Application] Vertex data initialized"
-            << " (4 vertices, 6 indices)" << std::endl;
+  Log::Info("Vertex data initialized (4 vertices, 6 indices)");
   return true;
 }
 
 bool Application::InitUI() {
   auto ui = m_Factory.CreateUIManager();
   if (!ui) {
-    std::cerr << "[Application] Failed to create UI manager" << std::endl;
+    Log::Error("Failed to create UI manager");
     return false;
   }
   bool ok = UIManager::Init(std::move(ui),
@@ -152,9 +151,8 @@ uint32 Application::RegisterUpdateSubsystem(
   // 检查名称冲突
   auto it = m_SubsystemNameMap.find(name);
   if (it != m_SubsystemNameMap.end()) {
-    std::cerr << "[Application] Subsystem '" << name
-              << "' already registered (ID=" << it->second
-              << "), returning existing ID." << std::endl;
+    Log::Warn("Subsystem '{}' already registered (ID={}), returning existing ID",
+              name, it->second);
     return it->second;
   }
 
@@ -173,17 +171,15 @@ uint32 Application::RegisterUpdateSubsystem(
 
   m_SubsystemEntries[id] = std::move(entry);
 
-  std::cout << "[Application] RegisterUpdateSubsystem: '" << name
-            << "' (ID=" << id << ", mode=" << static_cast<int>(config.updateMode)
-            << ")" << std::endl;
+  Log::Info("RegisterUpdateSubsystem: '{}' (ID={}, mode={})",
+            name, id, static_cast<int>(config.updateMode));
   return id;
 }
 
 void Application::UnregisterUpdateSubsystem(uint32 id) {
   auto it = m_SubsystemEntries.find(id);
   if (it == m_SubsystemEntries.end()) {
-    std::cerr << "[Application] UnregisterUpdateSubsystem: ID=" << id
-              << " not found." << std::endl;
+    Log::Warn("UnregisterUpdateSubsystem: ID={} not found.", id);
     return;
   }
 
@@ -196,8 +192,7 @@ void Application::UnregisterUpdateSubsystem(uint32 id) {
     }
   }
 
-  std::cout << "[Application] UnregisterUpdateSubsystem: '"
-            << it->second.name << "' (ID=" << id << ")" << std::endl;
+  Log::Info("UnregisterUpdateSubsystem: '{}' (ID={})", it->second.name, id);
   m_SubsystemEntries.erase(it);
 }
 
@@ -407,20 +402,18 @@ void Application::InternalRender() {
 
 void Application::Run() {
 
+  // ── 初始化日志系统 ──
+  Log::Init();
+
   // ── 将栈分配器注入工厂，所有子系统对象从连续内存池分配 ──
   m_Factory.SetAllocator(&m_SubsystemAllocator);
 
   if (!m_SubsystemManager.Initialize()) {
-    std::cerr << "[Application] Subsystem initialization failed, aborting."
-              << std::endl;
+    Log::Error("Subsystem initialization failed, aborting.");
     return;
   }
 
-  OnStartup();
 
-  // ── 启动文件监视器（在资源加载完成后） ──
-  if (auto *fw = FileWatcher::Get())
-    fw->Start();
 
   // ── 初始化高精度计时器 ──
   Time::Init();
@@ -429,6 +422,11 @@ void Application::Run() {
   // 传入 hardware_concurrency 个线程，预留 1 核给未来渲染线程
   JobSystem::Init(0, 1);
 
+  OnStartup();
+
+  // ── 启动文件监视器（在资源加载完成后） ──
+  if (auto *fw = FileWatcher::Get())
+    fw->Start();
   while (!m_Window->ShouldClose()) {
     // ============================================================
     // 阶段 1：消息泵 + 窗口状态感知的帧率控制

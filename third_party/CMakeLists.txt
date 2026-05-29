@@ -48,6 +48,11 @@ set(ALSOFT_INSTALL_HRTF_DATA OFF CACHE BOOL "" FORCE)
 add_subdirectory(openal-soft)
 
 # =============================================================================
+# spdlog — 高性能 C++ 日志库（header-only，提供 spdlog::spdlog 目标）
+# =============================================================================
+add_subdirectory(spdlog)
+
+# =============================================================================
 # Dear ImGui — 即时模式 GUI（构建文件在 imgui_build/，源文件来自子模块 imgui/）
 # =============================================================================
 add_subdirectory(imgui_build)
@@ -57,7 +62,7 @@ add_subdirectory(imgui_build)
 # =============================================================================
 
 # 将已知的第三方目标放入 "ThirdParty" 文件夹
-set(THIRD_PARTY_TARGETS glad2 glm glfw stb box2d imgui OpenAL alsoft.common alsoft.fmt)
+set(THIRD_PARTY_TARGETS glad2 glm glfw stb box2d imgui OpenAL alsoft.common alsoft.fmt spdlog)
 foreach(target ${THIRD_PARTY_TARGETS})
     if(TARGET ${target})
         set_target_properties(${target} PROPERTIES FOLDER "ThirdParty")

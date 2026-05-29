@@ -211,10 +211,10 @@ void JobSystem::Wait(JobHandle handle) {
 bool JobSystem::IsCompleted(JobHandle handle) {
     if (!handle.IsValid()) return true;
 
+    // 如果 Job 不在 ）map 中，说明已被 OnJobCompleted 清理 → 完成
+    // 如果 Job 在 map 中，说明尚未执行完毕（等待依赖 / 在队列中 / 正在执行
     std::lock_guard lock(m_JobMapMutex);
-    auto it = m_JobMap.find(handle.id);
-    if (it == m_JobMap.end()) return true;  // 已被清理 → 完成
-    return it->second->unfinishedPrereqs.load(std::memory_order_acquire) <= 0;
+    return m_JobMap.find(handle.id) == m_JobMap.end();
 }
 
 void JobSystem::WaitAll() {
