@@ -268,4 +268,13 @@ namespace Engine {
         s_Log.Info("============================");
     }
 
+    std::string ResourcePoolAllocator::DumpState() const {
+        auto gs = GetGlobalStats();
+        std::string result = "ResourcePoolAllocator: " + std::to_string(gs.poolCount)
+                           + " pools, " + std::to_string(gs.totalBytes)
+                           + " bytes (" + std::to_string(gs.totalAllocated)
+                           + " allocated, " + std::to_string(gs.totalFree) + " free)";
+        return result;
+    }
+
 } // namespace Engine

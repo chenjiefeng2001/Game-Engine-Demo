@@ -146,6 +146,7 @@ JobHandle JobSystem::ParallelFor(int32 begin, int32 end,
             // 批次完成后通知 counterJob
             job->dependents.push_back(counterId);
             m_JobMap[id] = std::move(job);
+            m_PendingCount.fetch_add(1, std::memory_order_release);  // AllocateJob 也会增加
             return id;
         }();
 

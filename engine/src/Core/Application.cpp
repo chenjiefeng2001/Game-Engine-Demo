@@ -13,10 +13,15 @@
 #include "Engine/Platform/PlatformUtils.h"
 #include "Engine/Core/Log.h"
 #include "Engine/UIManager.h"
+#include "Engine/Debug/CrashHandler.h"
+#include "Engine/Debug/ScreenshotCapture.h"
 #include <thread>
 #include <chrono>
 
 namespace Engine {
+
+// 供 CrashHandler 在崩溃时读取子系统分配器状态
+StackAllocator* g_SubsystemAllocator = nullptr;
 
 Application::Application(IGraphicsFactory &factory)
     : m_Factory(factory), m_TextureManager(factory) {
@@ -66,6 +71,8 @@ Application::Application(IGraphicsFactory &factory)
 
 Application::~Application() {
   // SubsystemManager::Shutdown() 在 m_SubsystemManager 析构时自动调用
+
+  CrashHandler::Shutdown();
 
   // ── 日志系统关闭（确保所有缓冲输出写入文件） ──
   Log::Shutdown();
@@ -410,6 +417,10 @@ void Application::Run() {
 
   // ── 将栈分配器注入工厂，所有子系统对象从连续内存池分配 ──
   m_Factory.SetAllocator(&m_SubsystemAllocator);
+  g_SubsystemAllocator = &m_SubsystemAllocator;
+
+  // ── 初始化崩溃报告系统 ──
+  CrashHandler::Init("crashes");
 
   if (!m_SubsystemManager.Initialize()) {
     Log::Error("Subsystem initialization failed, aborting.");
@@ -543,7 +554,20 @@ void Application::Run() {
       ui->End();
 
     // ============================================================
-    // 阶段 8：Swap Buffers + 帧尾消息泵
+    // 阶段 8：预捕获截屏（供崩溃报告使用）
+    // ============================================================
+    {
+      int32 sw = 0, sh = 0;
+      std::vector<uint8_t> pixels;
+      if (auto* ctx = m_Window->GetContext()) {
+        if (ctx->CaptureFrameBuffer(sw, sh, pixels)) {
+          Engine::ScreenshotCapture::CaptureFrame(sw, sh, pixels.data());
+        }
+      }
+    }
+
+    // ============================================================
+    // 阶段 9：Swap Buffers + 帧尾消息泵
     // ============================================================
     m_Window->OnUpdate();
 

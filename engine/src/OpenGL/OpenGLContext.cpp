@@ -44,6 +44,21 @@ namespace Engine {
 	void OpenGLContext::OnResize(int width, int height) {
 		m_GL.Viewport(0, 0, width, height);
 	}
+
+	bool OpenGLContext::CaptureFrameBuffer(int32& outWidth, int32& outHeight,
+	                                       std::vector<uint8_t>& outPixels) {
+		GLint viewport[4] = {};
+		m_GL.GetIntegerv(GL_VIEWPORT, viewport);
+		outWidth  = viewport[2];
+		outHeight = viewport[3];
+		if (outWidth <= 0 || outHeight <= 0) return false;
+
+		outPixels.resize(static_cast<size_t>(outWidth) * static_cast<size_t>(outHeight) * 3);
+		m_GL.ReadPixels(0, 0, outWidth, outHeight, GL_RGB, GL_UNSIGNED_BYTE,
+		                outPixels.data());
+		return true;
+	}
+
 	//init
 	void OpenGLContext::Init()
 	{
