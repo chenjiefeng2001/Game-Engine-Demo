@@ -2,8 +2,18 @@
 #include "Engine/Core/FileSystem.h"
 #include <cstdio>
 #include <cstring>
+#include <cstdint>
 #include <iostream>
 #include <algorithm>
+
+// 跨平台文件 I/O 适配
+#ifdef _WIN32
+#  define FSEEK64 _fseeki64
+#  define FTELL64 _ftelli64
+#else
+#  define FSEEK64 fseeko
+#  define FTELL64 ftello
+#endif
 
 namespace Engine {
 
@@ -33,14 +43,19 @@ namespace Engine {
         std::string realPath = FileSystem::ResolvePath(path);
 
         FILE* file = nullptr;
-        if (fopen_s(&file, realPath.c_str(), "rb") != 0 || !file) {
+#ifdef _WIN32
+        if (fopen_s(&file, realPath.c_str(), "rb") != 0) file = nullptr;
+#else
+        file = fopen(realPath.c_str(), "rb");
+#endif
+        if (!file) {
             std::cerr << "[AsyncStream] Failed to open: " << realPath << std::endl;
             return false;
         }
 
-        _fseeki64(file, 0, SEEK_END);
-        m_FileSize = static_cast<uint64>(_ftelli64(file));
-        _fseeki64(file, 0, SEEK_SET);
+        FSEEK64(file, 0, SEEK_END);
+        m_FileSize = static_cast<uint64>(FTELL64(file));
+        FSEEK64(file, 0, SEEK_SET);
 
         m_File = file;
         m_Path = realPath;
@@ -224,7 +239,7 @@ namespace Engine {
                 }
 
                 // 从磁盘读取
-                _fseeki64(m_File, static_cast<__int64>(blockStart), SEEK_SET);
+                FSEEK64(m_File, static_cast<int64_t>(blockStart), SEEK_SET);
                 size_t actual = std::fread(m_Cache[evictIndex].data.data(), 1,
                                            static_cast<size_t>(blockSize), m_File);
 
