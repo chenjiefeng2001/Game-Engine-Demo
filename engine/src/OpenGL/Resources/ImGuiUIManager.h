@@ -56,6 +56,7 @@ namespace Engine {
         // 字体状态
         std::string m_FontPath;
         float m_FontSize = 16.0f;
+        bool m_CjkFontAttempted = false;   // 是否已尝试加载 CJK 字体
 
         // 延迟缩放请求（帧间安全加载）
         float m_PendingScale = -1.0f;

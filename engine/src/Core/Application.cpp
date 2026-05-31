@@ -13,12 +13,16 @@
 #include "Engine/Platform/PlatformUtils.h"
 #include "Engine/Core/Log.h"
 #include "Engine/UIManager.h"
+#include "Engine/ConsolePanel.h"
 #include "Engine/Debug/CrashHandler.h"
 #include "Engine/Debug/ScreenshotCapture.h"
 #include <thread>
 #include <chrono>
 
 namespace Engine {
+
+// 静态成员定义
+ConsolePanel* Application::s_ConsolePanel = nullptr;
 
 // 供 CrashHandler 在崩溃时读取子系统分配器状态
 StackAllocator* g_SubsystemAllocator = nullptr;
@@ -355,7 +359,22 @@ void Application::DispatchSubsystemUpdates(float32 dt) {
 }
 
 void Application::InternalUpdate(float32 dt) {
+  // ── 阶段 0：控制台切换（优先处理，不受输入阻塞影响） ──
+  if (s_ConsolePanel) {
+    // 使用直接的 Input 查询（绕过 s_BlockKeyboard，因为控制台切换必须始终响应）
+    if (IInput* rawInput = Input::Get()) {
+      if (rawInput->IsKeyPressed(KeyCode::GraveAccent)) {
+        s_ConsolePanel->ToggleVisibility();
+      }
+    }
+
+    // 控制台激活时阻止游戏输入
+    bool consoleCaptures = s_ConsolePanel->IsCapturingInput();
+    Input::SetBlockInput(consoleCaptures, consoleCaptures);
+  }
+
   // ── 阶段 A：引擎级输入处理（串行） ──
+  // 注意：如果控制台激活，Input::IsKeyDown 等会因 SetBlockInput 自动返回 false
   if (Input::IsKeyDown(KeyCode::W)) {
     // m_Camera->MoveForward(dt);
   }

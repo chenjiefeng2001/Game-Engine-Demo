@@ -2,7 +2,7 @@
 
 /**
  * @file SystemTestApp.h
- * @brief 系统功能综合测试 — 日志、线程调度、计时器、混合驱动、Adaptive 模式
+ * @brief 系统功能综合测试 — 日志、线程调度、计时器、混合驱动、Adaptive 模式、控制台
  *
  * 测试内容：
  *   1. Log 系统：各级别日志输出、子系统独立 Logger
@@ -10,13 +10,17 @@
  *   3. Time 类：高精度计时器、时间缩放、漂移修正
  *   4. SubsystemConfig：多阶段并行子系统注册
  *   5. Adaptive 双模式消息泵
- *   6. 退出时打印汇总报告
+ *   6. 游戏内置控制台：命令注册、执行、CVar、历史、Tab 补全
+ *   7. 退出时打印汇总报告
  */
 
 #include <Engine/Application.h>
 #include <Engine/Platform/PlatformUtils.h>
 #include <Engine/Core/Log.h>
 #include <Engine/Core/JobSystem.h>
+#include <Engine/ConsolePanel.h>
+#include <Engine/ConsoleCommandRegistry.h>
+#include <Engine/ConsoleVariable.h>
 #include <memory>
 #include <vector>
 #include <atomic>
@@ -60,6 +64,21 @@ namespace Engine {
         void RunTimePrecisionTest();
         void RunTimeScaleTest();
 
+        // ── 控制台测试 ──
+        /** 注册测试用的控制台命令和 CVar */
+        void InitConsoleCommands();
+
+        /** 是否启用无敌模式（由 god 命令切换） */
+        bool m_GodMode = false;
+
+        /** 是否启用穿墙模式（由 noclip 命令切换） */
+        bool m_NoClip = false;
+
+        /** 测试用 CVar 示例 */
+        CVar<float32> m_PlayerSpeed{"player_speed", "玩家速度倍率", 1.0f};
+        CVar<int32>   m_MaxEnemies{"max_enemies", "最大敌人数", 10};
+        CVar<bool>    m_EnableDebugDraw{"debug_draw", "启用调试绘制", false};
+
         // ── 指标 ──
         uint32 m_FrameCount = 0;
         float32 m_Elapsed = 0.0f;
@@ -76,6 +95,9 @@ namespace Engine {
         bool m_JobTestPassed = false;
         bool m_TimeTestPassed = false;
         bool m_ParallelForPassed = false;
+
+        // ── 控制台面板 ──
+        ConsolePanel m_ConsolePanel;
 
         // ── 统计 ──
         struct PhaseTiming {

@@ -5,6 +5,10 @@
 
 #include "SystemTestApp.h"
 #include <Engine/Debug/CrashContext.h>
+#include <Engine/ConsolePanel.h>
+#include <Engine/ConsoleCommandRegistry.h>
+#include <Engine/ConsoleVariable.h>
+#include <Engine/Core/Input.h>
 #include <imgui.h>
 #include <cmath>
 #include <random>
@@ -269,6 +273,11 @@ void SystemTestApp::OnStartup() {
         []() { JobSystem::Shutdown(); }
     );
 
+    // ── 初始化控制台系统 ──
+    InitConsoleCommands();
+    Application::SetConsolePanel(&m_ConsolePanel);
+    sysLog->info("Console system initialized (press ~ to toggle)");
+
     // ── 运行一次性测试 ──
     RunTimePrecisionTest();
     RunTimeScaleTest();
@@ -280,12 +289,155 @@ void SystemTestApp::OnStartup() {
 }
 
 // ============================================================
+// InitConsoleCommands — 注册测试命令和 CVar
+// ============================================================
+
+void SystemTestApp::InitConsoleCommands()
+{
+    // 这些 CVar 已经在成员初始化列表中创建（m_PlayerSpeed, m_MaxEnemies, m_EnableDebugDraw）
+    // 所以会自动注册到 CVarRegistry
+
+    auto& registry = ConsoleCommandRegistry::Instance();
+
+    // ── god — 切换无敌模式 ──
+    registry.Register({"god", "切换无敌模式", "god",
+        [this](const std::vector<std::string>&, std::string& out) {
+            m_GodMode = !m_GodMode;
+            out = m_GodMode ? "^2God mode ON^7 - 你已无敌！" : "^1God mode OFF^7";
+        }
+    });
+
+    // ── noclip — 切换穿墙模式 ──
+    registry.Register({"noclip", "切换穿墙模式", "noclip",
+        [this](const std::vector<std::string>&, std::string& out) {
+            m_NoClip = !m_NoClip;
+            out = m_NoClip ? "^2Noclip ON^7 - 自由飞行！" : "^1Noclip OFF^7";
+        }
+    });
+
+    // ── spawn — 生成实体 ──
+    registry.Register({"spawn", "生成指定数量的实体", "spawn <count>",
+        [this](const std::vector<std::string>& args, std::string& out) {
+            int32 count = 1;
+            if (args.size() > 1) {
+                try { count = std::max(1, std::stoi(args[1])); }
+                catch (...) { out = "Invalid count: " + args[1]; return; }
+            }
+            out = "Spawned " + std::to_string(count) + " entities! (simulated)";
+        }
+    });
+
+    // ── tp — 传送 ──
+    registry.Register({"tp", "传送到指定坐标", "tp <x> <y>",
+        [this](const std::vector<std::string>& args, std::string& out) {
+            if (args.size() < 3) { out = "Usage: tp <x> <y>"; return; }
+            try {
+                float x = std::stof(args[1]);
+                float y = std::stof(args[2]);
+                out = "Teleported to (" + std::to_string(x) + ", " + std::to_string(y) + ")";
+            } catch (...) { out = "Invalid coordinates"; }
+        }
+    });
+
+    // ── test_log — 测试日志输出 ──
+    registry.Register({"test_log", "测试各级别日志输出", "test_log [info|warn|error]",
+        [this](const std::vector<std::string>& args, std::string& out) {
+            std::string level = (args.size() > 1) ? args[1] : "info";
+            if (level == "info") {
+                Log::Info("[ConsoleTest] This is an INFO message");
+                out = "Logged INFO";
+            } else if (level == "warn") {
+                Log::Warn("[ConsoleTest] This is a WARNING message");
+                out = "Logged WARN";
+            } else if (level == "error") {
+                Log::Error("[ConsoleTest] This is an ERROR message");
+                out = "Logged ERROR";
+            } else {
+                out = "Unknown level: " + level + " (use info|warn|error)";
+            }
+        }
+    });
+
+    // ── status — 显示系统状态 ──
+    registry.Register({"status", "显示当前系统状态", "status",
+        [this](const std::vector<std::string>&, std::string& out) {
+            out = "^5=== System Status ===^7\n";
+            out += "  ^5God mode:^7       " + std::string(m_GodMode ? "^2ON^7" : "^1OFF^7") + "\n";
+            out += "  ^5Noclip:^7         " + std::string(m_NoClip ? "^2ON^7" : "^1OFF^7") + "\n";
+            out += "  ^5Player speed:^7   " + std::to_string(m_PlayerSpeed.Get()) + "\n";
+            out += "  ^5Max enemies:^7    " + std::to_string(m_MaxEnemies.Get()) + "\n";
+            out += "  ^5Debug draw:^7     " + std::string(m_EnableDebugDraw ? "^2ON^7" : "^1OFF^7") + "\n";
+            out += "  ^5Frame count:^7    " + std::to_string(m_FrameCount) + "\n";
+            out += "  ^5Elapsed time:^7   " + std::to_string(m_Elapsed) + "s";
+        }
+    });
+
+    // ── test_colors — 输出所有颜色代码的示例 ──
+    registry.Register({"test_colors", "输出颜色代码渲染测试", "test_colors", 
+        [](const std::vector<std::string>&, std::string& out) {
+            out = "^5=== Console Color Palette ===^7\n";
+            out += "^0^0 White (#FFFFFF)   ^1^1 Red (#FF3333)^7\n";
+            out += "^2^2 Green (#88CC00)   ^3^3 Yellow (#00CCFF)^7\n";
+            out += "^4^4 Blue (#FF8800)    ^5^5 Cyan (#FFCC00)^7\n";
+            out += "^6^6 Magenta (#AA88FF) ^7^7 Light Gray (#CCCCCC)^7\n";
+            out += "^8^8 Orange (#2288FF)  ^9^9 Dark Gray (#888888)^7\n";
+            out += "\n^5Usage in commands:^7\n";
+            out += "  Use ^2^2text^7  for green\n";
+            out += "  Use ^1^1text^7  for red\n";
+            out += "  Use ^5^5label:^7 for labels\n";
+            out += "  Use ^^7 for literal caret\n";
+            out += "\n^3Tip:^7 Colors work in any command that uses ^0~^9 codes!^7";
+        }
+    });
+
+    // ── 输出帮助提示 ──
+    auto sysLog = Log::Get("SystemTest");
+    sysLog->info("--- Console Test Commands ---");
+    sysLog->info("  ~              : Toggle console");
+    sysLog->info("  god            : Toggle god mode");
+    sysLog->info("  noclip         : Toggle noclip");
+    sysLog->info("  spawn <n>      : Spawn entities");
+    sysLog->info("  tp <x> <y>     : Teleport");
+    sysLog->info("  set/get        : CVar manipulation");
+    sysLog->info("  status         : Show system state");
+    sysLog->info("  test_log       : Test log levels");
+    sysLog->info("  test_colors    : Show color palette test");
+    sysLog->info("  timescale <v>  : Set game speed (0=pause, 0.5=slow, 1=normal, 2=fast)");
+    sysLog->info("  pause/resume   : Pause / Resume game");
+    sysLog->info("  slowmo         : Toggle slow motion (0.5x)");
+    sysLog->info("  speed          : Show current speed");
+    sysLog->info("  help           : List all commands");
+}
+
+// ============================================================
 // OnUpdate — 每帧统计
 // ============================================================
 
 void SystemTestApp::OnUpdate(float32 dt) {
     m_FrameCount++;
     m_Elapsed += dt;
+
+    // ── 控制台测试：演示 god_mode / noclip 对游戏逻辑的影响 ──
+    if (m_GodMode) {
+        // 无敌模式：模拟自动回血等效果（仅用于演示）
+        // 实际游戏中这里会跳过伤害检测
+    }
+
+    if (m_NoClip) {
+        // 穿墙模式：模拟飞行或碰撞忽略（仅用于演示）
+        // 实际游戏中这里会禁用物理碰撞
+    }
+
+    // 使用 CVar 值影响游戏运行（演示）
+    float32 speedMultiplier = m_PlayerSpeed.Get();
+    int32   maxEnemies      = m_MaxEnemies.Get();
+    bool    debugDraw       = m_EnableDebugDraw.Get();
+
+    // 仅在 debug_draw 开启时记录（减少日志噪声）
+    if (debugDraw && m_FrameCount % 60 == 0) {
+        Log::Get("SystemTest")->debug("[DebugDraw] speed={:.1f}, maxEnemies={}",
+                                       speedMultiplier, maxEnemies);
+    }
 
     // 每 5 秒输出一次汇总日志
     if (m_Elapsed - m_LastLogTime >= 5.0f) {
@@ -343,6 +495,93 @@ void SystemTestApp::OnImGui() {
         showTiming("Audio",     m_AudioTiming);
         ImGui::Separator();
 
+        // ── 控制台测试区域 ──
+        ImGui::TextColored(ImVec4(0.2f, 0.8f, 1.0f, 1.0f), "Console System:");
+        ImGui::Text("  Press ~ to toggle console");
+        ImGui::Text("  Console visible:  %s", m_ConsolePanel.IsVisible() ? "YES" : "no");
+        ImGui::Text("  Capturing input:  %s", m_ConsolePanel.IsCapturingInput() ? "YES" : "no");
+
+        // 作弊状态
+        ImGui::Text("  God mode:         %s", m_GodMode ? "ON" : "off");
+        ImGui::Text("  Noclip:           %s", m_NoClip ? "ON" : "off");
+
+        // 按钮快速打开控制台
+        if (ImGui::Button("Open Console (~)", ImVec2(160, 0))) {
+            m_ConsolePanel.SetVisible(true);
+        }
+        ImGui::SameLine();
+        if (ImGui::Button("Execute 'help'", ImVec2(120, 0))) {
+            m_ConsolePanel.ExecuteCommand("help");
+            m_ConsolePanel.SetVisible(true);
+        }
+        ImGui::SameLine();
+        if (ImGui::Button("Test Colors", ImVec2(100, 0))) {
+            m_ConsolePanel.ExecuteCommand("test_colors");
+            m_ConsolePanel.SetVisible(true);
+        }
+
+        ImGui::Separator();
+
+        // ── CVar 状态 ──
+        ImGui::TextColored(ImVec4(0.2f, 0.8f, 1.0f, 1.0f), "Console Variables:");
+        ImGui::Text("  player_speed = %.2f  (set player_speed <val>)", m_PlayerSpeed.Get());
+        ImGui::Text("  max_enemies  = %d    (set max_enemies <val>)", m_MaxEnemies.Get());
+        ImGui::Text("  debug_draw   = %s  (set debug_draw 0|1)", m_EnableDebugDraw.Get() ? "true" : "false");
+
+        ImGui::Separator();
+
+        // ── 时间控制区域 ──
+        ImGui::TextColored(ImVec4(0.2f, 1.0f, 0.6f, 1.0f), "Time Control:");
+        float currentScale = Time::GetTimeScale();
+        float gameDt = Time::GetGameDeltaTime();
+        float rawDt = Time::GetDeltaTime();
+
+        ImGui::Text("  Timescale:    %.2f", currentScale);
+        ImGui::Text("  Game dt:      %.4fs (raw: %.4fs)", gameDt, rawDt);
+
+        // 速率指示器（带颜色）
+        const char* speedLabel = "UNKNOWN";
+        ImVec4 speedColor(1,1,1,1);
+        if (currentScale <= 0.0f)      { speedLabel = "PAUSED";    speedColor = ImVec4(1,0.3f,0.3f,1); }
+        else if (currentScale < 0.5f)  { speedLabel = "VERY SLOW"; speedColor = ImVec4(0.5f,0.8f,1,1); }
+        else if (currentScale < 0.9f)  { speedLabel = "SLOW-MO";   speedColor = ImVec4(0.5f,1,0.8f,1); }
+        else if (currentScale < 1.1f)  { speedLabel = "NORMAL";    speedColor = ImVec4(0.5f,1,0.5f,1); }
+        else if (currentScale < 2.5f)  { speedLabel = "FAST";      speedColor = ImVec4(1,1,0.5f,1); }
+        else                           { speedLabel = "LUDICROUS"; speedColor = ImVec4(1,0.3f,0.3f,1); }
+
+        ImGui::SameLine(); ImGui::TextColored(speedColor, " [ %s ]", speedLabel);
+
+        // 控制按钮
+        if (ImGui::Button("|| Pause", ImVec2(70, 0))) {
+            m_ConsolePanel.ExecuteCommand("pause");
+        }
+        ImGui::SameLine();
+        if (ImGui::Button("> 1x", ImVec2(45, 0))) {
+            m_ConsolePanel.ExecuteCommand("resume");
+        }
+        ImGui::SameLine();
+        if (ImGui::Button("< 0.5x", ImVec2(55, 0))) {
+            m_ConsolePanel.ExecuteCommand("slowmo");
+        }
+        ImGui::SameLine();
+        if (ImGui::Button(">> 2x", ImVec2(50, 0))) {
+            m_ConsolePanel.ExecuteCommand("timescale 2.0");
+        }
+        ImGui::SameLine();
+        if (ImGui::Button(">>> 5x", ImVec2(55, 0))) {
+            m_ConsolePanel.ExecuteCommand("timescale 5.0");
+        }
+
+        // 速率滑块
+        float sliderScale = currentScale;
+        ImGui::SetNextItemWidth(200);
+        if (ImGui::SliderFloat("##SpeedSlider", &sliderScale, 0.0f, 5.0f, "Speed: %.1fx")) {
+            std::string cmd = "timescale " + std::to_string(sliderScale);
+            m_ConsolePanel.ExecuteCommand(cmd);
+        }
+
+        ImGui::Separator();
+
         // ── 崩溃测试按钮 ──
         ImGui::Text("Crash Test:");
         if (ImGui::Button("Trigger Nullptr Crash", ImVec2(200, 0))) {
@@ -369,6 +608,9 @@ void SystemTestApp::OnImGui() {
         }
     }
     ImGui::End();
+
+    // ── 渲染控制台面板 ──
+    m_ConsolePanel.OnImGui();
 }
 
 // ============================================================

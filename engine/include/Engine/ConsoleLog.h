@@ -25,29 +25,32 @@ namespace Engine {
     // 日志级别
     // ============================================================
     enum class LogLevel : uint8 {
-        Info = 0,
-        Warn,
-        Error,
+        Info    = 0,
+        Warn    = 1,
+        Error   = 2,
+        Command = 3,    ///< 用户输入的命令回显
         COUNT
     };
 
     /// 日志级别的显示名称
     inline const char* LogLevelName(LogLevel level) {
         switch (level) {
-            case LogLevel::Info:  return "INFO";
-            case LogLevel::Warn:  return "WARN";
-            case LogLevel::Error: return "ERROR";
-            default:              return "????";
+            case LogLevel::Info:    return "INFO";
+            case LogLevel::Warn:    return "WARN";
+            case LogLevel::Error:   return "ERROR";
+            case LogLevel::Command: return "CMD";
+            default:                return "????";
         }
     }
 
     /// 日志级别的 ImGui 颜色编码（ABGR）
     inline uint32 LogLevelColor(LogLevel level) {
         switch (level) {
-            case LogLevel::Info:  return 0xFFAAAAAA;  // 浅灰
-            case LogLevel::Warn:  return 0xFF00CCFF;  // 橙黄
-            case LogLevel::Error: return 0xFF3333FF;  // 红
-            default:              return 0xFFFFFFFF;
+            case LogLevel::Info:    return 0xFFAAAAAA;  // 浅灰
+            case LogLevel::Warn:    return 0xFF00CCFF;  // 橙黄
+            case LogLevel::Error:   return 0xFF3333FF;  // 红
+            case LogLevel::Command: return 0xFF88CC00;  // 亮绿
+            default:                return 0xFFFFFFFF;
         }
     }
 
