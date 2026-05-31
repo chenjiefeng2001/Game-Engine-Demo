@@ -11,6 +11,7 @@
 
 #include "Engine/Core/JobSystem.h"
 #include "Engine/Core/Log.h"
+#include "Engine/Profiler.h"
 #include <queue>
 #include <unordered_map>
 #include <mutex>
@@ -321,10 +322,13 @@ void JobSystem::EnqueueJob(uint64 jobId) {
 // ============================================================
 
 void JobSystem::WorkerLoop(uint32 threadIndex) {
+    PROFILE_SET_THREAD_NAME(("Worker " + std::to_string(threadIndex)).c_str());
+
     while (m_Running.load(std::memory_order_acquire)) {
         uint64 jobId = 0;
 
         {
+            PROFILE_ZONE_NAME("WaitForJob");
             std::unique_lock lock(m_QueueMutex);
             m_WakeCondition.wait(lock, [this]() {
                 return !m_JobQueue.empty() || !m_Running.load(std::memory_order_acquire);
@@ -349,12 +353,21 @@ void JobSystem::WorkerLoop(uint32 threadIndex) {
 // ============================================================
 
 void JobSystem::ExecuteJob(uint64 jobId, uint32 threadIndex) {
+    PROFILE_ZONE_NAME("ExecuteJob");
+
     Job* job = nullptr;
     {
         std::lock_guard lock(m_JobMapMutex);
         auto it = m_JobMap.find(jobId);
         if (it == m_JobMap.end()) return;
         job = it->second.get();
+    }
+
+    // Zone 文本：Job ID（Tracy 中显示为附加信息）
+    {
+        char idStr[32];
+        std::snprintf(idStr, sizeof(idStr), "Job #%llu", (unsigned long long)jobId);
+        PROFILE_ZONE_TEXT(idStr);
     }
 
     // 执行

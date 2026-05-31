@@ -13,6 +13,7 @@
 #include "Engine/Platform/PlatformUtils.h"
 #include "Engine/Core/Log.h"
 #include "Engine/UIManager.h"
+#include "Engine/Profiler.h"
 #include "Engine/ConsolePanel.h"
 #include "Engine/Debug/CrashHandler.h"
 #include "Engine/Debug/ScreenshotCapture.h"
@@ -229,6 +230,7 @@ void Application::MarkSubsystemDirty(uint32 id) {
 // ============================================================
 
 void Application::DispatchSubsystemUpdates(float32 dt) {
+  PROFILE_ZONE();
   auto* js = JobSystem::Get();
   bool isActive = true;
   if (m_LoopMode == LoopMode::Adaptive) {
@@ -359,7 +361,7 @@ void Application::DispatchSubsystemUpdates(float32 dt) {
 }
 
 void Application::InternalUpdate(float32 dt) {
-  // ── 阶段 0：控制台切换（优先处理，不受输入阻塞影响） ──
+  PROFILE_ZONE();
   if (s_ConsolePanel) {
     // 使用直接的 Input 查询（绕过 s_BlockKeyboard，因为控制台切换必须始终响应）
     if (IInput* rawInput = Input::Get()) {
@@ -412,6 +414,7 @@ void Application::InternalUpdate(float32 dt) {
   // 且在主线程 work-stealing 场景下可能导致不可预期的执行顺序。
 }
 void Application::InternalRender() {
+  PROFILE_ZONE();
   auto context = m_Window->GetContext();
   context->ClearColor(0.2f, 0.2f, 0.2f, 1.0f);
 
@@ -456,6 +459,10 @@ void Application::Run() {
   JobSystem::Init(0, 1);
 
   OnStartup();
+
+  // ── 初始化 Profiler（Tracy GPU 上下文 + 日志输出） ──
+  Profiler::Init();
+  PROFILE_FRAME_START;
 
   // ── 启动文件监视器（在资源加载完成后） ──
   if (auto *fw = FileWatcher::Get())
@@ -593,6 +600,9 @@ void Application::Run() {
     // ── 阶段 9：Job 系统轮询（处理主线程回调） ──
     if (auto* js = JobSystem::Get())
       js->PollCompleted();
+
+    // ── 帧标记（Tracy Profiler） ──
+    PROFILE_FRAME("MainLoop");
   }
 
   // ── Job 系统关闭 ──

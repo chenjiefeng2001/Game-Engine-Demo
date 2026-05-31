@@ -58,6 +58,22 @@ add_subdirectory(spdlog)
 add_subdirectory(imgui_build)
 
 # =============================================================================
+# Tracy Profiler — 零开销性能追踪
+# =============================================================================
+set(TRACY_SRC_DIR "${CMAKE_CURRENT_SOURCE_DIR}/tracy")
+if(EXISTS "${TRACY_SRC_DIR}/public/TracyClient.cpp")
+    add_library(tracy STATIC
+        "${TRACY_SRC_DIR}/public/TracyClient.cpp"
+    )
+    target_include_directories(tracy PUBLIC "${TRACY_SRC_DIR}/public")
+    target_compile_definitions(tracy PUBLIC
+        $<$<CONFIG:Debug>:TRACY_ENABLE>
+        PRIVATE TRACY_NO_FMT_TRACING
+    )
+    set_target_properties(tracy PROPERTIES FOLDER "ThirdParty")
+endif()
+
+# =============================================================================
 # IDE 目标组织 — 将所有第三方库归入文件夹，隐藏不需要的目标
 # =============================================================================
 

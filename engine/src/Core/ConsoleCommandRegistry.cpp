@@ -1,6 +1,7 @@
 #include "Engine/ConsoleCommandRegistry.h"
 #include "Engine/ConsoleLog.h"
 #include "Engine/ConsoleVariable.h"
+#include "Engine/Profiler.h"
 #include "Engine/Platform/PlatformUtils.h"
 #include <algorithm>
 #include <sstream>
@@ -253,6 +254,16 @@ void ConsoleCommandRegistry::RegisterBuiltins() {
             float scale = Time::GetTimeScale();
             out = "^5Current timescale:^7 " + std::to_string(scale)
                 + "  ^2" + DescribeSpeed(scale) + "^7";
+        }
+    });
+
+    // ── profiler — 查看/切换 Profiler 状态 ──
+    Register({
+        "profiler",
+        "显示 Profiler (Tracy) 连接状态",
+        "profiler",
+        [](const std::vector<std::string>&, std::string& out) {
+            out = Engine::Profiler::GetStatus();
         }
     });
 }
