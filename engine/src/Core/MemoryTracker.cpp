@@ -119,7 +119,11 @@ namespace Engine {
         // 最近分配记录
         auto& rec = s_Recent[s_RecentIdx % kRecentMax];
         rec.cat = cat; rec.size = s; rec.isFree = false;
-        if (tag) { strncpy_s(rec.tag, sizeof(rec.tag), tag, _TRUNCATE); } else { rec.tag[0] = 0; }
+        if (tag) {
+            std::snprintf(rec.tag, sizeof(rec.tag), "%s", tag);
+        } else {
+            rec.tag[0] = '\0';
+        }
         s_RecentIdx++;
 
         if (tag && tag[0]) { std::lock_guard g(s_TagMutex); auto& ti = s_Tags[(int)cat][tag]; ti.bytes += s; ti.count++; }
@@ -131,7 +135,11 @@ namespace Engine {
 
         auto& rec = s_Recent[s_RecentIdx % kRecentMax];
         rec.cat = cat; rec.size = s; rec.isFree = true;
-        if (tag) strncpy_s(rec.tag, sizeof(rec.tag), tag, _TRUNCATE); else rec.tag[0] = 0;
+        if (tag) {
+            std::snprintf(rec.tag, sizeof(rec.tag), "%s", tag);
+        } else {
+            rec.tag[0] = '\0';
+        }
         s_RecentIdx++;
 
         if (tag && tag[0] && s > 0) { std::lock_guard g(s_TagMutex); auto& ti = s_Tags[(int)cat][tag]; if(ti.bytes>=s)ti.bytes-=s; ti.count++; }

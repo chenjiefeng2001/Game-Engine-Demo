@@ -38,6 +38,10 @@ namespace Engine {
         Component(const Component&) = delete;
         Component& operator=(const Component&) = delete;
 
+        // 允许移动语义（派生类如 AudioSourceComponent/PhysicsComponent 需要）
+        Component(Component&&) noexcept = default;
+        Component& operator=(Component&&) noexcept = default;
+
         // ── 生命周期 ──
         virtual void OnCreate() {}
         virtual void OnUpdate(float32 dt) { (void)dt; }
