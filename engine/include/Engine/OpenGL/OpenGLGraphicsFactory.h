@@ -48,12 +48,37 @@ namespace Engine {
 		// ---- UI Manager ----
 		virtual std::unique_ptr<IUIManager> CreateUIManager() override;
 
+		// ---- 图元批处理 ----
+		virtual std::unique_ptr<IPrimitiveBatch> CreatePrimitiveBatch(
+			uint32 capacity = 16384) override;
+
 
 		// ---- 获取内部 OpenGL 上下文（仅限 OpenGL 实现内部使用） ----
 		GladGLContext& GetGLContext() { return m_GL; }
 
+		// ---- FSAA / 多重采样 ----
+		/** 设置多重采样样本数（默认 0 = 关闭，设为 4 或 8 启用 FSAA） */
+		void SetMultisampleSamples(int32 samples) override { m_SampleCount = samples; }
+		int32 GetMultisampleSamples() const override { return m_SampleCount; }
+
+		// ---- 抗锯齿配置 ----
+		/**
+		 * @brief 设置抗锯齿模式与配置
+		 *
+		 * 支持 MSAA / SSAA / CSAA / MLAA 等多种抗锯齿技术。
+		 * 可在运行时切换。注意：CreateWindow 必须先于 SetAntiAliasingConfig 调用，
+		 * 因为 AA 管理器存储在 IRenderContext 中。
+		 */
+		void SetAntiAliasingConfig(const AntiAliasingConfig& config) override;
+		AntiAliasingConfig GetAntiAliasingConfig() const override;
+		AntiAliasingCaps GetAntiAliasingCaps() const override;
+
 	private:
 		GladGLContext m_GL;
+		int32 m_SampleCount = 4;  // 默认启用 4x MSAA
+		/** 存储窗口指针，用于后续 AA 配置传递 */
+		mutable IRenderContext* m_RenderContext = nullptr;
+		friend class OpenGLGraphicsFactory;  // CreateWindow 设置 m_RenderContext
 	};
 
 } // namespace Engine

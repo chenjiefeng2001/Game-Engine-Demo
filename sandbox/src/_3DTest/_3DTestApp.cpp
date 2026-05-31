@@ -76,6 +76,21 @@ namespace Engine {
         // Build scene
         BuildScene();
 
+        // ── 构建 PVS ──
+        {
+            std::vector<GameObject*> allObjects;
+            for (auto& obj : m_Scene.GetObjects())
+                allObjects.push_back(obj.get());
+
+            m_PVS.Build(allObjects, m_PVSBBoxMin, m_PVSBBoxMax, m_PVSCellSize);
+            m_MeshRenderer->SetPVS(&m_PVS);
+            std::cout << "[3DTest] PVS built: " << m_PVS.GetCellCount() << " cells\n";
+        }
+
+        // 默认打开性能与内存面板
+        m_PerfWindow.SetVisible(true);
+        m_MemoryPanel.SetVisible(true);
+
         std::cout << "[3DTest] Initialized.\n";
     }
 
@@ -252,6 +267,121 @@ namespace Engine {
             }
         }
 
+        // ════════════════════════════════════════════
+        // 潜在可见集 (PVS)
+        // ════════════════════════════════════════════
+        if (ImGui::CollapsingHeader("PVS (Visibility Culling)", ImGuiTreeNodeFlags_DefaultOpen)) {
+            if (ImGui::Checkbox("Enable PVS Culling", &m_PVSEnabled)) {
+                m_PVS.SetConfig(PVSConfig{ m_PVSCellSize, 0.5f, m_PVSEnabled, m_PVSDebugDraw });
+            }
+
+            ImGui::Checkbox("Debug Draw Cells", &m_PVSDebugDraw);
+            m_PVS.SetConfig(PVSConfig{ m_PVSCellSize, 0.5f, m_PVSEnabled, m_PVSDebugDraw });
+
+            bool rebuild = false;
+            rebuild |= ImGui::DragFloat3("BBox Min", &m_PVSBBoxMin.x, 0.5f);
+            rebuild |= ImGui::DragFloat3("BBox Max", &m_PVSBBoxMax.x, 0.5f);
+            rebuild |= ImGui::DragFloat3("Cell Size", &m_PVSCellSize.x, 0.5f);
+            if (m_PVSCellSize.x < 1.0f) m_PVSCellSize.x = 1.0f;
+            if (m_PVSCellSize.y < 1.0f) m_PVSCellSize.y = 1.0f;
+            if (m_PVSCellSize.z < 1.0f) m_PVSCellSize.z = 1.0f;
+
+            if (rebuild) {
+                std::vector<GameObject*> allObjects;
+                for (auto& obj : m_Scene.GetObjects())
+                    allObjects.push_back(obj.get());
+                m_PVS.Build(allObjects, m_PVSBBoxMin, m_PVSBBoxMax, m_PVSCellSize);
+            }
+
+            if (m_PVS.IsValid()) {
+                ImGui::Separator();
+                Vec3 camPos = m_Camera.GetPosition();
+                uint32 cellIdx = m_PVS.GetCellIndex(camPos);
+                uint32 total = m_PVS.GetCellCount();
+                uint32 visible = m_PVS.GetVisibleCellCount(camPos);
+                ImGui::Text("Camera Cell: %u / %u", cellIdx, total);
+                ImGui::Text("Visible Cells: %u (%.1f%%)", visible,
+                             total > 0 ? (float)visible / total * 100.0f : 0.0f);
+            }
+        }
+
+        // ════════════════════════════════════════════
+        // 抗锯齿设置
+        // ════════════════════════════════════════════
+        if (ImGui::CollapsingHeader("Anti-Aliasing", ImGuiTreeNodeFlags_DefaultOpen)) {
+            const char* aaModes[] = { "None", "MSAA (Multisample)", "SSAA (Supersample)",
+                                      "CSAA (Coverage)", "MLAA (Morphological)" };
+            int prevMode = m_CurrentAAMode;
+            int prevSampleIndex = m_AASampleIndex;
+            float prevScale = m_AASCale;
+
+            ImGui::Combo("Mode", &m_CurrentAAMode, aaModes, IM_ARRAYSIZE(aaModes));
+
+            // 样本数选择（仅 MSAA / CSAA / SSAA）
+            if (m_CurrentAAMode >= 1 && m_CurrentAAMode <= 3) {
+                const char* sampleItems[] = { "2x", "4x", "8x" };
+                ImGui::Combo("Sample Count", &m_AASampleIndex, sampleItems, 3);
+                ImGui::Text("Active: %dx", k_SampleValues[m_AASampleIndex]);
+            }
+
+            // SSAA 缩放比例
+            if (m_CurrentAAMode == 2) {
+                ImGui::SliderFloat("SSAA Scale", &m_AASCale, 1.0f, 4.0f, "%.1fx");
+            }
+
+            // 检测变更：模式切换 / 样本数变化 / 缩放变化
+            bool changed = (prevMode != m_CurrentAAMode);
+            if (m_CurrentAAMode >= 1 && m_CurrentAAMode <= 3) {
+                changed = changed || (prevSampleIndex != m_AASampleIndex);
+            }
+            if (m_CurrentAAMode == 2) {
+                changed = changed || (std::abs(prevScale - m_AASCale) > 0.01f);
+            }
+
+            if (changed) {
+                int sampleCount = (m_CurrentAAMode >= 1 && m_CurrentAAMode <= 3)
+                                  ? k_SampleValues[m_AASampleIndex] : 4;
+
+                m_AADemoConfig.sampleCount = sampleCount;
+                m_AADemoConfig.superSamplingScale = m_AASCale;
+
+                switch (m_CurrentAAMode) {
+                    case 0: m_AADemoConfig.mode = AntiAliasingMode::None; break;
+                    case 1: m_AADemoConfig.mode = AntiAliasingMode::MSAA; break;
+                    case 2: m_AADemoConfig.mode = AntiAliasingMode::SSAA; break;
+                    case 3: m_AADemoConfig.mode = AntiAliasingMode::CSAA; break;
+                    case 4: m_AADemoConfig.mode = AntiAliasingMode::MLAA; break;
+                }
+
+                m_Factory.SetAntiAliasingConfig(m_AADemoConfig);
+            }
+
+            // 显示当前 AA 状态
+            ImGui::Separator();
+            ImGui::Text("Current: %s",
+                         m_AADemoConfig.mode == AntiAliasingMode::None ? "Disabled" : "Enabled");
+            ImGui::Text("Samples: %dx", m_AADemoConfig.sampleCount);
+        }
+
+        // ════════════════════════════════════════════
+        // 调试工具开关
+        // ════════════════════════════════════════════
+        if (ImGui::CollapsingHeader("Debug Tools", ImGuiTreeNodeFlags_DefaultOpen)) {
+            bool perfVis = m_PerfWindow.IsVisible();
+            if (ImGui::Checkbox("Performance Window", &perfVis)) {
+                if (perfVis) m_PerfWindow.SetVisible(true);
+                else m_PerfWindow.SetVisible(false);
+            }
+
+            bool memVis = m_MemoryPanel.IsVisible();
+            if (ImGui::Checkbox("Memory Panel", &memVis)) {
+                if (memVis) m_MemoryPanel.SetVisible(true);
+                else m_MemoryPanel.SetVisible(false);
+            }
+
+            ImGui::Text("Toggle Console:  ~  (Grave Accent)");
+        }
+
         ImGui::End();
     }
 
@@ -348,20 +478,26 @@ namespace Engine {
                 // ── Draw grid (GL_LINES via simple triangle trick: we use thin quads) ──
                 // For now we skip lines rendering and just show the 3D objects.
 
-                // ── Draw 3D meshes ──
+                // ── Draw 3D meshes (PVS 加速) ──
                 std::vector<GameObject*> allObjects;
                 for (auto& obj : m_Scene.GetObjects()) {
                     allObjects.push_back(obj.get());
                 }
-                m_MeshRenderer->Render(allObjects);
+                Vec3 camPos = m_Camera.GetPosition();
+                m_MeshRenderer->RenderWithPVS(allObjects, camPos);
 
                 // ── Draw coordinate axes using a simple shader approach ──
                 // (skip GL_LINES for now until IRenderContext is extended)
             }
 
+            // ── 性能统计（在 UI 构建前收集 DrawCall） ──
+            uint32 drawCalls = ctx ? ctx->GetAndResetDrawCallCount() : 0;
+            m_PerfWindow.FeedStats(dt * 1000.0f, drawCalls, 0, 0, 0, 0);
+
             // ── Debug ImGui ──
             if (m_UIInitialized && UIManager::Get()) {
                 UIManager::Begin();
+                m_PerfWindow.OnImGui();
                 DrawDebugImGui();
                 m_ConsolePanel.OnImGui();
                 m_MemoryPanel.OnImGui();

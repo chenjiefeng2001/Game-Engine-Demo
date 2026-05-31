@@ -1,4 +1,6 @@
 #include "Engine/Core/RHI/MeshRenderer.h"
+#include "Engine/Core/RHI/PotentiallyVisibleSet.h"
+#include "Engine/Core/RHI/IPrimitiveBatch.h"
 #include "Engine/Core/Renderer/Mesh.h"
 #include "Engine/Core/Renderer/PerspectiveCamera.h"
 #include "Engine/Core/GameObject/GameObject.h"
@@ -21,6 +23,11 @@ namespace Engine {
     // ════════════════════════════════════════════════
     // 构造
     // ════════════════════════════════════════════════
+
+    MeshRenderer::~MeshRenderer()
+    {
+        // unique_ptr<IPrimitiveBatch> 在此析构（完整类型已可见）
+    }
 
     MeshRenderer::MeshRenderer(IGraphicsFactory& factory, IRenderContext& context)
         : m_Factory(factory)
@@ -125,6 +132,114 @@ namespace Engine {
         }
 
         return mesh;
+    }
+
+    // ════════════════════════════════════════════════
+    // 批处理渲染 — 所有可见网格合并到单个 DrawCall
+    // ════════════════════════════════════════════════
+
+    void MeshRenderer::RenderBatched(const std::vector<GameObject*>& objects,
+                                      IPrimitiveBatch& batch)
+    {
+        if (!m_Shader || !m_Camera)
+            return;
+
+        m_Shader->Bind();
+
+        // 设置相机 uniform
+        const Mat4& projMatrix = m_Camera->GetProjectionMatrix();
+        const Mat4& viewMatrix = m_Camera->GetViewMatrix();
+        const float* vpPtr     = m_Camera->GetViewProjectionMatrixPtr();
+
+        m_Shader->SetMat4("u_View",       viewMatrix.Data());
+        m_Shader->SetMat4("u_Projection", projMatrix.Data());
+
+        Vec3 viewPos = m_Camera->GetPosition();
+        m_Shader->SetVec3("u_LightPos",       &m_LightPos.x);
+        m_Shader->SetVec3("u_LightColor",     &m_LightColor.x);
+        m_Shader->SetFloat("u_LightIntensity", m_LightIntensity);
+        m_Shader->SetVec3("u_ViewPos",        &viewPos.x);
+        m_Shader->SetVec3("u_AmbientColor",   &m_AmbientColor.x);
+
+        // 收集所有网格到批处理器
+        batch.Begin(PrimitiveType::Triangles);
+
+        for (auto* obj : objects) {
+            if (!obj || !obj->IsActive()) continue;
+
+            auto* meshComp = obj->GetComponent<MeshComponent>();
+            if (!meshComp || !meshComp->m_Visible || !meshComp->HasMesh())
+                continue;
+
+            auto mesh = meshComp->GetMesh();
+            auto& verts = mesh->GetVertices();
+            auto& indices = mesh->GetIndices();
+
+            if (verts.empty() || indices.empty())
+                continue;
+
+            // 获取物体世界矩阵
+            const Mat4& worldMatrix = obj->GetTransform().GetWorldMatrix();
+            m_Shader->SetMat4("u_Model", worldMatrix.Data());
+
+            // 计算 MVP 和法线矩阵
+            glm::mat4 model = glm::make_mat4(worldMatrix.Data());
+            glm::mat4 view  = glm::make_mat4(viewMatrix.Data());
+            glm::mat4 proj  = glm::make_mat4(projMatrix.Data());
+            glm::mat4 mvp   = proj * view * model;
+
+            // 法线矩阵 = transpose(inverse(model))
+            glm::mat3 normalMat = glm::transpose(glm::inverse(glm::mat3(model)));
+            glm::mat4 normalMat4(normalMat);
+
+            m_Shader->SetMat4("u_MVP",          glm::value_ptr(mvp));
+            m_Shader->SetMat4("u_NormalMatrix",  glm::value_ptr(normalMat4));
+
+            // 设置物体颜色
+            Vec4 objColor = meshComp->m_Color;
+            m_Shader->SetVec4("u_ObjectColor", &objColor.x);
+            m_Shader->SetInt("u_HasTexture", 0);
+
+            // 将网格顶点/索引添加到批处理器
+            uint32 baseIndex = batch.GetVertexCount();
+            for (auto& v : verts) {
+                batch.Vertex(
+                    Vec3(v.position.x, v.position.y, v.position.z),
+                    Vec3(v.normal.x,   v.normal.y,   v.normal.z),
+                    Vec2(v.texCoord.x, v.texCoord.y),
+                    Vec4(objColor.x, objColor.y, objColor.z, 1.0f)
+                );
+            }
+            for (uint32 idx : indices) {
+                batch.Index(baseIndex + idx);
+            }
+        }
+
+        // 一次性提交所有图元
+        batch.Commit();
+        batch.End();
+    }
+
+    // ════════════════════════════════════════════════
+    // PVS 加速渲染 — 先剔除不可见物体，再调用 Render()
+    // ════════════════════════════════════════════════
+
+    void MeshRenderer::RenderWithPVS(const std::vector<GameObject*>& objects,
+                                      const Vec3& cameraPos)
+    {
+        if (!m_PVS || !m_PVS->IsValid()) {
+            // 没有 PVS，退化为普通渲染
+            Render(objects);
+            return;
+        }
+
+        // 使用 PVS 获取可见物体
+        thread_local std::vector<GameObject*> visibleObjects;
+        visibleObjects.clear();
+        m_PVS->GetVisibleObjects(cameraPos, visibleObjects);
+
+        // 渲染可见物体
+        Render(visibleObjects);
     }
 
     // ════════════════════════════════════════════════

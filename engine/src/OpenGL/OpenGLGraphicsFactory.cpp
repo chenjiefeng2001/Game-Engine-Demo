@@ -1,4 +1,5 @@
 #include "Engine/OpenGL/OpenGLGraphicsFactory.h"
+#include "Engine/OpenGL/OpenGLAntiAliasing.h"
 
 #include "Engine/Platform/GlfwWindow.h"
 #include "Engine/OpenGL/OpenGLContext.h"
@@ -10,6 +11,7 @@
 #include "Resources/OpenGLIndexBuffer.h"
 #include "Resources/OpenGLVertexArray.h"
 #include "Resources/OpenGLSpriteBatch.h"
+#include "Resources/OpenGLPrimitiveBatch.h"
 #include "Resources/ImGuiUIManager.h"
 
 #include "Engine/Core/Log.h"
@@ -72,6 +74,13 @@ namespace Engine {
 	std::unique_ptr<IWindow> OpenGLGraphicsFactory::CreateWindow(
 		int width, int height, const std::string& title)
 	{
+		// ── FSAA: 请求多重采样帧缓冲 ──
+		if (m_SampleCount > 0) {
+			glfwWindowHint(GLFW_SAMPLES, m_SampleCount);
+		} else {
+			glfwWindowHint(GLFW_SAMPLES, 0);
+		}
+
 		GLFWwindow* nativeWindow = glfwCreateWindow(
 			width, height, title.c_str(), nullptr, nullptr);
 
@@ -95,6 +104,9 @@ namespace Engine {
 		if (context) {
 			context->Init();  // ← 现在 m_GL 函数指针已就绪，不会崩溃
 		}
+
+		// 保存渲染上下文引用，便于后续 AA 配置传递
+		m_RenderContext = context.get();
 
 		return std::make_unique<GlfwWindow>(nativeWindow, std::move(context));
 	}
@@ -187,6 +199,40 @@ namespace Engine {
 	std::unique_ptr<IUIManager> OpenGLGraphicsFactory::CreateUIManager()
 	{
 		return std::make_unique<ImGuiUIManager>();
+	}
+
+	std::unique_ptr<IPrimitiveBatch> OpenGLGraphicsFactory::CreatePrimitiveBatch(
+		uint32 capacity)
+	{
+		return std::make_unique<OpenGLPrimitiveBatch>(m_GL, capacity);
+	}
+
+	// ---- 抗锯齿配置 ----
+	void OpenGLGraphicsFactory::SetAntiAliasingConfig(const AntiAliasingConfig& config)
+	{
+		if (m_RenderContext) {
+			auto* ctx = static_cast<OpenGLContext*>(m_RenderContext);
+			ctx->SetAntiAliasingConfig(config);
+		} else {
+			s_Log.Warn("SetAntiAliasingConfig: No render context available. Call CreateWindow first.");
+		}
+	}
+
+	AntiAliasingConfig OpenGLGraphicsFactory::GetAntiAliasingConfig() const
+	{
+		if (m_RenderContext) {
+			return static_cast<OpenGLContext*>(m_RenderContext)->GetAntiAliasingConfig();
+		}
+		return AntiAliasingConfig{};
+	}
+
+	AntiAliasingCaps OpenGLGraphicsFactory::GetAntiAliasingCaps() const
+	{
+		if (m_RenderContext) {
+			auto* aa = static_cast<OpenGLContext*>(m_RenderContext)->GetAntiAliasing();
+			if (aa) return aa->GetCaps();
+		}
+		return AntiAliasingCaps{};
 	}
 
 } // namespace Engine
