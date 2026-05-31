@@ -28,6 +28,7 @@ add_sandbox_executable(SerializationTest src/SerializationTest/main.cpp src/Seri
 add_sandbox_executable(MarioDemo src/MarioDemo/main.cpp src/MarioDemo/MarioDemoApp.cpp)
 add_sandbox_executable(EditorDemo src/EditorDemo/main.cpp)
 add_sandbox_executable(SystemTest src/SystemTest/main.cpp src/SystemTest/SystemTestApp.cpp)
+add_sandbox_executable(_3DTest src/_3DTest/main.cpp src/_3DTest/_3DTestApp.cpp)
 add_sandbox_executable(CrashTest src/CrashTest/main.cpp)
 
 # ==============================================================================
@@ -37,7 +38,7 @@ set(SANDBOX_TARGETS
     Sandbox InputTest SpriteBatchTest GameObjectTest
     TextureManagerTest PhysicsTest AudioTest ImGuiDemo
     CollisionAudioTest ImGuiTest AudioPhysicsSandbox SerializationTest MarioDemo EditorDemo
-    SystemTest
+    SystemTest _3DTest
 )
 
 add_custom_target(SyncSandboxResources ALL

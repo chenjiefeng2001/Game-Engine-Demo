@@ -28,7 +28,15 @@ void ConsolePanel::OnImGui()
 
     // 重要：允许键盘输入捕获
     ImGuiWindowFlags flags = ImGuiWindowFlags_NoScrollbar; // 我们自己在内部处理
-    ImGui::Begin("Console", &m_Visible, flags);
+    if (!ImGui::Begin("Console", &m_Visible, flags)) {
+        // Begin 返回 false（窗口已折叠、隐藏或用户点击了 X 关闭按钮）。
+        // 此时不能调用任何 ImGui widget 函数，必须立即 End 并返回。
+        ImGui::End();
+        // 如果控制台被关闭（点击 X），重置输入状态
+        if (!m_Visible)
+            m_InputActive = false;
+        return;
+    }
 
     // ── 绘制日志区域 ──
     DrawLogSection();
@@ -272,71 +280,78 @@ void ConsolePanel::DrawInputLine()
     ImGui::Text("> ");
     ImGui::SameLine();
 
-    // ── 手动处理 ↑/↓/Tab 键（在 InputText 之前） ──
-    if (m_InputActive) {
-        // ↑ 历史上一条
-        if (ImGui::IsKeyPressed(ImGuiKey_UpArrow, false)) {
-            HistoryPrev();
-            if (m_HistoryPos >= 0 &&
-                m_HistoryPos < static_cast<int>(m_CommandHistory.size())) {
-                std::strncpy(m_InputBuf, m_CommandHistory[m_HistoryPos].c_str(), sizeof(m_InputBuf) - 1);
-                m_InputBuf[sizeof(m_InputBuf) - 1] = '\0';
-            }
-        }
-
-        // ↓ 历史下一条
-        if (ImGui::IsKeyPressed(ImGuiKey_DownArrow, false)) {
-            HistoryNext();
-            if (m_HistoryPos >= 0 &&
-                m_HistoryPos < static_cast<int>(m_CommandHistory.size())) {
-                std::strncpy(m_InputBuf, m_CommandHistory[m_HistoryPos].c_str(), sizeof(m_InputBuf) - 1);
-                m_InputBuf[sizeof(m_InputBuf) - 1] = '\0';
-            } else {
-                m_InputBuf[0] = '\0';
-            }
-        }
-
-        // Tab 补全
-        if (ImGui::IsKeyPressed(ImGuiKey_Tab, false)) {
-            AutoComplete();
-            if (!m_CompletionCandidates.empty()) {
-                const auto& completion = m_CompletionCandidates[m_CompletionIndex];
-                // 只替换命令部分（第一个词）
-                std::string current(m_InputBuf);
-                size_t spacePos = current.find(' ');
-                std::string rest = (spacePos != std::string::npos) ? current.substr(spacePos) : "";
-                std::string newText = completion + rest;
-                std::strncpy(m_InputBuf, newText.c_str(), sizeof(m_InputBuf) - 1);
-                m_InputBuf[sizeof(m_InputBuf) - 1] = '\0';
-            }
-        }
-    }
-
-    // ── ImGui 输入框 ──
-    ImGuiInputTextFlags inputFlags = ImGuiInputTextFlags_EnterReturnsTrue;
+    // ── ImGui 输入框（使用 Callback 处理 ↑/↓/Tab） ──
+    // 关键：必须使用 ImGuiInputTextFlags_CallbackHistory 和
+    //       ImGuiInputTextFlags_CallbackCompletion，否则 InputText
+    //       会直接吞掉方向键和 Tab 键，外部 IsKeyPressed 检测不到。
+    ImGuiInputTextFlags inputFlags = ImGuiInputTextFlags_EnterReturnsTrue
+                                   | ImGuiInputTextFlags_CallbackHistory
+                                   | ImGuiInputTextFlags_CallbackCompletion;
 
     ImGui::PushItemWidth(-1.0f);
 
     bool executeCmd = false;
+
+    // 回调：处理 ↑/↓/Tab
+    struct CallbackUserData { ConsolePanel* panel; bool* execCmd; char* buf; size_t bufSize; };
+    CallbackUserData cbData{ this, &executeCmd, m_InputBuf, sizeof(m_InputBuf) };
+
+    auto callback = [](ImGuiInputTextCallbackData* data) -> int {
+        auto* ud = static_cast<CallbackUserData*>(data->UserData);
+        auto* panel = ud->panel;
+
+        switch (data->EventFlag) {
+        case ImGuiInputTextFlags_CallbackHistory: {
+            if (data->EventKey == ImGuiKey_UpArrow) {
+                panel->HistoryPrev();
+                if (panel->m_HistoryPos >= 0 &&
+                    panel->m_HistoryPos < (int)panel->m_CommandHistory.size()) {
+                    const auto& s = panel->m_CommandHistory[panel->m_HistoryPos];
+                    data->DeleteChars(0, data->BufTextLen);
+                    data->InsertChars(0, s.c_str());
+                }
+            } else if (data->EventKey == ImGuiKey_DownArrow) {
+                panel->HistoryNext();
+                data->DeleteChars(0, data->BufTextLen);
+                if (panel->m_HistoryPos >= 0 &&
+                    panel->m_HistoryPos < (int)panel->m_CommandHistory.size()) {
+                    data->InsertChars(0, panel->m_CommandHistory[panel->m_HistoryPos].c_str());
+                }
+                // else: 清空（已在 DeleteChars 中）
+            }
+            break;
+        }
+        case ImGuiInputTextFlags_CallbackCompletion: {
+            panel->AutoComplete();
+            if (!panel->m_CompletionCandidates.empty()) {
+                // 只替换命令部分（第一个词）
+                std::string current(data->Buf);
+                size_t sp = current.find(' ');
+                std::string rest = (sp != std::string::npos) ? current.substr(sp) : "";
+                std::string repl = panel->m_CompletionCandidates[panel->m_CompletionIndex] + rest;
+                data->DeleteChars(0, data->BufTextLen);
+                data->InsertChars(0, repl.c_str());
+            }
+            break;
+        }
+        }
+        return 0;
+    };
 
     // 如果刚打开控制台，自动聚焦输入框
     if (m_InputActive && !ImGui::IsAnyItemActive()) {
         ImGui::SetKeyboardFocusHere();
     }
 
-    if (ImGui::InputText("##CmdInput", m_InputBuf, sizeof(m_InputBuf), inputFlags))
+    if (ImGui::InputText("##CmdInput", m_InputBuf, sizeof(m_InputBuf),
+                          inputFlags, callback, &cbData))
     {
-        // Enter 被按下
         executeCmd = true;
     }
 
     // 跟踪焦点状态
-    if (ImGui::IsItemActivated()) {
-        m_InputActive = true;
-    }
-    if (ImGui::IsItemDeactivated()) {
-        m_InputActive = false;
-    }
+    if (ImGui::IsItemActivated())  m_InputActive = true;
+    if (ImGui::IsItemDeactivated()) m_InputActive = false;
 
     ImGui::PopItemWidth();
 
@@ -345,7 +360,7 @@ void ConsolePanel::DrawInputLine()
         SubmitCommand();
     }
 
-    // 如果点击控制台窗口内部，自动聚焦到输入框
+    // 点击控制台窗口 → 聚焦输入框
     if (ImGui::IsWindowHovered() && !m_InputActive &&
         ImGui::IsMouseClicked(ImGuiMouseButton_Left))
     {
@@ -514,10 +529,10 @@ void ConsolePanel::SetVisible(bool visible)
 void ConsolePanel::FocusInput()
 {
     m_InputActive = true;
-    ImGui::SetKeyboardFocusHere(-1);  // -1 表示聚焦到上一个未聚焦的控件
-    // 注意：实际的 ImGui::SetKeyboardFocusHere 需要在 InputText 前调用
-    // 我们在 OnImGui 的 DrawInputLine 之前无法直接调用，
-    // 所以这里只设置标志，DrawInputLine 中会检查
+    // 注意：不在这里调用 ImGui::SetKeyboardFocusHere，
+    // 因为此时可能不在 ImGui 窗口上下文中（例如 ToggleVisibility 在
+    // UIManager::Begin() 之前被调用），会导致 g.CurrentWindow 为 nullptr。
+    // 实际的焦点设置由 DrawInputLine() 中检查 m_InputActive 标志来完成。
 }
 
 void ConsolePanel::ExecuteCommand(const std::string& cmd)

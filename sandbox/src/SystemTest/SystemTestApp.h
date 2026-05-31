@@ -21,6 +21,14 @@
 #include <Engine/ConsolePanel.h>
 #include <Engine/ConsoleCommandRegistry.h>
 #include <Engine/ConsoleVariable.h>
+#include <Engine/MemoryPanel.h>
+#include <Engine/Core/Scene/Scene.h>
+#include <Engine/Core/Physics/IPhysicsWorld.h>
+#include <Engine/Core/Physics/PhysicsDefs.h>
+#include <Engine/Core/GameObject/SpriteComponent.h>
+#include <Engine/Core/Physics/PhysicsComponent.h>
+#include <Engine/Core/Renderer/SpriteBatch.h>
+#include <Engine/Core/Renderer/OrthographicCamera.h>
 #include <memory>
 #include <vector>
 #include <atomic>
@@ -68,11 +76,17 @@ namespace Engine {
         /** 注册测试用的控制台命令和 CVar */
         void InitConsoleCommands();
 
+        // ── 内存压力测试 ──
+        void RunMemoryStressTest(float32 dt);
+
         /** 是否启用无敌模式（由 god 命令切换） */
         bool m_GodMode = false;
 
         /** 是否启用穿墙模式（由 noclip 命令切换） */
         bool m_NoClip = false;
+
+        /** 是否启用内存压力测试（由 memory_stress 命令切换） */
+        bool m_EnableMemoryStress = false;
 
         /** 测试用 CVar 示例 */
         CVar<float32> m_PlayerSpeed{"player_speed", "玩家速度倍率", 1.0f};
@@ -96,8 +110,28 @@ namespace Engine {
         bool m_TimeTestPassed = false;
         bool m_ParallelForPassed = false;
 
+        // ── 精灵碰撞场景 ──
+        void InitSpriteScene();
+        void UpdateSpriteScene(float32 dt);
+        void RenderSpriteScene();
+        void SpawnRandomSprite();
+
+        bool m_SpriteSceneActive = false;
+        std::shared_ptr<IPhysicsWorld> m_PhysicsWorld;
+        Scene m_Scene;
+        std::shared_ptr<ISpriteBatch> m_SpriteBatch;
+        std::shared_ptr<Texture> m_TestTexture;
+        OrthographicCamera m_SpriteCamera;
+        std::vector<std::shared_ptr<GameObject>> m_SpriteObjects;
+
         // ── 控制台面板 ──
         ConsolePanel m_ConsolePanel;
+        MemoryPanel  m_MemoryPanel;
+
+        // ── 内存压力测试状态 ──
+        float32 m_MemStressTimer = 0.0f;
+        int32   m_MemStressCycle = 0;
+        std::vector<std::vector<char>> m_LeakedBlocks;  // 模拟持续泄漏
 
         // ── 统计 ──
         struct PhaseTiming {

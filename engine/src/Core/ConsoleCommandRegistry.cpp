@@ -1,6 +1,7 @@
 #include "Engine/ConsoleCommandRegistry.h"
 #include "Engine/ConsoleLog.h"
 #include "Engine/ConsoleVariable.h"
+#include "Engine/MemoryTracker.h"
 #include "Engine/Profiler.h"
 #include "Engine/Platform/PlatformUtils.h"
 #include <algorithm>
@@ -260,10 +261,56 @@ void ConsoleCommandRegistry::RegisterBuiltins() {
     // ── profiler — 查看/切换 Profiler 状态 ──
     Register({
         "profiler",
-        "显示 Profiler (Tracy) 连接状态",
-        "profiler",
+        "显示 Profiler (Tracy) 连接状态与使用指南",
+        "profiler [status|help|server]",
+        [](const std::vector<std::string>& args, std::string& out) {
+            if (args.size() > 1) {
+                std::string sub = args[1];
+                if (sub == "status") {
+                    out = Engine::Profiler::GetDetailedStatus();
+                } else if (sub == "help") {
+                    out = Engine::Profiler::GetHelp();
+                } else if (sub == "server") {
+                    if (Engine::Profiler::LaunchServer()) {
+                        out = "^2Launching Tracy Server...^7\n"
+                              "Server should appear shortly. Once running,\n"
+                              "it will auto-discover this game.";
+                    } else {
+                        out = "^3Could not find Tracy Server executable.^7\n"
+                              "Please download from GitHub Releases:\n"
+                              "  https://github.com/wolfpld/tracy/releases\n"
+                              "(ensure version matches submodule ^5v0.13.1^7)";
+                    }
+                } else {
+                    out = "^1Unknown subcommand:^7 " + sub + ". Try: status, help, server";
+                }
+            } else {
+                // 无参数 → 显示详细状态
+                out = Engine::Profiler::GetDetailedStatus();
+            }
+        }
+    });
+
+    // ── memory — 内存使用统计 ──
+    Register({
+        "memory",
+        "显示内存分配统计",
+        "memory",
         [](const std::vector<std::string>&, std::string& out) {
-            out = Engine::Profiler::GetStatus();
+            out = Engine::MemoryTracker::GetStatsString();
+        }
+    });
+
+    // ── memory_panel — 打开/关闭内存监控面板 ──
+    Register({
+        "memory_panel",
+        "打开内存监控面板",
+        "memory_panel",
+        [](const std::vector<std::string>&, std::string& out) {
+            // 通过 Application 获取 ConsolePanel？不，MemoryPanel 在 SystemTestApp 里。
+            // 这里仅提供提示，实际面板由 SystemTestApp Dashboard 按钮打开。
+            out = "^5Memory Panel:^7 Click 'Memory Panel' in SystemTest Dashboard\n"
+                  "to open the real-time memory monitor with usage graph.";
         }
     });
 }

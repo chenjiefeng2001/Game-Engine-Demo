@@ -14,6 +14,12 @@
 #include "Engine/Core/Log.h"
 #include "Engine/UIManager.h"
 #include "Engine/Profiler.h"
+#include "Engine/MemoryTracker.h"
+
+// 内存泄露检测
+#if defined(_DEBUG) && defined(_WIN32)
+#include <crtdbg.h>
+#endif
 #include "Engine/ConsolePanel.h"
 #include "Engine/Debug/CrashHandler.h"
 #include "Engine/Debug/ScreenshotCapture.h"
@@ -434,6 +440,11 @@ void Application::InternalRender() {
 
 void Application::Run() {
 
+  // ── 内存泄露检测（Debug 模式，退出时自动报告） ──
+#if defined(_DEBUG) && defined(_WIN32)
+  _CrtSetDbgFlag(_CRTDBG_ALLOC_MEM_DF | _CRTDBG_LEAK_CHECK_DF);
+#endif
+
   // ── 初始化日志系统 ──
   Log::Init();
 
@@ -504,6 +515,8 @@ void Application::Run() {
     // ============================================================
     // 阶段 3：UI 帧开始（内含 NewFrame + 输入抢占）
     // ============================================================
+    MemoryTracker::FrameStart();
+
     if (auto *ui = UIManager::Get())
       ui->Begin();
 
@@ -603,7 +616,14 @@ void Application::Run() {
 
     // ── 帧标记（Tracy Profiler） ──
     PROFILE_FRAME("MainLoop");
+
+    // ── 内存帧快照 ──
+    MemoryTracker::FrameEnd();
   }
+
+  // ── 先关闭 UI（必须在 SubsystemManager 析构前，因为后者会销毁窗口，
+  //     而 ImGui 后端清理需要有效的 GLFW/OpenGL 上下文） ──
+  UIManager::Shutdown();
 
   // ── Job 系统关闭 ──
   JobSystem::Shutdown();

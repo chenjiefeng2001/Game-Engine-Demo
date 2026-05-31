@@ -17,6 +17,10 @@ namespace Engine {
 		virtual void Bind() const override;
 		virtual void Unbind() const override;
 		virtual void SetMat4(const std::string& name, const float32* data) override;
+		virtual void SetVec3(const std::string& name, const float32* data) override;
+		virtual void SetVec4(const std::string& name, const float32* data) override;
+		virtual void SetFloat(const std::string& name, float32 value) override;
+		virtual void SetInt(const std::string& name, int32 value) override;
 
 		// ── 加载后初始化钩子 ──
 		bool PostLoad(IGraphicsFactory* factory) override;
