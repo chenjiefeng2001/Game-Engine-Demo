@@ -149,24 +149,82 @@ namespace Engine {
     // ============================================================
     // 字体
     //
-    // 仅将字体注册到 ImGui Atlas。不要调用 Build()/GetTexData*()——
-    // 交由后端在首次渲染时处理纹理上传。这样可以避免在后端纹理能力
-    // 尚未一致设置时触发 ImGui 的断言。
+    // 优先加载支持 CJK（中文/日文/韩文）的字体以正确渲染汉字。
+    // 策略：
+    //   1. 若指定了自定义字体路径 → 直接加载该字体
+    //   2. 否则尝试加载 Windows 系统 CJK 字体（微软雅黑）
+    //   3. 若均失败 → 回退到默认内嵌字体（不支持中文）
+    //
+    // 重要安全说明：
+    //   - 不要调用 io.Fonts->Clear()，否则会销毁当前帧还在引用的图集。
+    //   - 不要直接调用 GetTexDataAsRGBA32()/Build()，后端会在首次渲染时
+    //     自动处理纹理上传；提前调用可能因后端纹理能力未就绪而触发断言。
+    //   - 使用 m_CjkFontAttempted 标志确保 CJK 字体只尝试加载一次。
     // ============================================================
 
     void ImGuiUIManager::LoadFont(const char* filePath, float sizePixels) {
         ImGuiIO& io = ImGui::GetIO();
 
         if (filePath && filePath[0] != '\0') {
-            // 添加自定义 TTF 字体
-            io.Fonts->AddFontFromFileTTF(filePath, sizePixels);
-        } else {
-            // 添加默认内嵌字体
-            io.Fonts->AddFontDefault();
-        }
+            // ── 用户指定了自定义字体路径 ──
+            if (io.Fonts->AddFontFromFileTTF(filePath, sizePixels)) {
+                s_Log.Info("Loaded custom font: {} ({}px)", filePath, sizePixels);
+            } else {
+                s_Log.Warn("Failed to load custom font: {}, falling back to default", filePath);
+                io.Fonts->AddFontDefault();
+            }
+            m_CjkFontAttempted = true; // 自定义字体，不再尝试 CJK
+        } else if (!m_CjkFontAttempted) {
+            // ── 仅首次调用时尝试自动加载 CJK 字体 ──
+            m_CjkFontAttempted = true;
 
-        // 重要：不要主动调用 io.Fonts->Build() / GetTexDataAsRGBA32()
-        // 后端会在首次 ImGui_ImplOpenGL3_RenderDrawData() 时自动上传字体纹理
+            // 先加载默认字体，但指定显式 SizePixels。
+            // 若不设显式大小，AddFontDefault 会将字体标记为 ImFontFlags_ImplicitRefSize，
+            // 导致后续 MergeMode 的 CJK 字体加载时触发断言冲突。
+            {
+                ImFontConfig defaultConfig;
+                defaultConfig.SizePixels = sizePixels;
+                io.Fonts->AddFontDefault(&defaultConfig);
+            }
+
+            // 尝试从 Windows 系统字体目录合并 CJK 字形
+            const char* cjkCandidates[] = {
+                "C:/Windows/Fonts/msyh.ttc",     // Microsoft YaHei
+                "C:/Windows/Fonts/msyhbd.ttc",   // Microsoft YaHei Bold
+                "C:/Windows/Fonts/simhei.ttf",   // SimHei
+                "C:/Windows/Fonts/yahei.ttf",    // YaHei fallback
+                "C:/Windows/Fonts/msjh.ttc",     // Microsoft JhengHei (繁体)
+            };
+
+            bool cjkLoaded = false;
+            for (auto& candidate : cjkCandidates) {
+                ImFontConfig config;
+                config.MergeMode = true;
+                config.SizePixels = sizePixels;  // 与默认字体保持一致
+                // 仅加载 CJK 和符号字形 —— 不包含 Basic Latin / Latin-1，
+                // 以便 ProggyClean 的清晰位图字体继续渲染英文。
+                static const ImWchar cjkRanges[] = {
+                    0x4E00, 0x9FFF,     // CJK Unified Ideographs (汉字)
+                    0x3400, 0x4DBF,     // CJK Extension A (生僻字)
+                    0x3000, 0x303F,     // CJK Symbols and Punctuation（。、）
+                    0xFF00, 0xFFEF,     // Fullwidth Forms（！＂）
+                    0x2010, 0x205F,     // General Punctuation（–—'）
+                    0x2300, 0x27BF,     // Misc Technical / Symbols / Dingbats / Geometric Shapes
+                                        //  (⏸ ⏩ ▶ ◀ ■ ◆ ★ etc.)
+                    0,
+                };
+                if (io.Fonts->AddFontFromFileTTF(candidate, sizePixels, &config, cjkRanges)) {
+                    s_Log.Info("Merged CJK font: {} ({}px)", candidate, sizePixels);
+                    cjkLoaded = true;
+                    break;
+                }
+            }
+
+            if (!cjkLoaded) {
+                s_Log.Warn("No CJK font found, Chinese characters may show as '?'");
+            }
+        }
+        // 非首次调用且无自定义路径：不做任何事（字体已存在，避免重复添加）
     }
 
     // ============================================================

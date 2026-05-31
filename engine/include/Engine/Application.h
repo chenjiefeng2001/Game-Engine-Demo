@@ -29,6 +29,7 @@ class Texture;
 class TextureManager;
 class IGraphicsFactory;
 class OrthographicCamera;
+class ConsolePanel;
 
 enum class LoopMode {
   Variable, // 可变步长：每帧 dt 取决于实际时间
@@ -131,6 +132,12 @@ public:
    */
   void MarkSubsystemDirty(uint32 id);
 
+  // ── 控制台集成 ──
+  /** 设置全局控制台面板指针（用于 ~ 键切换和输入阻塞） */
+  static void SetConsolePanel(ConsolePanel* panel) { s_ConsolePanel = panel; }
+  /** 获取全局控制台面板指针 */
+  static ConsolePanel* GetConsolePanel() { return s_ConsolePanel; }
+
 protected:
   /**
    * @brief 注册自定义子系统（由子类在构造时调用）
@@ -200,6 +207,9 @@ private:
 
   /** InternalUpdate 内部：按配置分发更新到各子系统 */
   void DispatchSubsystemUpdates(float32 dt);
+
+  // ── 控制台 ──
+  static ConsolePanel* s_ConsolePanel;
 };
 
 } // namespace Engine
