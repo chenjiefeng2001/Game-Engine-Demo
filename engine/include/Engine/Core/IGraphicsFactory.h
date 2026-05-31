@@ -2,6 +2,7 @@
 
 #include <memory>
 #include <string>
+#include <vector>
 #include "Engine/Types.h"
 
 namespace Engine {
@@ -17,6 +18,7 @@ namespace Engine {
 	class ISpriteBatch;
 	class IUIManager;
 	class StackAllocator;
+	struct ShaderStage;
 
 // ============================================================
 // RHI 抽象工厂 — 完全与具体图形 API 解耦
@@ -42,9 +44,30 @@ namespace Engine {
 			void* nativeWindowHandle) = 0;
 
 		// ---- GPU 资源 ----
+		/** 从 vertex + fragment GLSL 文件创建着色器（向后兼容） */
 		virtual std::shared_ptr<Shader> CreateShader(
 			const std::string& vertexPath,
 			const std::string& fragmentPath) = 0;
+
+		/**
+		 * @brief 从多个着色器阶段创建着色器（新接口）
+		 *
+		 * 支持任意阶段组合，包括几何/细分/计算着色器。
+		 * 每个阶段可以是 GLSL 源码、SPIR-V 二进制或 HLSL（通过 shaderc）。
+		 *
+		 * @param stages 着色器阶段描述列表
+		 * @return 编译链接后的 Shader 对象
+		 *
+		 * @code
+		 *   auto shader = factory.CreateShaderFromStages({
+		 *       ShaderStage::FromFile(ShaderStageType::Vertex, "shader.vert"),
+		 *       ShaderStage::FromFile(ShaderStageType::Geometry, "shader.geom"),
+		 *       ShaderStage::FromFile(ShaderStageType::Fragment, "shader.frag"),
+		 *   });
+		 * @endcode
+		 */
+		virtual std::shared_ptr<Shader> CreateShaderFromStages(
+			const std::vector<ShaderStage>& stages) = 0;
 
 		virtual std::shared_ptr<Texture> CreateTexture(
 			const std::string& path) = 0;

@@ -25,6 +25,9 @@ namespace Engine {
 			const std::string& vertexPath,
 			const std::string& fragmentPath) override;
 
+		virtual std::shared_ptr<Shader> CreateShaderFromStages(
+			const std::vector<ShaderStage>& stages) override;
+
 		virtual std::shared_ptr<Texture> CreateTexture(
 			const std::string& path) override;
 
