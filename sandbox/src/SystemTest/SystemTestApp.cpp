@@ -406,6 +406,7 @@ void SystemTestApp::InitConsoleCommands()
     sysLog->info("  pause/resume   : Pause / Resume game");
     sysLog->info("  slowmo         : Toggle slow motion (0.5x)");
     sysLog->info("  speed          : Show current speed");
+    sysLog->info("  profiler       : Show Tracy Profiler status");
     sysLog->info("  help           : List all commands");
 }
 

@@ -60,6 +60,15 @@ target_include_directories(EngineCore
 )
 target_link_libraries(EngineCore PUBLIC glad2 glfw stb box2d OpenAL::OpenAL imgui spdlog::spdlog)
 
+# ── Tracy Profiler（Debug 默认启用，Release 关闭） ──
+if(TARGET tracy)
+    target_link_libraries(EngineCore PUBLIC tracy)
+    target_compile_definitions(EngineCore PUBLIC
+        $<$<CONFIG:Debug>:ENGINE_ENABLE_PROFILING>
+        $<$<CONFIG:Debug>:TRACY_ENABLE>
+    )
+endif()
+
 if(WIN32)
     target_link_libraries(EngineCore PRIVATE dbghelp.lib)
 endif()
