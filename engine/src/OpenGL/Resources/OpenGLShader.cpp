@@ -91,7 +91,32 @@ namespace Engine {
 
 	void OpenGLShader::SetMat4(const std::string& name, const float* data) {
 		GLint location = m_GL.GetUniformLocation(m_RendererID, name.c_str());
-		m_GL.UniformMatrix4fv(location, 1, GL_FALSE, data);
+		if (location != -1)
+			m_GL.UniformMatrix4fv(location, 1, GL_FALSE, data);
+	}
+
+	void OpenGLShader::SetVec3(const std::string& name, const float* data) {
+		GLint location = m_GL.GetUniformLocation(m_RendererID, name.c_str());
+		if (location != -1)
+			m_GL.Uniform3fv(location, 1, data);
+	}
+
+	void OpenGLShader::SetVec4(const std::string& name, const float* data) {
+		GLint location = m_GL.GetUniformLocation(m_RendererID, name.c_str());
+		if (location != -1)
+			m_GL.Uniform4fv(location, 1, data);
+	}
+
+	void OpenGLShader::SetFloat(const std::string& name, float value) {
+		GLint location = m_GL.GetUniformLocation(m_RendererID, name.c_str());
+		if (location != -1)
+			m_GL.Uniform1f(location, value);
+	}
+
+	void OpenGLShader::SetInt(const std::string& name, int value) {
+		GLint location = m_GL.GetUniformLocation(m_RendererID, name.c_str());
+		if (location != -1)
+			m_GL.Uniform1i(location, value);
 	}
 
 	// ============================================================

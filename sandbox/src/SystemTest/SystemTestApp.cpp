@@ -8,7 +8,10 @@
 #include <Engine/ConsolePanel.h>
 #include <Engine/ConsoleCommandRegistry.h>
 #include <Engine/ConsoleVariable.h>
+#include <Engine/MemoryTracker.h>
+#include <Engine/MemoryPanel.h>
 #include <Engine/Core/Input.h>
+#include <Engine/Box2D/Box2DPhysicsWorld.h>
 #include <imgui.h>
 #include <cmath>
 #include <random>
@@ -278,6 +281,10 @@ void SystemTestApp::OnStartup() {
     Application::SetConsolePanel(&m_ConsolePanel);
     sysLog->info("Console system initialized (press ~ to toggle)");
 
+    // ── 默认启动精灵碰撞场景 ──
+    InitSpriteScene();
+    m_SpriteSceneActive = true;
+
     // ── 运行一次性测试 ──
     RunTimePrecisionTest();
     RunTimeScaleTest();
@@ -390,6 +397,77 @@ void SystemTestApp::InitConsoleCommands()
         }
     });
 
+    // ── memory_test — 模拟内存分配活动（用于验证 MemoryPanel） ──
+    registry.Register({"memory_test", "模拟内存分配活动，测试 MemoryPanel", "memory_test [burst|steady|clear]",
+        [](const std::vector<std::string>& args, std::string& out) {
+            std::string mode = (args.size() > 1) ? args[1] : "burst";
+            if (mode == "clear") {
+                // 仅演示，无法真正"清空"已有分配 — 但模拟停止
+                out = "^2Memory test stopped.^7";
+                return;
+            }
+
+            if (mode == "burst") {
+                // 突发分配：多次 new + delete，产生锯齿状内存图
+                out = "^2Burst test:^7 allocating/deallocating blocks...\n";
+                for (int i = 0; i < 50; ++i) {
+                    size_t sizes[] = { 64, 128, 256, 512, 1024, 2048 };
+                    size_t sz = sizes[i % 6];
+                    char* p = new char[sz];
+                    delete[] p;
+                }
+                out += "  50 alloc/free cycles completed.\n";
+                out += "Check MemoryPanel to see the activity.";
+            } else if (mode == "steady") {
+                // 持续分配（保留不释放），模拟内存增长
+                out = "^2Steady growth test:^7 allocating retained blocks...\n";
+                for (int i = 0; i < 20; ++i) {
+                    char* p = new char[4096]; // 4KB, 故意不释放
+                    (void)p;
+                }
+                out += "  20 x 4KB allocated (retained).\n";
+                out += "Memory usage should increase by ~80KB.";
+            } else {
+                out = "^1Unknown mode:^7 " + mode + ". Use: burst | steady | clear";
+            }
+        }
+    });
+
+    // ── memory_stress — 持续内存压力测试 ──
+    registry.Register({"memory_stress", "启动/停止持续内存压力测试", "memory_stress [on|off]",
+        [this](const std::vector<std::string>& args, std::string& out) {
+            if (args.size() > 1 && args[1] == "off") {
+                m_EnableMemoryStress = false;
+                m_LeakedBlocks.clear();
+                out = "^2Memory stress test STOPPED.^7 All leaked blocks cleared.";
+            } else {
+                m_EnableMemoryStress = true;
+                out = "^2Memory stress test STARTED.^7\n"
+                      "  ~0.5s: temp alloc/free (4-64KB)\n"
+                      "  ~2s:   persistent 16KB blocks\n"
+                      "  ~5s:   release oldest block\n"
+                      "Check ^5Memory Panel^7 for live graph!";
+            }
+        }
+    });
+
+    // ── sprites — 切换精灵碰撞场景 ──
+    registry.Register({"sprites", "启动/停止精灵碰撞场景", "sprites [on|off]",
+        [this](const std::vector<std::string>& args, std::string& out) {
+            if (args.size() > 1 && args[1] == "off") {
+                m_SpriteSceneActive = false;
+                out = "^2Sprite scene DEACTIVATED.^7";
+            } else {
+                m_SpriteSceneActive = true;
+                out = "^2Sprite scene ACTIVE.^7\n"
+                      "  " + std::to_string(m_SpriteObjects.size()) + " sprites\n"
+                      "  Gravity: 9.81 m/s^2\n"
+                      "  Collision: random color change\n"
+                      "  Auto-spawn: 1 sprite/sec (max 100)";
+            }
+        }
+    });
+
     // ── 输出帮助提示 ──
     auto sysLog = Log::Get("SystemTest");
     sysLog->info("--- Console Test Commands ---");
@@ -434,6 +512,16 @@ void SystemTestApp::OnUpdate(float32 dt) {
     int32   maxEnemies      = m_MaxEnemies.Get();
     bool    debugDraw       = m_EnableDebugDraw.Get();
 
+    // ── 内存压力测试 ──
+    if (m_EnableMemoryStress) {
+        RunMemoryStressTest(dt);
+    }
+
+    // ── 精灵场景更新 ──
+    if (m_SpriteSceneActive) {
+        UpdateSpriteScene(dt);
+    }
+
     // 仅在 debug_draw 开启时记录（减少日志噪声）
     if (debugDraw && m_FrameCount % 60 == 0) {
         Log::Get("SystemTest")->debug("[DebugDraw] speed={:.1f}, maxEnemies={}",
@@ -457,6 +545,176 @@ void SystemTestApp::OnUpdate(float32 dt) {
                                        m_FrameCount, dt,
                                        JobSystem::Get()->GetPendingJobCount());
     }
+}
+
+// ============================================================
+// RunMemoryStressTest — 生成真实的内存分配/释放模式
+// ============================================================
+
+void SystemTestApp::RunMemoryStressTest(float32 dt) {
+    m_MemStressTimer += dt;
+    m_MemStressCycle++;
+
+    // ── 每 0.5 秒：分配+释放临时对象（模拟游戏逻辑对象生命周期） ──
+    if (m_MemStressTimer >= 0.5f) {
+        m_MemStressTimer = 0.0f;
+
+        // Retail: 分配临时 buffer 然后立即释放
+        std::vector<char> temp;
+        temp.resize((m_MemStressCycle % 16 + 1) * 4096); // 4KB ~ 64KB 波动
+
+        // Debug: 分配一些诊断数据（仅在 Debug 构建时有额外开销）
+        std::vector<int> debugData;
+        debugData.resize(256);
+        Engine::MemoryTracker::OnAlloc(Engine::MemCategory::Debug, debugData.size() * sizeof(int));
+
+        // Stack: 模拟 StackAllocator 用量波动
+        size_t stackUse = (m_MemStressCycle % 8 + 1) * 2048;
+        Engine::MemoryTracker::OnAlloc(Engine::MemCategory::Stack, stackUse);
+        Engine::MemoryTracker::OnFree(Engine::MemCategory::Stack, stackUse); // 立即释放（栈回滚）
+    }
+
+    // ── 每 2 秒：分配一小块长期存在的内存（模拟资源加载） ──
+    if (m_MemStressCycle % 120 == 0) {
+        std::vector<char> persistent;
+        persistent.resize(16384); // 16KB
+        m_LeakedBlocks.push_back(std::move(persistent));
+    }
+
+    // ── 每 5 秒：释放一块最早的内存（模拟资源卸载） ──
+    if (m_MemStressCycle % 300 == 0 && !m_LeakedBlocks.empty()) {
+        m_LeakedBlocks.erase(m_LeakedBlocks.begin());
+    }
+
+    // ── 每 60 帧：少量分散分配（模拟 UI/字符串临时对象） ──
+    if (m_MemStressCycle % 60 == 0) {
+        std::string tempStr = "Frame " + std::to_string(m_FrameCount);
+        Engine::MemoryTracker::OnAlloc(Engine::MemCategory::Retail, tempStr.capacity());
+    }
+}
+
+// ============================================================
+// InitSpriteScene — 创建精灵碰撞场景
+// ============================================================
+
+void SystemTestApp::InitSpriteScene() {
+    auto& factory = GetFactory();
+
+    // ── 1. 创建物理世界 ──
+    m_PhysicsWorld = std::make_shared<Box2DPhysicsWorld>(Vec2(0.0f, -9.81f));
+
+    // ── 2. 加载纹理 ──
+    m_TestTexture = GetTextureManager().Load("assets/textures/test.png");
+
+    // ── 3. 创建 SpriteBatch ──
+    auto* ctx = GetRenderContext();
+    if (ctx) {
+        m_SpriteBatch = factory.CreateSpriteBatch(*ctx);
+    }
+
+    // ── 4. 设置摄像机（0-800 x 0-600 与 Box2D 坐标系一致） ──
+    m_SpriteCamera = OrthographicCamera(0.0f, 800.0f, 0.0f, 600.0f);
+
+    // ── 5. 创建边界墙（Static 刚体） ──
+    auto createWall = [&](float32 x, float32 y, float32 hw, float32 hh) {
+        auto wall = std::make_shared<GameObject>("Wall");
+        BodyDef def;
+        def.type = BodyType::Static;
+        def.position = {x, y};
+        def.shape.type = ShapeType::Box;
+        def.shape.boxSize = {hw, hh};
+        wall->AddComponent<PhysicsComponent>()->CreateBody(m_PhysicsWorld, def);
+        m_Scene.AddObject(wall);
+    };
+
+    float32 wallThickness = 0.5f;
+    createWall(400.0f, wallThickness, 400.0f, wallThickness);        // 地面
+    createWall(wallThickness, 300.0f, wallThickness, 300.0f);        // 左墙
+    createWall(800.0f - wallThickness, 300.0f, wallThickness, 300.0f); // 右墙
+
+    // ── 6. 生成初始精灵 ──
+    m_SpriteObjects.clear();
+    for (int i = 0; i < 30; ++i) {
+        SpawnRandomSprite();
+    }
+
+    Log::Info("[SpriteScene] Created: 30 sprites + walls. Gravity: 9.81 m/s^2");
+}
+
+void SystemTestApp::SpawnRandomSprite() {
+    if (!m_TestTexture) return;
+
+    auto obj = std::make_shared<GameObject>("Sprite");
+    float32 x = 100.0f + (float32)(rand() % 600);
+    float32 y = 300.0f + (float32)(rand() % 200);
+
+    auto* sprite = obj->AddComponent<SpriteComponent>();
+    sprite->SetTexture(m_TestTexture);
+    sprite->SetColor((rand() % 100) / 100.0f + 0.3f,
+                     (rand() % 100) / 100.0f + 0.3f,
+                     (rand() % 100) / 100.0f + 0.3f, 1.0f);
+
+    BodyDef def;
+    def.type = BodyType::Dynamic;
+    def.position = {x, y};
+    def.shape.type = ShapeType::Box;
+    def.shape.boxSize = {0.4f, 0.4f};
+    def.density = 1.0f;
+    def.friction = 0.5f;
+    def.restitution = 0.3f;
+
+    auto* physics = obj->AddComponent<PhysicsComponent>();
+    physics->CreateBody(m_PhysicsWorld, def);
+
+    physics->SetOnCollisionEnter([this, obj](const ContactInfo&) {
+        auto* spr = obj->GetComponent<SpriteComponent>();
+        if (spr) spr->SetColor((rand() % 100) / 100.0f + 0.2f,
+                                (rand() % 100) / 100.0f + 0.2f,
+                                (rand() % 100) / 100.0f + 0.2f, 1.0f);
+    });
+
+    m_Scene.AddObject(obj);
+    m_SpriteObjects.push_back(obj);
+}
+
+void SystemTestApp::UpdateSpriteScene(float32 dt) {
+    PROFILE_ZONE_NAME("SpriteScene");
+    if (!m_PhysicsWorld) return;
+    m_PhysicsWorld->Step(dt, 8, 3);
+    m_Scene.Update(dt);
+
+    static float32 spawnTimer = 0.0f;
+    spawnTimer += dt;
+    if (spawnTimer > 1.0f && m_SpriteObjects.size() < 100) {
+        spawnTimer = 0.0f;
+        SpawnRandomSprite();
+    }
+}
+
+void SystemTestApp::RenderSpriteScene() {
+    PROFILE_ZONE_NAME("SpriteRender");
+    if (!m_SpriteBatch || !m_TestTexture) return;
+
+    m_SpriteBatch->Begin(m_TestTexture);
+
+    for (auto& obj : m_SpriteObjects) {
+        auto* pc = obj->GetComponent<PhysicsComponent>();
+        auto* sprite = obj->GetComponent<SpriteComponent>();
+        if (!pc || !sprite) continue;
+
+        Vec2 pos; float32 angle = 0;
+        pc->SyncPhysicsToTransform(pos, angle);
+
+        SpriteData sd;
+        sd.transform = SpriteTransform::FromScale(pos.x, pos.y, 0.4f, 0.4f);
+        sd.colorR = sprite->GetColor().x;
+        sd.colorG = sprite->GetColor().y;
+        sd.colorB = sprite->GetColor().z;
+        sd.colorA = sprite->GetColor().w;
+        m_SpriteBatch->Draw(sd);
+    }
+
+    m_SpriteBatch->End();
 }
 
 // ============================================================
@@ -519,6 +777,61 @@ void SystemTestApp::OnImGui() {
         if (ImGui::Button("Test Colors", ImVec2(100, 0))) {
             m_ConsolePanel.ExecuteCommand("test_colors");
             m_ConsolePanel.SetVisible(true);
+        }
+
+        ImGui::Separator();
+
+        // ── Profiler 状态 ──
+        ImGui::TextColored(ImVec4(1.0f, 0.6f, 0.2f, 1.0f), "Profiler:");
+        ImGui::Text("  %s", Profiler::IsConnected() ? "CONNECTED" : "broadcasting...");
+        if (ImGui::Button("Profiler Status", ImVec2(120, 0))) {
+            m_ConsolePanel.ExecuteCommand("profiler status");
+            m_ConsolePanel.SetVisible(true);
+        }
+        ImGui::SameLine();
+        if (ImGui::Button("Launch Server", ImVec2(110, 0))) {
+            m_ConsolePanel.ExecuteCommand("profiler server");
+            m_ConsolePanel.SetVisible(true);
+        }
+
+        ImGui::Separator();
+
+        // ── 内存统计 ──
+        ImGui::TextColored(ImVec4(0.3f, 0.9f, 0.3f, 1.0f), "Memory:");
+        {
+            size_t usage    = MemoryTracker::GetCurrentUsage();
+            size_t peak     = MemoryTracker::GetPeakUsage();
+            size_t fAlloc   = MemoryTracker::GetFrameAllocBytes();
+            size_t fFree    = MemoryTracker::GetFrameFreeBytes();
+
+            ImGui::Text("  Heap: %s  |  Peak: %s",
+                MemoryTracker::FormatBytes(usage).c_str(),
+                MemoryTracker::FormatBytes(peak).c_str());
+            ImGui::Text("  Frame: +%s  /  -%s",
+                MemoryTracker::FormatBytes(fAlloc).c_str(),
+                MemoryTracker::FormatBytes(fFree).c_str());
+        }
+        if (ImGui::Button("Memory Panel", ImVec2(120, 0))) {
+            m_MemoryPanel.Toggle();
+        }
+        ImGui::SameLine();
+        if (ImGui::Button("Mem Test", ImVec2(80, 0))) {
+            m_ConsolePanel.ExecuteCommand("memory_test burst");
+            m_ConsolePanel.SetVisible(true);
+        }
+
+        // 压力测试开关
+        ImGui::Text("  Stress: %s", m_EnableMemoryStress ? "^2ON^7" : "off");
+        ImGui::SameLine(0, 10);
+        if (ImGui::Button(m_EnableMemoryStress ? "Stop" : "Start", ImVec2(50, 0))) {
+            m_ConsolePanel.ExecuteCommand(m_EnableMemoryStress ? "memory_stress off" : "memory_stress on");
+        }
+
+        // 精灵场景开关
+        ImGui::Text("  Sprites: %zu %s", m_SpriteObjects.size(), m_SpriteSceneActive ? "^2ON^7" : "off");
+        ImGui::SameLine(0, 10);
+        if (ImGui::Button(m_SpriteSceneActive ? "Stop Spr" : "Start Spr", ImVec2(70, 0))) {
+            m_ConsolePanel.ExecuteCommand(m_SpriteSceneActive ? "sprites off" : "sprites on");
         }
 
         ImGui::Separator();
@@ -612,6 +925,9 @@ void SystemTestApp::OnImGui() {
 
     // ── 渲染控制台面板 ──
     m_ConsolePanel.OnImGui();
+
+    // ── 渲染内存监控面板 ──
+    m_MemoryPanel.OnImGui();
 }
 
 // ============================================================
@@ -619,7 +935,13 @@ void SystemTestApp::OnImGui() {
 // ============================================================
 
 void SystemTestApp::OnRender() {
-    // 无额外渲染，继承基类的默认四边形
+    if (m_SpriteSceneActive) {
+        // 禁用默认四边形，渲染精灵场景
+        m_Shader.reset();
+        m_VAO.reset();
+        m_Texture.reset();
+        RenderSpriteScene();
+    }
 }
 
 // ============================================================

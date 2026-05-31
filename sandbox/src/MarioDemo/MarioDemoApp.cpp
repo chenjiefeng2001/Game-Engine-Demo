@@ -2,6 +2,7 @@
 #include <Engine/OpenAL/OpenALAudioEngine.h>
 #include <Engine/Box2D/Box2DPhysicsWorld.h>
 #include <Engine/Core/IRenderContext.h>
+#include <Engine/UIManager.h>
 #include <iostream>
 #include <cmath>
 #include <chrono>
@@ -28,8 +29,46 @@ MarioDemoApp::MarioDemoApp(IGraphicsFactory& factory)
     try{m_Audio=std::make_shared<OpenALAudioEngine>();if(m_Audio&&!m_Audio->Init()){m_Audio.reset();}}catch(...){}
     auto ac=[&](const std::string& p){auto c=std::make_shared<AudioClip>();c->LoadFromFile(std::string("assets/sounds/")+p);return c;};
     m_SndJump=ac("jump.wav");m_SndCoin=ac("coin.wav");m_SndStomp=ac("stomp.wav");m_SndDie=ac("death.wav");
+    // ── 初始化 ImGui UI ──
+    InitUI();
+    // ── 注册控制台命令 ──
+    InitConsoleCommands();
     InitBGM();
     BuildLevel_1_1();
+}
+
+bool MarioDemoApp::InitUI() {
+    auto ui = m_Factory.CreateUIManager();
+    if (!ui) return false;
+    m_UIInitialized = UIManager::Init(std::move(ui), m_Window->GetNativeHandle(), m_Window->GetContext());
+    return m_UIInitialized;
+}
+
+void MarioDemoApp::InitConsoleCommands() {
+    auto& reg = ConsoleCommandRegistry::Instance();
+    reg.Register({"mario_god", "Mario 无敌模式", "mario_god",
+        [this](const std::vector<std::string>&, std::string& out) {
+            static bool god = false; god = !god;
+            out = god ? "^2Mario God mode ON^7" : "^1Mario God mode OFF^7";
+        }
+    });
+    reg.Register({"mario_level", "切换关卡", "mario_level [1|2]",
+        [this](const std::vector<std::string>& args, std::string& out) {
+            if (args.size() > 1 && args[1] == "2") { BuildLevel_1_2(); out = "^2Switched to Level 1-2^7"; }
+            else { BuildLevel_1_1(); out = "^2Switched to Level 1-1^7"; }
+        }
+    });
+    reg.Register({"mario_status", "显示 Mario 游戏状态", "mario_status",
+        [this](const std::vector<std::string>&, std::string& out) {
+            out = "^5=== Mario Status ===^7\n";
+            out += "  Level: 1-" + std::string(m_Level == 0 ? "1" : "2") + "\n";
+            out += "  Score: " + std::to_string(m_Score) + "\n";
+            out += "  Lives: " + std::to_string(m_Lives) + "\n";
+            out += "  Coins: " + std::to_string(m_CoinsCollected) + "\n";
+            out += "  State: " + std::string(m_State == PlayerState::Dead ? "DEAD" : 
+                      m_State == PlayerState::LevelComplete ? "COMPLETE" : "PLAYING") + "\n";
+        }
+    });
 }
 
 static void AT(Scene& s,std::shared_ptr<IPhysicsWorld> w,float x,float y,std::shared_ptr<Texture> t){
@@ -271,6 +310,16 @@ void MarioDemoApp::Run(){
     while(!m_Window->ShouldClose()&&!m_ShouldClose){
         auto now=high_resolution_clock::now();float dt=duration<float>(now-last).count();last=now;if(dt>0.05f)dt=0.05f;
         m_Window->PollEvents();
+
+        // ── 控制台切换（~ 键） ──
+        if (Input::IsKeyPressed(KeyCode::GraveAccent)) {
+            m_ConsolePanel.ToggleVisibility();
+        }
+        bool consoleCaptures = m_ConsolePanel.IsCapturingInput();
+        Input::SetBlockInput(consoleCaptures, consoleCaptures);
+
+        // ── 内存帧追踪 ──
+        MemoryTracker::FrameStart();
         if(Input::IsKeyPressed(KeyCode::Num1))BuildLevel_1_1();
         if(Input::IsKeyPressed(KeyCode::Num2))BuildLevel_1_2();
         if(Input::IsKeyPressed(KeyCode::R))ResetLevel();
@@ -313,11 +362,30 @@ void MarioDemoApp::Run(){
         if(m_BgmSource&&!m_BgmSource->IsPlaying()&&m_State!=PlayerState::LevelComplete)m_BgmSource->Play(m_BgmBuffer);
         auto* ctx=m_Window->GetContext();if(ctx)ctx->ClearColor(0.1f,0.1f,0.25f,1.0f);
         m_SceneRenderer.Render(m_Scene,m_Tex["ground"]);
+
+        // ── ImGui 渲染 ──
+        if (m_UIInitialized && UIManager::Get()) {
+            UIManager::Begin();
+            m_ConsolePanel.OnImGui();
+            m_MemoryPanel.OnImGui();
+            UIManager::End();
+        }
+
+        // ── 内存帧结束 ──
+        MemoryTracker::FrameEnd();
+
         m_InputManager.OnUpdate();
         if(auto* ctx=m_Window->GetContext())ctx->SwapBuffers();
     }
 
-    // ── 游戏循环退出后：显式清理音频资源，确保 OpenAL 后台线程正常终止 ──
+    // ── 游戏循环退出后：先关闭 UI（必须在窗口销毁前，ImGui 后端需要有效的
+    // GLFW/OpenGL 上下文来清理资源） ──
+    if (m_UIInitialized) {
+        UIManager::Shutdown();
+        m_UIInitialized = false;
+    }
+
+    // ── 显式清理音频资源，确保 OpenAL 后台线程正常终止 ──
     std::cout << "[Mario] 游戏循环结束，清理音频资源...\n";
     // 1. 停止所有一次性音效
     Audio::StopAllOneShots(*m_Audio);

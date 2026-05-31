@@ -90,6 +90,7 @@ namespace Engine {
 
     void ImGuiUIManager::Begin() {
         if (!m_Initialized) return;
+        if (!ImGui::GetCurrentContext()) return;
 
         if (m_PendingScale > 0.0f) {
             float pending = m_PendingScale;
@@ -111,6 +112,7 @@ namespace Engine {
 
     void ImGuiUIManager::End() {
         if (!m_Initialized) return;
+        if (!ImGui::GetCurrentContext()) return;
 
         ImGui::Render();
         if (m_Visible) {
@@ -123,11 +125,11 @@ namespace Engine {
     // ============================================================
 
     bool ImGuiUIManager::WantCaptureMouse() const {
-        return m_Visible && ImGui::GetIO().WantCaptureMouse;
+        return m_Visible && ImGui::GetCurrentContext() && ImGui::GetIO().WantCaptureMouse;
     }
 
     bool ImGuiUIManager::WantCaptureKeyboard() const {
-        return m_Visible && ImGui::GetIO().WantCaptureKeyboard;
+        return m_Visible && ImGui::GetCurrentContext() && ImGui::GetIO().WantCaptureKeyboard;
     }
 
     // ============================================================

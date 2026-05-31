@@ -34,6 +34,22 @@ namespace Engine {
 		m_VertexBuffers.push_back(vb);
 	}
 
+	void OpenGLVertexArray::AddVertexBuffer(const std::shared_ptr<VertexBuffer>& vb,
+	                                         const VertexAttribute* attributes,
+	                                         uint32 attributeCount) {
+		m_GL.BindVertexArray(m_RendererID);
+		vb->Bind();
+
+		for (uint32 i = 0; i < attributeCount; ++i) {
+			const auto& attr = attributes[i];
+			m_GL.EnableVertexAttribArray(attr.location);
+			m_GL.VertexAttribPointer(attr.location, attr.size, GL_FLOAT, GL_FALSE,
+			                         attr.stride, reinterpret_cast<void*>(static_cast<uintptr_t>(attr.offset)));
+		}
+
+		m_VertexBuffers.push_back(vb);
+	}
+
 	void OpenGLVertexArray::SetIndexBuffer(const std::shared_ptr<IndexBuffer>& ib) {
 		m_GL.BindVertexArray(m_RendererID);
 		ib->Bind();

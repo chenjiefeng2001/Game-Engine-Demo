@@ -43,16 +43,34 @@ namespace Engine {
         void ScaleBy(const Vec3& factor);
 
         // ── 矩阵 ──
-        /** 局部变换矩阵 (T * R * S) */
+        /** 局部变换矩阵 (T * R * S) —  model → parent 空间 */
         const Mat4& GetLocalMatrix();
-        /** 世界变换矩阵 — 如果无父级则等于局部矩阵 */
+        /** 世界变换矩阵 —  model → world 空间。如果无父级则等于局部矩阵 */
         const Mat4& GetWorldMatrix();
 
         /** RHI 接口：直接返回 float* 指针 */
         const float32* GetLocalMatrixData()  { return GetLocalMatrix().Data(); }
         const float32* GetWorldMatrixData()  { return GetWorldMatrix().Data(); }
 
-        // ── 朝向向量 (从世界矩阵提取，调用前确保矩阵已更新) ──
+        // ════════════════════════════════════════════════
+        // 坐标空间变换
+        // ════════════════════════════════════════════════
+
+        /** 将点从 局部空间 → 世界空间 */
+        Vec3 LocalToWorld(const Vec3& localPoint);
+        /** 将方向向量从 局部空间 → 世界空间（忽略平移） */
+        Vec3 LocalToWorldDir(const Vec3& localDir);
+        /** 将点从 世界空间 → 局部空间 */
+        Vec3 WorldToLocal(const Vec3& worldPoint);
+        /** 将方向向量从 世界空间 → 局部空间（忽略平移） */
+        Vec3 WorldToLocalDir(const Vec3& worldDir);
+
+        /** 局部坐标系的三个基向量（在世界空间中） */
+        Vec3 GetWorldForward();
+        Vec3 GetWorldRight();
+        Vec3 GetWorldUp();
+
+        // ── 朝向向量 (从世界矩阵提取的快捷方式，等价于 GetWorldForward/Right/Up) ──
         Vec3 GetForward() const noexcept;
         Vec3 GetRight()   const noexcept;
         Vec3 GetUp()      const noexcept;
@@ -72,8 +90,8 @@ namespace Engine {
         Vec3 m_Rotation = { 0.0f, 0.0f, 0.0f };
         Vec3 m_Scale    = { 1.0f, 1.0f, 1.0f };
 
-        Mat4 m_LocalMatrix;
-        Mat4 m_WorldMatrix;
+        Mat4 m_LocalMatrix;   //  model → parent（局部空间）
+        Mat4 m_WorldMatrix;   //  model → world（世界空间）
 
         bool m_Dirty = true;
 

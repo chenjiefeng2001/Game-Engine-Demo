@@ -36,6 +36,10 @@
 #include <Engine/Core/Audio/AudioClip.h>
 #include <Engine/Core/Audio/IAudioEngine.h>
 #include <Engine/Audio/AudioSystem.h>
+#include <Engine/ConsolePanel.h>
+#include <Engine/ConsoleCommandRegistry.h>
+#include <Engine/MemoryPanel.h>
+#include <Engine/MemoryTracker.h>
 #include <Engine/Types.h>
 
 #include <memory>
@@ -72,6 +76,8 @@ namespace Engine {
         void InitBGM();
         void InitLevelCompleteFanfare();
         void GoToNextLevel();
+        void InitConsoleCommands();
+        bool InitUI();
         // ── 成员 ──
         IGraphicsFactory&       m_Factory;
         std::unique_ptr<IWindow> m_Window;
@@ -124,6 +130,11 @@ namespace Engine {
         std::shared_ptr<IAudioSource> m_BgmSource;
 
         std::unordered_map<std::string, std::shared_ptr<Texture>> m_Tex;
+
+        // ── 调试面板 ──
+        ConsolePanel m_ConsolePanel;
+        MemoryPanel  m_MemoryPanel;
+        bool m_UIInitialized = false;
 
         static constexpr int32 WINDOW_WIDTH  = 800;
         static constexpr int32 WINDOW_HEIGHT = 480;

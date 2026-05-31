@@ -146,10 +146,10 @@
 
 namespace Engine {
 
-    /// Profiler 管理器 — 提供控制台命令支持
+    /// Profiler 管理器 — 控制台集成 + 运行时状态
     class Profiler {
     public:
-        /** 初始化 profiler：GPU 上下文 + 线程命名 + 日志 */
+        /** 初始化 profiler：线程命名 + 日志 */
         static void Init();
 
         /// 是否已连接到 Tracy Server
@@ -158,8 +158,17 @@ namespace Engine {
         /// 启用/禁用 profiling（仅在连接后有效）
         static void SetEnabled(bool enabled);
 
-        /// 获取 profiling 状态描述
+        /// 获取 profiling 状态（单行简要）
         static std::string GetStatus();
+
+        /// 获取详细状态报告（多行，含操作指引）
+        static std::string GetDetailedStatus();
+
+        /// 获取控制台使用帮助
+        static std::string GetHelp();
+
+        /** 尝试启动 Tracy Server（如果路径已配置） */
+        static bool LaunchServer();
     };
 
 } // namespace Engine
