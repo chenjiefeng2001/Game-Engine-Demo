@@ -119,6 +119,20 @@ namespace Engine {
 		return std::make_shared<OpenGLShader>(vertexPath, fragmentPath, m_GL);
 	}
 
+	std::shared_ptr<Shader> OpenGLGraphicsFactory::CreateShaderFromStages(
+		const std::vector<ShaderStage>& stages)
+	{
+		// 使用临时名称（从第一阶段派生）
+		std::string name = "shader_" + std::to_string(reinterpret_cast<uint64>(stages.data()));
+
+		auto shader = std::make_shared<OpenGLShader>("", "", m_GL);
+		if (shader->LoadStages(stages)) {
+			return shader;
+		}
+		s_Log.Error("CreateShaderFromStages failed");
+		return nullptr;
+	}
+
 	std::shared_ptr<Texture> OpenGLGraphicsFactory::CreateTexture(
 		const std::string& path)
 	{
