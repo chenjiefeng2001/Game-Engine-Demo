@@ -1,4 +1,5 @@
 #include "Engine/OpenGL/OpenGLContext.h"
+#include "Engine/OpenGL/OpenGLAntiAliasing.h"
 
 #include "Engine/Core/RenderResources/VertexArray.h"
 #include "Engine/Core/RenderResources/IndexBuffer.h"
@@ -18,15 +19,45 @@ namespace Engine {
 	{
 	}
 
+	OpenGLContext::~OpenGLContext()
+	{
+		// AntiAliasing 的 unique_ptr 自动析构
+	}
 
+	void OpenGLContext::SetAntiAliasingConfig(const AntiAliasingConfig& config)
+	{
+		if (!m_AntiAliasing) {
+			// 延迟创建 — Init() 之后才有合法的 GL 上下文
+			return;
+		}
+		m_AntiAliasing->SetConfig(config);
+	}
+
+	const AntiAliasingConfig& OpenGLContext::GetAntiAliasingConfig() const
+	{
+		static AntiAliasingConfig defaultConfig;
+		if (m_AntiAliasing)
+			return m_AntiAliasing->GetConfig();
+		return defaultConfig;
+	}
 
 	void OpenGLContext::SwapBuffers()
 	{
+		// 执行抗锯齿 resolve（如果启用了 AA）
+		if (m_AntiAliasing && m_AntiAliasing->IsActive()) {
+			m_AntiAliasing->ResolveToDefault();
+		}
+
 		glfwSwapBuffers(m_WindowHandle);
 	}
 
 	void OpenGLContext::ClearColor(float r, float g, float b, float a)
 	{
+		// 绑定 AA 帧缓冲（如果启用了 AA）
+		if (m_AntiAliasing && m_AntiAliasing->IsActive()) {
+			m_AntiAliasing->BindForRender();
+		}
+
 		m_GL.ClearColor(r, g, b, a);
 		m_GL.Clear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
 	}
@@ -43,10 +74,19 @@ namespace Engine {
 	}
 	void OpenGLContext::OnResize(int width, int height) {
 		m_GL.Viewport(0, 0, width, height);
+
+		if (m_AntiAliasing) {
+			m_AntiAliasing->OnResize(width, height);
+		}
 	}
 
 	bool OpenGLContext::CaptureFrameBuffer(int32& outWidth, int32& outHeight,
 	                                       std::vector<uint8_t>& outPixels) {
+		// 如果 AA 激活，先从 AA FBO resolve 到默认 FBO 再截屏
+		if (m_AntiAliasing && m_AntiAliasing->IsActive()) {
+			m_AntiAliasing->ResolveToDefault();
+		}
+
 		GLint viewport[4] = {};
 		m_GL.GetIntegerv(GL_VIEWPORT, viewport);
 		outWidth  = viewport[2];
@@ -65,6 +105,12 @@ namespace Engine {
 		m_GL.Enable(GL_DEPTH_TEST);
 		m_GL.Enable(GL_BLEND);
 		m_GL.BlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+		m_GL.Enable(GL_MULTISAMPLE);  // 启用 FSAA 多重采样
+
+		// ── 创建抗锯齿管理器（现在 GL 上下文已就绪） ──
+		m_AntiAliasing = std::make_unique<OpenGLAntiAliasing>(m_GL);
+		m_AntiAliasingInitialized = true;
+
 		glfwSwapInterval(1);
 	}
 }

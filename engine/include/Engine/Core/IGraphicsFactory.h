@@ -4,6 +4,7 @@
 #include <string>
 #include <vector>
 #include "Engine/Types.h"
+#include "Engine/Core/RHI/AntiAliasingTypes.h"
 
 namespace Engine {
 
@@ -16,6 +17,7 @@ namespace Engine {
 	class IndexBuffer;
 	class VertexArray;
 	class ISpriteBatch;
+	class IPrimitiveBatch;
 	class IUIManager;
 	class StackAllocator;
 	struct ShaderStage;
@@ -85,6 +87,52 @@ namespace Engine {
 		// ---- 高级渲染工具 ----
 		virtual std::shared_ptr<ISpriteBatch> CreateSpriteBatch(
 			IRenderContext& renderContext) = 0;
+
+		/**
+		 * @brief 创建图元批处理器
+		 * @param capacity 最大顶点数（默认 16384）
+		 * @return 图元批处理器实例
+		 *
+		 * 将大量顶点/索引累积到 CPU 缓冲区，Commit() 时以单个
+		 * DrawCall 提交 GPU。支持 Triangles / Lines / Points。
+		 */
+		virtual std::unique_ptr<IPrimitiveBatch> CreatePrimitiveBatch(
+			uint32 capacity = 16384) = 0;
+
+		// ---- 抗锯齿 ----
+		/**
+		 * @brief 设置多重采样样本数
+		 * @param samples 样本数（0=关闭，2/4/8=FSAA 级别）
+		 *
+		 * 必须在 CreateWindow 之前调用才有效。
+		 * 默认值由具体实现决定（OpenGL 默认 4x MSAA）。
+		 */
+		virtual void SetMultisampleSamples(int32 samples) { (void)samples; }
+
+		/**
+		 * @brief 获取当前多重采样样本数
+		 */
+		virtual int32 GetMultisampleSamples() const { return 0; }
+
+		/**
+		 * @brief 设置抗锯齿模式与配置
+		 *
+		 * 支持 MSAA / SSAA / CSAA / MLAA 等多种抗锯齿技术。
+		 * 可在运行时切换，下次渲染时生效。
+		 *
+		 * @param config 抗锯齿配置
+		 */
+		virtual void SetAntiAliasingConfig(const AntiAliasingConfig& config) { (void)config; }
+
+		/**
+		 * @brief 获取当前抗锯齿配置
+		 */
+		virtual AntiAliasingConfig GetAntiAliasingConfig() const { return AntiAliasingConfig{}; }
+
+		/**
+		 * @brief 查询抗锯齿能力
+		 */
+		virtual AntiAliasingCaps GetAntiAliasingCaps() const { return AntiAliasingCaps{}; }
 
 		// ---- UI 管理器 ----
 		virtual std::unique_ptr<IUIManager> CreateUIManager() = 0;

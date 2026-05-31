@@ -14,6 +14,8 @@ namespace Engine {
     class GameObject;
     class IGraphicsFactory;
     class IRenderContext;
+    class PotentiallyVisibleSet;
+    class IPrimitiveBatch;
 
     /**
      * @brief 3D 网格渲染器 — 将 MeshComponent 渲染到屏幕
@@ -27,7 +29,7 @@ namespace Engine {
     class MeshRenderer {
     public:
         MeshRenderer(IGraphicsFactory& factory, IRenderContext& context);
-        ~MeshRenderer() = default;
+        ~MeshRenderer();
 
         void SetShader(std::shared_ptr<Shader> shader) { m_Shader = std::move(shader); }
         std::shared_ptr<Shader> GetShader() const { return m_Shader; }
@@ -72,8 +74,32 @@ namespace Engine {
          */
         static AxisMesh GenerateGrid(float size = 10.0f, int32 steps = 10);
 
-        // ── 主渲染入口 ──
+        // ── 潜在可见集 (PVS) ──
+        void SetPVS(const PotentiallyVisibleSet* pvs) { m_PVS = pvs; }
+        const PotentiallyVisibleSet* GetPVS() const { return m_PVS; }
+
+        /**
+         * @brief 使用 PVS 加速渲染
+         * @param objects   所有场景物体列表
+         * @param cameraPos 相机世界坐标（用于 PVS 查询）
+         */
+        void RenderWithPVS(const std::vector<GameObject*>& objects,
+                           const Vec3& cameraPos);
+
+        /**
+         * @brief 使用批处理器渲染 — 所有网格合并到单个 DrawCall
+         * @param objects  物体列表
+         * @param batch    图元批处理器
+         */
+        void RenderBatched(const std::vector<GameObject*>& objects,
+                           IPrimitiveBatch& batch);
+
+        // ── 主渲染入口（无 PVS 剔除） ──
         void Render(const std::vector<GameObject*>& objects);
+
+    private:
+        const PotentiallyVisibleSet* m_PVS = nullptr;
+        std::unique_ptr<IPrimitiveBatch> m_Batch;  // 内部批处理器
 
         // ── GPU 资源管理 ──
         /**
