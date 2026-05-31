@@ -21,6 +21,7 @@ namespace Engine {
             case BodyType::Static:    return b2_staticBody;
             case BodyType::Dynamic:   return b2_dynamicBody;
             case BodyType::Kinematic: return b2_kinematicBody;
+            default:                  break;
         }
         return b2_staticBody;
     }
@@ -30,6 +31,7 @@ namespace Engine {
             case b2_staticBody:    return BodyType::Static;
             case b2_dynamicBody:   return BodyType::Dynamic;
             case b2_kinematicBody: return BodyType::Kinematic;
+            default:               break;
         }
         return BodyType::Static;
     }
