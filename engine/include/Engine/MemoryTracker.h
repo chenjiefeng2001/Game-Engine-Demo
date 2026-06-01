@@ -68,6 +68,7 @@ namespace Engine {
     // 分配记录（供详细面板显示）
     // ============================================================
     static constexpr int kRecentMax = 500;
+    static constexpr int kStackFramesPerRecord = 8;  // 每条记录保存的堆栈帧数
 
     struct MemAllocRecord {
         MemCategory cat;
@@ -75,6 +76,10 @@ namespace Engine {
         double      timestamp;
         char        tag[32];         // 分配站点标签
         bool        isFree;          // true=释放, false=分配
+
+        // ── 堆栈追踪 ──
+        int    stackDepth = 0;                          // 实际捕获到的帧数
+        void*  stackFrames[kStackFramesPerRecord]{};    // 原始地址（延迟解析符号）
     };
 
     // 分配站点标签统计

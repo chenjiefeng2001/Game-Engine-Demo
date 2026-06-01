@@ -5,9 +5,11 @@
 
 #include "Engine/MemoryPanel.h"
 #include "Engine/MemoryTracker.h"
+#include "Engine/Debug/StackTrace.h"
 #include <imgui.h>
 #include <cstdio>
 #include <algorithm>
+#include <cstring>
 
 namespace Engine {
 
@@ -15,7 +17,7 @@ namespace Engine {
     {
         if (!m_Visible) return;
 
-        ImGui::SetNextWindowSize(ImVec2(480, 480), ImGuiCond_FirstUseEver);
+        ImGui::SetNextWindowSize(ImVec2(520, 600), ImGuiCond_FirstUseEver);
         if (!ImGui::Begin("Memory Monitor", &m_Visible)) { ImGui::End(); return; }
 
         size_t usage = MemoryTracker::GetCurrentUsage();
@@ -32,6 +34,9 @@ namespace Engine {
             if (ImGui::BeginTabItem("Recent"))   { DrawRecent(); ImGui::EndTabItem(); }
             ImGui::EndTabBar();
         }
+
+        // ── 底部：当前选中记录的堆栈详情（始终显示） ──
+        DrawStackTraceDetail();
 
         ImGui::End();
     }
@@ -123,20 +128,104 @@ namespace Engine {
         auto* recs = MemoryTracker::GetRecentRecords(count);
         int start = count > 200 ? count - 200 : 0;
 
-        ImGui::Text("Last %d/%d records:", count-start, kRecentMax);
-        if (ImGui::BeginTable("RecTable", 4, ImGuiTableFlags_Borders|ImGuiTableFlags_RowBg|ImGuiTableFlags_ScrollY,
-                              ImVec2(0,250))) {
-            ImGui::TableSetupColumn("Type"); ImGui::TableSetupColumn("Size"); ImGui::TableSetupColumn("Category"); ImGui::TableSetupColumn("Tag");
+        ImGui::Text("Last %d/%d records — Click a row to view stack trace:", count-start, kRecentMax);
+
+        ImVec2 tableSize = ImVec2(0, m_SelectedRecordIndex >= 0 ? 180 : 280);
+        if (ImGui::BeginTable("RecTable", 4,
+                ImGuiTableFlags_Borders|ImGuiTableFlags_RowBg|ImGuiTableFlags_ScrollY,
+                tableSize))
+        {
+            ImGui::TableSetupColumn("Type");   ImGui::TableSetupColumn("Size");
+            ImGui::TableSetupColumn("Category"); ImGui::TableSetupColumn("Tag");
             ImGui::TableHeadersRow();
+
             for (int i = start; i < count; ++i) {
                 auto& r = recs[i % kRecentMax];
                 ImGui::TableNextRow();
-                ImGui::TableSetColumnIndex(0); ImGui::TextColored(r.isFree?ImVec4(1,0.3f,0.3f,1):ImVec4(0.3f,1,0.3f,1), "%s", r.isFree?"FREE":"ALLOC");
-                ImGui::TableSetColumnIndex(1); ImGui::Text("%s", MemoryTracker::FormatBytes(r.size).c_str());
-                ImGui::TableSetColumnIndex(2); ImGui::TextColored(ImColor(MemCategoryColor(r.cat)), "%s", MemCategoryName(r.cat));
-                ImGui::TableSetColumnIndex(3); ImGui::Text("%s", r.tag[0]?r.tag:"-");
+
+                // 第一列：可点击选择
+                ImGui::TableSetColumnIndex(0);
+                char label[64];
+                snprintf(label, sizeof(label), "%s##rec%d", r.isFree ? "FREE" : "ALLOC", i);
+                ImVec4 col = r.isFree ? ImVec4(1,0.3f,0.3f,1) : ImVec4(0.3f,1,0.3f,1);
+                ImGui::PushStyleColor(ImGuiCol_Text, col);
+                if (ImGui::Selectable(label, m_SelectedRecordIndex == i,
+                                      ImGuiSelectableFlags_SpanAllColumns))
+                {
+                    m_SelectedRecordIndex = (m_SelectedRecordIndex == i) ? -1 : i;
+                }
+                ImGui::PopStyleColor();
+
+                if (ImGui::IsItemHovered() && r.stackDepth > 0) {
+                    ImGui::BeginTooltip();
+                    ImGui::Text("Stack: %d frames — Click to view", r.stackDepth);
+                    ImGui::EndTooltip();
+                }
+
+                ImGui::TableSetColumnIndex(1);
+                ImGui::Text("%s", MemoryTracker::FormatBytes(r.size).c_str());
+
+                ImGui::TableSetColumnIndex(2);
+                ImGui::TextColored(ImColor(MemCategoryColor(r.cat)), "%s", MemCategoryName(r.cat));
+
+                ImGui::TableSetColumnIndex(3);
+                ImGui::Text("%s", r.tag[0] ? r.tag : "-");
             }
             ImGui::EndTable();
+        }
+    }
+
+    void MemoryPanel::DrawStackTraceDetail() {
+        if (m_SelectedRecordIndex < 0) return;
+
+        int count = 0;
+        auto* recs = MemoryTracker::GetRecentRecords(count);
+        if (count <= 0) return;
+
+        int idx = m_SelectedRecordIndex % kRecentMax;
+        auto& r = recs[idx];
+
+        // ── 选中记录摘要 ──
+        ImGui::Separator();
+        ImGui::TextColored(ImVec4(0.8f,0.8f,1.0f,1.0f), "📋 Selected Record");
+        ImGui::SameLine();
+        ImGui::TextDisabled("(ID:%d)", m_SelectedRecordIndex);
+
+        ImGui::Text("Type: %s  |  Size: %s  |  Category: %s  |  Tag: %s",
+            r.isFree ? "FREE" : "ALLOC",
+            MemoryTracker::FormatBytes(r.size).c_str(),
+            MemCategoryName(r.cat),
+            r.tag[0] ? r.tag : "-");
+
+        // ── 堆栈帧列表 ──
+        if (r.stackDepth > 0 && r.stackFrames[0] != nullptr) {
+            ImGui::Separator();
+            ImGui::TextColored(ImVec4(1.0f,0.9f,0.5f,1.0f), "🔍 Call Stack (%d frames):", r.stackDepth);
+
+            if (ImGui::BeginChild("StackFrameList", ImVec2(0, 120), true,
+                                  ImGuiWindowFlags_HorizontalScrollbar))
+            {
+                for (int fi = 0; fi < r.stackDepth && fi < kStackFramesPerRecord; ++fi) {
+                    void* addr = r.stackFrames[fi];
+                    if (addr == nullptr) break;
+
+                    // 延迟解析符号（只在查看时解析，不在分配时）
+                    std::string symbol = StackTrace::ResolveSymbol(addr);
+
+                    ImGui::Text("  #%d  0x%p", fi, addr);
+                    ImGui::SameLine();
+                    if (!symbol.empty()) {
+                        ImGui::TextColored(ImVec4(0.6f,0.8f,1.0f,1.0f), "%s", symbol.c_str());
+                    } else {
+                        ImGui::TextDisabled("(symbol unavailable)");
+                    }
+                }
+            }
+            ImGui::EndChild();
+        } else {
+            ImGui::Separator();
+            ImGui::TextDisabled("(No stack trace captured for this record.)");
+            ImGui::TextDisabled("Tip: Stack capture requires _DEBUG + ENGINE_ENABLE_PROFILING on Windows.");
         }
     }
 

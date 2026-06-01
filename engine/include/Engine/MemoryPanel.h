@@ -34,10 +34,12 @@ namespace Engine {
     private:
         bool m_Visible = false;
         bool m_ShowHistory = true;
+        int  m_SelectedRecordIndex = -1;   // -1 = 未选中
 
         void DrawOverview();
         void DrawDetails();
         void DrawRecent();
+        void DrawStackTraceDetail();       // 选中记录的堆栈详情
     };
 
 } // namespace Engine

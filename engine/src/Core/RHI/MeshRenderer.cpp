@@ -1,6 +1,7 @@
 #include "Engine/Core/RHI/MeshRenderer.h"
 #include "Engine/Core/RHI/PotentiallyVisibleSet.h"
 #include "Engine/Core/RHI/IPrimitiveBatch.h"
+#include "Engine/Core/RHI/ISceneGraph.h"
 #include "Engine/Core/Renderer/Mesh.h"
 #include "Engine/Core/Renderer/PerspectiveCamera.h"
 #include "Engine/Core/GameObject/GameObject.h"
@@ -221,6 +222,147 @@ namespace Engine {
     }
 
     // ════════════════════════════════════════════════
+    // 深度预渲染 + 主渲染（两遍法减少 overdraw）
+    // ════════════════════════════════════════════════
+
+    void MeshRenderer::RenderWithDepthPrePass(const std::vector<GameObject*>& objects)
+    {
+        if (!m_DepthPrePassEnabled || !m_DepthShader || !m_Camera) {
+            Render(objects);
+            return;
+        }
+
+        // ── Pass 1: 深度只写 ──
+        // 关闭颜色写入，只写深度缓冲
+        m_Context.SetDepthMask(true);
+        m_Context.SetColorMask(false, false, false, false);
+
+        m_DepthShader->Bind();
+
+        const Mat4& projMatrix = m_Camera->GetProjectionMatrix();
+        const Mat4& viewMatrix = m_Camera->GetViewMatrix();
+
+        // 深度着色器只需要 MVP 矩阵
+        glm::mat4 viewGlm = glm::make_mat4(viewMatrix.Data());
+        glm::mat4 projGlm = glm::make_mat4(projMatrix.Data());
+
+        for (auto* obj : objects) {
+            if (!obj || !obj->IsActive()) continue;
+            auto* meshComp = obj->GetComponent<MeshComponent>();
+            if (!meshComp || !meshComp->m_Visible || !meshComp->HasMesh()) continue;
+
+            auto mesh = meshComp->GetMesh();
+            uint64 gpuId = reinterpret_cast<uint64>(mesh.get());
+            auto it = m_MeshCache.find(gpuId);
+            if (it == m_MeshCache.end()) continue;
+
+            const auto& cached = it->second;
+            glm::mat4 modelGlm = glm::make_mat4(obj->GetTransform().GetWorldMatrix().Data());
+            glm::mat4 mvp = projGlm * viewGlm * modelGlm;
+
+            m_DepthShader->SetMat4("u_MVP", glm::value_ptr(mvp));
+
+            cached.vao->Bind();
+            m_Context.DrawIndexed(cached.vao);
+        }
+
+        // ── Pass 2: 主渲染（颜色） ──
+        // 恢复颜色写入，利用深度缓冲进行 Early-Z 剔除
+        m_Context.SetColorMask(true, true, true, true);
+        // 设置深度测试为 EQUAL：只绘制通过深度测试的片段
+        // 这样 Pass 1 已经写入深度的像素不会被重复着色
+        m_Context.SetDepthFunc(0x0202);  // GL_EQUAL
+        m_Context.SetDepthMask(false);   // 不需要再写入深度
+
+        // 调用主渲染
+        // 注意：这里直接调用完整 Render 逻辑
+        // 但由于我们内联实现了，直接使用主渲染循环
+        m_Shader->Bind();
+
+        m_Shader->SetMat4("u_View",       viewMatrix.Data());
+        m_Shader->SetMat4("u_Projection", projMatrix.Data());
+
+        Vec3 viewPos = m_Camera->GetPosition();
+        m_Shader->SetVec3("u_LightPos",       &m_LightPos.x);
+        m_Shader->SetVec3("u_LightColor",     &m_LightColor.x);
+        m_Shader->SetFloat("u_LightIntensity", m_LightIntensity);
+        m_Shader->SetVec3("u_ViewPos",        &viewPos.x);
+        m_Shader->SetVec3("u_AmbientColor",   &m_AmbientColor.x);
+
+        for (auto* obj : objects) {
+            if (!obj || !obj->IsActive()) continue;
+            auto* meshComp = obj->GetComponent<MeshComponent>();
+            if (!meshComp || !meshComp->m_Visible || !meshComp->HasMesh()) continue;
+
+            auto mesh = meshComp->GetMesh();
+            uint64 gpuId = reinterpret_cast<uint64>(mesh.get());
+            auto it = m_MeshCache.find(gpuId);
+            if (it == m_MeshCache.end()) continue;
+
+            const auto& cached = it->second;
+            glm::mat4 modelGlm = glm::make_mat4(obj->GetTransform().GetWorldMatrix().Data());
+            glm::mat4 mvp = projGlm * viewGlm * modelGlm;
+            glm::mat3 normalMat3 = glm::transpose(glm::inverse(glm::mat3(modelGlm)));
+            glm::mat4 normalMat4(normalMat3);
+
+            m_Shader->SetMat4("u_Model", obj->GetTransform().GetWorldMatrix().Data());
+            m_Shader->SetMat4("u_MVP", glm::value_ptr(mvp));
+            m_Shader->SetMat4("u_NormalMatrix", glm::value_ptr(normalMat4));
+            m_Shader->SetVec4("u_ObjectColor", &meshComp->m_Color.x);
+            m_Shader->SetInt("u_HasTexture", 0);
+
+            cached.vao->Bind();
+            m_Context.DrawIndexed(cached.vao);
+        }
+
+        // 恢复深度测试状态
+        m_Context.SetDepthFunc(0x0201);  // GL_LESS
+        m_Context.SetDepthMask(true);
+    }
+
+    // ════════════════════════════════════════════════
+    // 场景图渲染 — 平截头体剔除 + 自动切换
+    // ════════════════════════════════════════════════
+
+    void MeshRenderer::RenderWithSceneGraph(const std::vector<GameObject*>& objects,
+                                             const Frustum* frustum,
+                                             bool forceDepthPrePass)
+    {
+        m_LastTotalObjects = (uint32)objects.size();
+
+        bool useSG = m_SceneGraph && m_SceneGraph->IsValid() &&
+                     objects.size() >= m_SGThreshold;
+
+        if (!useSG) {
+            if ((m_DepthPrePassEnabled || forceDepthPrePass) && m_DepthShader) {
+                RenderWithDepthPrePass(objects);
+            } else {
+                Render(objects);
+            }
+            m_LastVisibleObjects = m_LastTotalObjects;
+            return;
+        }
+
+        // 更新平截头体
+        if (frustum) {
+            const_cast<ISceneGraph*>(m_SceneGraph)->SetFrustum(*frustum);
+        }
+
+        // 获取可见物体
+        thread_local std::vector<GameObject*> visibleObjects;
+        visibleObjects.clear();
+        m_SceneGraph->GetVisibleObjects(visibleObjects);
+        m_LastVisibleObjects = (uint32)visibleObjects.size();
+
+        bool useDepth = m_DepthPrePassEnabled || forceDepthPrePass;
+        if (useDepth && m_DepthShader) {
+            RenderWithDepthPrePass(visibleObjects);
+        } else {
+            Render(visibleObjects);
+        }
+    }
+
+    // ════════════════════════════════════════════════
     // PVS 加速渲染 — 先剔除不可见物体，再调用 Render()
     // ════════════════════════════════════════════════
 
@@ -239,7 +381,11 @@ namespace Engine {
         m_PVS->GetVisibleObjects(cameraPos, visibleObjects);
 
         // 渲染可见物体
-        Render(visibleObjects);
+        if (m_DepthPrePassEnabled && m_DepthShader) {
+            RenderWithDepthPrePass(visibleObjects);
+        } else {
+            Render(visibleObjects);
+        }
     }
 
     // ════════════════════════════════════════════════
