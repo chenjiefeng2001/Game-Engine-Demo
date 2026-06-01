@@ -74,11 +74,23 @@ if(EXISTS "${TRACY_SRC_DIR}/public/TracyClient.cpp")
 endif()
 
 # =============================================================================
+# FreeType — 字体渲染引擎（用于中文 / 文字排版）
+# =============================================================================
+set(FT_DISABLE_ZLIB      ON CACHE BOOL "" FORCE)
+set(FT_DISABLE_BZIP2     ON CACHE BOOL "" FORCE)
+set(FT_DISABLE_PNG       ON CACHE BOOL "" FORCE)
+set(FT_DISABLE_HARFBUZZ  ON CACHE BOOL "" FORCE)
+set(FT_DISABLE_BROTLI    ON CACHE BOOL "" FORCE)
+set(FT_DISABLE_HVF        ON CACHE BOOL "" FORCE)
+set(FT_ENABLE_ERROR_STRINGS ON CACHE BOOL "" FORCE)
+add_subdirectory(freetype)
+
+# =============================================================================
 # IDE 目标组织 — 将所有第三方库归入文件夹，隐藏不需要的目标
 # =============================================================================
 
 # 将已知的第三方目标放入 "ThirdParty" 文件夹
-set(THIRD_PARTY_TARGETS glad2 glm glfw stb box2d imgui OpenAL alsoft.common alsoft.fmt spdlog)
+set(THIRD_PARTY_TARGETS glad2 glm glfw stb box2d imgui OpenAL alsoft.common alsoft.fmt spdlog freetype)
 foreach(target ${THIRD_PARTY_TARGETS})
     if(TARGET ${target})
         set_target_properties(${target} PROPERTIES FOLDER "ThirdParty")

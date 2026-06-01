@@ -192,12 +192,13 @@ void OpenGLAntiAliasing::SetConfig(const AntiAliasingConfig& config)
     // ImGui 渲染中途删除仍绑定中的 FBO 导致驱动崩溃。
     if (modeChanged && m_Width > 0 && m_Height > 0) {
         m_NeedsRecreate = true;
-        m_ResourcesCreated = false;
         m_NeedsResize = true;
+        m_ResourcesCreated = false;  // 标记资源无效，当前帧 ResolveToDefault 将跳过以防止使用未创建的 FBO
     }
 
+    // MLAA 着色器延迟创建 — 不在此处调用 GL 函数（当前可能在 ImGui 渲染中）
     if (m_Config.mode == AntiAliasingMode::MLAA && !m_MLAAEdgeProgramValid) {
-        CreateMLAAShaders();
+        // 着色器创建延迟到下一次 BindForRender（那时不在 ImGui 上下文中）
     }
 
     m_Log.Info("Anti-aliasing set to: {} (samples={})", GetModeName(), m_Config.sampleCount);
@@ -217,6 +218,8 @@ void OpenGLAntiAliasing::OnResize(int width, int height)
     m_NeedsResize = true;
     m_ResourcesCreated = false;
 
+    // 先解绑到默认 FBO，防止删除仍在绑定的 FBO 后驱动崩溃
+    m_GL.BindFramebuffer(GL_FRAMEBUFFER, 0);
     DestroyFBOs();
     DestroyMLAAResources();
 }
@@ -227,14 +230,24 @@ void OpenGLAntiAliasing::OnResize(int width, int height)
 
 void OpenGLAntiAliasing::BindForRender()
 {
-    if (m_Width <= 0 || m_Height <= 0)
-        return;
+    if (m_Width <= 0 || m_Height <= 0) {
+        // 从视口获取尺寸（确保首次调用时尺寸有效）
+        GLint vp[4];
+        m_GL.GetIntegerv(GL_VIEWPORT, vp);
+        if (vp[2] > 0 && vp[3] > 0) {
+            m_Width = vp[2];
+            m_Height = vp[3];
+        } else {
+            return;
+        }
+    }
 
     if (!m_ResourcesCreated || m_NeedsResize) {
         QueryCaps();
 
-        // ⚡ 延迟销毁：在重建前才销毁旧的 FBO，确保当前帧的渲染不会中途失效
+        // 先解绑到默认 FBO，防止删除当前绑定的 FBO 后状态悬空
         if (m_NeedsRecreate) {
+            m_GL.BindFramebuffer(GL_FRAMEBUFFER, 0);
             DestroyFBOs();
             DestroyMLAAResources();
             m_NeedsRecreate = false;
@@ -242,6 +255,11 @@ void OpenGLAntiAliasing::BindForRender()
 
         // 缓存默认 FBO
         m_GL.GetIntegerv(GL_DRAW_FRAMEBUFFER_BINDING, &m_DefaultFBO);
+
+        // MLAA 着色器延迟编译（不在 ImGui 渲染期间调用 GL，移至此处）
+        if (m_Config.mode == AntiAliasingMode::MLAA && !m_MLAAEdgeProgramValid) {
+            CreateMLAAShaders();
+        }
 
         switch (m_Config.mode) {
             case AntiAliasingMode::MSAA: CreateMSAAFBO(m_Width, m_Height); break;
@@ -255,26 +273,34 @@ void OpenGLAntiAliasing::BindForRender()
         m_NeedsResize = false;
     }
 
-    // 绑定对应的 FBO
+    // 绑定对应的 FBO，并确保视口匹配 FBO 尺寸
     switch (m_Config.mode) {
         case AntiAliasingMode::MSAA:
         case AntiAliasingMode::CSAA:
             if (m_MultiSampleFBO) {
                 m_GL.BindFramebuffer(GL_FRAMEBUFFER, m_MultiSampleFBO);
+                m_GL.Viewport(0, 0, m_Width, m_Height);
             }
             break;
         case AntiAliasingMode::SSAA:
             if (m_SSAAFBO) {
                 m_GL.BindFramebuffer(GL_FRAMEBUFFER, m_SSAAFBO);
+                // SSAA FBO 尺寸大于窗口，必须更新视口以覆盖全部渲染区域
+                float scale = m_Config.superSamplingScale;
+                m_GL.Viewport(0, 0,
+                               static_cast<GLsizei>(m_Width * scale),
+                               static_cast<GLsizei>(m_Height * scale));
             }
             break;
         case AntiAliasingMode::MLAA:
             if (m_MLAAFBO) {
                 m_GL.BindFramebuffer(GL_FRAMEBUFFER, m_MLAAFBO);
+                m_GL.Viewport(0, 0, m_Width, m_Height);
             }
             break;
         default:
             m_GL.BindFramebuffer(GL_FRAMEBUFFER, m_DefaultFBO);
+            m_GL.Viewport(0, 0, m_Width, m_Height);
             break;
     }
 }
@@ -290,6 +316,20 @@ void OpenGLAntiAliasing::ResolveToDefault()
     // 资源尚未就绪（模式刚切换，下一帧才重建），跳过此次 resolve
     if (!m_ResourcesCreated)
         return;
+
+    // 检查当前模式的 FBO 是否有效，防止无效句柄导致崩溃
+    bool fboValid = false;
+    switch (m_Config.mode) {
+        case AntiAliasingMode::MSAA:
+        case AntiAliasingMode::CSAA: fboValid = (m_MultiSampleFBO != 0); break;
+        case AntiAliasingMode::SSAA: fboValid = (m_SSAAFBO != 0); break;
+        case AntiAliasingMode::MLAA: fboValid = (m_MLAAFBO != 0); break;
+        default: fboValid = true; break; // None 模式直接跳过
+    }
+    if (!fboValid) {
+        m_GL.BindFramebuffer(GL_FRAMEBUFFER, m_DefaultFBO);
+        return;
+    }
 
     m_GL.BindFramebuffer(GL_DRAW_FRAMEBUFFER, m_DefaultFBO);
 
@@ -435,6 +475,9 @@ void OpenGLAntiAliasing::CreateMSAAFBO(int width, int height)
     if (status != GL_FRAMEBUFFER_COMPLETE) {
         m_Log.Error("Resolve FBO incomplete! Status: 0x{:X}", status);
     }
+
+    // 初始化全屏四边形 VAO（Core Profile 必须绑 VAO 才能 DrawArrays）
+    InitFullscreenQuad();
 
     m_GL.BindFramebuffer(GL_FRAMEBUFFER, 0);
     CheckGLError("CreateMSAAFBO");
@@ -582,6 +625,9 @@ void OpenGLAntiAliasing::CreateCSAAFBO(int width, int height)
     m_GL.BindFramebuffer(GL_FRAMEBUFFER, m_ResolveFBO);
     m_GL.FramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0,
                                GL_TEXTURE_2D, m_ResolveTex, 0);
+
+    // 初始化全屏四边形 VAO（Core Profile 必须绑 VAO 才能 DrawArrays）
+    InitFullscreenQuad();
 
     m_GL.BindFramebuffer(GL_FRAMEBUFFER, 0);
     CheckGLError("CreateCSAAFBO");
@@ -731,12 +777,11 @@ void OpenGLAntiAliasing::ResolveMSAA()
     m_GL.BindFramebuffer(GL_FRAMEBUFFER, m_DefaultFBO);
     m_GL.Viewport(0, 0, m_Width, m_Height);
 
-    // 使用简单的纹理绘制
-    m_GL.BindTexture(GL_TEXTURE_2D, m_ResolveTex);
+    // 后处理全屏四边形必须覆盖默认帧缓冲，不能受深度/混合状态干扰
+    m_GL.Disable(GL_DEPTH_TEST);
+    m_GL.Disable(GL_BLEND);
 
     // 用全屏四边形 + 简单纹理采样绘制
-    // 使用固定管线效果：直接绑定纹理并绘制
-    // 注意：这里使用预先编译好的简单传递着色器
     GLuint program = m_SSAADownsampleProgram;
     if (!program) {
         program = CreateProgram(kFullscreenQuadVS, kSSAADownsampleFS);
@@ -749,9 +794,13 @@ void OpenGLAntiAliasing::ResolveMSAA()
         m_GL.Uniform1i(m_GL.GetUniformLocation(program, "u_Texture"), 0);
         m_GL.Uniform2f(m_GL.GetUniformLocation(program, "u_TexelSize"),
                         1.0f / m_Width, 1.0f / m_Height);
+        m_GL.ActiveTexture(GL_TEXTURE0);
+        m_GL.BindTexture(GL_TEXTURE_2D, m_ResolveTex);
         RenderFullscreenQuad();
         m_GL.UseProgram(0);
     }
+
+    m_GL.Enable(GL_BLEND);
 
     CheckGLError("ResolveMSAA");
 }
@@ -767,6 +816,9 @@ void OpenGLAntiAliasing::ResolveSSAA()
     m_GL.Clear(GL_COLOR_BUFFER_BIT);
 
     if (m_SSAADownsampleProgram) {
+        m_GL.Disable(GL_DEPTH_TEST);
+        m_GL.Disable(GL_BLEND);
+
         m_GL.UseProgram(m_SSAADownsampleProgram);
         m_GL.Uniform1i(m_GL.GetUniformLocation(m_SSAADownsampleProgram, "u_Texture"), 0);
 
@@ -774,13 +826,15 @@ void OpenGLAntiAliasing::ResolveSSAA()
         m_GL.Uniform2f(m_GL.GetUniformLocation(m_SSAADownsampleProgram, "u_TexelSize"),
                         1.0f / (m_Width * scale), 1.0f / (m_Height * scale));
 
-        // 生成 mipmap 以获得更好的下采样质量
+        m_GL.ActiveTexture(GL_TEXTURE0);
         m_GL.BindTexture(GL_TEXTURE_2D, m_SSAAColorTex);
         m_GL.GenerateMipmap(GL_TEXTURE_2D);
         m_GL.TexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR_MIPMAP_LINEAR);
 
         RenderFullscreenQuad();
         m_GL.UseProgram(0);
+
+        m_GL.Enable(GL_BLEND);
     }
 
     CheckGLError("ResolveSSAA");
@@ -802,16 +856,22 @@ void OpenGLAntiAliasing::ResolveCSAA()
     m_GL.BindFramebuffer(GL_FRAMEBUFFER, m_DefaultFBO);
     m_GL.Viewport(0, 0, m_Width, m_Height);
 
+    m_GL.Disable(GL_DEPTH_TEST);
+    m_GL.Disable(GL_BLEND);
+
     GLuint program = m_SSAADownsampleProgram;
     if (program) {
         m_GL.UseProgram(program);
         m_GL.Uniform1i(m_GL.GetUniformLocation(program, "u_Texture"), 0);
         m_GL.Uniform2f(m_GL.GetUniformLocation(program, "u_TexelSize"),
                         1.0f / m_Width, 1.0f / m_Height);
+        m_GL.ActiveTexture(GL_TEXTURE0);
         m_GL.BindTexture(GL_TEXTURE_2D, m_ResolveTex);
         RenderFullscreenQuad();
         m_GL.UseProgram(0);
     }
+
+    m_GL.Enable(GL_BLEND);
 
     CheckGLError("ResolveCSAA");
 }
@@ -836,6 +896,9 @@ void OpenGLAntiAliasing::ResolveMLAA()
     m_GL.BindFramebuffer(GL_FRAMEBUFFER, m_MLAATempFBO);
     m_GL.Viewport(0, 0, m_Width, m_Height);
     m_GL.Clear(GL_COLOR_BUFFER_BIT);
+
+    m_GL.Disable(GL_DEPTH_TEST);
+    m_GL.Disable(GL_BLEND);
 
     m_GL.UseProgram(m_MLAAEdgeDetectProgram);
     m_GL.Uniform1i(m_GL.GetUniformLocation(m_MLAAEdgeDetectProgram, "u_Texture"), 0);
@@ -870,6 +933,8 @@ void OpenGLAntiAliasing::ResolveMLAA()
 
     RenderFullscreenQuad();
     m_GL.UseProgram(0);
+
+    m_GL.Enable(GL_BLEND);
 
     CheckGLError("ResolveMLAA");
 }

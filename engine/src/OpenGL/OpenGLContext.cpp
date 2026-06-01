@@ -99,6 +99,15 @@ namespace Engine {
 		return true;
 	}
 
+	void OpenGLContext::ResolveToDefault()
+	{
+		if (m_AntiAliasing && m_AntiAliasing->IsActive()) {
+			m_AntiAliasing->ResolveToDefault();
+		} else {
+			m_GL.BindFramebuffer(GL_FRAMEBUFFER, 0);
+		}
+	}
+
 	//init
 	void OpenGLContext::Init()
 	{

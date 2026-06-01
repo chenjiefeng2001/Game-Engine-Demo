@@ -47,6 +47,10 @@ namespace Engine {
         virtual void SetColorMask(bool r, bool g, bool b, bool a) override;
         virtual void SetDepthFunc(uint32 func) override;
 
+        /** 仅执行 resolve（AA FBO→默认帧缓冲），不 swap。
+         *  用于在 ImGui/HUD 之前手动 resolve 场景。 */
+        void ResolveToDefault();
+
     private:
         friend class PerformanceWindow;
         GLFWwindow* m_WindowHandle;

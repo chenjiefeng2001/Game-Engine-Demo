@@ -75,6 +75,43 @@ namespace Engine {
                 v.normal = Vec3(0.0f, 1.0f, 0.0f);
             }
         }
+
+        // ── 计算切线 ──
+        for (auto& v : m_Vertices)
+            v.tangent = Vec3(0, 0, 0);
+
+        for (size_t i = 0; i + 2 < m_Indices.size(); i += 3) {
+            uint32 i0 = m_Indices[i], i1 = m_Indices[i+1], i2 = m_Indices[i+2];
+            if (i0>=m_Vertices.size()||i1>=m_Vertices.size()||i2>=m_Vertices.size()) continue;
+            const auto& v0=m_Vertices[i0], v1=m_Vertices[i1], v2=m_Vertices[i2];
+            glm::vec3 p0(v0.position.x,v0.position.y,v0.position.z);
+            glm::vec3 p1(v1.position.x,v1.position.y,v1.position.z);
+            glm::vec3 p2(v2.position.x,v2.position.y,v2.position.z);
+            glm::vec2 uv0(v0.texCoord.x,v0.texCoord.y);
+            glm::vec2 uv1(v1.texCoord.x,v1.texCoord.y);
+            glm::vec2 uv2(v2.texCoord.x,v2.texCoord.y);
+            glm::vec3 e1=p1-p0, e2=p2-p0;
+            glm::vec2 duv1=uv1-uv0, duv2=uv2-uv0;
+            float det = duv1.x*duv2.y - duv1.y*duv2.x;
+            if (std::abs(det) < 1e-8f) continue;
+            glm::vec3 tangent = (e1*duv2.y - e2*duv1.y) / det;
+            m_Vertices[i0].tangent.x+=tangent.x; m_Vertices[i0].tangent.y+=tangent.y; m_Vertices[i0].tangent.z+=tangent.z;
+            m_Vertices[i1].tangent.x+=tangent.x; m_Vertices[i1].tangent.y+=tangent.y; m_Vertices[i1].tangent.z+=tangent.z;
+            m_Vertices[i2].tangent.x+=tangent.x; m_Vertices[i2].tangent.y+=tangent.y; m_Vertices[i2].tangent.z+=tangent.z;
+        }
+        for (auto& v : m_Vertices) {
+            glm::vec3 t(v.tangent.x,v.tangent.y,v.tangent.z);
+            glm::vec3 n(v.normal.x,v.normal.y,v.normal.z);
+            t = glm::normalize(t - n * glm::dot(n, t));
+            if (!glm::isnan(t.x)&&!glm::isnan(t.y)&&!glm::isnan(t.z)) {
+                v.tangent=Vec3(t.x,t.y,t.z);
+            } else {
+                glm::vec3 up(0,1,0);
+                if (std::abs(glm::dot(n,up))>0.99f) up=glm::vec3(0,0,1);
+                t=glm::normalize(glm::cross(n,up));
+                v.tangent=Vec3(t.x,t.y,t.z);
+            }
+        }
     }
 
     // ============================================================
