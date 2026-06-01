@@ -18,6 +18,7 @@ namespace Engine {
         Vec3 position;
         Vec3 normal;
         Vec2 texCoord;
+        Vec3 tangent = {0, 0, 0};   // 切线（用于法线贴图）
     };
 
     /**

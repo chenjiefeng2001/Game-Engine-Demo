@@ -20,6 +20,7 @@ file(GLOB ENGINE_SOURCES CONFIGURE_DEPENDS
     src/OpenGL/Resources/*.cpp
     src/Platform/*.cpp
     src/Platform/glfw/*.cpp
+    src/Rendering/*.cpp
 )
 file(GLOB ENGINE_HEADERS CONFIGURE_DEPENDS
     include/*.h
@@ -42,6 +43,7 @@ file(GLOB ENGINE_HEADERS CONFIGURE_DEPENDS
     include/Engine/OpenAL/*.h
     include/Engine/Box2D/*.h
     include/Engine/Platform/*.h
+    include/Engine/Rendering/*.h
 )
 
 add_library(EngineCore STATIC
@@ -58,7 +60,7 @@ target_include_directories(EngineCore
     PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/src"
 
 )
-target_link_libraries(EngineCore PUBLIC glad2 glfw stb box2d OpenAL::OpenAL imgui spdlog::spdlog)
+target_link_libraries(EngineCore PUBLIC glad2 glfw stb box2d OpenAL::OpenAL imgui spdlog::spdlog freetype)
 
 # ── Tracy Profiler（Debug 默认启用，Release 关闭） ──
 if(TARGET tracy)
@@ -66,6 +68,7 @@ if(TARGET tracy)
     target_compile_definitions(EngineCore PUBLIC
         $<$<CONFIG:Debug>:ENGINE_ENABLE_PROFILING>
         $<$<CONFIG:Debug>:TRACY_ENABLE>
+        $<$<CONFIG:Debug>:TRACY_ON_DEMAND>
     )
 endif()
 

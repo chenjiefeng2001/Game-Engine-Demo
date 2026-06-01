@@ -50,6 +50,7 @@ namespace Engine {
 
     private:
         void Flush();
+        void EnsureCapacity(uint32 vCount, uint32 iCount);
         GLenum ToGLPrimitive(PrimitiveType type) const;
         void CreateGPUResources();
         void DestroyGPUResources();
@@ -62,6 +63,7 @@ namespace Engine {
         PrimitiveType  m_Type = PrimitiveType::Triangles;
         bool           m_Began = false;
         uint32         m_MaxVertices;
+        uint32         m_MaxIndices;
 
         // ── GPU 资源 ──
         GLuint m_VAO = 0;

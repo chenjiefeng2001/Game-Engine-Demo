@@ -17,7 +17,16 @@ namespace Engine {
     class PotentiallyVisibleSet;
     class ISceneGraph;
     class IPrimitiveBatch;
+    class ShadowMapper;
+    class GBuffer;
     struct Frustum;
+
+    /// 渲染模式
+    enum class RenderMode : uint8 {
+        Forward  = 0,   // 前向渲染 (直接光照)
+        Deferred = 1,   // 延迟渲染 (G-Buffer + 光照通道)
+        Default  = Forward,
+    };
 
     /**
      * @brief 3D 网格渲染器 — 将 MeshComponent 渲染到屏幕
@@ -39,16 +48,28 @@ namespace Engine {
         void SetCamera(PerspectiveCamera* camera) { m_Camera = camera; }
         PerspectiveCamera* GetCamera() const { return m_Camera; }
 
-        // ── 光源参数 ──
-        void SetLightPosition(const Vec3& pos)   { m_LightPos = pos; }
-        void SetLightColor(const Vec3& color)    { m_LightColor = color; }
-        void SetLightIntensity(float intensity)  { m_LightIntensity = intensity; }
+        // ── 多光源 ──
+        struct Light {
+            Vec3  position  = {5, 10, 5};
+            Vec3  color     = {1, 1, 1};
+            float intensity = 1.0f;
+        };
+
+        void ClearLights() { m_Lights.clear(); }
+        void AddLight(const Light& light) { if (m_Lights.size() < 4) m_Lights.push_back(light); }
+        size_t GetLightCount() const { return m_Lights.size(); }
+        Light& GetLight(size_t i) { return m_Lights[i]; }
+        const std::vector<Light>& GetLights() const { return m_Lights; }
+
+        // ── 向后兼容的单光源接口 ──
+        void SetLightPosition(const Vec3& pos)   { if (m_Lights.empty()) m_Lights.push_back({}); m_Lights[0].position = pos; }
+        void SetLightColor(const Vec3& color)    { if (m_Lights.empty()) m_Lights.push_back({}); m_Lights[0].color = color; }
+        void SetLightIntensity(float intensity)  { if (m_Lights.empty()) m_Lights.push_back({}); m_Lights[0].intensity = intensity; }
         void SetAmbientColor(const Vec3& color)  { m_AmbientColor = color; }
 
-        // ── 光源参数查询（供调试 UI 访问） ──
-        const Vec3& GetLightPosition()  const { return m_LightPos; }
-        const Vec3& GetLightColor()     const { return m_LightColor; }
-        float       GetLightIntensity() const { return m_LightIntensity; }
+        const Vec3& GetLightPosition()  const { return m_Lights.empty() ? m_AmbientColor : m_Lights[0].position; }
+        const Vec3& GetLightColor()     const { return m_Lights.empty() ? m_AmbientColor : m_Lights[0].color; }
+        float       GetLightIntensity() const { return m_Lights.empty() ? 1.0f : m_Lights[0].intensity; }
         const Vec3& GetAmbientColor()   const { return m_AmbientColor; }
 
         // ── 世界坐标轴辅助（调试用）──
@@ -125,17 +146,54 @@ namespace Engine {
         void SetSceneGraphThreshold(uint32 threshold) { m_SGThreshold = threshold; }
         uint32 GetSceneGraphThreshold() const { return m_SGThreshold; }
 
+        /** 获取内部批处理器（用于粒子/贴花等） */
+        IPrimitiveBatch* GetBatch() const { return m_Batch.get(); }
+
         /** 使用场景图渲染（自动平截头体剔除 + 深度预渲染） */
         void RenderWithSceneGraph(const std::vector<GameObject*>& objects,
                                   const Frustum* frustum = nullptr,
                                   bool forceDepthPrePass = false);
+
+        // ── 阴影映射 ──
+        void SetShadowMapper(ShadowMapper* sm) { m_ShadowMapper = sm; }
+        ShadowMapper* GetShadowMapper() { return m_ShadowMapper; }
+        void SetShadowEnabled(bool enable) { m_ShadowEnabled = enable; }
+        bool IsShadowEnabled() const { return m_ShadowEnabled; }
+        void RenderShadowPass(const std::vector<GameObject*>& objects);
+
+        // ── SSAO ──
+        void SetSSAOEnabled(bool enable) { m_SSAOEnabled = enable; }
+        bool IsSSAOEnabled() const { return m_SSAOEnabled; }
+        void SetSSAOStrength(float strength) { m_SSAOStrength = strength; }
+
+        // ── 焦散 ──
+        void SetCausticsEnabled(bool enable) { m_CausticsEnabled = enable; }
+        bool IsCausticsEnabled() const { return m_CausticsEnabled; }
+        void SetCausticStrength(float s) { m_CausticStrength = s; }
+
+        // ── 渲染模式 ──
+        void SetRenderMode(RenderMode mode) { m_RenderMode = mode; }
+        RenderMode GetRenderMode() const { return m_RenderMode; }
+        bool IsDeferred() const { return m_RenderMode == RenderMode::Deferred; }
+
+        // ── GBuffer（延迟渲染用） ──
+        void SetGBuffer(GBuffer* gbuf) { m_GBuffer = gbuf; }
+        GBuffer* GetGBuffer() const { return m_GBuffer; }
+
+        /** 延迟渲染入口 */
+        void RenderDeferred(const std::vector<GameObject*>& objects,
+                            std::shared_ptr<Shader> lightShader);
 
         // ── 主渲染入口（无 PVS 剔除） ──
         void Render(const std::vector<GameObject*>& objects);
 
     private:
         const PotentiallyVisibleSet* m_PVS = nullptr;
-        std::unique_ptr<IPrimitiveBatch> m_Batch;  // 内部批处理器
+        std::unique_ptr<IPrimitiveBatch> m_Batch;
+
+        // ── 全屏四边形（延迟渲染光照通道用） ──
+        void InitFullscreenQuad();
+        void RenderFullscreenQuad();
 
         // ── 深度预渲染 ──
         std::shared_ptr<Shader> m_DepthShader;
@@ -143,7 +201,26 @@ namespace Engine {
 
         // ── 场景图 ──
         const ISceneGraph* m_SceneGraph = nullptr;
-        uint32 m_SGThreshold = 50;  // 物体超过此数启用场景图剔除
+        uint32 m_SGThreshold = 50;
+
+        // ── 阴影 ──
+        ShadowMapper* m_ShadowMapper = nullptr;
+        bool m_ShadowEnabled = false;
+
+        // ── SSAO ──
+        bool m_SSAOEnabled = false;
+        float m_SSAOStrength = 1.0f;
+        std::shared_ptr<class Shader> m_SSAOShader;
+        uint32 m_SSAOFBO = 0, m_SSAOTex = 0;
+
+        // ── 焦散 ──
+        bool m_CausticsEnabled = false;
+        float m_CausticStrength = 0.3f;
+
+        // ── 延迟渲染 ──
+        RenderMode m_RenderMode = RenderMode::Forward;
+        GBuffer*   m_GBuffer = nullptr;
+        std::shared_ptr<Shader> m_GeomShader;  // 几何通道着色器
 
         // ── 统计 ──
         mutable uint32 m_LastTotalObjects = 0;
@@ -162,10 +239,10 @@ namespace Engine {
         std::shared_ptr<Shader> m_Shader;
         PerspectiveCamera* m_Camera = nullptr;
 
-        Vec3  m_LightPos      = {5.0f, 10.0f, 5.0f};
-        Vec3  m_LightColor    = {1.0f, 1.0f, 1.0f};
-        float m_LightIntensity = 1.0f;
         Vec3  m_AmbientColor  = {0.15f, 0.15f, 0.20f};
+        std::vector<Light> m_Lights;
+
+        // 向后兼容单光源（由 SetLightPosition 等填充）
 
         // GPU 资源缓存
         struct CachedMeshData {

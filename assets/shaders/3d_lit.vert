@@ -1,42 +1,26 @@
 #version 460 core
-
-layout(location = 0) in vec3 aPos;      // 模型空间顶点坐标
-layout(location = 1) in vec3 aNormal;    // 模型空间法线
-layout(location = 2) in vec2 aTexCoord;  // 纹理坐标（UV）
-
-// ═══════════════════════════════════════════════════════════
-// 坐标空间变换矩阵
-//
-//   u_Model       = 模型空间 → 世界空间     (Model  Matrix)
-//   u_View        = 世界空间 → 观察空间     (View   Matrix)
-//   u_Projection  = 观察空间 → 裁剪空间     (Proj   Matrix)
-//   u_NormalMatrix = transpose(inverse(u_Model))  法线空间变换
-//   u_MVP         = Projection * View * Model     快捷组合
-// ═══════════════════════════════════════════════════════════
-uniform mat4 u_Model;
-uniform mat4 u_View;
-uniform mat4 u_Projection;
-uniform mat4 u_NormalMatrix;
-uniform mat4 u_MVP;
-
-out vec3 v_WorldPos;    // 片元在世界空间中的位置
-out vec3 v_ViewPos;     // 片元在观察空间中的位置
-out vec3 v_Normal;      // 片元在世界空间中的法线
-out vec2 v_TexCoord;
-
-void main() {
-    // 模型空间 → 世界空间
-    vec4 worldPos = u_Model * vec4(aPos, 1.0);
-    v_WorldPos  = worldPos.xyz;
-
-    // 世界空间 → 观察空间
-    v_ViewPos   = (u_View * worldPos).xyz;
-
-    // 法线变换（必须使用 NormalMatrix 而非 Model 矩阵，
-    // 否则非均匀缩放会破坏法线方向）
-    v_Normal    = mat3(u_NormalMatrix) * aNormal;
-    v_TexCoord  = aTexCoord;
-
-    // 模型空间 → 裁剪空间（一步到位）
-    gl_Position = u_MVP * vec4(aPos, 1.0);
+layout(location=0)in vec3 aPos;layout(location=1)in vec3 aNormal;
+layout(location=2)in vec2 aTexCoord;layout(location=3)in vec3 aTangent;
+uniform mat4 u_Model,u_View,u_Projection,u_NormalMatrix,u_MVP;
+uniform mat4 u_LightSpaceMatrix;uniform float u_DisplacementStrength=0;
+uniform sampler2D u_HeightMap;uniform bool u_HasHeightMap;
+out vec3 v_WorldPos,v_ViewPos,v_Normal,v_Tangent,v_Bitangent,v_ViewDir;
+out vec2 v_TexCoord;out float v_Displacement;out vec4 v_LightSpacePos;
+void main(){
+    vec4 worldPos=u_Model*vec4(aPos,1);
+    float disp=0;
+    if(u_HasHeightMap&&u_DisplacementStrength>0){
+        float h=texture(u_HeightMap,aTexCoord).r;
+        disp=(h-0.5)*u_DisplacementStrength;
+        worldPos.xyz+=normalize(mat3(u_NormalMatrix)*aNormal)*disp;
+    }
+    v_Displacement=disp;v_WorldPos=worldPos.xyz;v_ViewPos=(u_View*worldPos).xyz;
+    v_Normal=mat3(u_NormalMatrix)*aNormal;
+    if(length(aTangent)>0.001){
+        v_Tangent=normalize(mat3(u_Model)*aTangent);
+        v_Bitangent=normalize(cross(v_Normal,v_Tangent));
+    }else{v_Tangent=mat3(u_Model)*normalize(cross(aNormal,vec3(0,0,1)));v_Bitangent=cross(v_Normal,v_Tangent);}
+    v_TexCoord=aTexCoord;v_ViewDir=(u_View*vec4(0,0,0,1)-u_View*worldPos).xyz;
+    v_LightSpacePos=u_LightSpaceMatrix*worldPos;
+    gl_Position=u_MVP*vec4(aPos,1);
 }

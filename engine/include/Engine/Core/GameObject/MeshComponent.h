@@ -27,6 +27,17 @@ namespace Engine {
         Vec4 m_Color      = {1.0f, 1.0f, 1.0f, 1.0f};
         bool m_Visible    = true;
 
+        // ── 贴图资源 ──
+        std::shared_ptr<class Texture> m_NormalMap;     // 法线贴图
+        std::shared_ptr<class Texture> m_HeightMap;     // 高度贴图（视差/位移用）
+        float m_NormalStrength = 1.0f;                  // 法线强度
+        float m_ParallaxScale = 0.05f;                  // 视差缩放系数
+        float m_DisplacementStrength = 0.0f;            // 位移强度（0=关闭）
+
+        // ── 材质属性 ──
+        float m_Shininess = 32.0f;
+        float m_SpecularStrength = 0.5f;
+
         // 将来可以扩展：
         // std::shared_ptr<Texture> m_DiffuseTexture;
         // std::shared_ptr<Texture> m_NormalMap;

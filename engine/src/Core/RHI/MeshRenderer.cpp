@@ -2,6 +2,8 @@
 #include "Engine/Core/RHI/PotentiallyVisibleSet.h"
 #include "Engine/Core/RHI/IPrimitiveBatch.h"
 #include "Engine/Core/RHI/ISceneGraph.h"
+#include "Engine/Core/RHI/ShadowMapper.h"
+#include "Engine/Core/RHI/GBuffer.h"
 #include "Engine/Core/Renderer/Mesh.h"
 #include "Engine/Core/Renderer/PerspectiveCamera.h"
 #include "Engine/Core/GameObject/GameObject.h"
@@ -34,7 +36,9 @@ namespace Engine {
         : m_Factory(factory)
         , m_Context(context)
     {
+        m_Batch = m_Factory.CreatePrimitiveBatch(32768);
     }
+
 
     // ════════════════════════════════════════════════
     // GPU 资源管理
@@ -65,12 +69,13 @@ namespace Engine {
         // VAO — 顶点属性布局（与 3D shader 的 layout 匹配）
         auto va = m_Factory.CreateVertexArray();
 
-        VertexAttribute attributes[3] = {
+        VertexAttribute attributes[4] = {
             {0, 3, sizeof(Vertex3D), offsetof(Vertex3D, position)},
             {1, 3, sizeof(Vertex3D), offsetof(Vertex3D, normal)},
             {2, 2, sizeof(Vertex3D), offsetof(Vertex3D, texCoord)},
+            {3, 3, sizeof(Vertex3D), offsetof(Vertex3D, tangent)},
         };
-        va->AddVertexBuffer(vb, attributes, 3);
+        va->AddVertexBuffer(vb, attributes, 4);
         va->SetIndexBuffer(ib);
 
         CachedMeshData cached;
@@ -156,9 +161,14 @@ namespace Engine {
         m_Shader->SetMat4("u_Projection", projMatrix.Data());
 
         Vec3 viewPos = m_Camera->GetPosition();
-        m_Shader->SetVec3("u_LightPos",       &m_LightPos.x);
-        m_Shader->SetVec3("u_LightColor",     &m_LightColor.x);
-        m_Shader->SetFloat("u_LightIntensity", m_LightIntensity);
+        m_Shader->SetInt("u_LightCount", (int)m_Lights.size());
+        for (size_t li = 0; li < m_Lights.size() && li < 4; ++li) {
+            auto& L = m_Lights[li];
+            std::string si = std::to_string(li);
+            m_Shader->SetVec3(("u_LightPos["+si+"]").c_str(), &L.position.x);
+            m_Shader->SetVec3(("u_LightColor["+si+"]").c_str(), &L.color.x);
+            m_Shader->SetFloat(("u_LightIntensity["+si+"]").c_str(), L.intensity);
+        }
         m_Shader->SetVec3("u_ViewPos",        &viewPos.x);
         m_Shader->SetVec3("u_AmbientColor",   &m_AmbientColor.x);
 
@@ -222,6 +232,180 @@ namespace Engine {
     }
 
     // ════════════════════════════════════════════════
+    // 全屏四边形（延迟渲染光照通道）
+    // ════════════════════════════════════════════════
+
+    void MeshRenderer::InitFullscreenQuad() {
+        // 延迟初始化：通过 CreatePrimitiveBatch 获取批处理器
+        if (m_Batch) return;
+    }
+
+    void MeshRenderer::RenderFullscreenQuad() {
+        // 使用批处理器绘制全屏四边形
+        if (!m_Batch) return;
+        m_Batch->Begin(PrimitiveType::Triangles);
+        m_Batch->Vertex(Vec3(-1, 1, 0), Vec4(1,1,1,1));
+        m_Batch->Vertex(Vec3(-1,-1, 0), Vec4(1,1,1,1));
+        m_Batch->Vertex(Vec3( 1,-1, 0), Vec4(1,1,1,1));
+        m_Batch->Vertex(Vec3(-1, 1, 0), Vec4(1,1,1,1));
+        m_Batch->Vertex(Vec3( 1,-1, 0), Vec4(1,1,1,1));
+        m_Batch->Vertex(Vec3( 1, 1, 0), Vec4(1,1,1,1));
+        m_Batch->Index(0);m_Batch->Index(1);m_Batch->Index(2);
+        m_Batch->Index(3);m_Batch->Index(4);m_Batch->Index(5);
+        m_Batch->Commit();
+        m_Batch->End();
+    }
+
+    // ════════════════════════════════════════════════
+    // 延迟渲染 — 几何通道 + 光照通道
+    // ════════════════════════════════════════════════
+
+    void MeshRenderer::RenderDeferred(const std::vector<GameObject*>& objects,
+                                       std::shared_ptr<Shader> lightShader)
+    {
+        if (!m_GBuffer || !m_GBuffer->IsValid() || !lightShader) {
+            Render(objects);  // 退化为前向渲染
+            return;
+        }
+
+        // ── Pass 1: 几何通道 — 写入 G-Buffer ──
+        m_GBuffer->BindForGeometryPass();
+        m_GBuffer->Clear();
+
+        auto geomShader = m_GeomShader ? m_GeomShader : m_Shader;
+        geomShader->Bind();
+
+        const Mat4& projMatrix = m_Camera->GetProjectionMatrix();
+        const Mat4& viewMatrix = m_Camera->GetViewMatrix();
+        glm::mat4 viewGlm = glm::make_mat4(viewMatrix.Data());
+        glm::mat4 projGlm = glm::make_mat4(projMatrix.Data());
+
+        for (auto* obj : objects) {
+            if (!obj || !obj->IsActive()) continue;
+            auto* mc = obj->GetComponent<MeshComponent>();
+            if (!mc || !mc->m_Visible || !mc->HasMesh()) continue;
+
+            auto mesh = mc->GetMesh();
+            uint64 id = reinterpret_cast<uint64>(mesh.get());
+            auto it = m_MeshCache.find(id);
+            if (it == m_MeshCache.end()) {
+                id = UploadMesh(mesh);
+                if (id == 0) continue;
+                it = m_MeshCache.find(id);
+                if (it == m_MeshCache.end()) continue;
+            }
+
+            const auto& cached = it->second;
+            glm::mat4 model = glm::make_mat4(obj->GetTransform().GetWorldMatrix().Data());
+            glm::mat4 mvp = projGlm * viewGlm * model;
+            glm::mat3 nm = glm::transpose(glm::inverse(glm::mat3(model)));
+
+            geomShader->SetMat4("u_Model", obj->GetTransform().GetWorldMatrix().Data());
+            geomShader->SetMat4("u_View", viewMatrix.Data());
+            geomShader->SetMat4("u_Projection", projMatrix.Data());
+            geomShader->SetMat4("u_MVP", glm::value_ptr(mvp));
+            geomShader->SetMat4("u_NormalMatrix", glm::value_ptr(glm::mat4(nm)));
+            geomShader->SetVec4("u_ObjectColor", &mc->m_Color.x);
+            geomShader->SetInt("u_HasTexture", 0);
+            geomShader->SetFloat("u_Shininess", mc->m_Shininess);
+            geomShader->SetFloat("u_SpecularStrength", mc->m_SpecularStrength);
+
+            // 法线贴图
+            if (mc->m_NormalMap) {
+                geomShader->SetInt("u_HasNormalMap", 1);
+                geomShader->SetFloat("u_NormalStrength", mc->m_NormalStrength);
+                mc->m_NormalMap->Bind(1);
+                geomShader->SetInt("u_NormalMap", 1);
+            } else {
+                geomShader->SetInt("u_HasNormalMap", 0);
+            }
+
+            cached.vao->Bind();
+            m_Context.DrawIndexed(cached.vao);
+        }
+
+        // ── Pass 2: 光照通道 — 全屏四边形 ──
+        m_GBuffer->Unbind();
+        m_Context.ClearColor(0,0,0,1);  // clears color+depth
+
+        lightShader->Bind();
+        lightShader->SetInt("u_PositionMap", 0);
+        lightShader->SetInt("u_NormalMap", 1);
+        lightShader->SetInt("u_AlbedoMap", 2);
+        lightShader->SetInt("u_AOMap", 3);
+        lightShader->SetInt("u_DepthMap", 4);
+
+        Vec3 viewPos = m_Camera->GetPosition();
+        lightShader->SetVec3("u_ViewPos", &viewPos.x);
+        lightShader->SetVec3("u_AmbientColor", &m_AmbientColor.x);
+        lightShader->SetMat4("u_View", viewMatrix.Data());
+
+        // 光源
+        lightShader->SetInt("u_LightCount", (int)m_Lights.size());
+        for (size_t li = 0; li < m_Lights.size() && li < 4; ++li) {
+            auto& L = m_Lights[li];
+            std::string si = std::to_string(li);
+            lightShader->SetVec3(("u_LightPos["+si+"]").c_str(), &L.position.x);
+            lightShader->SetVec3(("u_LightColor["+si+"]").c_str(), &L.color.x);
+            lightShader->SetFloat(("u_LightIntensity["+si+"]").c_str(), L.intensity);
+        }
+
+        // 阴影
+        if (m_ShadowEnabled && m_ShadowMapper && m_ShadowMapper->IsValid()) {
+            m_ShadowMapper->SetShaderUniforms(lightShader.get());
+            m_ShadowMapper->BindShadowMap(5);
+            lightShader->SetInt("u_ShadowMap", 5);
+        } else {
+            lightShader->SetInt("u_ShadowEnabled", 0);
+        }
+
+        m_GBuffer->BindTexturesForLighting();
+
+        // 全屏四边形
+        InitFullscreenQuad();  // 复用全屏 VAO
+        RenderFullscreenQuad();
+    }
+
+    // ════════════════════════════════════════════════
+    // 阴影渲染 — 从光源视角渲染深度图
+    // ════════════════════════════════════════════════
+
+    void MeshRenderer::RenderShadowPass(const std::vector<GameObject*>& objects) {
+        if (!m_ShadowMapper || !m_ShadowMapper->IsValid() || !m_DepthShader) {
+            return;
+        }
+
+        m_ShadowMapper->BindForShadowPass();
+        m_DepthShader->Bind();
+
+        for (auto* obj : objects) {
+            if (!obj || !obj->IsActive()) continue;
+            auto* mc = obj->GetComponent<MeshComponent>();
+            if (!mc || !mc->m_Visible || !mc->HasMesh()) continue;
+
+            auto mesh = mc->GetMesh();
+            uint64 id = reinterpret_cast<uint64>(mesh.get());
+            auto it = m_MeshCache.find(id);
+            if (it == m_MeshCache.end()) {
+                id = UploadMesh(mesh);
+                if (id == 0) continue;
+                it = m_MeshCache.find(id);
+                if (it == m_MeshCache.end()) continue;
+            }
+
+            const auto& cached = it->second;
+            glm::mat4 model = glm::make_mat4(obj->GetTransform().GetWorldMatrix().Data());
+            glm::mat4 mvp   = glm::make_mat4(m_ShadowMapper->GetLightVP().Data()) * model;
+            m_DepthShader->SetMat4("u_MVP", glm::value_ptr(mvp));
+            cached.vao->Bind();
+            m_Context.DrawIndexed(cached.vao);
+        }
+
+        m_Shader->Bind(); // 绑定主 shader 以便继续主渲染
+        m_ShadowMapper->EndShadowPass();
+    }
+
+    // ════════════════════════════════════════════════
     // 深度预渲染 + 主渲染（两遍法减少 overdraw）
     // ════════════════════════════════════════════════
 
@@ -232,19 +416,29 @@ namespace Engine {
             return;
         }
 
+        const Mat4& projMatrix = m_Camera->GetProjectionMatrix();
+        const Mat4& viewMatrix = m_Camera->GetViewMatrix();
+        glm::mat4 viewGlm = glm::make_mat4(viewMatrix.Data());
+        glm::mat4 projGlm = glm::make_mat4(projMatrix.Data());
+
+        // ── 确保所有网格的 GPU 资源已创建 ──
+        for (auto* obj : objects) {
+            if (!obj || !obj->IsActive()) continue;
+            auto* meshComp = obj->GetComponent<MeshComponent>();
+            if (!meshComp || !meshComp->m_Visible || !meshComp->HasMesh()) continue;
+            auto mesh = meshComp->GetMesh();
+            uint64 gpuId = reinterpret_cast<uint64>(mesh.get());
+            auto it = m_MeshCache.find(gpuId);
+            if (it == m_MeshCache.end()) {
+                UploadMesh(mesh);
+            }
+        }
+
         // ── Pass 1: 深度只写 ──
-        // 关闭颜色写入，只写深度缓冲
         m_Context.SetDepthMask(true);
         m_Context.SetColorMask(false, false, false, false);
 
         m_DepthShader->Bind();
-
-        const Mat4& projMatrix = m_Camera->GetProjectionMatrix();
-        const Mat4& viewMatrix = m_Camera->GetViewMatrix();
-
-        // 深度着色器只需要 MVP 矩阵
-        glm::mat4 viewGlm = glm::make_mat4(viewMatrix.Data());
-        glm::mat4 projGlm = glm::make_mat4(projMatrix.Data());
 
         for (auto* obj : objects) {
             if (!obj || !obj->IsActive()) continue;
@@ -259,33 +453,29 @@ namespace Engine {
             const auto& cached = it->second;
             glm::mat4 modelGlm = glm::make_mat4(obj->GetTransform().GetWorldMatrix().Data());
             glm::mat4 mvp = projGlm * viewGlm * modelGlm;
-
             m_DepthShader->SetMat4("u_MVP", glm::value_ptr(mvp));
-
             cached.vao->Bind();
             m_Context.DrawIndexed(cached.vao);
         }
 
-        // ── Pass 2: 主渲染（颜色） ──
-        // 恢复颜色写入，利用深度缓冲进行 Early-Z 剔除
+        // ── Pass 2: 主渲染（颜色）with GL_EQUAL ──
         m_Context.SetColorMask(true, true, true, true);
-        // 设置深度测试为 EQUAL：只绘制通过深度测试的片段
-        // 这样 Pass 1 已经写入深度的像素不会被重复着色
         m_Context.SetDepthFunc(0x0202);  // GL_EQUAL
-        m_Context.SetDepthMask(false);   // 不需要再写入深度
+        m_Context.SetDepthMask(false);
 
-        // 调用主渲染
-        // 注意：这里直接调用完整 Render 逻辑
-        // 但由于我们内联实现了，直接使用主渲染循环
         m_Shader->Bind();
-
         m_Shader->SetMat4("u_View",       viewMatrix.Data());
         m_Shader->SetMat4("u_Projection", projMatrix.Data());
 
         Vec3 viewPos = m_Camera->GetPosition();
-        m_Shader->SetVec3("u_LightPos",       &m_LightPos.x);
-        m_Shader->SetVec3("u_LightColor",     &m_LightColor.x);
-        m_Shader->SetFloat("u_LightIntensity", m_LightIntensity);
+        m_Shader->SetInt("u_LightCount", (int)m_Lights.size());
+        for (size_t li = 0; li < m_Lights.size() && li < 4; ++li) {
+            auto& L = m_Lights[li];
+            std::string si = std::to_string(li);
+            m_Shader->SetVec3(("u_LightPos["+si+"]").c_str(), &L.position.x);
+            m_Shader->SetVec3(("u_LightColor["+si+"]").c_str(), &L.color.x);
+            m_Shader->SetFloat(("u_LightIntensity["+si+"]").c_str(), L.intensity);
+        }
         m_Shader->SetVec3("u_ViewPos",        &viewPos.x);
         m_Shader->SetVec3("u_AmbientColor",   &m_AmbientColor.x);
 
@@ -315,7 +505,7 @@ namespace Engine {
             m_Context.DrawIndexed(cached.vao);
         }
 
-        // 恢复深度测试状态
+        // ── 恢复默认深度状态 ──
         m_Context.SetDepthFunc(0x0201);  // GL_LESS
         m_Context.SetDepthMask(true);
     }
@@ -431,11 +621,43 @@ namespace Engine {
 
         // 光源 / 环境光 uniform
         Vec3 viewPos = m_Camera->GetPosition();
-        m_Shader->SetVec3("u_LightPos",       &m_LightPos.x);
-        m_Shader->SetVec3("u_LightColor",     &m_LightColor.x);
-        m_Shader->SetFloat("u_LightIntensity", m_LightIntensity);
+        m_Shader->SetInt("u_LightCount", (int)m_Lights.size());
+        for (size_t li = 0; li < m_Lights.size() && li < 4; ++li) {
+            auto& L = m_Lights[li];
+            std::string si = std::to_string(li);
+            m_Shader->SetVec3(("u_LightPos["+si+"]").c_str(), &L.position.x);
+            m_Shader->SetVec3(("u_LightColor["+si+"]").c_str(), &L.color.x);
+            m_Shader->SetFloat(("u_LightIntensity["+si+"]").c_str(), L.intensity);
+        }
         m_Shader->SetVec3("u_ViewPos",        &viewPos.x);
         m_Shader->SetVec3("u_AmbientColor",   &m_AmbientColor.x);
+
+        // ── 阴影 uniform ──
+        if (m_ShadowEnabled && m_ShadowMapper && m_ShadowMapper->IsValid()) {
+            m_ShadowMapper->BindShadowMap(3);
+            m_Shader->SetMat4("u_LightSpaceMatrix", m_ShadowMapper->GetLightVP().Data());
+            m_Shader->SetFloat("u_ShadowBias", 0.005f);
+            m_Shader->SetInt("u_ShadowEnabled", 1);
+        } else {
+            m_Shader->SetInt("u_ShadowEnabled", 0);
+        }
+
+        // ── SSAO uniform ──
+        if (m_SSAOEnabled && m_SSAOTex) {
+            m_Shader->SetInt("u_SSAOMap", 4);
+            m_Shader->SetInt("u_SSAOEnabled", 1);
+            m_Shader->SetFloat("u_SSAOStrength", m_SSAOStrength);
+        } else {
+            m_Shader->SetInt("u_SSAOEnabled", 0);
+        }
+
+        // ── 焦散 uniform ──
+        if (m_CausticsEnabled) {
+            m_Shader->SetInt("u_CausticsEnabled", 1);
+            m_Shader->SetFloat("u_CausticStrength", m_CausticStrength);
+        } else {
+            m_Shader->SetInt("u_CausticsEnabled", 0);
+        }
 
         // ── 遍历所有 GameObject 并渲染带 MeshComponent 的 ──
         for (auto* obj : objects) {
@@ -494,6 +716,40 @@ namespace Engine {
             // ── 材质属性 ──
             m_Shader->SetVec4("u_ObjectColor", &meshComp->m_Color.x);
             m_Shader->SetInt("u_HasTexture", 0);
+            m_Shader->SetFloat("u_Shininess", meshComp->m_Shininess);
+            m_Shader->SetFloat("u_SpecularStrength", meshComp->m_SpecularStrength);
+
+            // ── 法线贴图 ──
+            if (meshComp->m_NormalMap) {
+                m_Shader->SetInt("u_HasNormalMap", 1);
+                m_Shader->SetFloat("u_NormalStrength", meshComp->m_NormalStrength);
+                meshComp->m_NormalMap->Bind(1);
+                m_Shader->SetInt("u_NormalMap", 1);
+            } else {
+                m_Shader->SetInt("u_HasNormalMap", 0);
+            }
+
+            // ── 高度贴图（视差/位移） ──
+            if (meshComp->m_HeightMap) {
+                m_Shader->SetInt("u_HasHeightMap", 1);
+                m_Shader->SetFloat("u_ParallaxScale", meshComp->m_ParallaxScale);
+                m_Shader->SetFloat("u_DisplacementStrength", meshComp->m_DisplacementStrength);
+                meshComp->m_HeightMap->Bind(2);
+                m_Shader->SetInt("u_HeightMap", 2);
+            } else {
+                m_Shader->SetInt("u_HasHeightMap", 0);
+                m_Shader->SetFloat("u_DisplacementStrength", 0.0f);
+            }
+
+            // ── 动态多光源 ──
+            m_Shader->SetInt("u_LightCount", (int)m_Lights.size());
+            for (size_t li = 0; li < m_Lights.size() && li < 4; ++li) {
+                auto& L = m_Lights[li];
+                std::string si = std::to_string(li);
+                m_Shader->SetVec3(("u_LightPos["+si+"]").c_str(), &L.position.x);
+                m_Shader->SetVec3(("u_LightColor["+si+"]").c_str(), &L.color.x);
+                m_Shader->SetFloat(("u_LightIntensity["+si+"]").c_str(), L.intensity);
+            }
 
             // ── 绘制 ──
             cached.vao->Bind();
