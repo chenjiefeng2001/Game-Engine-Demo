@@ -113,4 +113,16 @@ namespace Engine {
 
 		glfwSwapInterval(1);
 	}
+
+	// ── 深度预渲染状态控制 ──
+	void OpenGLContext::SetDepthMask(bool enable) {
+		m_GL.DepthMask(enable ? GL_TRUE : GL_FALSE);
+	}
+	void OpenGLContext::SetColorMask(bool r, bool g, bool b, bool a) {
+		m_GL.ColorMask(r ? GL_TRUE : GL_FALSE, g ? GL_TRUE : GL_FALSE,
+		               b ? GL_TRUE : GL_FALSE, a ? GL_TRUE : GL_FALSE);
+	}
+	void OpenGLContext::SetDepthFunc(uint32 func) {
+		m_GL.DepthFunc(func);
+	}
 }

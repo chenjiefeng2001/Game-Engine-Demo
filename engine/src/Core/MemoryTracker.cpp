@@ -17,6 +17,33 @@
 #include <cstring>
 #include <cstdio>
 
+// ── 堆栈捕获（Windows RtlCaptureStackBackTrace，轻量级，只返回地址） ──
+#ifdef _WIN32
+#ifndef WIN32_LEAN_AND_MEAN
+#define WIN32_LEAN_AND_MEAN
+#endif
+#include <windows.h>
+// 函数指针类型
+typedef USHORT (__stdcall* CaptureStackFn)(ULONG, ULONG, PVOID*, PULONG);
+static CaptureStackFn s_CaptureStackBackTrace = nullptr;
+static bool InitStackCapture() {
+    if (s_CaptureStackBackTrace) return true;
+    HMODULE ntdll = GetModuleHandleA("ntdll.dll");
+    if (ntdll) {
+        s_CaptureStackBackTrace = (CaptureStackFn)GetProcAddress(ntdll, "RtlCaptureStackBackTrace");
+    }
+    return s_CaptureStackBackTrace != nullptr;
+}
+#define CAPTURE_STACK(frames, maxDepth, skip) do { \
+    if (InitStackCapture()) { \
+        (void)skip; \
+        s_CaptureStackBackTrace(skip + 1, maxDepth, (PVOID*)(frames), nullptr); \
+    } \
+} while(0)
+#else
+#define CAPTURE_STACK(frames, maxDepth, skip) do {(void)frames;(void)maxDepth;(void)skip;}while(0)
+#endif
+
 // ============================================================
 // 全局 operator new/delete 钩子（仅 Debug，自动调用 MemoryTracker）
 // ============================================================
@@ -116,13 +143,22 @@ namespace Engine {
         size_t cur = c.current, pk = c.peak;
         while (cur > pk && !c.peak.compare_exchange_weak(pk, cur)) {}
 
-        // 最近分配记录
+        // 最近分配记录（含堆栈捕获）
         auto& rec = s_Recent[s_RecentIdx % kRecentMax];
         rec.cat = cat; rec.size = s; rec.isFree = false;
         if (tag) {
             std::snprintf(rec.tag, sizeof(rec.tag), "%s", tag);
         } else {
             rec.tag[0] = '\0';
+        }
+        // 捕获调用堆栈（跳过 OnAlloc 自身 2 帧，最多 8 帧）
+        rec.stackDepth = 0;
+        std::memset(rec.stackFrames, 0, sizeof(rec.stackFrames));
+        CAPTURE_STACK(rec.stackFrames, kStackFramesPerRecord, 2);
+        // 计算实际深度（nullptr 结尾）
+        for (int i = 0; i < kStackFramesPerRecord; ++i) {
+            if (rec.stackFrames[i] == nullptr) break;
+            rec.stackDepth = i + 1;
         }
         s_RecentIdx++;
 
@@ -139,6 +175,14 @@ namespace Engine {
             std::snprintf(rec.tag, sizeof(rec.tag), "%s", tag);
         } else {
             rec.tag[0] = '\0';
+        }
+        // 释放记录也捕获堆栈
+        rec.stackDepth = 0;
+        std::memset(rec.stackFrames, 0, sizeof(rec.stackFrames));
+        CAPTURE_STACK(rec.stackFrames, kStackFramesPerRecord, 2);
+        for (int i = 0; i < kStackFramesPerRecord; ++i) {
+            if (rec.stackFrames[i] == nullptr) break;
+            rec.stackDepth = i + 1;
         }
         s_RecentIdx++;
 

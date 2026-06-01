@@ -32,5 +32,13 @@ namespace Engine {
 		 */
 		virtual bool CaptureFrameBuffer(int32& outWidth, int32& outHeight,
 		                                std::vector<uint8_t>& outPixels) { return false; }
+
+		// ── 深度预渲染状态控制（用于 Early-Z 优化） ──
+		/** 设置深度写入掩码 */
+		virtual void SetDepthMask(bool enable) { (void)enable; }
+		/** 设置颜色通道写入掩码 */
+		virtual void SetColorMask(bool r, bool g, bool b, bool a) { (void)r; (void)g; (void)b; (void)a; }
+		/** 设置深度比较函数 */
+		virtual void SetDepthFunc(uint32 func) { (void)func; }
 	};
 }

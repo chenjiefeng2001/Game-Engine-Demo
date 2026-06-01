@@ -15,7 +15,9 @@ namespace Engine {
     class IGraphicsFactory;
     class IRenderContext;
     class PotentiallyVisibleSet;
+    class ISceneGraph;
     class IPrimitiveBatch;
+    struct Frustum;
 
     /**
      * @brief 3D 网格渲染器 — 将 MeshComponent 渲染到屏幕
@@ -94,12 +96,58 @@ namespace Engine {
         void RenderBatched(const std::vector<GameObject*>& objects,
                            IPrimitiveBatch& batch);
 
+        // ── 深度预渲染 (Depth Pre-Pass) ──
+        /**
+         * @brief 设置深度预渲染着色器
+         * @param shader 深度只写着色器（assets/shaders/depth_only）
+         */
+        void SetDepthShader(std::shared_ptr<Shader> shader) { m_DepthShader = std::move(shader); }
+
+        /** 是否启用深度预渲染（减少 overdraw） */
+        void SetDepthPrePassEnabled(bool enable) { m_DepthPrePassEnabled = enable; }
+        bool IsDepthPrePassEnabled() const { return m_DepthPrePassEnabled; }
+
+        /**
+         * @brief 执行深度预渲染 + 主渲染（两遍法）
+         * @param objects 物体列表
+         */
+        void RenderWithDepthPrePass(const std::vector<GameObject*>& objects);
+
+        // ── 场景图管理（支持 Flat / BVH / Grid 切换） ──
+        /**
+         * @brief 设置场景图（用于平截头体剔除加速）
+         * @param sceneGraph 场景图接口指针（可运行时切换）
+         */
+        void SetSceneGraph(const ISceneGraph* sceneGraph) { m_SceneGraph = sceneGraph; }
+        const ISceneGraph* GetSceneGraph() const { return m_SceneGraph; }
+
+        /** 自动切换阈值：物体数超过此值启用场景图剔除 */
+        void SetSceneGraphThreshold(uint32 threshold) { m_SGThreshold = threshold; }
+        uint32 GetSceneGraphThreshold() const { return m_SGThreshold; }
+
+        /** 使用场景图渲染（自动平截头体剔除 + 深度预渲染） */
+        void RenderWithSceneGraph(const std::vector<GameObject*>& objects,
+                                  const Frustum* frustum = nullptr,
+                                  bool forceDepthPrePass = false);
+
         // ── 主渲染入口（无 PVS 剔除） ──
         void Render(const std::vector<GameObject*>& objects);
 
     private:
         const PotentiallyVisibleSet* m_PVS = nullptr;
         std::unique_ptr<IPrimitiveBatch> m_Batch;  // 内部批处理器
+
+        // ── 深度预渲染 ──
+        std::shared_ptr<Shader> m_DepthShader;
+        bool m_DepthPrePassEnabled = true;
+
+        // ── 场景图 ──
+        const ISceneGraph* m_SceneGraph = nullptr;
+        uint32 m_SGThreshold = 50;  // 物体超过此数启用场景图剔除
+
+        // ── 统计 ──
+        mutable uint32 m_LastTotalObjects = 0;
+        mutable uint32 m_LastVisibleObjects = 0;
 
         // ── GPU 资源管理 ──
         /**

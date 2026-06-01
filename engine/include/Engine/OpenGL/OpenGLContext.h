@@ -42,6 +42,11 @@ namespace Engine {
             return count;
         }
 
+        // ── 深度预渲染 ──
+        virtual void SetDepthMask(bool enable) override;
+        virtual void SetColorMask(bool r, bool g, bool b, bool a) override;
+        virtual void SetDepthFunc(uint32 func) override;
+
     private:
         friend class PerformanceWindow;
         GLFWwindow* m_WindowHandle;
