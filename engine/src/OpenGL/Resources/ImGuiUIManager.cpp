@@ -75,13 +75,17 @@ namespace Engine {
     void ImGuiUIManager::Shutdown() {
         if (!m_Initialized) return;
 
-        s_Log.Info("Shutting down...");
+        if (Log::IsInitialized()) {
+            s_Log.Info("Shutting down...");
+        }
         ImGui_ImplOpenGL3_Shutdown();
         ImGui_ImplGlfw_Shutdown();
         ImGui::DestroyContext();
 
         m_Initialized = false;
-        s_Log.Info("Shutdown complete");
+        if (Log::IsInitialized()) {
+            s_Log.Info("Shutdown complete");
+        }
     }
 
     // ============================================================

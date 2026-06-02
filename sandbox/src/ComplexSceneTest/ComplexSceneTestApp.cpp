@@ -8,6 +8,7 @@
 #include <Engine/Core/RenderResources/TextureManager.h>
 #include <Engine/Core/RenderResources/VertexArray.h>
 #include <Engine/Core/RenderResources/VertexBuffer.h>
+#include <Engine/Core/Log.h>
 #include <Engine/MemoryTracker.h>
 #include <Engine/OpenGL/OpenGLContext.h>
 #include <Engine/Rendering/TextRenderer.h>
@@ -20,8 +21,6 @@
 #include <iostream>
 #include <random>
 #include <sstream>
-
-#include <spdlog/spdlog.h>
 
 namespace Engine {
 
@@ -44,6 +43,8 @@ ComplexSceneTestApp::ComplexSceneTestApp(IGraphicsFactory &factory)
     : m_Factory(factory), m_TextureManager(factory),
       m_SceneRenderer(factory, m_TextureManager),
       m_Camera(60.0f, 1280.0f / 720.0f, 0.1f, 200.0f), m_Scene("ComplexScene") {
+  // 初始化日志系统
+  Log::Init("logs/complex_scene_test.log");
   m_Window = m_Factory.CreateWindow(1280, 720, "Complex 3D Scene Test");
   m_InputManager.Init(m_Window.get());
   m_SceneRenderer.SetRenderContext(*m_Window->GetContext());
@@ -135,9 +136,9 @@ ComplexSceneTestApp::ComplexSceneTestApp(IGraphicsFactory &factory)
 
   std::cout << "[ComplexSceneTest] Initialized with " << m_AllObjects.size()
             << " objects.\n";
-  spdlog::info("ComplexSceneTest initialized with {} objects. Press ~ to open console.",
-               m_AllObjects.size());
-  spdlog::info("Controls: WASD=move, Q/E=up/down, RMB+drag=look around");
+  Log::Info("ComplexSceneTest initialized with {} objects. Press ~ to open console.",
+            m_AllObjects.size());
+  Log::Info("Controls: WASD=move, Q/E=up/down, RMB+drag=look around");
 }
 
 ComplexSceneTestApp::~ComplexSceneTestApp() {
@@ -145,6 +146,7 @@ ComplexSceneTestApp::~ComplexSceneTestApp() {
     UIManager::Shutdown();
     m_UIInitialized = false;
   }
+  Log::Shutdown();
 }
 
 bool ComplexSceneTestApp::InitUI() {
@@ -682,7 +684,7 @@ void ComplexSceneTestApp::Run() {
     // 每 120 帧打印一次性能日志到控制台
     static int frameCount = 0;
     if (++frameCount % 120 == 0) {
-      spdlog::info("[Perf] FPS: {:.1f} | DrawCalls: {} | Objects: {}", 1.0f / std::max(dt, 0.0001f), drawCalls, m_AllObjects.size());
+      Log::Info("[Perf] FPS: {:.1f} | DrawCalls: {} | Objects: {}", 1.0f / std::max(dt, 0.0001f), drawCalls, m_AllObjects.size());
     }
   }
 }

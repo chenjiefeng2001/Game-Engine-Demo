@@ -120,6 +120,11 @@ public:
     static void SetLevel(Level level);
     static void SetLevel(const std::string& loggerName, Level level);
 
+    // ── 状态查询 ──
+
+    /** 检查日志系统是否已初始化 */
+    static bool IsInitialized() { return s_Initialized; }
+
     // ── 刷新 ──
 
     /** 强制刷新所有日志到磁盘 */
