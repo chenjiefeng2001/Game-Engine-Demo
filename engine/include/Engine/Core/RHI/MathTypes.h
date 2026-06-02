@@ -68,6 +68,28 @@ struct Vec4 {
 #pragma pack(pop)
 
 // ──────────────────────────────────────────
+// 四元数
+// ──────────────────────────────────────────
+struct Quat {
+    float32 x, y, z, w;
+
+    Quat() : x(0.0f), y(0.0f), z(0.0f), w(1.0f) {}
+    Quat(float32 x_, float32 y_, float32 z_, float32 w_)
+        : x(x_), y(y_), z(z_), w(w_) {}
+
+    float32& operator[](int32 i)       { return (&x)[i]; }
+    float32  operator[](int32 i) const { return (&x)[i]; }
+
+    bool operator==(const Quat& o) const {
+        return x == o.x && y == o.y && z == o.z && w == o.w;
+    }
+    bool operator!=(const Quat& o) const { return !(*this == o); }
+
+    /** 单位四元数（无旋转） */
+    static Quat Identity() { return Quat(0.0f, 0.0f, 0.0f, 1.0f); }
+};
+
+// ──────────────────────────────────────────
 // 4×4 矩阵（列主序，与 OpenGL / glm 内存布局一致）
 //
 // 内存布局: data[col * 4 + row]

@@ -2,6 +2,7 @@
 # 精确 GLOB + CONFIGURE_DEPENDS（新文件自动发现，CMake 3.12+）
 file(GLOB ENGINE_SOURCES CONFIGURE_DEPENDS
     src/*.cpp
+    src/Animation/*.cpp
     src/Audio/*.cpp
     src/Box2D/*.cpp
     src/Core/*.cpp
@@ -25,6 +26,7 @@ file(GLOB ENGINE_SOURCES CONFIGURE_DEPENDS
 file(GLOB ENGINE_HEADERS CONFIGURE_DEPENDS
     include/*.h
     include/Engine/*.h
+    include/Engine/Animation/*.h
     include/Engine/Core/*.h
     include/Engine/Core/Memory/*.h
     include/Engine/Core/Containers/*.h
