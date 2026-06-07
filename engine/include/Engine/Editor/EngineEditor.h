@@ -9,6 +9,7 @@
  *   2. 拥有并协调所有编辑器面板的生命周期
  *   3. 提供主菜单栏 + 工具栏
  *   4. 与 Application::OnImGui() 集成
+ *   5. 支持面板分离为独立 GLFW 窗口
  *
  * 使用方式（在 Application 子类中）：
  * @code

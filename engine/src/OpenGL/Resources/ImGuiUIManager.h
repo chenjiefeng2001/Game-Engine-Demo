@@ -6,6 +6,9 @@
  *
  * 实现 IUIManager 接口，封装 Dear ImGui 在 OpenGL 4.6 + GLFW3 上的初始化、
  * 帧管理、字体、缩放、引擎暗色主题等。
+ *
+ * 多窗口支持：通过 ImGuiConfigFlags_DockingEnable + ViewportsEnable
+ * 启用官方多视口功能（ImGui docking 分支），面板可拖出主窗口成为独立 OS 窗口。
  */
 
 #include "Engine/Core/IUIManager.h"
@@ -41,9 +44,9 @@ namespace Engine {
         void SetScale(float scale) override;
         float GetScale() const override { return m_Scale; }
 
-        void LoadFont(const char* path, float size) override;
-        const std::string& GetFontPath() const override { return m_FontPath; }
-        float GetFontSize() const override { return m_FontSize; }
+        void LoadFont(const char* path, float size);
+        const std::string& GetFontPath() const { return m_FontPath; }
+        float GetFontSize() const { return m_FontSize; }
 
     private:
         /** 应用引擎暗色主题 */
@@ -56,9 +59,8 @@ namespace Engine {
         // 字体状态
         std::string m_FontPath;
         float m_FontSize = 16.0f;
-        bool m_CjkFontAttempted = false;   // 是否已尝试加载 CJK 字体
+        bool m_CjkFontAttempted = false;
 
-        // 延迟缩放请求（帧间安全加载）
         float m_PendingScale = -1.0f;
     };
 
