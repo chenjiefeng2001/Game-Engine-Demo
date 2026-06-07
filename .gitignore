@@ -58,7 +58,7 @@ compile_commands.json
 *.log
 *.bak
 *.swp
-
+*.yaml
 # vcpkg
 vcpkg_installed/
 
@@ -75,3 +75,4 @@ Testing/
 third_party/**/*.vcxproj
 third_party/**/*.vcxproj.filters
 third_party/**/*.sln
+

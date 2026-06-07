@@ -59,11 +59,19 @@ namespace Engine {
         ImGui::CreateContext();
         ImGuiIO& io = ImGui::GetIO();
         io.ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard;
+        io.ConfigFlags |= ImGuiConfigFlags_DockingEnable;
+        io.ConfigFlags |= ImGuiConfigFlags_ViewportsEnable;
 
         ApplyEngineStyle(1.0f);
 
         ImGui_ImplGlfw_InitForOpenGL(window, true);
         ImGui_ImplOpenGL3_Init("#version 460");
+
+        // ── 视口窗口样式：平台窗口应使用直角（无圆角） ──
+        if (io.ConfigFlags & ImGuiConfigFlags_ViewportsEnable) {
+            ImGui::GetStyle().WindowRounding = 0.0f;
+            ImGui::GetStyle().Colors[ImGuiCol_WindowBg].w = 1.0f;
+        }
 
         LoadFont(nullptr, 16.0f);
 
@@ -78,6 +86,7 @@ namespace Engine {
         if (Log::IsInitialized()) {
             s_Log.Info("Shutting down...");
         }
+
         ImGui_ImplOpenGL3_Shutdown();
         ImGui_ImplGlfw_Shutdown();
         ImGui::DestroyContext();
@@ -121,6 +130,21 @@ namespace Engine {
         ImGui::Render();
         if (m_Visible) {
             ImGui_ImplOpenGL3_RenderDrawData(ImGui::GetDrawData());
+        }
+
+        // ── 官方多视口渲染（ImGui docking 分支） ──
+        // 当面板被拖出主窗口时，ImGui 自动创建辅助 GLFW 窗口并在各自的
+        // OpenGL 上下文中渲染。无需自定义子窗口管理代码。
+        ImGuiIO& io = ImGui::GetIO();
+        if (io.ConfigFlags & ImGuiConfigFlags_ViewportsEnable) {
+            ImGui::UpdatePlatformWindows();
+            ImGui::RenderPlatformWindowsDefault();
+
+            // 恢复主窗口 OpenGL 上下文
+            GLFWwindow* mainWin = static_cast<GLFWwindow*>(
+                ImGui::GetMainViewport()->PlatformHandle);
+            if (mainWin)
+                glfwMakeContextCurrent(mainWin);
         }
     }
 

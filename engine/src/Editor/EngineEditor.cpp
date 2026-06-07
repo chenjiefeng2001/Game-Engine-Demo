@@ -154,7 +154,6 @@ namespace Engine {
         }
 
         if (vis.depGraph) {
-            // 依赖图面板使用独立窗口（非底部条），充分利用空间
             float depW = workW * 0.85f;
             float depH = workH * 0.8f;
             float depX = viewport->Pos.x + (workW - depW) * 0.5f;
@@ -227,5 +226,9 @@ namespace Engine {
     void EngineEditor::DrawViewportPanel() {
         m_Viewport.OnImGui();
     }
+
+    // ============================================================
+    // 分离 / 附着面板
+    // ============================================================
 
 } // namespace Engine
