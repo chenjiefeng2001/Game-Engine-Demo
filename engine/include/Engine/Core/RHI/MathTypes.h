@@ -13,6 +13,7 @@
 
 #include "Engine/Types.h"
 #include <cstring>   // memcpy, memset
+#include <cmath>     // sqrt, cos, sin
 
 namespace Engine {
 
@@ -31,7 +32,40 @@ struct Vec2 {
 
     bool operator==(const Vec2& o) const { return x == o.x && y == o.y; }
     bool operator!=(const Vec2& o) const { return !(*this == o); }
+
+    // 算术运算符
+    Vec2 operator+(const Vec2& o) const { return Vec2(x + o.x, y + o.y); }
+    Vec2 operator-(const Vec2& o) const { return Vec2(x - o.x, y - o.y); }
+    Vec2 operator*(float32 s) const { return Vec2(x * s, y * s); }
+    Vec2 operator/(float32 s) const { return Vec2(x / s, y / s); }
+    Vec2 operator-() const { return Vec2(-x, -y); }
+
+    Vec2& operator+=(const Vec2& o) { x += o.x; y += o.y; return *this; }
+    Vec2& operator-=(const Vec2& o) { x -= o.x; y -= o.y; return *this; }
+    Vec2& operator*=(float32 s) { x *= s; y *= s; return *this; }
+    Vec2& operator/=(float32 s) { x /= s; y /= s; return *this; }
+
+    // 静态工具方法
+    static float32 Dot(const Vec2& a, const Vec2& b) { return a.x * b.x + a.y * b.y; }
+    static float32 Cross(const Vec2& a, const Vec2& b) { return a.x * b.y - a.y * b.x; }
+    static float32 Length(const Vec2& v) { return std::sqrt(v.x * v.x + v.y * v.y); }
+    static float32 LengthSq(const Vec2& v) { return v.x * v.x + v.y * v.y; }
+    static Vec2 Normalize(const Vec2& v) {
+        float32 len = Length(v);
+        if (len < 1e-8f) return Vec2(0.0f, 0.0f);
+        return Vec2(v.x / len, v.y / len);
+    }
+    static Vec2 Perp(const Vec2& v) { return Vec2(-v.y, v.x); }
+    static float32 Distance(const Vec2& a, const Vec2& b) { return Length(a - b); }
+    static Vec2 Lerp(const Vec2& a, const Vec2& b, float32 t) { return a + (b - a) * t; }
+    static Vec2 Rotate(const Vec2& v, float32 angle) {
+        float32 c = std::cos(angle), s = std::sin(angle);
+        return Vec2(v.x * c - v.y * s, v.x * s + v.y * c);
+    }
 };
+
+// 标量 * Vec2 的左乘
+inline Vec2 operator*(float32 s, const Vec2& v) { return Vec2(v.x * s, v.y * s); }
 
 // ──────────────────────────────────────────
 // 3D 向量

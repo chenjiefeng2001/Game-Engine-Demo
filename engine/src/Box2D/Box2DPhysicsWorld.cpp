@@ -74,9 +74,9 @@ namespace Engine {
         /// 在刚体上创建初始形状（用于 CreateBody）
         void CreateShapesFromBodyDef(b2BodyId bodyId, const BodyDef& def) {
             b2ShapeDef shapeDef = b2DefaultShapeDef();
-            shapeDef.density     = def.density;
-            shapeDef.material.friction    = def.friction;
-            shapeDef.material.restitution = def.restitution;
+            shapeDef.density     = def.material.density;
+            shapeDef.material.friction    = def.material.friction;
+            shapeDef.material.restitution = def.material.restitution;
             shapeDef.filter.categoryBits = static_cast<uint64_t>(def.categoryBits);
             shapeDef.filter.maskBits     = static_cast<uint64_t>(def.maskBits);
             shapeDef.filter.groupIndex   = def.groupIndex;

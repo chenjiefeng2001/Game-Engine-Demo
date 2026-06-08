@@ -1,4 +1,4 @@
-#include "PhysicsTestApp.h"
+P#include "PhysicsTestApp.h"
 #include <Engine/Platform/PlatformUtils.h>
 #include <Engine/Core/IRenderContext.h>
 #include <Engine/Core/IWindow.h>
@@ -86,7 +86,7 @@ namespace Engine {
             groundDef.position = Vec2(0.0f, -5.0f);
             groundDef.shape.type = ShapeType::Box;
             groundDef.shape.boxSize = Vec2(8.0f, 0.5f);
-            groundDef.friction = 0.5f;
+            groundDef.material.friction = 0.5f;
             m_PhysicsWorld->CreateBody(groundDef);
         }
 
@@ -113,8 +113,8 @@ namespace Engine {
                 bodyDef.type = BodyType::Dynamic;
                 bodyDef.shape.type = ShapeType::Box;
                 bodyDef.shape.boxSize = Vec2(0.45f, 0.45f);
-                bodyDef.density  = 1.0f;
-                bodyDef.friction = 0.5f;
+                bodyDef.material.density  = 1.0f;
+                bodyDef.material.friction = 0.5f;
                 box->GetPhysics().CreateBody(m_PhysicsWorld, bodyDef);
 
                 // 初始位置同步到物理体
@@ -138,8 +138,8 @@ namespace Engine {
                 bodyDef.type = BodyType::Dynamic;
                 bodyDef.shape.type = ShapeType::Box;
                 bodyDef.shape.boxSize = Vec2(0.45f, 0.45f);
-                bodyDef.density  = 1.0f;
-                bodyDef.friction = 0.5f;
+                bodyDef.material.density  = 1.0f;
+                bodyDef.material.friction = 0.5f;
                 box->GetPhysics().CreateBody(m_PhysicsWorld, bodyDef);
 
                 const auto& pos = box->GetTransform().GetPosition();
@@ -161,9 +161,9 @@ namespace Engine {
             bodyDef.type = BodyType::Dynamic;
             bodyDef.shape.type = ShapeType::Circle;
             bodyDef.shape.circleRadius = 0.5f;
-            bodyDef.density  = 1.0f;
-            bodyDef.friction = 0.3f;
-            bodyDef.restitution = 0.6f;
+            bodyDef.material.density     = 1.0f;
+            bodyDef.material.friction    = 0.3f;
+            bodyDef.material.restitution = 0.6f;
             ball->GetPhysics().CreateBody(m_PhysicsWorld, bodyDef);
 
             // 演示：碰撞回调（游戏对象级别）
