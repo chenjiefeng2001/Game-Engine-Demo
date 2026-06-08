@@ -1,8 +1,5 @@
-if(MSVC)
-    # 强制 MSVC 使用 UTF-8 编码读取源文件并生成执行文件
-    add_compile_options(/utf-8)
-endif()
 cmake_minimum_required(VERSION 3.20)
+project(GameEngineDemo LANGUAGES C CXX)
 
 # ── Ninja 依赖格式：将编译器输出的头文件依赖写入 .d 文件而非控制台 ──
 # MSVC 的 /showIncludes 会向 stdout 输出每条包含路径，导致编译输出杂乱。
@@ -19,7 +16,6 @@ endif()
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
-project(GameEngineDemo LANGUAGES C CXX)
 
 # ============================================================================
 # Visual Studio / MSVC 兼容性设置
