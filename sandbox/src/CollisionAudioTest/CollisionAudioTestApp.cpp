@@ -246,7 +246,7 @@ namespace Engine {
             def.position = Vec2(0.0f, -5.0f);
             def.shape.type = ShapeType::Box;
             def.shape.boxSize = Vec2(8.0f, 0.5f);
-            def.friction = 0.5f;
+            def.material.friction = 0.5f;
             def.userData = nullptr;  // 无材质
             m_PhysicsWorld->CreateBody(def);
         }
@@ -258,8 +258,8 @@ namespace Engine {
             def.position = Vec2(-3.0f, 2.0f);
             def.shape.type = ShapeType::Box;
             def.shape.boxSize = Vec2(0.45f, 0.45f);
-            def.density  = 2.0f;
-            def.friction = 0.8f;
+            def.material.density  = 2.0f;
+            def.material.friction = 0.8f;
             def.userData = reinterpret_cast<void*>(static_cast<uintptr_t>(
                 static_cast<uint8>(MaterialType::Stone)));
             m_PhysicsWorld->CreateBody(def);
@@ -272,8 +272,8 @@ namespace Engine {
             def.position = Vec2(0.0f, 4.0f);
             def.shape.type = ShapeType::Box;
             def.shape.boxSize = Vec2(0.45f, 0.45f);
-            def.density  = 0.8f;
-            def.friction = 0.6f;
+            def.material.density  = 0.8f;
+            def.material.friction = 0.6f;
             def.userData = reinterpret_cast<void*>(static_cast<uintptr_t>(
                 static_cast<uint8>(MaterialType::Wood)));
             m_PhysicsWorld->CreateBody(def);
@@ -286,8 +286,8 @@ namespace Engine {
             def.position = Vec2(3.0f, 6.0f);
             def.shape.type = ShapeType::Box;
             def.shape.boxSize = Vec2(0.45f, 0.45f);
-            def.density  = 3.0f;
-            def.friction = 0.4f;
+            def.material.density  = 3.0f;
+            def.material.friction = 0.4f;
             def.userData = reinterpret_cast<void*>(static_cast<uintptr_t>(
                 static_cast<uint8>(MaterialType::Metal)));
             m_PhysicsWorld->CreateBody(def);
@@ -304,8 +304,8 @@ namespace Engine {
             def.position = Vec2(-1.5f + i * 0.6f, 8.0f + i * 0.8f);
             def.shape.type = ShapeType::Circle;
             def.shape.circleRadius = 0.35f;
-            def.density  = 1.0f + static_cast<float32>(i % 3) * 0.5f;
-            def.friction = 0.5f;
+            def.material.density  = 1.0f + static_cast<float32>(i % 3) * 0.5f;
+            def.material.friction = 0.5f;
             def.userData = reinterpret_cast<void*>(static_cast<uintptr_t>(
                 static_cast<uint8>(mat)));
             m_PhysicsWorld->CreateBody(def);

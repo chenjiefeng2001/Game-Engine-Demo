@@ -883,8 +883,8 @@ namespace Engine {
             ContactPairKey key{c.bodyA, c.bodyB};
             auto it = m_ActiveContacts.find(key);
             if (it == m_ActiveContacts.end()) {
-                // Begin
-                if (m_ContactBeginCallback && !c.isSensor) {
+                // Begin — 传感器和非传感器都触发
+                if (m_ContactBeginCallback) {
                     ContactInfo info;
                     info.bodyA = c.bodyA;
                     info.bodyB = c.bodyB;
@@ -894,7 +894,7 @@ namespace Engine {
                     m_ContactBeginCallback(info);
                 }
             } else {
-                // Persist
+                // Persist — 非传感器才触发（传感器无冲量）
                 if (m_ContactPersistCallback && !c.isSensor) {
                     ContactPersistData data;
                     data.bodyA = c.bodyA;
@@ -910,10 +910,10 @@ namespace Engine {
             newMap[key] = c;
         }
 
-        // End
+        // End — 传感器和非传感器都触发
         for (auto& [key, oldContact] : m_PrevActiveContacts) {
             if (newMap.find(key) == newMap.end()) {
-                if (m_ContactEndCallback && !oldContact.isSensor) {
+                if (m_ContactEndCallback) {
                     ContactInfo info;
                     info.bodyA = oldContact.bodyA;
                     info.bodyB = oldContact.bodyB;

@@ -1,4 +1,4 @@
-P#include "PhysicsTestApp.h"
+#include "PhysicsTestApp.h"
 #include <Engine/Platform/PlatformUtils.h>
 #include <Engine/Core/IRenderContext.h>
 #include <Engine/Core/IWindow.h>

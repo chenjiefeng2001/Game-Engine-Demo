@@ -659,9 +659,9 @@ void SystemTestApp::SpawnRandomSprite() {
     def.position = {x, y};
     def.shape.type = ShapeType::Box;
     def.shape.boxSize = {0.4f, 0.4f};
-    def.density = 1.0f;
-    def.friction = 0.5f;
-    def.restitution = 0.3f;
+    def.material.density = 1.0f;
+    def.material.friction = 0.5f;
+    def.material.restitution = 0.3f;
 
     auto* physics = obj->AddComponent<PhysicsComponent>();
     physics->CreateBody(m_PhysicsWorld, def);
