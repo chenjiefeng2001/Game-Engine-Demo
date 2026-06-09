@@ -627,7 +627,7 @@ namespace Engine {
             def.position = Vec2(0.0f, -5.0f);
             def.shape.type = ShapeType::Box;
             def.shape.boxSize = Vec2(9.0f, 0.5f);
-            def.friction = 0.5f;
+            def.material.friction = 0.5f;
             def.userData = nullptr;
             auto body = m_PhysicsWorld->CreateBody(def);
             m_Stats.physicsBodiesCreated++;
@@ -641,7 +641,7 @@ namespace Engine {
             def.position = Vec2(-4.5f, 0.0f);
             def.shape.type = ShapeType::Box;
             def.shape.boxSize = Vec2(0.5f, 5.0f);
-            def.friction = 0.5f;
+            def.material.friction = 0.5f;
             auto body = m_PhysicsWorld->CreateBody(def);
             m_Stats.physicsBodiesCreated++;
             m_AllBodies.push_back(body);
@@ -654,7 +654,7 @@ namespace Engine {
             def.position = Vec2(4.5f, 0.0f);
             def.shape.type = ShapeType::Box;
             def.shape.boxSize = Vec2(0.5f, 5.0f);
-            def.friction = 0.5f;
+            def.material.friction = 0.5f;
             auto body = m_PhysicsWorld->CreateBody(def);
             m_Stats.physicsBodiesCreated++;
             m_AllBodies.push_back(body);
@@ -681,9 +681,9 @@ namespace Engine {
             def.position = spawn.pos;
             def.shape.type = ShapeType::Box;
             def.shape.boxSize = spawn.boxSize;
-            def.density  = spawn.density;
-            def.friction = 0.5f;
-            def.restitution = 0.3f;
+            def.material.density  = spawn.density;
+            def.material.friction = 0.5f;
+            def.material.restitution = 0.3f;
             def.userData = reinterpret_cast<void*>(static_cast<uintptr_t>(
                 static_cast<uint8>(spawn.mat)));
             auto body = m_PhysicsWorld->CreateBody(def);
@@ -703,9 +703,9 @@ namespace Engine {
             def.position = Vec2(-3.0f + i * 0.8f, 8.0f + i * 0.6f);
             def.shape.type = ShapeType::Circle;
             def.shape.circleRadius = 0.3f;
-            def.density  = 1.0f + static_cast<float32>(i % 4) * 0.3f;
-            def.friction = 0.4f;
-            def.restitution = 0.5f;
+            def.material.density  = 1.0f + static_cast<float32>(i % 4) * 0.3f;
+            def.material.friction = 0.4f;
+            def.material.restitution = 0.5f;
             def.userData = reinterpret_cast<void*>(static_cast<uintptr_t>(
                 static_cast<uint8>(mat)));
             auto body = m_PhysicsWorld->CreateBody(def);
@@ -720,9 +720,9 @@ namespace Engine {
             def.position = Vec2(3.0f, 2.0f);
             def.shape.type = ShapeType::Circle;
             def.shape.circleRadius = 0.5f;
-            def.density  = 1.5f;
-            def.friction = 0.3f;
-            def.restitution = 0.8f;
+            def.material.density  = 1.5f;
+            def.material.friction = 0.3f;
+            def.material.restitution = 0.8f;
             def.userData = reinterpret_cast<void*>(static_cast<uintptr_t>(
                 static_cast<uint8>(MaterialType::Rubber)));
             auto body = m_PhysicsWorld->CreateBody(def);
@@ -737,8 +737,8 @@ namespace Engine {
             defA.position = Vec2(-1.5f, 0.5f);
             defA.shape.type = ShapeType::Box;
             defA.shape.boxSize = Vec2(0.4f, 0.4f);
-            defA.density = 1.0f;
-            defA.friction = 0.5f;
+            defA.material.density = 1.0f;
+            defA.material.friction = 0.5f;
             defA.userData = reinterpret_cast<void*>(static_cast<uintptr_t>(
                 static_cast<uint8>(MaterialType::Wood)));
             auto bodyA = m_PhysicsWorld->CreateBody(defA);
@@ -750,8 +750,8 @@ namespace Engine {
             defB.position = Vec2(1.5f, 0.5f);
             defB.shape.type = ShapeType::Box;
             defB.shape.boxSize = Vec2(0.4f, 0.4f);
-            defB.density = 1.0f;
-            defB.friction = 0.5f;
+            defB.material.density = 1.0f;
+            defB.material.friction = 0.5f;
             defB.userData = reinterpret_cast<void*>(static_cast<uintptr_t>(
                 static_cast<uint8>(MaterialType::Metal)));
             auto bodyB = m_PhysicsWorld->CreateBody(defB);

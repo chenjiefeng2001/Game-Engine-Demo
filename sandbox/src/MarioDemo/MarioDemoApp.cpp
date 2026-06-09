@@ -74,14 +74,14 @@ void MarioDemoApp::InitConsoleCommands() {
 static void AT(Scene& s,std::shared_ptr<IPhysicsWorld> w,float x,float y,std::shared_ptr<Texture> t){
     auto o=std::make_shared<GameObject>("T");o->GetTransform().SetPosition(x,y,0);
     if(t)o->GetSprite().SetTexture(t);o->GetSprite().SetSortingLayer(2);
-    auto* p=o->AddComponent<PhysicsComponent>();BodyDef b;b.type=BodyType::Static;b.shape.type=ShapeType::Box;b.shape.boxSize={0.5f,0.5f};b.friction=0.5f;
+    auto* p=o->AddComponent<PhysicsComponent>();BodyDef b;b.type=BodyType::Static;b.shape.type=ShapeType::Box;b.shape.boxSize={0.5f,0.5f};b.material.friction=0.5f;
     p->CreateBody(w,b);p->SyncTransformToPhysics({x,y},0);s.AddObject(o);
 }
 
 static void AG(Scene& s,std::shared_ptr<IPhysicsWorld> w,float x,float y,std::shared_ptr<Texture> t,auto& ev){
     auto e=std::make_shared<GameObject>("G");e->GetTransform().SetPosition(x,y,0);
     if(t)e->GetSprite().SetTexture(t);e->GetSprite().SetSortingLayer(8);
-    auto* ep=e->AddComponent<PhysicsComponent>();BodyDef b;b.type=BodyType::Dynamic;b.shape.type=ShapeType::Box;b.shape.boxSize={0.4f,0.4f};b.density=1;b.friction=0.2f;b.fixedRotation=true;
+    auto* ep=e->AddComponent<PhysicsComponent>();BodyDef b;b.type=BodyType::Dynamic;b.shape.type=ShapeType::Box;b.shape.boxSize={0.4f,0.4f};b.material.density=1;b.material.friction=0.2f;b.fixedRotation=true;
     ep->CreateBody(w,b);ep->SyncTransformToPhysics({x,y},0);s.AddObject(e);
     ev.push_back({e,true,-1,1.2f});
 }
@@ -114,7 +114,7 @@ void MarioDemoApp::BuildLevel_1_1(){
     m_Player=std::make_shared<GameObject>("Mario");m_Player->GetTransform().SetPosition(4,10.5f,0);
     if(auto t=m_Tex.find("ms")!=m_Tex.end()?m_Tex["ms"]:nullptr)m_Player->GetSprite().SetTexture(t);
     m_Player->GetSprite().SetSortingLayer(10);
-    auto* pp=m_Player->AddComponent<PhysicsComponent>();BodyDef b;b.type=BodyType::Dynamic;b.shape.type=ShapeType::Box;b.shape.boxSize={0.35f,0.45f};b.density=1;b.friction=0.2f;b.fixedRotation=true;
+    auto* pp=m_Player->AddComponent<PhysicsComponent>();BodyDef b;b.type=BodyType::Dynamic;b.shape.type=ShapeType::Box;b.shape.boxSize={0.35f,0.45f};b.material.density=1;b.material.friction=0.2f;b.fixedRotation=true;
     pp->CreateBody(m_Physics,b);pp->SyncTransformToPhysics({4,10.5f},0);m_Scene.AddObject(m_Player);
     m_State=PlayerState::Idle;m_OnGround=false;m_DeathTimer=0;m_InvTimer=0;m_LevelCompleteTimer=0;
     AG(m_Scene,m_Physics,30.5f,10.5f,m_Tex["goomba"],m_Enemies);AG(m_Scene,m_Physics,45.5f,10.5f,m_Tex["goomba"],m_Enemies);
@@ -157,7 +157,7 @@ void MarioDemoApp::BuildLevel_1_2(){
     m_Player=std::make_shared<GameObject>("Mario");m_Player->GetTransform().SetPosition(4,10.5f,0);
     if(auto t=m_Tex.find("ms")!=m_Tex.end()?m_Tex["ms"]:nullptr)m_Player->GetSprite().SetTexture(t);
     m_Player->GetSprite().SetSortingLayer(10);
-    auto* pp=m_Player->AddComponent<PhysicsComponent>();BodyDef b2;b2.type=BodyType::Dynamic;b2.shape.type=ShapeType::Box;b2.shape.boxSize={0.35f,0.45f};b2.density=1;b2.friction=0.2f;b2.fixedRotation=true;
+    auto* pp=m_Player->AddComponent<PhysicsComponent>();BodyDef b2;b2.type=BodyType::Dynamic;b2.shape.type=ShapeType::Box;b2.shape.boxSize={0.35f,0.45f};b2.material.density=1;b2.material.friction=0.2f;b2.fixedRotation=true;
     pp->CreateBody(m_Physics,b2);pp->SyncTransformToPhysics({4,10.5f},0);m_Scene.AddObject(m_Player);
     m_State=PlayerState::Idle;m_OnGround=false;m_DeathTimer=0;m_InvTimer=0;m_LevelCompleteTimer=0;
     AG(m_Scene,m_Physics,18.5f,10.5f,m_Tex["goomba"],m_Enemies);AG(m_Scene,m_Physics,35.5f,10.5f,m_Tex["goomba"],m_Enemies);

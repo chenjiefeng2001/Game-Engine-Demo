@@ -169,7 +169,7 @@ namespace Engine {
                 bd.type = BodyType::Static;
                 bd.shape.type = ShapeType::Box;
                 bd.shape.boxSize = {8.0f, 0.5f};
-                bd.friction = 0.5f;
+                bd.material.friction = 0.5f;
                 ground->GetPhysics().CreateBody(m_PhysicsWorld, bd);
                 m_TestScene->AddObject(ground);
                 MemoryTracker::created++;
@@ -219,8 +219,8 @@ namespace Engine {
             bd.type = BodyType::Dynamic;
             bd.shape.type = ShapeType::Box;
             bd.shape.boxSize = {0.45f, 0.45f};
-            bd.density  = 1.0f;
-            bd.friction = 0.5f;
+            bd.material.density  = 1.0f;
+            bd.material.friction = 0.5f;
             box->GetPhysics().CreateBody(m_PhysicsWorld, bd);
             const auto& p = box->GetTransform().GetPosition();
             box->GetPhysics().SyncTransformToPhysics(Vec2(p.x, p.y), 0);
@@ -239,7 +239,7 @@ namespace Engine {
             bd.type = BodyType::Dynamic;
             bd.shape.type = ShapeType::Box;
             bd.shape.boxSize = {0.45f, 0.45f};
-            bd.density = 1.0f;
+            bd.material.density = 1.0f;
             box->GetPhysics().CreateBody(m_PhysicsWorld, bd);
             const auto& p = box->GetTransform().GetPosition();
             box->GetPhysics().SyncTransformToPhysics(Vec2(p.x, p.y), 0);
@@ -258,9 +258,9 @@ namespace Engine {
             bd.type = BodyType::Dynamic;
             bd.shape.type = ShapeType::Circle;
             bd.shape.circleRadius = 0.5f;
-            bd.density  = 1.0f;
-            bd.friction = 0.3f;
-            bd.restitution = 0.5f;
+            bd.material.density  = 1.0f;
+            bd.material.friction = 0.3f;
+            bd.material.restitution = 0.5f;
             ball->GetPhysics().CreateBody(m_PhysicsWorld, bd);
             const auto& p = ball->GetTransform().GetPosition();
             ball->GetPhysics().SyncTransformToPhysics(Vec2(p.x, p.y), 0);
@@ -384,11 +384,19 @@ namespace Engine {
             }
 
             ImGui::Separator();
-            if (ImGui::Button("Reload Font 16px"))
-                UIManager::Get()->LoadFont(nullptr, 16);
+            if (ImGui::Button("Rebuild Font 16px")) {
+                ImGui::GetIO().Fonts->Clear();
+                ImGui::GetIO().Fonts->AddFontDefault();
+                ImGui::GetIO().Fonts->Build();
+                ImGui::GetIO().FontDefault = ImGui::GetIO().Fonts->Fonts[0];
+            }
             ImGui::SameLine();
-            if (ImGui::Button("Reload Font 24px"))
-                UIManager::Get()->LoadFont(nullptr, 24);
+            if (ImGui::Button("Rebuild Font 24px")) {
+                ImGui::GetIO().Fonts->Clear();
+                ImGui::GetIO().Fonts->AddFontDefault();
+                ImGui::GetIO().Fonts->Build();
+                ImGui::GetIO().FontDefault = ImGui::GetIO().Fonts->Fonts[0];
+            }
 
             ImGui::Separator();
             ImGui::Text("Objects: %zu", m_TestScene->GetObjects().size());
