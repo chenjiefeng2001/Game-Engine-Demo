@@ -1,4 +1,4 @@
-﻿#include "Engine/Application.h"
+#include "Engine/Application.h"
 #include "Engine/Core/IRenderContext.h"
 #include "Engine/Core/IWindow.h"
 #include "Engine/Core/Input.h"
@@ -427,6 +427,10 @@ void Application::InternalRender() {
   // 仅在需要时绘制默认测试四边形
   if (m_RenderDefaultQuad && m_Shader && m_VAO && m_Texture) {
     m_Shader->Bind();
+
+    // 绑定当前渲染调试模式的 uniform
+    context->BindViewModeUniform(m_Shader.get());
+
     m_Shader->SetMat4("u_ViewProjection",
                       m_Camera.GetViewProjectionMatrixPtr());
     m_Texture->Bind(0);
@@ -565,10 +569,50 @@ void Application::Run() {
     // 阶段 6：构建 UI（仅在可见时执行）
     // ============================================================
     if (auto *ui = UIManager::Get(); ui && ui->IsVisible()) {
-      // 收集渲染统计（在构建 UI 前，让 DrawCall 计数反映上一帧的数据）
-      uint32 drawCalls = m_Window->GetContext()->GetAndResetDrawCallCount();
+      // ── 确保 PerformanceWindow 持有渲染上下文指针 ──
+      auto* ctx = m_Window->GetContext();
+      m_PerfWindow.SetRenderContext(ctx);
 
+      // ── 绑定 View Mode uniform（在所有渲染前） ──
+      // 通知上下文本帧的 view mode，shader 在 Bind() 后可查询
+      // 注：ctx->BindViewModeUniform(shader) 在 InternalRender 或子类 OnRender 中调用
+
+      uint32 drawCalls   = ctx->GetAndResetDrawCallCount();
+      uint32 vertexCount = ctx->GetAndResetVertexCount();
+      uint32 triCount    = ctx->GetAndResetTriangleCount();
+
+      // 基础统计
       m_PerfWindow.FeedStats(dt * 1000.0f, drawCalls, 0, 0, 0, 0);
+
+      // 几何体统计
+      m_PerfWindow.SetGeometryCount(vertexCount, triCount);
+
+      // CPU 耗时 (近似: 帧总时间 - GPU 时间)
+      float32 cpuTimeMs = dt * 1000.0f;
+      m_PerfWindow.SetCPUTime(cpuTimeMs);
+
+      // GPU 耗时 (从时间戳查询)
+      GPUProfileFrame gpuFrame;
+      if (ctx->GetGPUProfileFrame(gpuFrame)) {
+        m_PerfWindow.SetGPUTime(gpuFrame.GetTotalMs());
+
+        // 填充 GPU Profiler 快照
+        GPUProfilerSnapshot snap;
+        snap.passCount = (std::min)(gpuFrame.passCount,
+                                     static_cast<uint32>(GPUProfilerSnapshot::kMaxPasses));
+        for (uint32 i = 0; i < snap.passCount; ++i) {
+          snap.passes[i].name   = gpuFrame.passes[i].passName;
+          snap.passes[i].timeMs = gpuFrame.passes[i].elapsedMs;
+        }
+        m_PerfWindow.SetGPUProfiler(snap);
+      }
+
+      // 显存占用
+      m_PerfWindow.SetVRAMUsage(
+        ctx->GetTextureVRAMBytes(),
+        ctx->GetBufferVRAMBytes(),
+        0 // model bytes — 暂未单独跟踪
+      );
 
       // 绘制性能监控窗口（可由子类通过 m_DrawPerformanceWindow=false 交给
       // Editor 管理）

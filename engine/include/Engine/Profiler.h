@@ -45,6 +45,13 @@
 
 #if defined(ENGINE_ENABLE_PROFILING)
 
+// ── 禁止 Tracy ETW 系统跟踪 ──
+// ETW 采样在 Windows 上会导致堆栈 Cookie 检测溢出崩溃。
+// 禁用后不影响 Zone/Frame/Memory/GPU 等核心 profiling 功能。
+#ifndef TRACY_NO_SYSTEM_TRACING
+#define TRACY_NO_SYSTEM_TRACING
+#endif
+
 // ── 包含 Tracy 头 ──
 #include <tracy/Tracy.hpp>
 #include <tracy/TracyC.h>
