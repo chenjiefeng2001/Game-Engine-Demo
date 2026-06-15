@@ -1,435 +1,226 @@
 #include "_3DTestApp.h"
-#include <Engine/Core/RenderResources/Shader.h>
-#include <Engine/Core/RenderResources/VertexBuffer.h>
-#include <Engine/Core/RenderResources/VertexArray.h>
-#include <Engine/Core/RenderResources/TextureManager.h>
-#include <Engine/Core/IRenderContext.h>
-#include <Engine/Core/IGraphicsFactory.h>
-#include <Engine/UIManager.h>
-#include <Engine/ConsoleCommandRegistry.h>
-#include <Engine/MemoryTracker.h>
-#include <Engine/Core/RenderResources/Texture.h>
-
-#include <glm/glm.hpp>
-#include <iostream>
-#include <cmath>
+#include "Engine/Core/Log.h"
+#include "Engine/Core/IRenderContext.h"
+#include "Engine/Core/RHI/IPrimitiveBatch.h"
+#include "Engine/Core/IGraphicsFactory.h"
+#include "Engine/Core/RenderResources/Shader.h"
+#include "Engine/Profiler.h"
+#include "Engine/OpenGL/OpenGLContext.h"
+#include "Engine/MemoryTracker.h"
+#include <GLFW/glfw3.h>
 #include <chrono>
-#include <sstream>
 
 namespace Engine {
-
-    constexpr int WINDOW_WIDTH  = 1280;
-    constexpr int WINDOW_HEIGHT = 720;
 
     _3DTestApp::_3DTestApp(IGraphicsFactory& factory)
         : m_Factory(factory)
         , m_TextureManager(factory)
-        , m_SceneRenderer(factory, m_TextureManager)
-        , m_Camera(45.0f, (float)WINDOW_WIDTH / WINDOW_HEIGHT, 0.1f, 100.0f)
-        , m_Scene("3DTest")
+        , m_Camera(60.0f, 1280.0f / 720.0f, 0.1f, 200.0f)
     {
-        m_Window = m_Factory.CreateWindow(WINDOW_WIDTH, WINDOW_HEIGHT, "3D Test - Coordinate Spaces");
+        // Note: Log::Init is called in Run() to avoid Tracy ETW stack overflow
+        // during static initialization phase.
+
+        m_Window = m_Factory.CreateWindow(1280, 720, "3D Debug Test");
         m_InputManager.Init(m_Window.get());
-        m_SceneRenderer.SetRenderContext(*m_Window->GetContext());
 
-        // Load 3D shader
-        m_3DShader = m_Factory.CreateShader("assets/shaders/3d_lit.vert", "assets/shaders/3d_lit.frag");
-        m_SceneRenderer.SetShader(m_3DShader);
+        m_Camera.SetPosition(Vec3(0, 10, 25));
+        m_Camera.SetRotation(-15, 0);
 
-        // Create MeshRenderer
         auto* ctx = m_Window->GetContext();
-        m_MeshRenderer = std::make_shared<MeshRenderer>(m_Factory, *ctx);
-        m_MeshRenderer->SetShader(m_3DShader);
+        m_MeshRenderer = std::make_unique<MeshRenderer>(m_Factory, *ctx);
         m_MeshRenderer->SetCamera(&m_Camera);
+        m_MeshRenderer->SetAmbientColor(Vec3(0.2f, 0.2f, 0.25f));
 
-        // Build coordinate axes and grid GPU resources
-        {
-            auto axes = MeshRenderer::GenerateAxes(8.0f);
-            m_AxesIndexCount = (uint32)axes.indices.size();
-            m_AxesVBO = m_Factory.CreateVertexBuffer(
-                reinterpret_cast<float*>(axes.vertices.data()),
-                (uint32)(axes.vertices.size() * sizeof(MeshRenderer::AxisVert)));
-            m_AxesVAO = m_Factory.CreateVertexArray();
-            VertexAttribute axesAttrs[2] = {
-                {0, 3, sizeof(MeshRenderer::AxisVert), offsetof(MeshRenderer::AxisVert, position)},
-                {1, 3, sizeof(MeshRenderer::AxisVert), offsetof(MeshRenderer::AxisVert, color)},
-            };
-            m_AxesVAO->AddVertexBuffer(m_AxesVBO, axesAttrs, 2);
+        // 3D Shader
+        m_3DShader = m_Factory.CreateShader("assets/shaders/3d_lit.vert", "assets/shaders/3d_lit.frag");
+        m_MeshRenderer->SetShader(m_3DShader);
+
+        // Depth shader
+        m_DepthShader = m_Factory.CreateShader("assets/shaders/depth_only.vert", "assets/shaders/depth_only.frag");
+        m_MeshRenderer->SetDepthShader(m_DepthShader);
+
+        // Shadow mapper
+        m_ShadowMapper = std::make_unique<ShadowMapper>(*ctx);
+        m_MeshRenderer->SetShadowMapper(m_ShadowMapper.get());
+        m_MeshRenderer->SetShadowEnabled(true);
+
+        // Lights
+        m_MeshRenderer->AddLight({ {15, 20, 15}, {1, 1, 1}, 1.5f });
+        m_MeshRenderer->AddLight({ {-10, 8, 12}, {0.8f, 0.6f, 1.0f}, 0.8f });
+        m_MeshRenderer->AddLight({ {5, 3, -12}, {1.0f, 0.4f, 0.2f}, 0.6f });
+
+        // Console panel
+        m_ConsolePanel.SetVisible(false);
+
+        // ✨ 重要：注册控制台面板到 Application 静态指针
+        // 使 ~ 键可在全局切换控制台
+        // 这里我们手动处理，不依赖 Application::SetConsolePanel
+
+        Log::Info("[3DTest] Initialized. Controls: WASD=move, Q/E=up/down, RMB+drag=look, ~=console");
+    }
+
+    _3DTestApp::~_3DTestApp() {
+        if (m_UIInitialized) {
+            UIManager::Shutdown();
+            m_UIInitialized = false;
         }
-        {
-            auto grid = MeshRenderer::GenerateGrid(10.0f, 10);
-            m_GridIndexCount = (uint32)grid.indices.size();
-            m_GridVBO = m_Factory.CreateVertexBuffer(
-                reinterpret_cast<float*>(grid.vertices.data()),
-                (uint32)(grid.vertices.size() * sizeof(MeshRenderer::AxisVert)));
-            m_GridVAO = m_Factory.CreateVertexArray();
-            VertexAttribute gridAttrs[2] = {
-                {0, 3, sizeof(MeshRenderer::AxisVert), offsetof(MeshRenderer::AxisVert, position)},
-                {1, 3, sizeof(MeshRenderer::AxisVert), offsetof(MeshRenderer::AxisVert, color)},
-            };
-            m_GridVAO->AddVertexBuffer(m_GridVBO, gridAttrs, 2);
-        }
-
-        // Init UI
-        InitUI();
-
-        // Build scene
-        BuildScene();
-
-        // ── 构建 PVS ──
-        {
-            std::vector<GameObject*> allObjects;
-            for (auto& obj : m_Scene.GetObjects())
-                allObjects.push_back(obj.get());
-
-            m_PVS.Build(allObjects, m_PVSBBoxMin, m_PVSBBoxMax, m_PVSCellSize);
-            m_MeshRenderer->SetPVS(&m_PVS);
-            std::cout << "[3DTest] PVS built: " << m_PVS.GetCellCount() << " cells\n";
-        }
-
-        // 默认打开性能与内存面板
-        m_PerfWindow.SetVisible(true);
-        m_MemoryPanel.SetVisible(true);
-
-        std::cout << "[3DTest] Initialized.\n";
+        Log::Shutdown();
     }
 
     bool _3DTestApp::InitUI() {
         auto ui = m_Factory.CreateUIManager();
         if (!ui) return false;
-        m_UIInitialized = UIManager::Init(std::move(ui), m_Window->GetNativeHandle(), m_Window->GetContext());
+        m_UIInitialized = UIManager::Init(std::move(ui),
+                                           m_Window->GetNativeHandle(),
+                                           m_Window->GetContext());
         return m_UIInitialized;
     }
 
-    void _3DTestApp::BuildScene() {
-        // Ground plane
-        auto ground = std::make_shared<GameObject>("Ground");
-        ground->GetTransform().SetPosition(0, -1.5f, 0);
-        auto* groundMesh = ground->AddComponent<MeshComponent>();
-        groundMesh->SetMesh(std::make_shared<Mesh>(Mesh::CreatePlane(10.0f, 10.0f)));
-        groundMesh->m_Color = Vec4(0.3f, 0.5f, 0.3f, 1.0f);
-        m_Scene.AddObject(ground);
-
-        // Center cube (rotating)
-        auto cube = std::make_shared<GameObject>("Cube");
-        cube->GetTransform().SetPosition(0, 0, 0);
-        auto* cubeMesh = cube->AddComponent<MeshComponent>();
-        cubeMesh->SetMesh(std::make_shared<Mesh>(Mesh::CreateCube(1.0f)));
-        cubeMesh->m_Color = Vec4(1.0f, 0.2f, 0.2f, 1.0f);
-        m_Scene.AddObject(cube);
-
-        // Sphere (blue)
-        auto sphere = std::make_shared<GameObject>("Sphere");
-        sphere->GetTransform().SetPosition(2.5f, 0, 0);
-        auto* sphereMesh = sphere->AddComponent<MeshComponent>();
-        sphereMesh->SetMesh(std::make_shared<Mesh>(Mesh::CreateSphere(0.8f, 24)));
-        sphereMesh->m_Color = Vec4(0.2f, 0.4f, 1.0f, 1.0f);
-        m_Scene.AddObject(sphere);
-
-        // Cylinder (yellow)
-        auto cylinder = std::make_shared<GameObject>("Cylinder");
-        cylinder->GetTransform().SetPosition(-2.5f, 0, 0);
-        auto* cylMesh = cylinder->AddComponent<MeshComponent>();
-        cylMesh->SetMesh(std::make_shared<Mesh>(Mesh::CreateCylinder(0.6f, 1.5f, 24)));
-        cylMesh->m_Color = Vec4(1.0f, 0.8f, 0.2f, 1.0f);
-        m_Scene.AddObject(cylinder);
-
-        // Child cube (orange, parented to Cube)
-        auto childCube = std::make_shared<GameObject>("ChildCube");
-        childCube->GetTransform().SetPosition(0, 1.2f, 0);
-        auto* childMesh = childCube->AddComponent<MeshComponent>();
-        childMesh->SetMesh(std::make_shared<Mesh>(Mesh::CreateCube(0.5f)));
-        childMesh->m_Color = Vec4(1.0f, 0.6f, 0.0f, 1.0f);
-        cube->AddChild(childCube);
-
-        std::cout << "[3DTest] Scene built.\n";
-    }
-
-    // ── 渲染坐标轴（GL_LINES）──
-    // 注意: 当前 IRenderContext 只支持 DrawIndexed(GL_TRIANGLES)，
-    // 坐标轴/网格的 GL_LINES 绘制需要后续扩展 IRenderContext。
-    // 目前通过透明的辅助网格物体替代可视化。
-    void _3DTestApp::RenderCoordinateAxes() {
-        // TODO: 扩展 IRenderContext 支持 DrawLines
-    }
-
-    // ── 渲染网格（GL_LINES）──
-    void _3DTestApp::RenderGrid() {
-        // TODO: 扩展 IRenderContext 支持 DrawLines
-    }
-
-    // ── ImGui 调试面板 ──
-    void _3DTestApp::DrawDebugImGui() {
-        if (!m_UIInitialized) return;
-
-        ImGui::SetNextWindowPos(ImVec2(10, 30), ImGuiCond_FirstUseEver);
-        ImGui::SetNextWindowSize(ImVec2(350, 400), ImGuiCond_FirstUseEver);
-        ImGui::Begin("Coordinate Spaces Debug", nullptr,
-                     ImGuiWindowFlags_NoSavedSettings);
-
-        // ════════════════════════════════════════════
-        // 相机坐标信息
-        // ════════════════════════════════════════════
-        if (ImGui::CollapsingHeader("Camera (View Space)", ImGuiTreeNodeFlags_DefaultOpen)) {
-            Vec3 pos = m_Camera.GetPosition();
-            ImGui::Text("Position (world):  X=%.2f  Y=%.2f  Z=%.2f", pos.x, pos.y, pos.z);
-
-            Vec3 fwd = m_Camera.GetForward();
-            Vec3 right = m_Camera.GetRight();
-            Vec3 up = m_Camera.GetUp();
-            ImGui::Text("Forward:  X=%.2f  Y=%.2f  Z=%.2f", fwd.x, fwd.y, fwd.z);
-            ImGui::Text("Right:    X=%.2f  Y=%.2f  Z=%.2f", right.x, right.y, right.z);
-            ImGui::Text("Up:       X=%.2f  Y=%.2f  Z=%.2f", up.x, up.y, up.z);
-
-            ImGui::Text("Pitch: %.1f   Yaw: %.1f", m_Camera.GetPitch(), m_Camera.GetYaw());
-            ImGui::Text("FOV: %.1f  Aspect: %.2f  Near: %.2f  Far: %.2f",
-                        m_Camera.GetFov(), m_Camera.GetAspect(),
-                        m_Camera.GetNear(), m_Camera.GetFar());
-        }
-
-        // ════════════════════════════════════════════
-        // 物体坐标信息
-        // ════════════════════════════════════════════
-        if (ImGui::CollapsingHeader("Objects (Model/World Space)", ImGuiTreeNodeFlags_DefaultOpen)) {
-            for (auto& obj : m_Scene.GetObjects()) {
-                if (!obj || !obj->IsActive()) continue;
-
-                auto name = obj->GetName();
-                auto& t = obj->GetTransform();
-
-                Vec3 localPos  = t.GetPosition();
-                Vec3 worldPos  = t.LocalToWorld(Vec3(0,0,0)); // 原点在局部空间中变换到世界空间
-                Vec3 localRot  = t.GetRotation();
-                Vec3 localScale = t.GetScale();
-
-                std::string label = name + "##" + std::to_string(reinterpret_cast<uint64>(obj.get()));
-                if (ImGui::TreeNode(label.c_str())) {
-                    ImGui::Text("Local Pos:   X=%.2f  Y=%.2f  Z=%.2f",
-                                localPos.x, localPos.y, localPos.z);
-                    ImGui::Text("World Pos:   X=%.2f  Y=%.2f  Z=%.2f",
-                                worldPos.x, worldPos.y, worldPos.z);
-                    ImGui::Text("Rotation:    Pitch=%.1f  Yaw=%.1f  Roll=%.1f",
-                                localRot.x, localRot.y, localRot.z);
-                    ImGui::Text("Scale:       X=%.2f  Y=%.2f  Z=%.2f",
-                                localScale.x, localScale.y, localScale.z);
-
-                    // 局部→世界 坐标变换
-                    ImGui::Separator();
-                    ImGui::TextColored(ImVec4(0.6f, 0.9f, 1.0f, 1.0f),
-                                       "Coordinate Transform Examples:");
-                    Vec3 origin(0,0,0);
-                    Vec3 unitX(1,0,0), unitY(0,1,0), unitZ(0,0,1);
-                    Vec3 wOrigin = t.LocalToWorld(origin);
-                    Vec3 wX = t.LocalToWorld(unitX);
-                    Vec3 wY = t.LocalToWorld(unitY);
-                    Vec3 wZ = t.LocalToWorld(unitZ);
-                    ImGui::Text("  Local(0,0,0) -> World(%.2f, %.2f, %.2f)",
-                                wOrigin.x, wOrigin.y, wOrigin.z);
-                    ImGui::Text("  Local(1,0,0) -> World(%.2f, %.2f, %.2f)",
-                                wX.x, wX.y, wX.z);
-                    ImGui::Text("  Local(0,1,0) -> World(%.2f, %.2f, %.2f)",
-                                wY.x, wY.y, wY.z);
-                    ImGui::Text("  Local(0,0,1) -> World(%.2f, %.2f, %.2f)",
-                                wZ.x, wZ.y, wZ.z);
-
-                    // 世界→观察 坐标变换
-                    Vec3 viewPos = m_Camera.WorldToView(wOrigin);
-                    Vec4 clipPos = m_Camera.WorldToClip(wOrigin);
-                    ImGui::Text("  World -> View(%.2f, %.2f, %.2f)",
-                                viewPos.x, viewPos.y, viewPos.z);
-                    ImGui::Text("  World -> Clip(%.2f, %.2f, %.2f, %.2f)",
-                                clipPos.x, clipPos.y, clipPos.z, clipPos.w);
-
-                    ImGui::TreePop();
-                }
-            }
-        }
-
-        // ════════════════════════════════════════════
-        // 渲染开关
-        // ════════════════════════════════════════════
-        if (ImGui::CollapsingHeader("Render Options", ImGuiTreeNodeFlags_DefaultOpen)) {
-            ImGui::Checkbox("Show Coordinate Axes", &m_ShowAxes);
-            ImGui::SameLine();
-            ImGui::Checkbox("Show Grid", &m_ShowGrid);
-
-            ImGui::Separator();
-            float ambient[3] = {m_MeshRenderer->GetAmbientColor().x,
-                                m_MeshRenderer->GetAmbientColor().y,
-                                m_MeshRenderer->GetAmbientColor().z};
-            if (ImGui::ColorEdit3("Ambient Color", ambient)) {
-                m_MeshRenderer->SetAmbientColor(Vec3(ambient[0], ambient[1], ambient[2]));
-            }
-
-            Vec3 lightPos = m_MeshRenderer->GetLightPosition();
-            if (ImGui::DragFloat3("Light Position", &lightPos.x, 0.1f)) {
-                m_MeshRenderer->SetLightPosition(lightPos);
-            }
-        }
-
-        // ════════════════════════════════════════════
-        // 潜在可见集 (PVS)
-        // ════════════════════════════════════════════
-        if (ImGui::CollapsingHeader("PVS (Visibility Culling)", ImGuiTreeNodeFlags_DefaultOpen)) {
-            if (ImGui::Checkbox("Enable PVS Culling", &m_PVSEnabled)) {
-                m_PVS.SetConfig(PVSConfig{ m_PVSCellSize, 0.5f, m_PVSEnabled, m_PVSDebugDraw });
-            }
-
-            ImGui::Checkbox("Debug Draw Cells", &m_PVSDebugDraw);
-            m_PVS.SetConfig(PVSConfig{ m_PVSCellSize, 0.5f, m_PVSEnabled, m_PVSDebugDraw });
-
-            bool rebuild = false;
-            rebuild |= ImGui::DragFloat3("BBox Min", &m_PVSBBoxMin.x, 0.5f);
-            rebuild |= ImGui::DragFloat3("BBox Max", &m_PVSBBoxMax.x, 0.5f);
-            rebuild |= ImGui::DragFloat3("Cell Size", &m_PVSCellSize.x, 0.5f);
-            if (m_PVSCellSize.x < 1.0f) m_PVSCellSize.x = 1.0f;
-            if (m_PVSCellSize.y < 1.0f) m_PVSCellSize.y = 1.0f;
-            if (m_PVSCellSize.z < 1.0f) m_PVSCellSize.z = 1.0f;
-
-            if (rebuild) {
-                std::vector<GameObject*> allObjects;
-                for (auto& obj : m_Scene.GetObjects())
-                    allObjects.push_back(obj.get());
-                m_PVS.Build(allObjects, m_PVSBBoxMin, m_PVSBBoxMax, m_PVSCellSize);
-            }
-
-            if (m_PVS.IsValid()) {
-                ImGui::Separator();
-                Vec3 camPos = m_Camera.GetPosition();
-                uint32 cellIdx = m_PVS.GetCellIndex(camPos);
-                uint32 total = m_PVS.GetCellCount();
-                uint32 visible = m_PVS.GetVisibleCellCount(camPos);
-                ImGui::Text("Camera Cell: %u / %u", cellIdx, total);
-                ImGui::Text("Visible Cells: %u (%.1f%%)", visible,
-                             total > 0 ? (float)visible / total * 100.0f : 0.0f);
-            }
-        }
-
-        // ════════════════════════════════════════════
-        // 抗锯齿设置
-        // ════════════════════════════════════════════
-        if (ImGui::CollapsingHeader("Anti-Aliasing", ImGuiTreeNodeFlags_DefaultOpen)) {
-            const char* aaModes[] = { "None", "MSAA (Multisample)", "SSAA (Supersample)",
-                                      "CSAA (Coverage)", "MLAA (Morphological)" };
-            int prevMode = m_CurrentAAMode;
-            int prevSampleIndex = m_AASampleIndex;
-            float prevScale = m_AASCale;
-
-            ImGui::Combo("Mode", &m_CurrentAAMode, aaModes, IM_ARRAYSIZE(aaModes));
-
-            // 样本数选择（仅 MSAA / CSAA / SSAA）
-            if (m_CurrentAAMode >= 1 && m_CurrentAAMode <= 3) {
-                const char* sampleItems[] = { "2x", "4x", "8x" };
-                ImGui::Combo("Sample Count", &m_AASampleIndex, sampleItems, 3);
-                ImGui::Text("Active: %dx", k_SampleValues[m_AASampleIndex]);
-            }
-
-            // SSAA 缩放比例
-            if (m_CurrentAAMode == 2) {
-                ImGui::SliderFloat("SSAA Scale", &m_AASCale, 1.0f, 4.0f, "%.1fx");
-            }
-
-            // 检测变更：模式切换 / 样本数变化 / 缩放变化
-            bool changed = (prevMode != m_CurrentAAMode);
-            if (m_CurrentAAMode >= 1 && m_CurrentAAMode <= 3) {
-                changed = changed || (prevSampleIndex != m_AASampleIndex);
-            }
-            if (m_CurrentAAMode == 2) {
-                changed = changed || (std::abs(prevScale - m_AASCale) > 0.01f);
-            }
-
-            if (changed) {
-                int sampleCount = (m_CurrentAAMode >= 1 && m_CurrentAAMode <= 3)
-                                  ? k_SampleValues[m_AASampleIndex] : 4;
-
-                m_AADemoConfig.sampleCount = sampleCount;
-                m_AADemoConfig.superSamplingScale = m_AASCale;
-
-                switch (m_CurrentAAMode) {
-                    case 0: m_AADemoConfig.mode = AntiAliasingMode::None; break;
-                    case 1: m_AADemoConfig.mode = AntiAliasingMode::MSAA; break;
-                    case 2: m_AADemoConfig.mode = AntiAliasingMode::SSAA; break;
-                    case 3: m_AADemoConfig.mode = AntiAliasingMode::CSAA; break;
-                    case 4: m_AADemoConfig.mode = AntiAliasingMode::MLAA; break;
-                }
-
-                m_Factory.SetAntiAliasingConfig(m_AADemoConfig);
-            }
-
-            // 显示当前 AA 状态
-            ImGui::Separator();
-            ImGui::Text("Current: %s",
-                         m_AADemoConfig.mode == AntiAliasingMode::None ? "Disabled" : "Enabled");
-            ImGui::Text("Samples: %dx", m_AADemoConfig.sampleCount);
-        }
-
-        // ════════════════════════════════════════════
-        // 调试工具开关
-        // ════════════════════════════════════════════
-        if (ImGui::CollapsingHeader("Debug Tools", ImGuiTreeNodeFlags_DefaultOpen)) {
-            bool perfVis = m_PerfWindow.IsVisible();
-            if (ImGui::Checkbox("Performance Window", &perfVis)) {
-                if (perfVis) m_PerfWindow.SetVisible(true);
-                else m_PerfWindow.SetVisible(false);
-            }
-
-            bool memVis = m_MemoryPanel.IsVisible();
-            if (ImGui::Checkbox("Memory Panel", &memVis)) {
-                if (memVis) m_MemoryPanel.SetVisible(true);
-                else m_MemoryPanel.SetVisible(false);
-            }
-
-            ImGui::Text("Toggle Console:  ~  (Grave Accent)");
-        }
-
-        ImGui::End();
-    }
+    // ============================================================
+    // HandleInput — WASD + 鼠标 + 菜单/控制台切换
+    // ============================================================
 
     void _3DTestApp::HandleInput(float dt) {
+        // ── 控制台切换（~ 键） ──
         if (Input::IsKeyPressed(KeyCode::GraveAccent)) {
             m_ConsolePanel.ToggleVisibility();
         }
+
+        // 控制台捕获输入时阻止游戏操作
         bool consoleCaptures = m_ConsolePanel.IsCapturingInput();
         Input::SetBlockInput(consoleCaptures, consoleCaptures);
         if (consoleCaptures) return;
 
+        // ── 菜单导航 ──
+        if (m_MenuManager.isVisible) {
+            if (Input::IsKeyPressed(KeyCode::Up))       m_MenuManager.OnKeyPressed(KeyCode::Up);
+            if (Input::IsKeyPressed(KeyCode::Down))     m_MenuManager.OnKeyPressed(KeyCode::Down);
+            if (Input::IsKeyPressed(KeyCode::Left))     m_MenuManager.OnKeyPressed(KeyCode::Left);
+            if (Input::IsKeyPressed(KeyCode::Right))    m_MenuManager.OnKeyPressed(KeyCode::Right);
+            if (Input::IsKeyPressed(KeyCode::Escape))   m_MenuManager.OnKeyPressed(KeyCode::Escape);
+            if (Input::IsKeyPressed(KeyCode::Enter))    m_MenuManager.OnKeyPressed(KeyCode::Enter);
+            return; // 菜单打开时阻止游戏输入
+        }
+
+        // ── ESC → 打开菜单 ──
+        if (Input::IsKeyPressed(KeyCode::Escape)) {
+            m_MenuManager.isVisible = !m_MenuManager.isVisible;
+            if (m_MenuManager.isVisible && m_MenuManager.currentPage == MenuManager::Page::None)
+                m_MenuManager.currentPage = MenuManager::Page::MainMenu;
+            return;
+        }
+
+        // ── Helper Toggles 快捷键 ──
+        auto* ctx = m_Window->GetContext();
+        if (ctx) {
+            auto* ht = ctx->GetHelperTogglesData();
+            if (ht) {
+                if (Input::IsKeyPressed(KeyCode::F1)) ht->showGrid = !ht->showGrid;
+                if (Input::IsKeyPressed(KeyCode::F2)) ht->showColliders = !ht->showColliders;
+                if (Input::IsKeyPressed(KeyCode::F3)) ht->showBones = !ht->showBones;
+                if (Input::IsKeyPressed(KeyCode::F10)) {
+                    ht->pauseRendering = !ht->pauseRendering;
+                    if (ht->pauseRendering) ht->stepOneFrame = false;
+                }
+                if (Input::IsKeyPressed(KeyCode::F11)) {
+                    ht->stepOneFrame = true;
+                    ht->pauseRendering = false;
+                }
+            }
+        }
+
+        // ── 摄像机移动（WASD + Q/E） ──
         Vec3 pos = m_Camera.GetPosition();
         float speed = m_CameraSpeed * dt;
         Vec3 fwd = m_Camera.GetForward();
         Vec3 right = m_Camera.GetRight();
 
-        if (Input::IsKeyDown(KeyCode::W)) {
-            pos.x += fwd.x * speed; pos.y += fwd.y * speed; pos.z += fwd.z * speed;
-        }
-        if (Input::IsKeyDown(KeyCode::S)) {
-            pos.x -= fwd.x * speed; pos.y -= fwd.y * speed; pos.z -= fwd.z * speed;
-        }
-        if (Input::IsKeyDown(KeyCode::A)) {
-            pos.x -= right.x * speed; pos.y -= right.y * speed; pos.z -= right.z * speed;
-        }
-        if (Input::IsKeyDown(KeyCode::D)) {
-            pos.x += right.x * speed; pos.y += right.y * speed; pos.z += right.z * speed;
-        }
+        if (Input::IsKeyDown(KeyCode::W)) { pos.x += fwd.x * speed; pos.y += fwd.y * speed; pos.z += fwd.z * speed; }
+        if (Input::IsKeyDown(KeyCode::S)) { pos.x -= fwd.x * speed; pos.y -= fwd.y * speed; pos.z -= fwd.z * speed; }
+        if (Input::IsKeyDown(KeyCode::A)) { pos.x -= right.x * speed; pos.y -= right.y * speed; pos.z -= right.z * speed; }
+        if (Input::IsKeyDown(KeyCode::D)) { pos.x += right.x * speed; pos.y += right.y * speed; pos.z += right.z * speed; }
         if (Input::IsKeyDown(KeyCode::Q)) pos.y -= speed;
         if (Input::IsKeyDown(KeyCode::E)) pos.y += speed;
-
         m_Camera.SetPosition(pos);
 
-        float yaw   = m_Camera.GetYaw();
+        // ── 自由视角旋转（右键拖拽） ──
+        float yaw = m_Camera.GetYaw();
         float pitch = m_Camera.GetPitch();
-        if (Input::IsKeyDown(KeyCode::Left))  yaw   -= 50.0f * dt;
-        if (Input::IsKeyDown(KeyCode::Right)) yaw   += 50.0f * dt;
-        if (Input::IsKeyDown(KeyCode::Up))    pitch += 50.0f * dt;
-        if (Input::IsKeyDown(KeyCode::Down))  pitch -= 50.0f * dt;
-        if (pitch > 89.0f)  pitch = 89.0f;
-        if (pitch < -89.0f) pitch = -89.0f;
+        if (Input::IsMouseButtonDown(MouseCode::ButtonRight)) {
+            yaw   += Input::GetMouseDeltaX() * m_MouseSensitivity;
+            pitch += Input::GetMouseDeltaY() * m_MouseSensitivity * 0.8f;
+        }
+        pitch = std::max(-89.0f, std::min(89.0f, pitch));
         m_Camera.SetRotation(pitch, yaw);
     }
+
+    // ============================================================
+    // DrawDebugImGui — 自定义调试面板
+    // ============================================================
+
+    void _3DTestApp::DrawDebugImGui() {
+        if (!m_UIInitialized) return;
+
+        ImGui::SetNextWindowPos(ImVec2(10, 410), ImGuiCond_FirstUseEver);
+        ImGui::SetNextWindowSize(ImVec2(300, 120), ImGuiCond_FirstUseEver);
+
+        ImGui::Begin("3D Test Info", nullptr,
+                     ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_AlwaysAutoResize);
+
+        ImGui::TextColored(ImVec4(0.3f, 0.8f, 1.0f, 1), "3D Debug Test App");
+        ImGui::Separator();
+
+        Vec3 camPos = m_Camera.GetPosition();
+        ImGui::Text("Camera: (%.1f, %.1f, %.1f)", camPos.x, camPos.y, camPos.z);
+        ImGui::Text("Frame: %u", m_FrameCount);
+        ImGui::Text("Objects: %zu", m_SceneObjects.size());
+        ImGui::Text("F1: Grid  F2: Colliders  F3: Bones");
+        ImGui::Text("F10: Pause  F11: Step  ESC: Menu");
+
+        auto* ctx = m_Window->GetContext();
+        if (ctx) {
+            ViewMode vm = ctx->GetViewMode();
+            ImGui::Text("View Mode: %s", ViewModeToString(vm));
+        }
+
+        ImGui::Spacing();
+        ImGui::Separator();
+        ImGui::TextColored(ImVec4(0.5f, 0.5f, 0.5f, 1),
+                           "Open 'Graphics Debug Tools' window\n"
+                           "to access all 12 debug panels.");
+
+        ImGui::End();
+    }
+
+    // ============================================================
+    // Run — 主循环
+    // ============================================================
 
     void _3DTestApp::Run() {
         using namespace std::chrono;
         auto last = high_resolution_clock::now();
-        float lightAngle = 0.0f;
+
+        // 初始化 UI
+        InitUI();
+
+        // 设置菜单回调
+        m_MenuManager.SetStartGameCallback([this]() {
+            // "New Game": 关闭菜单，开始游戏
+            m_MenuManager.isVisible = false;
+            m_MenuManager.currentPage = MenuManager::Page::None;
+        });
+        m_MenuManager.SetQuitCallback([this]() {
+            // "Quit": 关闭窗口
+            if (m_Window) {
+                glfwSetWindowShouldClose(
+                    static_cast<GLFWwindow*>(m_Window->GetNativeHandle()), GLFW_TRUE);
+            }
+        });
+
+        // 启动时有菜单
+        m_MenuManager.isVisible = true;
+        m_MenuManager.currentPage = MenuManager::Page::MainMenu;
+        m_PerfWindow.SetVisible(true);
 
         while (!m_Window->ShouldClose()) {
             auto now = high_resolution_clock::now();
@@ -439,87 +230,345 @@ namespace Engine {
 
             m_Window->PollEvents();
             HandleInput(dt);
-
             MemoryTracker::FrameStart();
 
-            // ── Update scene (rotate cube) ──
-            static float rotAngle = 0.0f;
-            rotAngle += dt * 30.0f;
-            auto* cubeObj = m_Scene.FindObject("Cube");
-            if (cubeObj) {
-                cubeObj->GetTransform().SetRotation(rotAngle * 0.5f, rotAngle, 0);
-            }
-
-            // ── Rotating light ──
-            lightAngle += dt * 20.0f;
-            float rad = lightAngle * 3.14159265f / 180.0f;
-            Vec3 lightPos(5.0f * std::cos(rad), 5.0f, 5.0f * std::sin(rad));
-            m_MeshRenderer->SetLightPosition(lightPos);
-
-            // ── Render 3D ──
-            auto* ctx = m_Window->GetContext();
-            if (ctx) {
-                ctx->ClearColor(0.08f, 0.08f, 0.12f, 1.0f);
-
-                // Bind the 3D shader for coordinate axes & grid (they use the same shader)
-                m_3DShader->Bind();
-                m_3DShader->SetMat4("u_View",       m_Camera.GetViewMatrix().Data());
-                m_3DShader->SetMat4("u_Projection", m_Camera.GetProjectionMatrix().Data());
-                Vec3 ambient = m_MeshRenderer->GetAmbientColor();
-                m_3DShader->SetVec3("u_AmbientColor", &ambient.x);
-                Vec3 lightCol(1,1,1);
-                m_3DShader->SetVec3("u_LightColor",   &lightCol.x);
-                m_3DShader->SetFloat("u_LightIntensity", 1.0f);
-                Vec3 viewPos = m_Camera.GetPosition();
-                m_3DShader->SetVec3("u_ViewPos", &viewPos.x);
-                m_3DShader->SetVec3("u_LightPos",  &lightPos.x);
-                m_3DShader->SetInt("u_HasTexture", 0);
-
-                // ── Draw grid (GL_LINES via simple triangle trick: we use thin quads) ──
-                // For now we skip lines rendering and just show the 3D objects.
-
-                // ── Draw 3D meshes (PVS 加速) ──
-                std::vector<GameObject*> allObjects;
-                for (auto& obj : m_Scene.GetObjects()) {
-                    allObjects.push_back(obj.get());
+            // ── 检测窗口 resize ──
+            {
+                int w, h;
+                glfwGetFramebufferSize(
+                    static_cast<GLFWwindow*>(m_Window->GetNativeHandle()), &w, &h);
+                static int lastW = 0, lastH = 0;
+                if (w != lastW || h != lastH) {
+                    lastW = w; lastH = h;
+                    if (w > 0 && h > 0) OnWindowResize(w, h);
                 }
-                Vec3 camPos = m_Camera.GetPosition();
-                m_MeshRenderer->RenderWithPVS(allObjects, camPos);
-
-                // ── Draw coordinate axes using a simple shader approach ──
-                // (skip GL_LINES for now until IRenderContext is extended)
             }
 
-            // ── 性能统计（在 UI 构建前收集 DrawCall） ──
-            uint32 drawCalls = ctx ? ctx->GetAndResetDrawCallCount() : 0;
-            m_PerfWindow.FeedStats(dt * 1000.0f, drawCalls, 0, 0, 0, 0);
+            ++m_FrameCount;
 
-            // ── Debug ImGui ──
+            // ── 更新场景 ──
+            m_MenuManager.OnUpdate(dt);
+
+            // 动画光源
+            if (m_AnimateLights) {
+                m_LightAngle += dt * 15.0f;
+                float rad = m_LightAngle * 3.14159f / 180.0f;
+                Vec3 lightPos(std::cos(rad) * 25.0f, 20.0f, std::sin(rad) * 25.0f);
+                m_MeshRenderer->SetLightPosition(lightPos);
+            }
+
+            // ── 渲染 ──
+            auto* ctx = m_Window->GetContext();
+
+            // 暂停/步进控制
+            bool shouldRender = true;
+            if (ctx) {
+                auto* ht = ctx->GetHelperTogglesData();
+                if (ht) {
+                    if (ht->pauseRendering) shouldRender = false;
+                    if (ht->stepOneFrame) {
+                        shouldRender = true;
+                        ht->stepOneFrame = false;
+                        ht->pauseRendering = true;
+                    }
+                }
+            }
+
+            if (shouldRender && ctx) {
+                ctx->ClearColor(0.1f, 0.1f, 0.15f, 1.0f);
+
+                // ── GPU Pass 标记 ──
+                // Shadow Pass
+                {
+                    int32 q = ctx->BeginGPUPass("ShadowPass");
+                    if (m_ShadowMapper) {
+                        m_ShadowMapper->BindForShadowPass();
+                        m_ShadowMapper->EndShadowPass();
+                    }
+                    ctx->EndGPUPass(q);
+                }
+
+                // Base Pass
+                {
+                    int32 q = ctx->BeginGPUPass("BasePass");
+
+                    // 绑定 View Mode uniform
+                    if (m_3DShader) {
+                        m_3DShader->Bind();
+                        ctx->BindViewModeUniform(m_3DShader.get());
+                    }
+
+                    // 设置光源 uniform
+                    m_MeshRenderer->RenderWithSceneGraph(m_SceneObjects);
+
+                    // 辅助可视化
+                    RenderHelperVisualizations();
+
+                    ctx->EndGPUPass(q);
+                }
+
+                // PostProcess Pass
+                {
+                    int32 q = ctx->BeginGPUPass("PostProcess");
+                    // 后期处理占位
+                    ctx->EndGPUPass(q);
+                }
+
+                // Resolve AA
+                static_cast<OpenGLContext*>(ctx)->ResolveToDefault();
+            }
+
+            // ── 填充调试数据 ──
+            if (ctx) {
+                PopulateLightingDebugData();
+                PopulateGeometryDebugData();
+                PopulatePostProcessingDebugData();
+                PopulateTextureDebugData();
+            }
+
+            // ── 统计数据 ──
+            uint32 drawCalls = ctx ? ctx->GetAndResetDrawCallCount() : 0;
+            uint32 vertexCount = ctx ? ctx->GetAndResetVertexCount() : 0;
+            uint32 triCount = ctx ? ctx->GetAndResetTriangleCount() : 0;
+
+            m_PerfWindow.FeedStats(dt * 1000.0f, drawCalls,
+                                    (uint32)m_SceneObjects.size(), 0, 0, 0);
+            m_PerfWindow.SetGeometryCount(vertexCount, triCount);
+            m_PerfWindow.SetCPUTime(dt * 1000.0f);
+
+            // GPU Profiler
+            if (ctx) {
+                GPUProfileFrame gpuFrame;
+                if (ctx->GetGPUProfileFrame(gpuFrame)) {
+                    m_PerfWindow.SetGPUTime(gpuFrame.GetTotalMs());
+                    GPUProfilerSnapshot snap;
+                    snap.passCount = std::min(gpuFrame.passCount,
+                                              (uint32)GPUProfilerSnapshot::kMaxPasses);
+                    for (uint32 i = 0; i < snap.passCount; ++i) {
+                        snap.passes[i].name   = gpuFrame.passes[i].passName;
+                        snap.passes[i].timeMs = gpuFrame.passes[i].elapsedMs;
+                    }
+                    m_PerfWindow.SetGPUProfiler(snap);
+                }
+
+                m_PerfWindow.SetVRAMUsage(ctx->GetTextureVRAMBytes(),
+                                           ctx->GetBufferVRAMBytes(), 0);
+            }
+
+            // ── ImGui ──
             if (m_UIInitialized && UIManager::Get()) {
                 UIManager::Begin();
+
+                // 性能调试面板
                 m_PerfWindow.OnImGui();
+
+                // 自定义调试面板
                 DrawDebugImGui();
+
+                // 控制台
                 m_ConsolePanel.OnImGui();
-                m_MemoryPanel.OnImGui();
+
+                // 菜单
+                if (m_MenuManager.isVisible)
+                    m_MenuManager.OnImGui();
+
                 UIManager::End();
 
-                // Block input to game when ImGui is capturing
                 ImGuiIO& io = ImGui::GetIO();
                 Input::SetBlockInput(io.WantCaptureMouse, io.WantCaptureKeyboard);
             }
 
             MemoryTracker::FrameEnd();
-
             m_InputManager.OnUpdate();
-            if (ctx) ctx->SwapBuffers();
+
+            glfwSwapBuffers(static_cast<GLFWwindow*>(m_Window->GetNativeHandle()));
+        }
+    }
+
+    // ============================================================
+    // 调试数据填充
+    // ============================================================
+
+    void _3DTestApp::PopulateLightingDebugData() {
+        auto* ctx = m_Window->GetContext();
+        if (!ctx) return;
+        auto* ld = ctx->GetLightingDebugData();
+        if (!ld) return;
+
+        ld->lightCount = (uint32)std::min(m_MeshRenderer->GetLightCount(), (size_t)LightingDebugFrameData::kMaxLights);
+        for (uint32 i = 0; i < ld->lightCount; ++i) {
+            auto& dst = ld->lights[i];
+            char buf[32]; std::snprintf(buf, sizeof(buf), "Light_%u", i);
+            dst.name = buf;
+            dst.position = m_MeshRenderer->GetLight(i).position;
+            dst.color = m_MeshRenderer->GetLight(i).color;
+            dst.intensity = m_MeshRenderer->GetLight(i).intensity;
+            dst.enabled = true;
+            dst.isShadowCaster = (i == 0);
+        }
+        ld->ambientColor = m_MeshRenderer->GetAmbientColor();
+        ld->ambientIntensity = 1.0f;
+        ld->shadowMapSize = 2048;
+        ld->shadowBias = 0.005f;
+        ld->shadowsEnabled = m_MeshRenderer->IsShadowEnabled();
+
+        ld->cascades.cascadeCount = 4;
+        ld->cascades.cascadeSplits[0] = 0.05f;
+        ld->cascades.cascadeSplits[1] = 0.15f;
+        ld->cascades.cascadeSplits[2] = 0.4f;
+        ld->cascades.cascadeSplits[3] = 1.0f;
+
+        if (m_ShadowMapper) {
+            ld->shadowTextureHandle = m_ShadowMapper->GetShadowTexture();
+            ld->shadowTexWidth = m_ShadowMapper->GetConfig().resolution;
+            ld->shadowTexHeight = m_ShadowMapper->GetConfig().resolution;
+        }
+    }
+
+    void _3DTestApp::PopulateGeometryDebugData() {
+        auto* ctx = m_Window->GetContext();
+        if (!ctx) return;
+        auto* gd = ctx->GetGeometryDebugData();
+        if (!gd) return;
+
+        gd->totalObjects = (uint32)m_SceneObjects.size() + 1;
+        gd->visibleObjects = gd->totalObjects;
+        gd->culledObjects = 0;
+
+        AABB sb;
+        sb.Expand(Vec3(-15, -5, -15));
+        sb.Expand(Vec3(15, 15, 15));
+        gd->sceneBounds = sb;
+        gd->lod.currentLODCount = 3;
+    }
+
+    void _3DTestApp::PopulatePostProcessingDebugData() {
+        auto* ctx = m_Window->GetContext();
+        if (!ctx) return;
+        auto* pp = ctx->GetPostProcessingDebugData();
+        if (!pp) return;
+
+        pp->postProcessingEnabled = true;
+        pp->bloomEnabled = true;
+        pp->bloomIntensity = 1.2f;
+        pp->bloomThreshold = 1.0f;
+        pp->colorGradingEnabled = true;
+        pp->colorGradingStrength = 0.8f;
+        pp->brightness = 1.0f;
+        pp->contrast = 1.1f;
+        pp->saturation = 1.05f;
+        pp->antiAliasingEnabled = true;
+        pp->aaType = AAType::FXAA;
+        pp->toneMappingEnabled = true;
+        pp->toneMapMode = ToneMappingMode::ACES;
+        pp->exposure = 1.0f;
+        pp->gamma = 2.2f;
+    }
+
+    void _3DTestApp::PopulateTextureDebugData() {
+        auto* ctx = m_Window->GetContext();
+        if (!ctx) return;
+        auto* td = ctx->GetTextureDebugData();
+        if (!td) return;
+
+        const char* texNames[] = {
+            "test.png", "brick_diffuse.dds", "metal_roughness.dds",
+            "skybox_cubemap.dds", "normal_map.png", "shadow_map", "checker_placeholder"
+        };
+        const uint32 texW[] = {512, 1024, 512, 2048, 256, 2048, 128};
+        const uint32 texH[] = {512, 1024, 512, 2048, 256, 2048, 128};
+        const uint32 mips[] = {10, 11, 10, 12, 9, 1, 7};
+        const uint64 vram[] = {1048576, 16777216, 4194304, 33554432, 262144, 16777216, 65536};
+
+        td->textureCount = 7;
+        td->totalVRAM = 0;
+        for (uint32 i = 0; i < 7; ++i) {
+            auto& tex = td->textures[i];
+            tex.name = texNames[i];
+            tex.width = texW[i]; tex.height = texH[i];
+            tex.mipCount = mips[i];
+            tex.vramBytes = vram[i];
+            td->totalVRAM += vram[i];
+            tex.isStreaming = (i >= 3 && i <= 5);
+            tex.isLoading = (i == 4);
+            tex.streamProgress = (i == 4) ? 0.65f : 1.0f;
+            tex.isResident = !tex.isLoading;
+        }
+    }
+
+    // ============================================================
+    // 辅助可视化
+    // ============================================================
+
+    void _3DTestApp::RenderHelperVisualizations() {
+        auto* ctx = m_Window->GetContext();
+        if (!ctx) return;
+        auto* ht = ctx->GetHelperTogglesData();
+        if (!ht) return;
+
+        if (ht->showGrid) DrawGrid(ht->gridSize, ht->gridSteps);
+        if (ht->showOriginAxis) DrawOriginAxis();
+
+        if (ht->showColliders) {
+            auto* batch = m_MeshRenderer->GetBatch();
+            if (batch) {
+                batch->Begin(PrimitiveType::Lines);
+                Vec3 corners[8] = {
+                    {-2,-2,-2}, {2,-2,-2}, {2,-2,2}, {-2,-2,2},
+                    {-2,2,-2}, {2,2,-2}, {2,2,2}, {-2,2,2}
+                };
+                int edges[24] = {0,1,1,2,2,3,3,0,4,5,5,6,6,7,7,4,0,4,1,5,2,6,3,7};
+                Vec4 wc(ht->colliderColor[0], ht->colliderColor[1], ht->colliderColor[2], 1.0f);
+                for (int e = 0; e < 24; e += 2)
+                    batch->Line(corners[edges[e]], corners[edges[e+1]], wc);
+                batch->End();
+            }
         }
 
-        // Cleanup
-        if (m_UIInitialized) {
-            UIManager::Shutdown();
-            m_UIInitialized = false;
+        if (ht->showBones) {
+            auto* batch = m_MeshRenderer->GetBatch();
+            if (batch) {
+                batch->Begin(PrimitiveType::Lines);
+                Vec4 boneCol(1.0f, 1.0f, 0.0f, 1.0f);
+                batch->Line(Vec3(0,0,0), Vec3(0,5,0), boneCol);
+                batch->Line(Vec3(0,5,0), Vec3(1.5f,6,0), boneCol);
+                batch->Line(Vec3(0,5,0), Vec3(-1.5f,6,0), boneCol);
+                batch->End();
+            }
         }
-        std::cout << "[3DTest] Shutdown complete.\n";
+    }
+
+    void _3DTestApp::DrawGrid(float size, int steps) {
+        auto* batch = m_MeshRenderer->GetBatch();
+        if (!batch) return;
+        batch->Begin(PrimitiveType::Lines);
+        float half = size * 0.5f;
+        float step = size / steps;
+        Vec4 gc(0.3f, 0.3f, 0.3f, 0.6f);
+        Vec4 ax(1,0.2f,0.2f,0.8f), az(0.2f,0.2f,1,0.8f);
+        for (int i = 0; i <= steps; ++i) {
+            float t = -half + i * step;
+            batch->Line(Vec3(-half,0,t), Vec3(half,0,t), (i==steps/2)?ax:gc);
+            batch->Line(Vec3(t,0,-half), Vec3(t,0,half), (i==steps/2)?az:gc);
+        }
+        batch->End();
+    }
+
+    void _3DTestApp::DrawOriginAxis() {
+        auto* batch = m_MeshRenderer->GetBatch();
+        if (!batch) return;
+        batch->Begin(PrimitiveType::Lines);
+        batch->Line(Vec3(0,0,0), Vec3(3,0,0), Vec4(1,0,0,1));
+        batch->Line(Vec3(0,0,0), Vec3(0,3,0), Vec4(0,1,0,1));
+        batch->Line(Vec3(0,0,0), Vec3(0,0,3), Vec4(0,0,1,1));
+        batch->End();
+    }
+
+    void _3DTestApp::OnWindowResize(int width, int height) {
+        float aspect = (float)width / (float)height;
+        m_Camera.SetAspectRatio(aspect);
+        if (auto* ctx = m_Window->GetContext())
+            ctx->OnResize(width, height);
     }
 
 } // namespace Engine
