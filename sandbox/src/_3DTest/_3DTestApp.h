@@ -1,95 +1,106 @@
 #pragma once
 
-#include <Engine/Core/IGraphicsFactory.h>
-#include <Engine/Core/IWindow.h>
-#include <Engine/Core/Input.h>
-#include <Engine/Core/InputManager.h>
-#include <Engine/Core/RenderResources/TextureManager.h>
-#include <Engine/Core/Renderer/OrthographicCamera.h>
-#include <Engine/Core/Renderer/PerspectiveCamera.h>
-#include <Engine/Core/RHI/SceneRenderer.h>
-#include <Engine/Core/RHI/MeshRenderer.h>
-#include <Engine/Core/RHI/IRenderQueue.h>
-#include <Engine/Core/Scene/Scene.h>
-#include <Engine/Core/GameObject/GameObject.h>
-#include <Engine/Core/GameObject/MeshComponent.h>
-#include <Engine/ConsolePanel.h>
-#include <Engine/UIManager.h>
-#include <Engine/PerformanceWindow.h>
-#include <Engine/MemoryPanel.h>
-#include <Engine/Core/RHI/PotentiallyVisibleSet.h>
-#include <Engine/Types.h>
+/**
+ * @file _3DTestApp.h
+ * @brief 3D 测试应用 — 集成全部图形调试菜单的独立测试用例
+ *
+ * 此应用参照 ComplexSceneTestApp 的结构，不继承 Application，
+ * 而是独立管理窗口、输入、渲染和所有调试面板。
+ *
+ * 演示功能：
+ *   - 12 个 Graphics Debug Tools 面板的数据填充
+ *   - GPU Pass 时间戳标记 (ShadowPass/BasePass/PostProcess)
+ *   - ViewMode 切换、辅助可视化 (Grid/Bones/Colliders)
+ *   - 暂停/单帧步进控制
+ *   - 菜单系统 (开始游戏/继续/退出)
+ *   - 控制台 (~ 键)
+ *   - 视角操作 (WASD + 鼠标右键)
+ */
 
+#include "Engine/ConsolePanel.h"
+#include "Engine/Core/IGraphicsFactory.h"
+#include "Engine/Core/IWindow.h"
+#include "Engine/Core/Input.h"
+#include "Engine/Core/InputManager.h"
+#include "Engine/Core/RHI/IPrimitiveBatch.h"
+#include "Engine/Core/RHI/MeshRenderer.h"
+#include "Engine/Core/RHI/ShadowMapper.h"
+#include "Engine/Core/RenderResources/TextureManager.h"
+#include "Engine/Core/Renderer/PerspectiveCamera.h"
+#include "Engine/PerformanceWindow.h"
+#include "Engine/Core/MenuManager.h"
+#include "Engine/Types.h"
+#include "Engine/UIManager.h"
+
+#include <imgui.h>
 #include <memory>
 #include <vector>
-#include <imgui.h>
 
 namespace Engine {
 
     class _3DTestApp {
     public:
         _3DTestApp(IGraphicsFactory& factory);
-        ~_3DTestApp() = default;
+        ~_3DTestApp();
 
         void Run();
 
     private:
         bool InitUI();
-        void BuildScene();
+
+        // ── 调试数据填充 ──
+        void PopulateLightingDebugData();
+        void PopulateGeometryDebugData();
+        void PopulatePostProcessingDebugData();
+        void PopulateTextureDebugData();
+
+        // ── 辅助可视化 ──
+        void RenderHelperVisualizations();
+        void DrawGrid(float size, int steps);
+        void DrawOriginAxis();
+
+        // ── 输入处理 ──
         void HandleInput(float dt);
-        void RenderCoordinateAxes();
-        void RenderGrid();
+
+        // ── ImGui 面板 ──
         void DrawDebugImGui();
 
-        IGraphicsFactory&       m_Factory;
+        // ── 窗口事件 ──
+        void OnWindowResize(int width, int height);
+
+        IGraphicsFactory& m_Factory;
         std::unique_ptr<IWindow> m_Window;
-        InputManager            m_InputManager;
-        TextureManager          m_TextureManager;
-        SceneRenderer           m_SceneRenderer;
-        PerspectiveCamera       m_Camera;
+        InputManager m_InputManager;
+        TextureManager m_TextureManager;
 
-        std::shared_ptr<MeshRenderer> m_MeshRenderer;
+        // ── 3D 渲染器 ──
+        std::unique_ptr<MeshRenderer> m_MeshRenderer;
+        std::unique_ptr<ShadowMapper> m_ShadowMapper;
         std::shared_ptr<Shader> m_3DShader;
+        std::shared_ptr<Shader> m_DepthShader;
 
-        // 坐标轴 / 网格调试资源
-        std::shared_ptr<class VertexArray> m_AxesVAO;
-        std::shared_ptr<class VertexBuffer> m_AxesVBO;
-        uint32 m_AxesIndexCount = 0;
-        std::shared_ptr<class VertexArray> m_GridVAO;
-        std::shared_ptr<class VertexBuffer> m_GridVBO;
-        uint32 m_GridIndexCount = 0;
+        // ── 相机 ──
+        PerspectiveCamera m_Camera;
+        float m_CameraSpeed = 10.0f;
+        float m_MouseSensitivity = 0.15f;
 
-        Scene m_Scene;
-
-        // 控制台 / 性能 / 内存
-        ConsolePanel      m_ConsolePanel;
+        // ── 调试面板 ──
         PerformanceWindow m_PerfWindow;
-        MemoryPanel       m_MemoryPanel;
+        ConsolePanel m_ConsolePanel;
+        MenuManager m_MenuManager;
         bool m_UIInitialized = false;
 
-        // 相机控制
-        float m_CameraSpeed = 5.0f;
-        float m_MouseSensitivity = 0.1f;
-        bool m_MouseCaptured = false;
+        // ── 场景物体 ──
+        std::vector<GameObject*> m_SceneObjects;
 
-        // 调试开关
-        bool m_ShowAxes = true;
-        bool m_ShowGrid = true;
+        // ── 渲染控制 ──
+        bool m_ParticlesEnabled = true;
+        bool m_HUDVisible = true;
+        float m_LightAngle = 0.0f;
+        bool m_AnimateLights = true;
 
-        // ── 潜在可见集 (PVS) ──
-        PotentiallyVisibleSet m_PVS;
-        bool m_PVSEnabled = true;
-        bool m_PVSDebugDraw = false;
-        Vec3 m_PVSBBoxMin = {-12.0f, -5.0f, -12.0f};
-        Vec3 m_PVSBBoxMax = {12.0f, 10.0f, 12.0f};
-        Vec3 m_PVSCellSize = {4.0f, 4.0f, 4.0f};
-
-        // ── 抗锯齿 ──
-        AntiAliasingConfig m_AADemoConfig;
-        int m_CurrentAAMode = 0;     // 0=None, 1=MSAA, 2=SSAA, 3=CSAA, 4=MLAA
-        int m_AASampleIndex = 1;     // Combo 索引: 0=2x, 1=4x, 2=8x
-        static constexpr int k_SampleValues[3] = { 2, 4, 8 };
-        float m_AASCale = 1.5f;
+        // ── 帧计数 ──
+        uint32 m_FrameCount = 0;
     };
 
 } // namespace Engine
