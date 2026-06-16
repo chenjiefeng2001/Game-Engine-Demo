@@ -446,7 +446,7 @@ namespace Engine {
             return true;
         };
 
-        b2World_OverlapAABB(m_WorldId, aabb, b2DefaultQueryFilter(), callback, &ctx);
+        b2World_OverlapAABB(m_WorldId, {0, 0}, aabb, b2DefaultQueryFilter(), callback, &ctx);
         return results;
     }
 

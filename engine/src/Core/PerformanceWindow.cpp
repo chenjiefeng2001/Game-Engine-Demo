@@ -528,55 +528,83 @@ namespace Engine {
         }
     }
 
-    // ── 5. GPU Profiler 瀑布图 ──────────────────────────────────
+    // ── 5. GPU Profiler 瀑布图（固定 Pass 表） ──────────────────
+
+    DebugPassId PerformanceWindow::MapPassNameToId(const std::string& name) {
+        // 简单的前缀匹配 —— 忽略大小写
+        if (name == "ShadowPass" || name == "shadowpass")  return DebugPassId::ShadowPass;
+        if (name == "BasePass"   || name == "basepass")     return DebugPassId::BasePass;
+        if (name == "SSAO"       || name == "ssao")         return DebugPassId::SSAO;
+        if (name == "Bloom"      || name == "bloom")        return DebugPassId::Bloom;
+        if (name == "ToneMapping"|| name == "tonemapping")  return DebugPassId::ToneMapping;
+        if (name == "FXAA"       || name == "fxaa")         return DebugPassId::FXAA;
+        if (name == "PostProcess"|| name == "postprocess")  return DebugPassId::PostProcess;
+        if (name == "UIPass"     || name == "uipass")       return DebugPassId::UIPass;
+        // 未知 Pass 名 — 分配到 ShadowPass 位置但保持 inactive
+        return DebugPassId::ShadowPass;
+    }
+
+    void PerformanceWindow::SetGPUProfiler(const GPUProfilerSnapshot& snap) {
+        // 1. 先将所有条目标记为 non-active
+        for (auto& p : m_StablePasses) {
+            p.active = false;
+            p.timeMs = 0.0f;
+        }
+
+        // 2. 将动态 Pass 数据映射到固定表
+        for (uint32 i = 0; i < snap.passCount && i < GPUProfilerSnapshot::kMaxPasses; ++i) {
+            DebugPassId id = MapPassNameToId(snap.passes[i].name);
+            auto& entry = m_StablePasses[(int32)id];
+            entry.active = true;
+            entry.timeMs = snap.passes[i].timeMs;
+        }
+    }
 
     void PerformanceWindow::DrawGPUProfiler() {
-        uint32 passCount = m_GPUProfiler.passCount;
-
-        // ── 总耗时 ──
+        // ── 计算总耗时（仅统计 active pass） ──
         float totalGPUms = 0.0f;
-        for (uint32 i = 0; i < passCount; ++i)
-            totalGPUms += m_GPUProfiler.passes[i].timeMs;
+        uint32 activeCount = 0;
+        for (auto& p : m_StablePasses) {
+            if (p.active) {
+                totalGPUms += p.timeMs;
+                ++activeCount;
+            }
+        }
 
         char totalGpuBuf[64];
         std::snprintf(totalGpuBuf, sizeof(totalGpuBuf),
-                      "Total GPU: %.3f ms", totalGPUms);
+                      "Total GPU: %.3f ms (%u active / %zu total)",
+                      totalGPUms, activeCount, m_StablePasses.size());
         ImGui::TextColored(ImVec4(0,1,0.5f,1), "%s", totalGpuBuf);
 
         ImGui::Spacing();
 
-        if (passCount == 0) {
+        if (activeCount == 0) {
             ImGui::TextColored(ImVec4(0.5f,0.5f,0.5f,1),
-                               "No GPU pass data. Enable GPU timestamp queries\n"
-                               "in your renderer to populate the profiler.");
+                               "No GPU pass data yet.");
             return;
         }
 
-        const float rowH = 28.0f;          // 每行高度
-        const float labelW = 130.0f;       // 左侧标签宽度
-        const float msBarMax = (std::max)(totalGPUms, 16.667f); // 缩放基准 (至少 ~60fps 一帧)
+        const float rowH = 26.0f;
+        const float labelW = 140.0f;
+        const float msBarMax = (std::max)(totalGPUms, 16.667f);
 
         ImDrawList* dl = ImGui::GetWindowDrawList();
-        ImVec2 cursorBase = ImGui::GetCursorScreenPos();
         float availW = ImGui::GetContentRegionAvail().x - labelW;
         if (availW < 50.0f) availW = 50.0f;
 
-        // ── 表头 ──
-        ImGui::Text("Pass Name");
-        ImGui::SameLine(labelW);
-
-        // 时间刻度尺
+        // ── 表头 + 刻度尺 ──
         {
             float rulerY = ImGui::GetCursorScreenPos().y;
-            float rulerW = availW;
             ImVec2 rulerStart = ImGui::GetCursorScreenPos();
+            ImGui::Text("Pass Name");
+            ImGui::SameLine(labelW);
             ImGui::Text("Timeline (ms)");
 
-            // 在 ruler 上画刻度线
             const int numTicks = 5;
             for (int t = 1; t <= numTicks; ++t) {
                 float tickFrac = static_cast<float>(t) / static_cast<float>(numTicks);
-                float tickX = rulerStart.x + rulerW * tickFrac;
+                float tickX = rulerStart.x + availW * tickFrac;
                 dl->AddLine(ImVec2(tickX, rulerY + 2),
                             ImVec2(tickX, rulerY + 10),
                             IM_COL32(100,100,100,150));
@@ -589,69 +617,78 @@ namespace Engine {
 
         ImGui::Dummy(ImVec2(0, 4));
 
-        // ── 为每个 Pass 分配颜色 ──
+        // ── 固定颜色（按 DebugPassId 索引） ──
         static const ImU32 passColors[] = {
-            IM_COL32(50,  180, 230, 220),  // 浅蓝
-            IM_COL32(230, 180, 50,  220),  // 金色
-            IM_COL32(80,  200, 120, 220),  // 绿色
-            IM_COL32(200, 80,  120, 220),  // 玫红
-            IM_COL32(120, 100, 220, 220),  // 淡紫
-            IM_COL32(220, 120, 50,  220),  // 橙色
-            IM_COL32(50,  200, 200, 220),  // 青色
-            IM_COL32(200, 200, 80,  220),  // 黄绿
+            IM_COL32(50,  180, 230, 220),  // 0  ShadowPass: 浅蓝
+            IM_COL32(230, 180, 50,  220),  // 1  BasePass: 金色
+            IM_COL32(80,  200, 120, 220),  // 2  SSAO: 绿色
+            IM_COL32(200, 80,  120, 220),  // 3  Bloom: 玫红
+            IM_COL32(120, 100, 220, 220),  // 4  ToneMapping: 淡紫
+            IM_COL32(220, 120, 50,  220),  // 5  FXAA: 橙色
+            IM_COL32(50,  200, 200, 220),  // 6  PostProcess: 青色
+            IM_COL32(200, 200, 80,  220),  // 7  UIPass: 黄绿
         };
-        static const uint32 kColorCount = sizeof(passColors) / sizeof(passColors[0]);
 
-        // ── 绘制每一行 ──
-        for (uint32 i = 0; i < passCount; ++i) {
-            const auto& pass = m_GPUProfiler.passes[i];
-            float passMs = pass.timeMs;
-            float frac = (msBarMax > 0.0f) ? (passMs / msBarMax) : 0.0f;
-            frac = (std::min)(frac, 1.0f);
+        // ── 遍历固定表绘制（行数恒定，窗口永不跳变） ──
+        for (size_t i = 0; i < m_StablePasses.size(); ++i) {
+            const auto& entry = m_StablePasses[i];
+            const char* passName = kDebugPassNames[i];
 
             ImVec2 rowPos = ImGui::GetCursorScreenPos();
             float rowY0 = rowPos.y;
             float rowY1 = rowY0 + rowH;
 
-            // 背景 (隔行交替)
+            // 交替背景
             if (i % 2 == 1) {
                 dl->AddRectFilled(ImVec2(rowPos.x, rowY0),
                                   ImVec2(rowPos.x + labelW + availW, rowY1),
                                   IM_COL32(30,30,35,180));
             }
 
-            // Pass 名称 (左对齐)
-            dl->AddText(ImVec2(rowPos.x + 4, rowY0 + 6),
-                        IM_COL32(220,220,220,255), pass.name.c_str());
+            if (entry.active) {
+                // ── 活动 Pass: 显示名称 + 耗时 + 条形图 ──
+                float passMs = entry.timeMs;
+                float frac = (msBarMax > 0.0f) ? (std::min)(passMs / msBarMax, 1.0f) : 0.0f;
 
-            // 时间值 (在名称后)
-            char timeBuf[32];
-            std::snprintf(timeBuf, sizeof(timeBuf), "%.3f ms", passMs);
-            float nameW = ImGui::CalcTextSize(pass.name.c_str()).x;
-            dl->AddText(ImVec2(rowPos.x + 6 + nameW + 8, rowY0 + 6),
-                        IM_COL32(150,150,150,200), timeBuf);
+                // 名称
+                dl->AddText(ImVec2(rowPos.x + 4, rowY0 + 5),
+                            IM_COL32(220,220,220,255), passName);
 
-            // 条形图
-            float barX0 = rowPos.x + labelW;
-            float barW = availW * frac;
-            if (barW < 1.0f && frac > 0.0f) barW = 1.0f;
+                // 时间值
+                char timeBuf[32];
+                std::snprintf(timeBuf, sizeof(timeBuf), "%.3f ms", passMs);
+                float nameW = ImGui::CalcTextSize(passName).x;
+                dl->AddText(ImVec2(rowPos.x + 6 + nameW + 8, rowY0 + 5),
+                            IM_COL32(150,150,150,200), timeBuf);
 
-            if (barW > 0.0f) {
-                ImU32 color = passColors[i % kColorCount];
-                // 圆角矩形
-                dl->AddRectFilled(ImVec2(barX0 + 2, rowY0 + 4),
-                                  ImVec2(barX0 + barW, rowY1 - 4),
-                                  color, 3.0f);
+                // 条形图
+                float barX0 = rowPos.x + labelW;
+                float barW = availW * frac;
+                if (barW < 1.0f && frac > 0.0f) barW = 1.0f;
 
-                // 百分比标注
-                char pctBuf[16];
-                float pct = (totalGPUms > 0.0f) ? (passMs / totalGPUms) * 100.0f : 0.0f;
-                std::snprintf(pctBuf, sizeof(pctBuf), "%.1f%%", pct);
-                dl->AddText(ImVec2(barX0 + barW + 6, rowY0 + 6),
-                            IM_COL32(180,180,180,255), pctBuf);
+                if (barW > 0.0f) {
+                    ImU32 color = passColors[i % 8];
+                    dl->AddRectFilled(ImVec2(barX0 + 2, rowY0 + 3),
+                                      ImVec2(barX0 + barW, rowY1 - 3),
+                                      color, 3.0f);
+
+                    float pct = (totalGPUms > 0.0f) ? (passMs / totalGPUms) * 100.0f : 0.0f;
+                    char pctBuf[16];
+                    std::snprintf(pctBuf, sizeof(pctBuf), "%.1f%%", pct);
+                    dl->AddText(ImVec2(barX0 + barW + 6, rowY0 + 5),
+                                IM_COL32(180,180,180,255), pctBuf);
+                }
+            } else {
+                // ── 非活动 Pass: 灰色名称 + "--" ──
+                dl->AddText(ImVec2(rowPos.x + 4, rowY0 + 5),
+                            IM_COL32(120,120,120,200), passName);
+                char disabledBuf[24];
+                std::snprintf(disabledBuf, sizeof(disabledBuf), "--");
+                float nameW = ImGui::CalcTextSize(passName).x;
+                dl->AddText(ImVec2(rowPos.x + 6 + nameW + 8, rowY0 + 5),
+                            IM_COL32(80,80,80,200), disabledBuf);
             }
 
-            // 模拟 ImGui 占位空间
             ImGui::Dummy(ImVec2(0, rowH));
         }
 
@@ -660,8 +697,8 @@ namespace Engine {
         if (totalGPUms > 0.0f) {
             char summary[128];
             std::snprintf(summary, sizeof(summary),
-                          "Total: %.3f ms | %u passes | %.1f FPS budget",
-                          totalGPUms, passCount, 1000.0f / (std::max)(totalGPUms, 0.001f));
+                          "Total: %.3f ms | %.1f FPS budget",
+                          totalGPUms, 1000.0f / (std::max)(totalGPUms, 0.001f));
             ImGui::TextColored(ImVec4(0.6f,0.8f,1.0f,1), "%s", summary);
         }
     }
@@ -1118,7 +1155,7 @@ namespace Engine {
                                   ImGuiColorEditFlags_Float | ImGuiColorEditFlags_HDR)) {
                 ld->ambientColor = { col[0], col[1], col[2] };
             }
-            ImGui::SliderFloat("Intensity", &ld->ambientIntensity, 0.0f, 5.0f, "%.2f");
+            ImGui::SliderFloat("Ambient Intensity", &ld->ambientIntensity, 0.0f, 5.0f, "%.2f");
         }
 
         ImGui::Spacing();
@@ -1160,7 +1197,7 @@ namespace Engine {
 
                     ImGui::DragFloat3("Position", pos, 0.1f);
                     ImGui::ColorEdit3("Color", col, ImGuiColorEditFlags_Float);
-                    ImGui::SliderFloat("Intensity", &light.intensity, 0.0f, 20.0f, "%.1f");
+                    ImGui::SliderFloat("Light Intensity", &light.intensity, 0.0f, 20.0f, "%.1f");
                     ImGui::Checkbox("Cast Shadows", &light.isShadowCaster);
 
                     light.position = { pos[0], pos[1], pos[2] };
@@ -1188,7 +1225,7 @@ namespace Engine {
             ImGui::TextColored(ImVec4(1.0f,0.6f,0.3f,1), "Shadow Settings");
             ImGui::Separator();
 
-            ImGui::SliderFloat("Shadow Bias", &ld->shadowBias, 0.0f, 0.05f, "%.5f", 5.0f);
+            ImGui::SliderFloat("Shadow Bias", &ld->shadowBias, 0.0f, 0.05f, "%.5f");
             ImGui::SliderInt("Shadow Map Size", (int*)&ld->shadowMapSize, 256, 4096);
             ImGui::Checkbox("Show Shadow Map", &ld->showShadowMap);
 

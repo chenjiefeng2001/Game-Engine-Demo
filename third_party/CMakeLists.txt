@@ -68,6 +68,7 @@ if(EXISTS "${TRACY_SRC_DIR}/public/TracyClient.cpp")
     target_include_directories(tracy PUBLIC "${TRACY_SRC_DIR}/public")
     target_compile_definitions(tracy PUBLIC
         $<$<CONFIG:Debug>:TRACY_ENABLE>
+        $<$<CONFIG:Debug>:TRACY_NO_SYSTEM_TRACING>
         PRIVATE TRACY_NO_FMT_TRACING
     )
     set_target_properties(tracy PROPERTIES FOLDER "ThirdParty")

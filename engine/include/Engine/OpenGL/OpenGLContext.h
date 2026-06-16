@@ -13,11 +13,6 @@ namespace Engine {
 
 	/**
 	 * @brief OpenGL 渲染上下文实现 — 支持 DrawCall/几何统计和 GPU 时间戳查询
-	 *
-	 * 新增功能：
-	 *   - GetAndResetVertexCount() / GetAndResetTriangleCount()：几何体统计
-	 *   - BeginGPUPass() / EndGPUPass() / GetGPUProfileFrame()：GPU 瀑布图
-	 *   - GetTextureVRAMBytes() / GetBufferVRAMBytes()：显存占用估算
 	 */
 	class OpenGLContext final : public IRenderContext {
 	public:
@@ -102,10 +97,16 @@ namespace Engine {
 		OpenGLAntiAliasing* GetAntiAliasing() const { return m_AntiAliasing.get(); }
 		void ResolveToDefault();
 
+		// ── 管道状态重置（用于 UI Pass 前，防止 3D 深度/混合状态污染 ImGui） ──
+		void ResetPipelineState();
+
 		// ── 访问器 ──
 		GladGLContext& GetGL() { return m_GL; }
 		void RecordTriangleCount(uint32 count) { m_TriangleCount += count; }
 		void RecordVertexCount(uint32 count)   { m_VertexCount += count; }
+
+		int32 GetBackbufferWidth()  const { return m_BackbufferWidth; }
+		int32 GetBackbufferHeight() const { return m_BackbufferHeight; }
 
 	private:
 		// ── GPU 时间戳查询（GL 实现） ──
@@ -127,6 +128,10 @@ namespace Engine {
 		uint32 m_DrawCallCount  = 0;
 		uint32 m_VertexCount    = 0;
 		uint32 m_TriangleCount  = 0;
+
+		// ── 窗口尺寸（用于 ResetPipelineState 恢复 viewport） ──
+		int32 m_BackbufferWidth  = 1280;
+		int32 m_BackbufferHeight = 720;
 
 		// ── 显存占用估算 ──
 		uint64 m_TextureVRAMBytes = 0;
