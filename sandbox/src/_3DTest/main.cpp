@@ -12,7 +12,7 @@ int main() {
 #endif
     try {
         Engine::OpenGLGraphicsFactory factory;
-        Engine::_3DTestApp app(factory);
+        Engine::_3DTestApp app(factory, "3D Graphics Debug Test");
         app.Run();
     } catch (const std::exception& e) {
         std::cerr << "Fatal error: " << e.what() << std::endl;
