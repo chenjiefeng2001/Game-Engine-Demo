@@ -1,5 +1,6 @@
 #include "ImGuiUIManager.h"
 #include "Engine/Core/Input.h"
+#include "Engine/OpenGL/OpenGLContext.h"
 
 // GLAD 必须在任何可能包含 gl.h 的头文件之前包含
 #include <glad/gl.h>
@@ -12,6 +13,10 @@
 
 namespace {
     Engine::Logger s_Log("ImGuiUIManager");
+    
+    // 供 Renderer_RenderWindow 回调使用的 GladGLContext 指针
+    // 在 Init() 中设置，用于子视口渲染时访问 OpenGL 函数
+    GladGLContext* s_ViewportGL = nullptr;
 }
 #include <cstdio>
 #include <cmath>
@@ -67,8 +72,40 @@ namespace Engine {
         ImGui_ImplGlfw_InitForOpenGL(window, true);
         ImGui_ImplOpenGL3_Init("#version 460");
 
-        // ── 视口窗口样式：平台窗口应使用直角（无圆角） ──
+        // ── 自定义 Viewport 渲染回调 ──
+        // 替换默认的 Renderer_RenderWindow，确保每个子视口在渲染前都重置 2D 状态。
+        // 默认回调 (imgui_impl_opengl3.cpp:1119) 只做 glClear(GL_COLOR_BUFFER_BIT)，
+        // 不清除深度缓冲、不禁用深度测试。如果子视口的上下文被 3D 状态污染，
+        // UI 将被深度剔除而消失。
         if (io.ConfigFlags & ImGuiConfigFlags_ViewportsEnable) {
+            // 从 apiContext 获取 OpenGL 上下文用于多视口渲染回调
+            if (auto* oglCtx = static_cast<OpenGLContext*>(apiContext)) {
+                s_ViewportGL = &oglCtx->GetGL();
+            }
+
+            ImGuiPlatformIO& platform_io = ImGui::GetPlatformIO();
+            platform_io.Renderer_RenderWindow = [](ImGuiViewport* viewport, void*) {
+                if (!s_ViewportGL) return;
+
+                // 清除颜色 + 深度缓冲（关键：深度也必须清，否则子视口 UI 被旧数据剔除）
+                if (!(viewport->Flags & ImGuiViewportFlags_NoRendererClear)) {
+                    s_ViewportGL->ClearColor(0.0f, 0.0f, 0.0f, 1.0f);
+                    s_ViewportGL->Clear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+                }
+
+                // 【关键】强制 2D 渲染状态 — 每个视口都是干净的 UI 上下文
+                s_ViewportGL->Disable(GL_DEPTH_TEST);
+                s_ViewportGL->DepthMask(GL_FALSE);
+                s_ViewportGL->Disable(GL_CULL_FACE);
+                s_ViewportGL->Enable(GL_BLEND);
+                s_ViewportGL->BlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+                s_ViewportGL->Enable(GL_SCISSOR_TEST);
+                s_ViewportGL->Disable(GL_STENCIL_TEST);
+                s_ViewportGL->PolygonMode(GL_FRONT_AND_BACK, GL_FILL);
+
+                ImGui_ImplOpenGL3_RenderDrawData(viewport->DrawData);
+            };
+
             ImGui::GetStyle().WindowRounding = 0.0f;
             ImGui::GetStyle().Colors[ImGuiCol_WindowBg].w = 1.0f;
         }

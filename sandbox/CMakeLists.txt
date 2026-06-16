@@ -34,6 +34,7 @@ add_sandbox_executable(ComplexSceneTest src/ComplexSceneTest/main.cpp src/Comple
 add_sandbox_executable(AnimationTest src/AnimationTest/main.cpp src/AnimationTest/AnimationTestApp.cpp)
 add_sandbox_executable(AnimationDemo src/AnimationDemo/main.cpp src/AnimationDemo/AnimationDemoApp.cpp)
 add_sandbox_executable(BarePhysicsTest src/BarePhysicsTest/main.cpp src/BarePhysicsTest/BarePhysicsTestApp.cpp)
+add_sandbox_executable(AudioSystemTest src/AudioSystemTest/main.cpp)
 
 # ==============================================================================
 # 2. 资源同步 Target — 将 assets 和 OpenAL32.dll 拷贝到每个输出子目录
@@ -42,7 +43,7 @@ set(SANDBOX_TARGETS
     Sandbox InputTest SpriteBatchTest GameObjectTest
     TextureManagerTest PhysicsTest AudioTest ImGuiDemo
     CollisionAudioTest ImGuiTest AudioPhysicsSandbox SerializationTest MarioDemo EditorDemo
-    SystemTest _3DTest ComplexSceneTest AnimationTest AnimationDemo
+    SystemTest _3DTest ComplexSceneTest AnimationTest AnimationDemo AudioSystemTest
 )
 
 add_custom_target(SyncSandboxResources ALL
