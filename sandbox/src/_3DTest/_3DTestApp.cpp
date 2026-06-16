@@ -490,6 +490,13 @@ void _3DTestApp::Run() {
       static_cast<OpenGLContext *>(ctx)->ResolveToDefault();
     }
 
+    // 【幻影修复】清除 Backbuffer 深度缓冲
+    // 3D 渲染在 MSAA FBO 上进行；ResolveToDefault 只复制颜色数据到默认 Backbuffer，
+    // 而深度缓冲保留了旧帧数据。若不清除，ImGui 会被该残留深度值剔除（消失/闪烁）。
+    {
+      static_cast<OpenGLContext*>(ctx)->GetGL().Clear(GL_DEPTH_BUFFER_BIT);
+    }
+
     // ═══ UI 渲染管线 ═══
     {
       int32 q = ctx->BeginGPUPass("UIPass");
@@ -497,6 +504,16 @@ void _3DTestApp::Run() {
       // 重置 OpenGL 管道状态（防止深度/混合残留污染 ImGui）
       auto* glCtx = static_cast<OpenGLContext*>(ctx);
       glCtx->ResetPipelineState();
+
+      // 【防御性修复】显式确认 ImGui 所需的 2D 渲染状态
+      // ImGui 基于画家算法，必须禁用所有 3D 状态以避免碰撞剔除
+      auto& gl = glCtx->GetGL();
+      gl.Disable(GL_DEPTH_TEST);
+      gl.DepthMask(GL_FALSE);
+      gl.Disable(GL_CULL_FACE);
+      gl.Enable(GL_BLEND);
+      gl.BlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+      gl.Enable(GL_SCISSOR_TEST);
 
       // 同步持久化光源数据
       SyncDebugLights();
