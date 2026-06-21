@@ -2,35 +2,41 @@
 
 /**
  * @file Log.h
- * @brief 引擎日志系统 — 基于 spdlog 的结构化日志
+ * @brief 引擎日志系统 — 基于 spdlog 的高性能结构化日志
+ *
+ * ============================================================
+ * 设计要点（基于方案重构）：
+ *   - 基于 spdlog，使用异步模式（线程池 + 队列）
+ *   - 每个 Category 对应一个 spdlog::logger 实例
+ *   - 宏 ENGINE_LOG_*(Category, ...) 自动捕获源码位置
+ *   - 内置内存环形缓冲区 Sink，崩溃时自动 Dump
+ *   - 与 CrashHandler 深度集成：崩溃时强制刷盘所有 Sink
+ * ============================================================
  *
  * 使用方式：
  * @code
- *   // 基本日志（自动带 [Engine] 标签）
- *   Log::Info("Window created {}x{}", 800, 600);
- *   Log::Warn("Texture '{}' not found, using fallback", path);
- *   Log::Error("Failed to load shader: {}", error);
+ *   // 1. 引擎全局日志（Category = "Engine"）
+ *   ENGINE_LOG_INFO("Window created {}x{}", 800, 600);
  *
- *   // 按子系统标签
- *   Log::Get("Physics")->Info("Step dt={:.6f}s", dt);
- *   Log::Get("Audio" )->Warn("Source {} underrun", sourceId);
+ *   // 2. 按子系统日志
+ *   ENGINE_LOG_INFO("Physics", "Step dt={:.6f}s", dt);
+ *   ENGINE_LOG_WARN("Audio", "Source {} underrun", sourceId);
  *
- *   // 初始化时设置日志级别和输出
+ *   // 3. 获取 Logger 对象（避免宏开销，适合关键路径）
+ *   auto log = Log::GetLogger("Physics");
+ *   log.Info("Step dt={:.6f}s", dt);
+ *
+ *   // 4. 初始化
  *   Log::Init("logs/engine.log", Log::Level::Trace);
  *
- *   // 在作用域中自动缩进
- *   {
- *       Log::ScopeIndent _("Resource loading:");
- *       Log::Info("Texture: {}", path);
- *       Log::Info("Shader: {}", shaderPath);
- *   }  // 自动取消缩进
+ *   // 5. 级别控制
+ *   Log::SetLevel("Physics", Log::Level::Warn);
  * @endcode
  *
- * 设计原则：
- *   - 基于 spdlog，利用其异步写入、多线程安全、文件轮转能力
- *   - 引擎代码统一调用 Log::Info(...)，不直接使用 spdlog API
- *   - 可逐个子系统独立设置日志级别
- *   - Debug 模式下自动附加源码文件 + 行号
+ * 崩溃集成：
+ *   CrashHandler::OnCrash() 中应调用：
+ *     Log::ForceFlushAndDump("crashes/last_logs.txt");
+ *   这会强制刷盘所有文件 Sink 并导出内存环形缓冲区。
  */
 
 #include "Engine/Types.h"
@@ -38,11 +44,18 @@
 #include <string>
 #include <spdlog/spdlog.h>
 #include <spdlog/fmt/fmt.h>
+#include <spdlog/common.h>
+#include <source_location>
 
 namespace Engine {
 
-// 前向声明（Log::GetLogger 返回 Logger 值类型）
+// 前向声明
 class Logger;
+
+// ============================================================
+// 内存环形缓冲区 Sink 的前向声明（用于 Dump）
+// ============================================================
+class MemoryHistorySink;
 
 class Log {
 public:
@@ -58,13 +71,12 @@ public:
     };
 
     // ── 生命周期 ──
-    static void Init(const std::string& filePath = "logs/engine.log",
+    static void Init(const std::string& filePath   = "logs/engine.log",
                      Level consoleLevel = Level::Trace,
                      Level fileLevel    = Level::Debug);
     static void Shutdown();
 
-    // ── 全局日志（使用 fmt::format_string 支持 C++20 编译期格式检查） ──
-
+    // ── 全局日志（直接调用，不捕获 source_loc） ──
     template<typename... Args>
     static void Trace(fmt::format_string<Args...> fmtStr, Args&&... args) {
         GetDefaultLogger()->trace(fmtStr, std::forward<Args>(args)...);
@@ -95,25 +107,79 @@ public:
         GetDefaultLogger()->critical(fmtStr, std::forward<Args>(args)...);
     }
 
+    // ── 带 source_loc 的日志（由宏调用） ──
+
+    template<typename... Args>
+    static void TraceLoc(const std::source_location& loc,
+                         fmt::format_string<Args...> fmtStr, Args&&... args) {
+        GetDefaultLogger()->log(spdlog::source_loc{
+            loc.file_name(), static_cast<int>(loc.line()), loc.function_name()},
+            spdlog::level::trace, fmtStr, std::forward<Args>(args)...);
+    }
+
+    template<typename... Args>
+    static void DebugLoc(const std::source_location& loc,
+                         fmt::format_string<Args...> fmtStr, Args&&... args) {
+        GetDefaultLogger()->log(spdlog::source_loc{
+            loc.file_name(), static_cast<int>(loc.line()), loc.function_name()},
+            spdlog::level::debug, fmtStr, std::forward<Args>(args)...);
+    }
+
+    template<typename... Args>
+    static void InfoLoc(const std::source_location& loc,
+                        fmt::format_string<Args...> fmtStr, Args&&... args) {
+        GetDefaultLogger()->log(spdlog::source_loc{
+            loc.file_name(), static_cast<int>(loc.line()), loc.function_name()},
+            spdlog::level::info, fmtStr, std::forward<Args>(args)...);
+    }
+
+    template<typename... Args>
+    static void WarnLoc(const std::source_location& loc,
+                        fmt::format_string<Args...> fmtStr, Args&&... args) {
+        GetDefaultLogger()->log(spdlog::source_loc{
+            loc.file_name(), static_cast<int>(loc.line()), loc.function_name()},
+            spdlog::level::warn, fmtStr, std::forward<Args>(args)...);
+    }
+
+    template<typename... Args>
+    static void ErrorLoc(const std::source_location& loc,
+                         fmt::format_string<Args...> fmtStr, Args&&... args) {
+        GetDefaultLogger()->log(spdlog::source_loc{
+            loc.file_name(), static_cast<int>(loc.line()), loc.function_name()},
+            spdlog::level::err, fmtStr, std::forward<Args>(args)...);
+    }
+
+    template<typename... Args>
+    static void CriticalLoc(const std::source_location& loc,
+                            fmt::format_string<Args...> fmtStr, Args&&... args) {
+        GetDefaultLogger()->log(spdlog::source_loc{
+            loc.file_name(), static_cast<int>(loc.line()), loc.function_name()},
+            spdlog::level::critical, fmtStr, std::forward<Args>(args)...);
+    }
+
+    // ── 子系统 Logger（带 source_loc） ──
+
+    template<typename... Args>
+    static void LogToCategory(const std::string& category,
+                              spdlog::level::level_enum level,
+                              const std::source_location& loc,
+                              fmt::format_string<Args...> fmtStr, Args&&... args) {
+        auto logger = Get(category);
+        if (logger) {
+            logger->log(spdlog::source_loc{
+                loc.file_name(), static_cast<int>(loc.line()), loc.function_name()},
+                level, fmtStr, std::forward<Args>(args)...);
+        }
+    }
+
     // ── 按子系统获取独立 Logger ──
 
     /**
      * @brief 获取或创建指定名称的子系统 Logger
      * @param name 子系统名称，如 "Physics"、"Audio"
      * @return spdlog::logger 指针
-     *
-     * 首次调用时自动创建，后续复用。
-     * 每个 Logger 可独立设置日志级别：
-     * @code
-     *   Log::Get("Physics")->set_level(spdlog::level::warn);
-     * @endcode
      */
     static std::shared_ptr<spdlog::logger> Get(const std::string& name);
-
-    // ── 便捷宏（自动包含文件名和行号） ──
-
-    // 非关键路径使用宏（自动附加源码位置）
-    // 关键路径直接用 Log::Info(...) 避免宏开销
 
     // ── 日志级别控制 ──
 
@@ -127,49 +193,50 @@ public:
 
     // ── 刷新 ──
 
-    /** 强制刷新所有日志到磁盘 */
+    /** 强制刷新默认 logger 到磁盘 */
     static void Flush();
+
+    /**
+     * @brief 强制刷新所有 logger 到磁盘（供 CrashHandler 使用）
+     *
+     * 遍历所有已注册的 logger，对每个 logger 调用 flush()。
+     * 同时调用 spdlog::details::thread_pool 的 flush_all() 确保
+     * 异步队列中的待处理日志全部写入。
+     */
+    static void ForceFlushAll();
+
+    /**
+     * @brief 强制刷盘并导出内存历史缓冲区（供 CrashHandler 使用）
+     * @param dumpPath 导出的文件路径
+     *
+     * 在崩溃时调用此函数：
+     * 1. 强制刷新所有文件 Sink
+     * 2. 导出 MemoryHistorySink 的环形缓冲区内容到文件
+     */
+    static void ForceFlushAndDump(const std::string& dumpPath);
 
     // ── 获取模块 Logger（不暴露 spdlog 类型） ──
 
-    /**
-     * @brief 获取或创建指定名称的模块 Logger
-     * @param name 模块名称，如 "ResourceManager"、"Audio"
-     * @return Logger 值对象（轻量，可安全复制）
-     *
-     * @code
-     *   auto log = Log::GetLogger("Physics");
-     *   log.Info("Step dt={:.6f}s", dt);
-     *   log.Warn("Body {} out of bounds", bodyId);
-     * @endcode
-     */
     static Logger GetLogger(const std::string& name);
 
     // ── 内部 ──
     static std::shared_ptr<spdlog::logger> GetDefaultLogger();
+    static std::shared_ptr<MemoryHistorySink> GetMemoryHistorySink();
 
 private:
     static bool s_Initialized;
     static std::shared_ptr<spdlog::logger> s_DefaultLogger;
+    static std::shared_ptr<MemoryHistorySink> s_MemorySink;
 };
 
 // ============================================================
-// Logger — 轻量日志中间层，不暴露 spdlog 类型
-//
-// 设计要点：
-//   - 值类型，可安全复制、移动
-//   - 懒初始化：构造时不访问 spdlog，首次输出时才获取 logger
-//   - 因此可在静态初始化阶段安全创建（如文件作用域 static Logger）
+// Logger — 轻量日志中间层
 // ============================================================
 
 class Logger {
 public:
     Logger() = default;
-
-    /// 按名称创建 Logger（懒初始化）
     explicit Logger(const std::string& name) : m_Name(name) {}
-
-    // ── 日志输出 ──
 
     template<typename... Args>
     void Trace(fmt::format_string<Args...> fmt, Args&&... args) {
@@ -207,8 +274,6 @@ public:
         if (m_Logger) m_Logger->critical(fmt, std::forward<Args>(args)...);
     }
 
-    // ── 控制 ──
-
     void SetLevel(Log::Level level) {
         EnsureLogger();
         if (m_Logger)
@@ -230,3 +295,72 @@ private:
 };
 
 } // namespace Engine
+
+// ============================================================
+// ENGINE_LOG 宏 — 引擎级结构化日志（自动捕获源码位置）
+//
+// 设计原则：
+//   - Category 是显式必选的第一参数，例如 "Physics"、"Audio"
+//   - 内部通过 spdlog::source_loc 传递文件名、行号和函数名
+//   - 使用 do { ... } while(0) 确保宏语法安全
+//
+// 使用方式：
+//   // 指定 Category
+//   ENGINE_LOG_INFO("Renderer", "Created shader: {}", path);
+//   ENGINE_LOG_WARN("Audio",    "Source {} underrun", srcId);
+//   ENGINE_LOG_ERROR("Physics", "Body {} out of bounds", bodyId);
+// ============================================================
+
+#define ENGINE_LOG_TRACE(category, ...) \
+    do { \
+        if (auto _l_ = ::Engine::Log::Get(category)) { \
+            auto _loc_ = std::source_location::current(); \
+            _l_->log(spdlog::source_loc{_loc_.file_name(), static_cast<int>(_loc_.line()), _loc_.function_name()}, \
+                     spdlog::level::trace, __VA_ARGS__); \
+        } \
+    } while (0)
+
+#define ENGINE_LOG_DEBUG(category, ...) \
+    do { \
+        if (auto _l_ = ::Engine::Log::Get(category)) { \
+            auto _loc_ = std::source_location::current(); \
+            _l_->log(spdlog::source_loc{_loc_.file_name(), static_cast<int>(_loc_.line()), _loc_.function_name()}, \
+                     spdlog::level::debug, __VA_ARGS__); \
+        } \
+    } while (0)
+
+#define ENGINE_LOG_INFO(category, ...) \
+    do { \
+        if (auto _l_ = ::Engine::Log::Get(category)) { \
+            auto _loc_ = std::source_location::current(); \
+            _l_->log(spdlog::source_loc{_loc_.file_name(), static_cast<int>(_loc_.line()), _loc_.function_name()}, \
+                     spdlog::level::info, __VA_ARGS__); \
+        } \
+    } while (0)
+
+#define ENGINE_LOG_WARN(category, ...) \
+    do { \
+        if (auto _l_ = ::Engine::Log::Get(category)) { \
+            auto _loc_ = std::source_location::current(); \
+            _l_->log(spdlog::source_loc{_loc_.file_name(), static_cast<int>(_loc_.line()), _loc_.function_name()}, \
+                     spdlog::level::warn, __VA_ARGS__); \
+        } \
+    } while (0)
+
+#define ENGINE_LOG_ERROR(category, ...) \
+    do { \
+        if (auto _l_ = ::Engine::Log::Get(category)) { \
+            auto _loc_ = std::source_location::current(); \
+            _l_->log(spdlog::source_loc{_loc_.file_name(), static_cast<int>(_loc_.line()), _loc_.function_name()}, \
+                     spdlog::level::err, __VA_ARGS__); \
+        } \
+    } while (0)
+
+#define ENGINE_LOG_CRITICAL(category, ...) \
+    do { \
+        if (auto _l_ = ::Engine::Log::Get(category)) { \
+            auto _loc_ = std::source_location::current(); \
+            _l_->log(spdlog::source_loc{_loc_.file_name(), static_cast<int>(_loc_.line()), _loc_.function_name()}, \
+                     spdlog::level::critical, __VA_ARGS__); \
+        } \
+    } while (0)

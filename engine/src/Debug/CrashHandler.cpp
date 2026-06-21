@@ -144,7 +144,13 @@ void CrashHandler::OnCrash(void* context) {
     // ── 4. 分配器状态 ──
     DumpAllocators(base + "_allocators.txt");
 
-    // ── 5. 额外堆栈跟踪文本 ──
+    // ── 5. 强制刷盘所有日志 + 导出内存历史缓冲区 ──
+    // 必须在 StackTrace 之后调用，因为 ForceFlushAndDump 可触及其他日志
+    {
+        Log::ForceFlushAndDump(base + "_last_logs.txt");
+    }
+
+    // ── 6. 额外堆栈跟踪文本 ──
     {
         std::ofstream f(base + "_stacktrace.txt");
         if (f) {
