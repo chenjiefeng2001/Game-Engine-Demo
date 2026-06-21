@@ -48,7 +48,8 @@ namespace Engine {
     // 静态回调实现
     // ============================================================
 
-    void Box2DDebugDraw::DrawPolygonImpl(const b2Vec2* vertices, int vertexCount,
+    void Box2DDebugDraw::DrawPolygonImpl(b2WorldTransform transform,
+                                         const b2Vec2* vertices, int vertexCount,
                                          b2HexColor color, void* context) {
         auto* target = static_cast<IPhysicsDebugDraw*>(context);
         if (!target) return;
@@ -57,7 +58,7 @@ namespace Engine {
         Vec2 buffer[maxVerts];
         int32 count = vertexCount < maxVerts ? vertexCount : maxVerts;
         for (int32 i = 0; i < count; ++i) {
-            buffer[i] = FromB2(vertices[i]);
+            buffer[i] = FromB2(b2TransformWorldPoint(transform, vertices[i]));
         }
         target->DrawPolygon(buffer, count, FromB2Color(color));
     }
@@ -85,12 +86,12 @@ namespace Engine {
         target->DrawCircle(FromB2(center), radius, FromB2Color(color));
     }
 
-    void Box2DDebugDraw::DrawSolidCircleImpl(b2Transform transform, float radius,
-                                              b2HexColor color, void* context) {
+    void Box2DDebugDraw::DrawSolidCircleImpl(b2WorldTransform transform, b2Vec2 center,
+                                              float radius, b2HexColor color, void* context) {
         auto* target = static_cast<IPhysicsDebugDraw*>(context);
         if (!target) return;
 
-        target->DrawSolidCircle(FromB2(transform.p), radius,
+        target->DrawSolidCircle(FromB2(center), radius,
                                 Vec2(1.0f, 0.0f), FromB2Color(color));
     }
 

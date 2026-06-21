@@ -439,9 +439,9 @@ OcclusionData SpatialAudioManager::ComputeOcclusion(
         // 在源-听者方向周围添加小偏移（圆锥采样）
         float spread = 0.1f; // 10° 散布
         glm::vec3 offset(
-            (static_cast<float>(rand()) / RAND_MAX - 0.5f) * spread,
-            (static_cast<float>(rand()) / RAND_MAX - 0.5f) * spread,
-            (static_cast<float>(rand()) / RAND_MAX - 0.5f) * spread
+            (static_cast<float>(rand()) / static_cast<float>(RAND_MAX) - 0.5f) * spread,
+            (static_cast<float>(rand()) / static_cast<float>(RAND_MAX) - 0.5f) * spread,
+            (static_cast<float>(rand()) / static_cast<float>(RAND_MAX) - 0.5f) * spread
         );
 
         glm::vec3 rayEnd = listener;
