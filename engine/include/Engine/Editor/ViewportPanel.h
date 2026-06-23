@@ -2,75 +2,87 @@
 
 /**
  * @file ViewportPanel.h
- * @brief 视口面板 — 游戏主渲染视图的 ImGui 容器
- *
- * 功能：
- *   - 嵌入游戏渲染结果到 ImGui 窗口（通过 FBO 纹理）
- *   - 处理窗口大小变化 → 重新分配 FBO
- *   - 鼠标事件坐标转换（屏幕 → 世界）
- *   - 支持 Gizmo 操作（预留）
- *
- * 使用方式：
- * @code
- *   ViewportPanel viewport;
- *   viewport.SetFramebuffer(&fbo);
- *   viewport.OnImGui();  // 自动显示 FBO 颜色纹理
- * @endcode
+ * @brief 视口面板 — 可多次实例化的独立 3D 视口
  */
 
 #include "Engine/Types.h"
-#include <functional>
+#include "Engine/Editor/EditorCamera.h"
+#include "Engine/Core/ViewMode.h"
+#include "Engine/Core/RenderResources/Shader.h"
+#include "Engine/Core/RenderResources/VertexArray.h"
+#include "Engine/Core/RenderResources/VertexBuffer.h"
+#include "Engine/Core/RenderResources/IndexBuffer.h"
+#include "Engine/Core/IGraphicsFactory.h"
+#include "Engine/Core/IRenderContext.h"
+#include "Engine/OpenGL/OpenGLFramebuffer.h"
+#include <memory>
 #include <string>
+#include <functional>
+#include <vector>
+
+struct GladGLContext;
 
 namespace Engine {
 
-    class IRenderContext;
-    class OpenGLFramebuffer;
-
     class ViewportPanel {
     public:
-        ViewportPanel() = default;
-        ~ViewportPanel() = default;
+        explicit ViewportPanel(const std::string& name);
+        ~ViewportPanel();
 
         ViewportPanel(const ViewportPanel&) = delete;
         ViewportPanel& operator=(const ViewportPanel&) = delete;
 
-        // ── FBO 绑定 ──
-        /** 设置要渲染到视口的帧缓冲 */
-        void SetFramebuffer(OpenGLFramebuffer* fbo) { m_Framebuffer = fbo; }
+        void InitResources(IGraphicsFactory* factory,
+                           const std::string& vertPath,
+                           const std::string& fragPath);
 
-        /** 设置渲染上下文（用于 resize 回调） */
         void SetRenderContext(IRenderContext* ctx) { m_RenderContext = ctx; }
+        void SetGLContext(GladGLContext* gl) { m_GL = gl; }
 
-        // ── 尺寸查询 ──
+        void SetViewMode(ViewMode mode) { m_ViewMode = mode; }
+        ViewMode GetViewMode() const { return m_ViewMode; }
+
+        void OnUpdate(float32 dt, bool isFocusedViewport = false);
+        void OnImGui();
+
+        const std::string& GetName() const { return m_Name; }
+        EditorCamera& GetCamera() { return *m_Camera; }
+        const EditorCamera& GetCamera() const { return *m_Camera; }
         float32 GetWidth() const  { return m_Width; }
         float32 GetHeight() const { return m_Height; }
         bool    IsHovered() const { return m_Hovered; }
         bool    IsFocused() const { return m_Focused; }
 
-        /** 获取视口坐标 → 窗口坐标的偏移 */
         float32 GetViewX() const { return m_ViewX; }
         float32 GetViewY() const { return m_ViewY; }
 
-        // ── 渲染 ──
-        /** 在 OnImGui() 中调用，绘制视口窗口 */
-        void OnImGui();
-
-        // ── 事件 ──
         using ResizeCallback = std::function<void(int32 width, int32 height)>;
         void SetResizeCallback(ResizeCallback cb) { m_ResizeCallback = std::move(cb); }
 
     private:
-        IRenderContext*    m_RenderContext = nullptr;
-        OpenGLFramebuffer* m_Framebuffer   = nullptr;
+        void InitFBO();
+        void Render3DScene();
 
-        // 上次渲染时的视口尺寸
+        std::string m_Name;
         float32 m_Width  = 0.0f;
         float32 m_Height = 0.0f;
         float32 m_ViewX  = 0.0f;
         float32 m_ViewY  = 0.0f;
         bool    m_Hovered = false;
         bool    m_Focused = false;
+        ViewMode m_ViewMode = ViewMode::Normal;
+
+        IRenderContext*      m_RenderContext = nullptr;
+        IGraphicsFactory*    m_Factory = nullptr;
+        GladGLContext*       m_GL = nullptr;
+        std::unique_ptr<OpenGLFramebuffer> m_FBO;
+
+        std::unique_ptr<EditorCamera> m_Camera;
+
+        std::shared_ptr<Shader>     m_3DShader;
+        std::shared_ptr<VertexArray> m_CubeVAO;
+        std::shared_ptr<VertexArray> m_GridVAO;
+        uint32 m_GridVertexCount = 0;
 
         ResizeCallback m_ResizeCallback;
     };

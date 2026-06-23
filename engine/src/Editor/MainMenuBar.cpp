@@ -1,7 +1,14 @@
 #include "Engine/Editor/MainMenuBar.h"
+#include "Engine/Core/EngineSettings.h"
 #include <imgui.h>
 
 namespace Engine {
+
+    // 用于在 Preferences 窗口中暂存的设置副本
+    // 只在 Preferences 打开时从 EngineSettings 加载一次，关闭时写回
+    static EngineSettings::Graphics s_PendingGraphics;
+    static EngineSettings::Audio    s_PendingAudio;
+    static EngineSettings::Physics  s_PendingPhysics;
 
     void MainMenuBar::OnImGui() {
         if (!ImGui::BeginMainMenuBar()) return;
@@ -150,6 +157,9 @@ namespace Engine {
             ImGui::MenuItem("Dependency Graph",  nullptr, &m_Visibility->depGraph);
             ImGui::MenuItem("Viewport",          nullptr, &m_Visibility->viewport);
 
+            // 渲染调试面板
+            ImGui::MenuItem("Renderer Debug", nullptr, &m_Visibility->rendererDebug);
+
             ImGui::Separator();
 
             // 布局重置：通过信号机制通知 EngineEditor 消费
@@ -227,27 +237,84 @@ namespace Engine {
     void MainMenuBar::DrawPreferencesWindow() {
         if (!m_ShowPreferences) return;
 
+        // Preferences 窗口打开时，从 EngineSettings 加载当前值
+        static bool initialized = false;
+        if (!initialized) {
+            EngineSettings settings;
+            settings.Load("assets/config/engine_settings.json");
+            s_PendingGraphics = settings.GetGraphics();
+            s_PendingAudio    = settings.GetAudio();
+            s_PendingPhysics  = settings.GetPhysics();
+            initialized = true;
+        }
+
         ImGui::Begin("Preferences", &m_ShowPreferences, ImGuiWindowFlags_AlwaysAutoResize);
-        ImGui::Text("Editor Preferences");
+        ImGui::Text("Engine Settings");
+
+        // ── Graphics 设置 ──
+        if (ImGui::CollapsingHeader("Graphics", ImGuiTreeNodeFlags_DefaultOpen)) {
+            ImGui::Indent();
+
+            ImGui::InputInt("Window Width",  &s_PendingGraphics.windowWidth);
+            ImGui::InputInt("Window Height", &s_PendingGraphics.windowHeight);
+            ImGui::Checkbox("Fullscreen", &s_PendingGraphics.fullscreen);
+            ImGui::Checkbox("VSync",      &s_PendingGraphics.vsync);
+            ImGui::InputInt("Target FPS", &s_PendingGraphics.targetFPS);
+            ImGui::SliderFloat("Render Scale", &s_PendingGraphics.renderScale, 0.5f, 2.0f, "%.2f");
+            ImGui::Checkbox("Enable PostFX", &s_PendingGraphics.enablePostFX);
+            ImGui::InputInt("Shadow Map Size", &s_PendingGraphics.shadowMapSize);
+
+            ImGui::Unindent();
+        }
+
+        // ── Audio 设置 ──
+        if (ImGui::CollapsingHeader("Audio", ImGuiTreeNodeFlags_DefaultOpen)) {
+            ImGui::Indent();
+
+            ImGui::SliderFloat("Master Volume", &s_PendingAudio.masterVolume, 0.0f, 1.0f, "%.2f");
+            ImGui::SliderFloat("Music Volume",  &s_PendingAudio.musicVolume, 0.0f, 1.0f, "%.2f");
+            ImGui::SliderFloat("SFX Volume",    &s_PendingAudio.sfxVolume,   0.0f, 1.0f, "%.2f");
+            ImGui::InputInt("Audio Channels",   &s_PendingAudio.audioChannels);
+
+            ImGui::Unindent();
+        }
+
+        // ── Physics 设置 ──
+        if (ImGui::CollapsingHeader("Physics", ImGuiTreeNodeFlags_DefaultOpen)) {
+            ImGui::Indent();
+
+            ImGui::InputInt("Velocity Iterations", &s_PendingPhysics.velocityIterations);
+            ImGui::InputInt("Position Iterations", &s_PendingPhysics.positionIterations);
+            ImGui::SliderFloat("Gravity Scale", &s_PendingPhysics.gravityScale, 0.0f, 5.0f, "%.2f");
+
+            ImGui::Unindent();
+        }
 
         ImGui::Separator();
 
-        // 示例：网格颜色（预留）
-        static float gridColor[3] = { 0.5f, 0.5f, 0.5f };
-        ImGui::ColorEdit3("Grid Color", gridColor);
-
-        // 示例：吸附设置
-        static float snapValue = 0.5f;
-        ImGui::DragFloat("Snap Value", &snapValue, 0.01f, 0.01f, 10.0f, "%.2f");
-
-        // 示例：自动保存
-        static bool autoSave = true;
-        ImGui::Checkbox("Auto-save on Play", &autoSave);
-
-        ImGui::Separator();
-
-        if (ImGui::Button("Close")) {
+        // ── 操作按钮 ──
+        if (ImGui::Button("Save & Apply")) {
+            EngineSettings settings;
+            settings.Load("assets/config/engine_settings.json");
+            settings.SetGraphics(s_PendingGraphics);
+            settings.SetAudio(s_PendingAudio);
+            settings.SetPhysics(s_PendingPhysics);
+            settings.Save("assets/config/engine_settings.json");
             m_ShowPreferences = false;
+            initialized = false;
+        }
+        ImGui::SameLine();
+        if (ImGui::Button("Restore Defaults")) {
+            EngineSettings settings;
+            settings.RestoreDefaults();
+            s_PendingGraphics = settings.GetGraphics();
+            s_PendingAudio    = settings.GetAudio();
+            s_PendingPhysics  = settings.GetPhysics();
+        }
+        ImGui::SameLine();
+        if (ImGui::Button("Cancel")) {
+            m_ShowPreferences = false;
+            initialized = false;
         }
 
         ImGui::End();

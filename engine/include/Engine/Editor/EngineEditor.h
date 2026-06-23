@@ -109,7 +109,7 @@ namespace Engine {
         // ── 拥有的面板 ──
         MainMenuBar           m_MenuBar;
         Toolbar               m_Toolbar;
-        ViewportPanel         m_Viewport;
+        ViewportPanel         m_Viewport{"Viewport"};
         EditorSceneManager    m_SceneManager;
         ContentBrowserPanel   m_ContentBrowser;
         AssetBrowserPanel     m_AssetBrowser;

@@ -10,13 +10,14 @@
 
 #include "Engine/Types.h"
 #include <string>
+#include <vector>
 #include <functional>
 
 namespace Engine {
 
     class ResourceManager;
 
-    class ContentBrowserPanel {
+class ContentBrowserPanel {
     public:
         ContentBrowserPanel() = default;
         ~ContentBrowserPanel() = default;
@@ -36,6 +37,7 @@ namespace Engine {
     private:
         void DrawTextureList();
         void DrawShaderList();
+        void ScanAssets();
 
         bool m_Visible = false;
         bool m_ShowTextures = true;
@@ -43,6 +45,10 @@ namespace Engine {
 
         // 当前选中的资源路径
         std::string m_SelectedPath;
+
+        // 扫描结果缓存
+        std::vector<std::string> m_TextureFiles;
+        std::vector<std::string> m_ShaderFiles;
     };
 
 } // namespace Engine
