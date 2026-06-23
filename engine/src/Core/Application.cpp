@@ -87,11 +87,11 @@ Application::Application(IGraphicsFactory &factory)
 
 Application::~Application() {
   // SubsystemManager::Shutdown() 在 m_SubsystemManager 析构时自动调用
+  // 注意：SubsystemManager 的析构中会打印日志（s_Log.Info...），
+  // 因此 Log::Shutdown() 不能在此时调用。
+  // Log 的生命周期由 main() 函数末尾统一管理。
 
   CrashHandler::Shutdown();
-
-  // ── 日志系统关闭（确保所有缓冲输出写入文件） ──
-  Log::Shutdown();
 }
 
 void Application::RegisterSubsystem(std::string name, SubsystemPhase phase,
