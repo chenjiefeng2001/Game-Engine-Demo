@@ -1,4 +1,4 @@
-﻿#include "Engine/Platform/GlfwWindow.h"
+#include "Engine/Platform/GlfwWindow.h"
 #include "Engine/Core/Input.h"
 #include "Engine/Core/IWindow.h"
 #include "Engine/OpenGL/OpenGLContext.h"
@@ -151,6 +151,13 @@ namespace Engine {
 	bool GlfwWindow::ShouldClose() const
 	{
 		return m_Window ? glfwWindowShouldClose(m_Window) : true;
+	}
+
+	void GlfwWindow::SetShouldClose(bool close)
+	{
+		if (m_Window) {
+			glfwSetWindowShouldClose(m_Window, close ? GLFW_TRUE : GLFW_FALSE);
+		}
 	}
 
 	//Register the GLFW Recall

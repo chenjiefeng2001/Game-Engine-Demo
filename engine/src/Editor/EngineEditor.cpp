@@ -6,6 +6,7 @@
 #include "Engine/PerformanceWindow.h"
 #include "Engine/Core/IWindow.h"
 #include "Engine/Core/IRenderContext.h"
+#include "Engine/Core/Log.h"
 #include <imgui.h>
 
 namespace Engine {
@@ -17,9 +18,9 @@ namespace Engine {
         m_App = app;
         if (!app) return;
 
-        // ── 连接面板可见性到菜单栏 ──
-        static PanelVisibility vis;
-        m_MenuBar.SetPanelVisibility(&vis);
+        // ── PanelVisibility 作为 EngineEditor 的成员（非 static），
+        //     与 MainMenuBar 共享同一实例 ──
+        m_MenuBar.SetPanelVisibility(&m_Visibility);
 
         // ── 视口回调 ──
         m_Viewport.SetResizeCallback([app](int32 w, int32 h) {
@@ -28,21 +29,94 @@ namespace Engine {
             }
         });
 
-        // ── 菜单栏回调 ──
-        m_MenuBar.SetExitCallback([app]() {});
+        // ── 菜单栏回调：文件操作与播放控制 ──
+        m_MenuBar.SetExitCallback([app]() {
+            if (app) {
+                auto& window = app->GetWindow();
+                window.SetShouldClose(true);
+            }
+        });
+
+        m_MenuBar.SetNewSceneCallback([]() {
+            Log::Info("[Editor] New Scene requested");
+        });
+
+        m_MenuBar.SetOpenSceneCallback([]() {
+            Log::Info("[Editor] Open Scene requested");
+        });
+
+        m_MenuBar.SetSaveSceneCallback([]() {
+            Log::Info("[Editor] Save Scene requested");
+        });
+
+        m_MenuBar.SetSaveAsCallback([]() {
+            Log::Info("[Editor] Save As requested");
+        });
+
+        // ── 播放控制回调 ──
+        m_MenuBar.SetPlayCallback([this, app]() {
+            if (app) {
+                app->SetPlaying(true);
+                m_Toolbar.SetPlayState(Toolbar::PlayState::Playing);
+            }
+        });
+
+        m_MenuBar.SetStopCallback([this, app]() {
+            if (app) {
+                app->SetPlaying(false);
+                m_Toolbar.SetPlayState(Toolbar::PlayState::Stopped);
+            }
+        });
+
+        m_MenuBar.SetPauseCallback([this, app]() {
+            if (app && app->IsPlaying()) {
+                m_Toolbar.SetPlayState(
+                    m_Toolbar.GetPlayState() == Toolbar::PlayState::Playing
+                    ? Toolbar::PlayState::Paused : Toolbar::PlayState::Playing);
+            }
+        });
+
+        m_MenuBar.SetStepCallback([]() {
+            Log::Info("[Editor] Step Frame requested");
+        });
 
         // ── 工具栏回调 ──
-        m_Toolbar.SetResetLayoutCallback([this]() {});
+        m_Toolbar.SetPlayCallback([this, app]() {
+            if (app) {
+                app->SetPlaying(true);
+                m_Toolbar.SetPlayState(Toolbar::PlayState::Playing);
+            }
+        });
+
+        m_Toolbar.SetStopCallback([this, app]() {
+            if (app) {
+                app->SetPlaying(false);
+                m_Toolbar.SetPlayState(Toolbar::PlayState::Stopped);
+            }
+        });
+
+        m_Toolbar.SetPauseCallback([this, app]() {
+            if (app && app->IsPlaying()) {
+                m_Toolbar.SetPlayState(
+                    m_Toolbar.GetPlayState() == Toolbar::PlayState::Playing
+                    ? Toolbar::PlayState::Paused : Toolbar::PlayState::Playing);
+            }
+        });
+
+        m_Toolbar.SetResetLayoutCallback([this]() {
+            // 重置布局：清除 imgui.ini 中的布局数据
+            // 下次重启时会恢复默认 Docking 布局
+        });
 
         // ── 默认可见性 ──
-        vis.sceneHierarchy = true;
-        vis.inspector      = true;
-        vis.console        = false;
-        vis.performance    = true;
-        vis.contentBrowser = false;
-        vis.assetBrowser   = false;
-        vis.depGraph       = false;
-        vis.viewport       = true;
+        m_Visibility.sceneHierarchy = true;
+        m_Visibility.inspector      = true;
+        m_Visibility.console        = true;
+        m_Visibility.performance    = true;
+        m_Visibility.contentBrowser = false;
+        m_Visibility.assetBrowser   = false;
+        m_Visibility.depGraph       = false;
+        m_Visibility.viewport       = true;
     }
 
     void EngineEditor::OnUpdate(float32 dt) {
@@ -50,133 +124,76 @@ namespace Engine {
     }
 
     void EngineEditor::OnImGui() {
-        // ── 1. 主菜单栏 ──
+        // ── 1. 主菜单栏（始终在最顶层） ──
         m_MenuBar.OnImGui();
 
-        // ── 2. 获取可见性状态 ──
-        PanelVisibility vis;
-        if (auto* pvis = const_cast<PanelVisibility*>(
-                []() -> PanelVisibility* {
-                    static PanelVisibility v;
-                    return &v;
-                }())) {
-            vis = *pvis;
-        }
-
-        // ── 3. 工具栏（浮动在菜单栏下方） ──
-        m_DockingInitialized = true;
-
-        ImGuiViewport* viewport = ImGui::GetMainViewport();
-        float menuBarHeight = ImGui::GetFrameHeight();
-        float toolbarHeight = 36.0f;
-        float toolY = viewport->Pos.y + menuBarHeight;
-
-        ImGui::SetNextWindowPos(ImVec2(viewport->Pos.x, toolY));
-        ImGui::SetNextWindowSize(ImVec2(viewport->Size.x, toolbarHeight));
-        ImGui::SetNextWindowBgAlpha(0.9f);
-
-        ImGuiWindowFlags toolFlags = ImGuiWindowFlags_NoTitleBar |
-                                     ImGuiWindowFlags_NoResize |
-                                     ImGuiWindowFlags_NoMove |
-                                     ImGuiWindowFlags_NoScrollbar |
-                                     ImGuiWindowFlags_NoCollapse;
-        ImGui::PushStyleVar(ImGuiStyleVar_WindowBorderSize, 0.0f);
-        ImGui::Begin("Toolbar", nullptr, toolFlags);
+        // ── 2. 工具栏（浮动窗口，可 dock） ──
+        // 不设置固定位置，让 Dockspace 系统管理
+        ImGui::Begin("##Toolbar", nullptr,
+                     ImGuiWindowFlags_NoTitleBar |
+                     ImGuiWindowFlags_NoResize |
+                     ImGuiWindowFlags_NoScrollbar);
         m_Toolbar.OnImGui();
         ImGui::End();
-        ImGui::PopStyleVar();
 
-        // ── 4. 面板工作区 ──
-        float workY    = toolY + toolbarHeight;
-        float workW    = viewport->Size.x;
-        float workH    = (viewport->Pos.y + viewport->Size.y) - workY;
+        // ── 3. 各编辑面板（由 Dockspace 管理布局，用户可自由拖拽） ──
 
-        float sideW   = 280.0f;   // 侧面板宽度
-        float bottomH = 200.0f;   // 底部面板高度
-
-        // ── 4a. Scene Hierarchy（左上） ──
-        if (vis.sceneHierarchy && m_SceneHierarchy) {
-            ImGui::SetNextWindowPos(ImVec2(viewport->Pos.x, workY));
-            ImGui::SetNextWindowSize(ImVec2(sideW, workH - bottomH));
-            ImGui::Begin("Scene Hierarchy", &vis.sceneHierarchy);
+        // 3a. Scene Hierarchy
+        if (m_Visibility.sceneHierarchy && m_SceneHierarchy) {
+            ImGui::Begin("Scene Hierarchy", &m_Visibility.sceneHierarchy);
             m_SceneHierarchy->OnImGui();
             ImGui::End();
         }
 
-        // ── 4b. Viewport（中央） ──
-        if (vis.viewport) {
-            float vpX = viewport->Pos.x + sideW;
-            float vpW = workW - sideW * 2;
-            ImGui::SetNextWindowPos(ImVec2(vpX, workY));
-            ImGui::SetNextWindowSize(ImVec2(vpW, workH - bottomH));
+        // 3b. Viewport（中央 3D/2D 视口）
+        if (m_Visibility.viewport) {
             m_Viewport.OnImGui();
         }
 
-        // ── 4c. Inspector（右上） ──
-        if (vis.inspector && m_Inspector) {
-            ImGui::SetNextWindowPos(ImVec2(viewport->Pos.x + workW - sideW, workY));
-            ImGui::SetNextWindowSize(ImVec2(sideW, workH - bottomH));
-            ImGui::Begin("Inspector", &vis.inspector);
+        // 3c. Inspector
+        if (m_Visibility.inspector && m_Inspector) {
+            ImGui::Begin("Inspector", &m_Visibility.inspector);
             m_Inspector->OnImGui();
             ImGui::End();
         }
 
-        // ── 4d. 底部面板（Console / Performance / Content / Asset） ──
-        float bottomY = workY + workH - bottomH;
-        float bottomItemW = workW / 4.0f;
-
-        if (vis.console && m_Console) {
-            ImGui::SetNextWindowPos(ImVec2(viewport->Pos.x, bottomY));
-            ImGui::SetNextWindowSize(ImVec2(bottomItemW, bottomH));
-            ImGui::Begin("Console", &vis.console);
+        // 3d. Console
+        if (m_Visibility.console && m_Console) {
+            ImGui::Begin("Console", &m_Visibility.console);
             m_Console->OnImGui();
             ImGui::End();
         }
 
-        if (vis.performance && m_Performance) {
-            ImGui::SetNextWindowPos(ImVec2(viewport->Pos.x + bottomItemW, bottomY));
-            ImGui::SetNextWindowSize(ImVec2(bottomItemW, bottomH));
-            ImGui::Begin("Performance", &vis.performance);
+        // 3e. Performance
+        if (m_Visibility.performance && m_Performance) {
+            ImGui::Begin("Performance", &m_Visibility.performance);
             m_Performance->OnImGui();
             ImGui::End();
         }
 
-        if (vis.contentBrowser) {
-            ImGui::SetNextWindowPos(ImVec2(viewport->Pos.x + bottomItemW * 2, bottomY));
-            ImGui::SetNextWindowSize(ImVec2(bottomItemW, bottomH));
+        // 3f. Content Browser
+        if (m_Visibility.contentBrowser) {
             m_ContentBrowser.OnImGui();
         }
 
-        if (vis.assetBrowser) {
-            ImGui::SetNextWindowPos(ImVec2(viewport->Pos.x + bottomItemW * 3, bottomY));
-            ImGui::SetNextWindowSize(ImVec2(bottomItemW, bottomH));
+        // 3g. Asset Browser
+        if (m_Visibility.assetBrowser) {
             m_AssetBrowser.OnImGui();
         }
 
-        if (vis.depGraph) {
-            float depW = workW * 0.85f;
-            float depH = workH * 0.8f;
-            float depX = viewport->Pos.x + (workW - depW) * 0.5f;
-            float depY = workY + (workH - depH) * 0.5f;
-            ImGui::SetNextWindowPos(ImVec2(depX, depY));
-            ImGui::SetNextWindowSize(ImVec2(depW, depH));
+        // 3h. Dependency Graph
+        if (m_Visibility.depGraph) {
             m_DepGraph.OnImGui();
         }
 
-        // ── 5. ImGui Demo（按需） ──
+        // ── 4. ImGui Demo（按需） ──
         if (m_ShowDockingDemo) {
             ImGui::ShowDemoWindow(&m_ShowDockingDemo);
         }
-
-        // ── 6. 同步可见性到各面板实例 ──
-        if (m_SceneHierarchy) m_SceneHierarchy->SetVisible(vis.sceneHierarchy);
-        if (m_Console)        m_Console->SetVisible(vis.console);
-        if (m_Performance)    m_Performance->SetVisible(vis.performance);
-        m_DepGraph.SetVisible(vis.depGraph);
     }
 
     // ============================================================
-    // 各面板的包裹窗口
+    // 各面板的包裹窗口（保留但不用于主循环，供外部使用）
     // ============================================================
 
     void EngineEditor::DrawSceneHierarchyWindow() {
@@ -226,9 +243,5 @@ namespace Engine {
     void EngineEditor::DrawViewportPanel() {
         m_Viewport.OnImGui();
     }
-
-    // ============================================================
-    // 分离 / 附着面板
-    // ============================================================
 
 } // namespace Engine

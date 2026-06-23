@@ -21,8 +21,13 @@
 #include <crtdbg.h>
 #endif
 #include "Engine/ConsolePanel.h"
+#include "Engine/DockspaceBuilder.h"
 #include "Engine/Debug/CrashHandler.h"
 #include "Engine/Debug/ScreenshotCapture.h"
+#include "Engine/Editor/EditorCamera.h"
+#include "Engine/Editor/ViewportPanel.h"
+#include "Engine/OpenGL/OpenGLFramebuffer.h"
+#include "Engine/OpenGL/OpenGLContext.h"
 #include <thread>
 #include <chrono>
 
@@ -158,6 +163,24 @@ bool Application::InitUI() {
                              m_Window->GetNativeHandle(),
                              m_Window->GetContext());
   return ok && UIManager::IsInitialized();
+}
+
+// ============================================================
+// 游戏播放状态控制
+// ============================================================
+
+void Application::SetPlaying(bool playing) {
+  if (m_IsPlaying == playing) return;
+  m_IsPlaying = playing;
+  if (playing) {
+    // 进入游戏运行模式 → 显示游戏主菜单
+    Log::Info("Game mode: PLAYING — activating MenuManager");
+    m_MenuManager.NavigateTo(MenuManager::Page::MainMenu);
+  } else {
+    // 回到编辑模式 → 隐藏游戏菜单
+    Log::Info("Game mode: STOPPED — hiding MenuManager");
+    m_MenuManager.currentPage = MenuManager::Page::None;
+  }
 }
 
 // ============================================================
@@ -402,44 +425,98 @@ void Application::InternalUpdate(float32 dt) {
   // 内部会利用 JobSystem::ParallelFor 对可并行的任务进行调度
   DispatchSubsystemUpdates(dt);
 
-  // ── 阶段 D：更新菜单状态（串行） ──
-  m_MenuManager.OnUpdate(dt);
+  // ── 阶段 D：更新游戏菜单状态（仅在游戏运行时执行） ──
+  if (m_IsPlaying) {
+    m_MenuManager.OnUpdate(dt);
 
-  // ── 转发按键到菜单系统 ──
-  if (m_MenuManager.isVisible && m_MenuManager.currentPage != MenuManager::Page::None) {
-    if (Input::IsKeyPressed(KeyCode::Up))       m_MenuManager.OnKeyPressed(KeyCode::Up);
-    if (Input::IsKeyPressed(KeyCode::Down))     m_MenuManager.OnKeyPressed(KeyCode::Down);
-    if (Input::IsKeyPressed(KeyCode::Left))     m_MenuManager.OnKeyPressed(KeyCode::Left);
-    if (Input::IsKeyPressed(KeyCode::Right))    m_MenuManager.OnKeyPressed(KeyCode::Right);
-    if (Input::IsKeyPressed(KeyCode::Escape))   m_MenuManager.OnKeyPressed(KeyCode::Escape);
-    if (Input::IsKeyPressed(KeyCode::Enter))    m_MenuManager.OnKeyPressed(KeyCode::Enter);
+    // ── 转发按键到游戏菜单系统 ──
+    if (m_MenuManager.isVisible && m_MenuManager.currentPage != MenuManager::Page::None) {
+      if (Input::IsKeyPressed(KeyCode::Up))       m_MenuManager.OnKeyPressed(KeyCode::Up);
+      if (Input::IsKeyPressed(KeyCode::Down))     m_MenuManager.OnKeyPressed(KeyCode::Down);
+      if (Input::IsKeyPressed(KeyCode::Left))     m_MenuManager.OnKeyPressed(KeyCode::Left);
+      if (Input::IsKeyPressed(KeyCode::Right))    m_MenuManager.OnKeyPressed(KeyCode::Right);
+      if (Input::IsKeyPressed(KeyCode::Escape))   m_MenuManager.OnKeyPressed(KeyCode::Escape);
+      if (Input::IsKeyPressed(KeyCode::Enter))    m_MenuManager.OnKeyPressed(KeyCode::Enter);
+    }
   }
 
   // 注意：不在此处额外调用 WaitAll()。
   // DispatchSubsystemUpdates 已按阶段逐一等待完成，此处的显式同步是多余的，
   // 且在主线程 work-stealing 场景下可能导致不可预期的执行顺序。
 }
+void Application::InitViewportFBO() {
+  auto* oglCtx = static_cast<OpenGLContext*>(m_Window->GetContext());
+  if (!oglCtx) return;
+
+  m_GL = &oglCtx->GetGL();
+  m_ViewportFBO = std::make_unique<OpenGLFramebuffer>(*m_GL);
+
+  // 初始尺寸：从窗口尺寸
+  int32 w = 800, h = 600;
+  if (auto* ctx = m_Window->GetContext()) {
+    // 从窗口上下文获取视口尺寸
+  }
+  m_ViewportFBO->Resize(800, 600);
+
+  // 连接 ViewportPanel
+  m_ViewportPanel.SetFramebuffer(m_ViewportFBO.get());
+  m_ViewportPanel.SetRenderContext(m_Window->GetContext());
+  // 必须提供 GL 库头文件获取m_GL指针，见OpenGLContext.h
+}
+
+void Application::ResizeViewportFBO(int w, int h) {
+  if (m_ViewportFBO) {
+    m_ViewportFBO->Resize(static_cast<uint32>(w), static_cast<uint32>(h));
+    m_EditorCamera.SetViewportSize(static_cast<float32>(w),
+                                   static_cast<float32>(h));
+  }
+}
+
 void Application::InternalRender() {
   PROFILE_ZONE();
-  auto context = m_Window->GetContext();
-  context->ClearColor(0.2f, 0.2f, 0.2f, 1.0f);
 
-  // 仅在需要时绘制默认测试四边形
+  // ── 视口渲染管线 ──
+  // 离屏渲染到 FBO，然后在 ViewportPanel 中通过 ImGui::Image 显示
+
+  // 获取 OpenGL 上下文
+  auto* oglCtx = static_cast<OpenGLContext*>(m_Window->GetContext());
+  if (!oglCtx) return;
+
+  // ── 步骤 1：绑定视口 FBO ──
+  if (m_ViewportFBO && m_ViewportFBO->IsValid()) {
+    m_ViewportFBO->Bind();
+  }
+
+  // ── 步骤 2：清除 FBO ──
+  GladGLContext& gl = oglCtx->GetGL();
+  gl.ClearColor(0.2f, 0.2f, 0.2f, 1.0f);
+  gl.Clear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+  gl.Enable(GL_DEPTH_TEST);
+
+  // ── 步骤 3：使用编辑器相机矩阵渲染场景 ──
   if (m_RenderDefaultQuad && m_Shader && m_VAO && m_Texture) {
     m_Shader->Bind();
 
     // 绑定当前渲染调试模式的 uniform
-    context->BindViewModeUniform(m_Shader.get());
+    oglCtx->BindViewModeUniform(m_Shader.get());
 
     m_Shader->SetMat4("u_ViewProjection",
-                      m_Camera.GetViewProjectionMatrixPtr());
+                      m_EditorCamera.GetViewProjectionMatrixPtr());
     m_Texture->Bind(0);
     m_VAO->Bind();
-    context->DrawIndexed(m_VAO);
+    oglCtx->DrawIndexed(m_VAO);
   }
 
-  // 子类扩展
+  // ── 步骤 4：子类扩展渲染 ──
   OnRender();
+
+  // ── 步骤 5：解绑 FBO，恢复默认帧缓冲 ──
+  if (m_ViewportFBO && m_ViewportFBO->IsValid()) {
+    m_ViewportFBO->Unbind();
+  }
+
+  // ── 步骤 6：重置管线状态供 UI 渲染 ──
+  oglCtx->ResetPipelineState();
 }
 
 void Application::Run() {
@@ -474,6 +551,19 @@ void Application::Run() {
   JobSystem::Init(0, 1);
 
   OnStartup();
+
+  // ── 初始化视口 FBO（在窗口和上下文就绪后） ──
+  InitViewportFBO();
+
+  // 设置 resize 回调
+  m_ViewportPanel.SetResizeCallback([this](int32 w, int32 h) {
+    ResizeViewportFBO(w, h);
+  });
+
+  // 设置编辑器相机初始视口尺寸
+  m_EditorCamera.SetViewportSize(
+      static_cast<float32>(m_ViewportPanel.GetWidth()),
+      static_cast<float32>(m_ViewportPanel.GetHeight()));
 
   // ── 初始化 Profiler（Tracy GPU 上下文 + 日志输出） ──
   Profiler::Init();
@@ -525,6 +615,14 @@ void Application::Run() {
       ui->Begin();
 
     // ============================================================
+    // 阶段 3.5：编辑器相机输入处理（在 UI 帧开始后，更新之前）
+    // ============================================================
+    m_EditorCamera.SetActive(m_ViewportPanel.IsHovered() ||
+                             m_ViewportPanel.IsFocused());
+    m_EditorCamera.ProcessInput(dt);
+    m_EditorCamera.OnUpdate(dt);
+
+    // ============================================================
     // 阶段 4：更新（混合驱动 — 全局策略 + 子系统独立策略）
     // ============================================================
     if (m_LoopMode == LoopMode::Fixed) {
@@ -573,10 +671,6 @@ void Application::Run() {
       auto* ctx = m_Window->GetContext();
       m_PerfWindow.SetRenderContext(ctx);
 
-      // ── 绑定 View Mode uniform（在所有渲染前） ──
-      // 通知上下文本帧的 view mode，shader 在 Bind() 后可查询
-      // 注：ctx->BindViewModeUniform(shader) 在 InternalRender 或子类 OnRender 中调用
-
       uint32 drawCalls   = ctx->GetAndResetDrawCallCount();
       uint32 vertexCount = ctx->GetAndResetVertexCount();
       uint32 triCount    = ctx->GetAndResetTriangleCount();
@@ -614,17 +708,27 @@ void Application::Run() {
         0 // model bytes — 暂未单独跟踪
       );
 
-      // 绘制性能监控窗口（可由子类通过 m_DrawPerformanceWindow=false 交给
-      // Editor 管理）
-      if (m_DrawPerformanceWindow)
-        m_PerfWindow.OnImGui();
+      // ── 全屏 Dockspace 工作台 ──
+      // 所有编辑器面板被包裹在 DockspaceBuilder 中，形成 Unity/Unreal
+      // 风格的可拖拽面板系统
+      {
+        DockspaceBuilder dockspace;
+        dockspace.Begin("MainDockspace");
 
-      // 子类自定义 UI
-      OnImGui();
+        // 绘制性能监控窗口（可由子类通过 m_DrawPerformanceWindow=false
+        // 交给 Editor 管理）
+        if (m_DrawPerformanceWindow)
+          m_PerfWindow.OnImGui();
 
-      // ── 绘制内置菜单 ──
-      if (m_MenuManager.isVisible)
-        m_MenuManager.OnImGui();
+        // 子类自定义 UI
+        OnImGui();
+
+        // ── 绘制内置游戏菜单（仅在游戏运行状态下渲染） ──
+        if (m_IsPlaying && m_MenuManager.isVisible)
+          m_MenuManager.OnImGui();
+
+        dockspace.End();
+      }
     }
 
     // ============================================================

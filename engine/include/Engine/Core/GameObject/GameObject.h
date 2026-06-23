@@ -19,8 +19,11 @@ namespace Engine {
     class IRenderQueue;
 
 
-    class GameObject : public IRenderable {
+class GameObject : public IRenderable {
     public:
+        /** 全局自增 ID 生成器 */
+        static uint32 GetNextID() { static uint32 s_NextID = 1; return s_NextID++; }
+
         GameObject();
         explicit GameObject(std::string name);
         virtual ~GameObject();
@@ -168,6 +171,9 @@ namespace Engine {
         void SetName(const std::string& name) { m_Name = name; }
         const std::string& GetName() const noexcept { return m_Name; }
 
+        // ── 唯一标识 ──
+        uint32 GetID() const noexcept { return m_ID; }
+
         void SetActive(bool active) { m_Active = active; }
         bool IsActive() const noexcept { return m_Active; }
         bool IsActiveInHierarchy() const;
@@ -190,6 +196,7 @@ namespace Engine {
         void SubmitSprite(ISpriteBatch& batch);
 
     protected:
+        uint32 m_ID = 0;              ///< 唯一标识符（用于 Picking 和序列化）
         std::string m_Name;
 
         TransformComponent  m_Transform;   // 每个 GameObject 都有的内置变换

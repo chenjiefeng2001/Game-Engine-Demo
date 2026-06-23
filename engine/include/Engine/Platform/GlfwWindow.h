@@ -16,6 +16,7 @@ namespace Engine {
 		virtual void PollEvents() override;
 		virtual void WaitEvents(double timeoutSec = 0.0) override;
 		virtual bool ShouldClose() const override;
+		virtual void SetShouldClose(bool close) override;
 
 		// ── 窗口状态查询 ──
 		virtual bool IsActive() const override;

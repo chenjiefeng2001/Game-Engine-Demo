@@ -94,6 +94,25 @@ namespace Engine {
             }
             return nullptr;
         }
+        GameObject* findByIDRecursive(uint32 id,
+                const std::vector<std::shared_ptr<GameObject>>& objects) {
+            for (auto& obj : objects) {
+                if (obj->GetID() == id) return obj.get();
+                auto* found = findByIDRecursive(id, obj->GetChildren());
+                if (found) return found;
+            }
+            return nullptr;
+        }
+
+        const GameObject* findByIDRecursiveConst(uint32 id,
+                const std::vector<std::shared_ptr<GameObject>>& objects) {
+            for (const auto& obj : objects) {
+                if (obj->GetID() == id) return obj.get();
+                auto* found = findByIDRecursiveConst(id, obj->GetChildren());
+                if (found) return found;
+            }
+            return nullptr;
+        }
     } // namespace detail
 
     GameObject* Scene::FindObject(const std::string& name) {
@@ -102,6 +121,14 @@ namespace Engine {
 
     const GameObject* Scene::FindObject(const std::string& name) const {
         return detail::findRecursiveConst(name, m_Objects);
+    }
+
+    GameObject* Scene::FindByID(uint32 id) {
+        return detail::findByIDRecursive(id, m_Objects);
+    }
+
+    const GameObject* Scene::FindByID(uint32 id) const {
+        return detail::findByIDRecursiveConst(id, m_Objects);
     }
 
     // ──────────────────────────────────────────────

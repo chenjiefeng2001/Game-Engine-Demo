@@ -10,11 +10,11 @@ namespace Engine {
 
 
     GameObject::GameObject()
-        : m_Name("GameObject") {
+        : m_ID(GetNextID()), m_Name("GameObject") {
     }
 
     GameObject::GameObject(std::string name)
-        : m_Name(std::move(name)) {
+        : m_ID(GetNextID()), m_Name(std::move(name)) {
     }
 
     GameObject::~GameObject() {

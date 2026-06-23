@@ -95,6 +95,9 @@ namespace Engine {
         AssetBrowserPanel     m_AssetBrowser;
         DependencyGraphPanel  m_DepGraph;
 
+        // ── 面板可见性（EngineEditor 拥有，MainMenuBar 持有指针） ──
+        PanelVisibility m_Visibility;
+
         // ── 外部注册的引擎面板（非拥有，仅引用） ──
         SceneHierarchyPanel* m_SceneHierarchy = nullptr;
         InspectorPanel*      m_Inspector      = nullptr;

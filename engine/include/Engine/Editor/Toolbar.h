@@ -30,7 +30,6 @@ namespace Engine {
 
         // ── 回调 ──
         using ActionCallback = std::function<void()>;
-        using StateCallback  = std::function<void(PlayState)>;
 
         void SetPlayCallback(ActionCallback cb)     { m_PlayCallback = std::move(cb); }
         void SetStopCallback(ActionCallback cb)     { m_StopCallback = std::move(cb); }
@@ -42,12 +41,25 @@ namespace Engine {
         PlayState GetPlayState() const { return m_PlayState; }
         void SetPlayState(PlayState state) { m_PlayState = state; }
 
+        // ── Gizmo 控制 ──
+        int GetGizmoMode() const { return m_GizmoMode; }
+        void SetGizmoMode(int mode) { m_GizmoMode = mode; }
+        bool IsGizmoLocal() const { return m_GizmoLocal; }
+        void SetGizmoLocal(bool local) { m_GizmoLocal = local; }
+
+        // ── 视口模式 ──
+        int GetViewMode() const { return m_ViewMode; }
+        void SetViewMode(int mode) { m_ViewMode = mode; }
+
         // ── 渲染 ──
-        /** 在 OnImGui() 中调用，绘制工具栏 */
         void OnImGui();
 
     private:
         PlayState m_PlayState = PlayState::Stopped;
+        int m_GizmoMode = 0;    // 0=Translate, 1=Rotate, 2=Scale
+        bool m_GizmoLocal = false;
+        int m_ViewMode = 0;     // 0=Solid, 1=Wireframe, 2=Lighting
+
         ActionCallback m_PlayCallback;
         ActionCallback m_StopCallback;
         ActionCallback m_PauseCallback;
