@@ -24,6 +24,11 @@ namespace Engine {
 class EditorDemoApp : public Application {
 public:
   EditorDemoApp(IGraphicsFactory &factory) : Application(factory) {
+    // ── EngineEditor 自管理布局 ──
+    // EngineEditor::OnImGui() 内部自行创建全屏 DockSpace 窗口（含内嵌菜单栏），
+    // Application::Run() 不再包裹 DockspaceBuilder。
+    m_UseEngineEditorDockspace = true;
+
     // 性能窗口交由 EngineEditor 管理，Application::Run() 不再自动绘制
     m_DrawPerformanceWindow = false;
   }

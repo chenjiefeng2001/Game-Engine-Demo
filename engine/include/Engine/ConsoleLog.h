@@ -94,6 +94,14 @@ namespace Engine {
         /// 获取缓冲区容量
         uint32 GetCapacity() const { return kBufferSize; }
 
+        // ── 控制台日志持久化路径 ──
+
+        /** 获取日志文件持久化路径（空字符串表示未启用） */
+        const std::string& GetLogPath() const { return m_LogPath; }
+
+        /** 设置日志文件持久化路径（空字符串=禁用持久化） */
+        void SetLogPath(const std::string& path) { m_LogPath = path; }
+
     private:
         ConsoleLog() = default;
         ~ConsoleLog() = default;
@@ -103,6 +111,7 @@ namespace Engine {
         std::array<LogEntry, kBufferSize> m_Buffer;
         uint32 m_StartIndex = 0;   ///< 环形缓冲区中最旧条目的索引
         uint32 m_Count = 0;        ///< 有效条目数
+        std::string m_LogPath;     ///< 日志文件持久化路径（空=禁用）
     };
 
 } // namespace Engine

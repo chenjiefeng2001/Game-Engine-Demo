@@ -25,7 +25,17 @@ namespace Engine {
         MainMenuBar(const MainMenuBar&) = delete;
         MainMenuBar& operator=(const MainMenuBar&) = delete;
 
+        /**
+         * @brief 作为独立顶层菜单栏渲染（使用 ImGui::BeginMainMenuBar）
+         * 适用于未使用 DockSpace 容器的场景
+         */
         void OnImGui();
+
+        /**
+         * @brief 在窗口菜单栏内部渲染菜单（在 BeginMenuBar/EndMenuBar 之间调用）
+         * 适用于全屏 DockSpace 窗口内嵌菜单栏的架构
+         */
+        void OnMenuBar();
 
         void SetPanelVisibility(PanelVisibility* vis) { m_Visibility = vis; }
 

@@ -70,6 +70,12 @@ namespace Engine {
         /** 单帧步进（Pause 状态下） */
         void StepFrame();
 
+        /** 是否请求了单帧步进（OnUpdate 中消费后应自动清除） */
+        bool IsStepRequested() const { return m_StepRequested; }
+
+        /** 消费单帧步进请求（由 OnUpdate 调用，清除标记） */
+        void ConsumeStepRequest() { m_StepRequested = false; }
+
         // ── ImGui 工具栏控件 ──
         /** 绘制 Play/Stop 按钮组，返回当前是否处于播放状态 */
         bool DrawPlayToolbar();

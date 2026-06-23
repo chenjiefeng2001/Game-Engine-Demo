@@ -189,7 +189,7 @@ protected:
   PerformanceWindow m_PerfWindow;
   MenuManager m_MenuManager;
 
-  /** 视口面板（编辑器嵌入） */
+      /** 视口面板（编辑器嵌入） */
   ViewportPanel m_ViewportPanel;
 
   /** 编辑器相机 */
@@ -202,6 +202,14 @@ protected:
    */
   bool m_DrawPerformanceWindow = true;
   bool m_RenderDefaultQuad = true;
+
+  /**
+   * @brief 是否使用 EngineEditor 自管理的 DockSpace 布局。
+   * 设为 true 时，Application::Run() 中的 DockspaceBuilder 会被跳过，
+   * 由 EngineEditor::OnImGui() 自行创建全屏 DockSpace 窗口（含内嵌菜单栏）。
+   * 适用于集成了 EngineEditor 的编辑器应用。
+   */
+  bool m_UseEngineEditorDockspace = false;
 
   // ── 混合驱动调度内部锁 ──
   bool m_InsideDispatch = false;

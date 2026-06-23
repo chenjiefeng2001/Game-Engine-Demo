@@ -30,12 +30,16 @@ namespace Engine {
 
         // ── 回调 ──
         using ActionCallback = std::function<void()>;
+        using ViewModeChangeCallback = std::function<void(int newMode)>;
 
         void SetPlayCallback(ActionCallback cb)     { m_PlayCallback = std::move(cb); }
         void SetStopCallback(ActionCallback cb)     { m_StopCallback = std::move(cb); }
         void SetPauseCallback(ActionCallback cb)    { m_PauseCallback = std::move(cb); }
         void SetStepCallback(ActionCallback cb)     { m_StepCallback = std::move(cb); }
         void SetResetLayoutCallback(ActionCallback cb) { m_ResetLayoutCallback = std::move(cb); }
+
+        /** 视口模式变更回调（通知渲染器切换 Wireframe/Solid/Lighting） */
+        void SetViewModeCallback(ViewModeChangeCallback cb) { m_ViewModeCallback = std::move(cb); }
 
         // ── 状态查询 ──
         PlayState GetPlayState() const { return m_PlayState; }
@@ -65,6 +69,7 @@ namespace Engine {
         ActionCallback m_PauseCallback;
         ActionCallback m_StepCallback;
         ActionCallback m_ResetLayoutCallback;
+        ViewModeChangeCallback m_ViewModeCallback;
     };
 
 } // namespace Engine
