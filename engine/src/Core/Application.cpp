@@ -708,10 +708,27 @@ void Application::Run() {
         0 // model bytes — 暂未单独跟踪
       );
 
-      // ── 全屏 Dockspace 工作台 ──
-      // 所有编辑器面板被包裹在 DockspaceBuilder 中，形成 Unity/Unreal
-      // 风格的可拖拽面板系统
-      {
+      // ── UI 容器布局 ──
+      if (m_UseEngineEditorDockspace) {
+        // ── EngineEditor 自管理布局 ──
+        // 由 EngineEditor::OnImGui() 内部自行创建全屏 DockSpace 窗口
+        //（含内嵌菜单栏），因此不在 Application 层包裹 DockspaceBuilder。
+        //
+        // 性能窗口仍由 Application 控制绘制，但其窗口会被 EngineEditor
+        // 的 DockSpace 系统管理，用户可拖拽停靠。
+        if (m_DrawPerformanceWindow)
+          m_PerfWindow.OnImGui();
+
+        // 子类自定义 UI（通常为 EngineEditor::OnImGui()）
+        OnImGui();
+
+        // ── 绘制内置游戏菜单（仅在游戏运行状态下渲染） ──
+        if (m_IsPlaying && m_MenuManager.isVisible)
+          m_MenuManager.OnImGui();
+      } else {
+        // ── 传统 Dockspace 工作台 ──
+        // 所有编辑器面板被包裹在 DockspaceBuilder 中，形成 Unity/Unreal
+        // 风格的可拖拽面板系统
         DockspaceBuilder dockspace;
         dockspace.Begin("MainDockspace");
 

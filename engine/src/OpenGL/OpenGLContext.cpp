@@ -132,9 +132,19 @@ namespace Engine {
 
 	bool OpenGLContext::CaptureFrameBuffer(int32& outWidth, int32& outHeight,
 	                                       std::vector<uint8_t>& outPixels) {
+		// ── 确保默认帧缓冲被绑定 ──
+		// 如果当前仍绑定着视口 FBO 或 MSAA FBO，glReadPixels 会从错误的缓冲读取，
+		// 甚至因写入位置超出默认缓冲范围而访问冲突。
+		m_GL.BindFramebuffer(GL_FRAMEBUFFER, 0);
+
 		if (m_AntiAliasing && m_AntiAliasing->IsActive()) {
 			m_AntiAliasing->ResolveToDefault();
 		}
+
+		// ── 显式设置视口为后备缓冲区尺寸 ──
+		// 在 UI 渲染完成后 Viewport 可能已被 ImGui/子视口修改，
+		// 此处必须用真实的后备缓冲区尺寸覆盖。
+		m_GL.Viewport(0, 0, m_BackbufferWidth, m_BackbufferHeight);
 
 		GLint viewport[4] = {};
 		m_GL.GetIntegerv(GL_VIEWPORT, viewport);
@@ -143,6 +153,13 @@ namespace Engine {
 		if (outWidth <= 0 || outHeight <= 0) return false;
 
 		outPixels.resize(static_cast<size_t>(outWidth) * static_cast<size_t>(outHeight) * 3);
+
+		// ── 设置像素读取对齐 ──
+		// GL_PACK_ALIGNMENT 默认为 4（用于 32 位对齐）。对于 RGB（3 字节/像素），
+		// 每行字节数可能不是 4 的倍数。设置为 1 避免行对齐导致的越界读。
+		// 如果不设置且图像宽度不是 4 的倍数，ReadPixels 可能读取到未分配内存。
+		m_GL.PixelStorei(GL_PACK_ALIGNMENT, 1);
+
 		m_GL.ReadPixels(0, 0, outWidth, outHeight, GL_RGB, GL_UNSIGNED_BYTE,
 		                outPixels.data());
 		return true;

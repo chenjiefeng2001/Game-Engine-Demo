@@ -216,6 +216,12 @@ private:
     };
 
     // ── 工作线程函数 ──
+    /** @brief 启动所有工作线程（在构造函数末尾调用，确保所有成员已构造） */
+    void StartWorkers();
+
+    /** @brief 停止所有工作线程并等待它们退出（在析构函数中调用） */
+    void StopWorkers();
+
     void WorkerLoop(uint32 threadIndex);
 
     // ── 内部调度 ──

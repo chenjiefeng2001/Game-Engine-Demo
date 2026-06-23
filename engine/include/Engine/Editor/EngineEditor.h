@@ -25,9 +25,12 @@
 #include "Engine/Editor/MainMenuBar.h"
 #include "Engine/Editor/Toolbar.h"
 #include "Engine/Editor/ViewportPanel.h"
+#include "Engine/Editor/EditorSceneManager.h"
 #include "Engine/Editor/ContentBrowserPanel.h"
 #include "Engine/Editor/AssetBrowserPanel.h"
 #include "Engine/Editor/DependencyGraphPanel.h"
+#include <glm/glm.hpp>
+#include <glm/gtc/type_ptr.hpp>
 
 namespace Engine {
 
@@ -36,6 +39,7 @@ namespace Engine {
     class InspectorPanel;
     class ConsolePanel;
     class PerformanceWindow;
+    class IRenderContext;
 
     class EngineEditor {
     public:
@@ -60,12 +64,19 @@ namespace Engine {
         void OnUpdate(float32 dt);
 
         // ── 面板访问 ──
-        MainMenuBar&        GetMenuBar()        { return m_MenuBar; }
-        Toolbar&            GetToolbar()        { return m_Toolbar; }
-        ViewportPanel&      GetViewport()       { return m_Viewport; }
+        MainMenuBar&          GetMenuBar()        { return m_MenuBar; }
+        Toolbar&              GetToolbar()        { return m_Toolbar; }
+        ViewportPanel&        GetViewport()       { return m_Viewport; }
+        EditorSceneManager&   GetSceneManager()   { return m_SceneManager; }
         ContentBrowserPanel&  GetContentBrowser()   { return m_ContentBrowser; }
-        AssetBrowserPanel&    GetAssetBrowser()     { return m_AssetBrowser; }
+        AssetBrowserPanel&      GetAssetBrowser()     { return m_AssetBrowser; }
         DependencyGraphPanel& GetDependencyGraph()  { return m_DepGraph; }
+
+        // ── 编辑器状态 ──
+        EditorState GetEditorState() const { return m_SceneManager.GetState(); }
+        bool IsPlaying() const { return m_SceneManager.IsPlaying(); }
+        bool IsPaused()  const { return m_SceneManager.IsPaused(); }
+        bool IsEditing() const { return m_SceneManager.IsEditing(); }
 
         // ── 面板注册（供外部访问已有的 Engine 面板） ──
         void RegisterSceneHierarchy(SceneHierarchyPanel* panel) { m_SceneHierarchy = panel; }
@@ -73,7 +84,15 @@ namespace Engine {
         void RegisterConsole(ConsolePanel* panel)               { m_Console = panel; }
         void RegisterPerformance(PerformanceWindow* window)     { m_Performance = window; }
 
+        // ── Gizmo 操作物体选择 ──
+        void SetSelectedObject(std::shared_ptr<class GameObject> obj) { m_SelectedObject = obj; }
+        std::shared_ptr<class GameObject> GetSelectedObject() const { return m_SelectedObject.lock(); }
+
     private:
+        // ── Gizmo 渲染 ──
+        /** 在 Viewport 中绘制 ImGuizmo 操作手柄 */
+        void DrawGizmo(const glm::mat4& viewMatrix, const glm::mat4& projMatrix);
+
         // ── 初始化 Docking 布局 ──
         void InitDockingLayout();
 
@@ -91,6 +110,7 @@ namespace Engine {
         MainMenuBar           m_MenuBar;
         Toolbar               m_Toolbar;
         ViewportPanel         m_Viewport;
+        EditorSceneManager    m_SceneManager;
         ContentBrowserPanel   m_ContentBrowser;
         AssetBrowserPanel     m_AssetBrowser;
         DependencyGraphPanel  m_DepGraph;
@@ -110,6 +130,9 @@ namespace Engine {
 
         // 关联的 Application
         Application* m_App = nullptr;
+
+        // ── Gizmo 操作物体（通过 weak_ptr 避免循环引用） ──
+        std::weak_ptr<class GameObject> m_SelectedObject;
     };
 
 } // namespace Engine

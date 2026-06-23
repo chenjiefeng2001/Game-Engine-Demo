@@ -51,6 +51,10 @@ void JobSystem::Init(uint32 threadCount, uint32 reservedForRender) {
     }
 
     s_Instance = new JobSystem(threadCount, reservedForRender);
+    // 在所有成员变量构造完成后才启动工作线程
+    // 在构造函数中启动线程会导致工作线程访问尚未初始化的 mutex/condition_variable，
+    // 引发 std::system_error 崩溃。
+    s_Instance->StartWorkers();
     s_Log.Info("Initialized with {} worker threads", threadCount);
 }
 
@@ -67,18 +71,32 @@ JobSystem::JobSystem(uint32 threadCount, uint32 reservedForRender)
     , m_Running(true)
     , m_ReservedForRender(reservedForRender)
 {
+    // 注意：不在此处创建线程！
+    // 工作线程的创建推迟到 StartWorkers()，确保所有成员变量
+    //（m_QueueMutex, m_WakeCondition, m_JobMapMutex 等）
+    // 在构造函数初始化列表中已完成构造。
+    // 在成员初始化列表完成前创建线程会导致工作线程访问未初始化的同步原语，
+    // 引发 std::system_error 崩溃。
     m_Workers.reserve(threadCount);
-    for (uint32 i = 0; i < threadCount; ++i) {
+}
+
+void JobSystem::StartWorkers() {
+    for (uint32 i = 0; i < m_ThreadCount; ++i) {
         m_Workers.emplace_back(&JobSystem::WorkerLoop, this, i);
     }
 }
 
 JobSystem::~JobSystem() {
+    StopWorkers();
+}
+
+void JobSystem::StopWorkers() {
     m_Running = false;
     m_WakeCondition.notify_all();
     for (auto& t : m_Workers) {
         if (t.joinable()) t.join();
     }
+    m_Workers.clear();
 }
 
 // ============================================================

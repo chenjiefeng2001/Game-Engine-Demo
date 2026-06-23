@@ -5,19 +5,28 @@ namespace Engine {
 
     void MainMenuBar::OnImGui() {
         if (!ImGui::BeginMainMenuBar()) return;
+        OnMenuBar();
+        // 右侧状态信息
+        ImGui::SameLine(ImGui::GetWindowWidth() - 160.0f);
+        ImGui::TextColored(ImVec4(0.5f, 0.5f, 0.5f, 1.0f), "Engine Editor v0.1");
+        ImGui::EndMainMenuBar();
+    }
 
+    /**
+     * @brief 在窗口菜单栏内部渲染菜单（在 BeginMenuBar/EndMenuBar 之间调用）
+     *
+     * 与 OnImGui() 共享相同的菜单绘制逻辑，但：
+     *   - 不调用 BeginMainMenuBar() / EndMainMenuBar()
+     *   - 不添加右侧状态文本（由外部窗口决定）
+     *   - 适用于全屏 DockSpace 窗口内嵌菜单栏的架构
+     */
+    void MainMenuBar::OnMenuBar() {
         DrawFileMenu();
         DrawEditMenu();
         DrawSceneMenu();
         DrawViewMenu();
         DrawToolsMenu();
         DrawHelpMenu();
-
-        // 右侧状态信息
-        ImGui::SameLine(ImGui::GetWindowWidth() - 160.0f);
-        ImGui::TextColored(ImVec4(0.5f, 0.5f, 0.5f, 1.0f), "Engine Editor v0.1");
-
-        ImGui::EndMainMenuBar();
     }
 
     // ============================================================
