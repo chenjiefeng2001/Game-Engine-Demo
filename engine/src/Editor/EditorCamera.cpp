@@ -83,6 +83,42 @@ namespace Engine {
     void EditorCamera::ProcessInput(float32 dt) {
         if (!m_Active) return;
 
+        // ── 旋转锁定 → 忽略鼠标旋转输入 ──
+        if (m_RotationLocked) {
+            // 仍然处理平移和缩放
+            IInput* input = Input::Get();
+            if (!input) return;
+
+            m_RightMouseDown  = input->IsMouseButtonDown(MouseCode::ButtonRight);
+            m_MiddleMouseDown = input->IsMouseButtonDown(MouseCode::ButtonMiddle);
+            m_AltHeld         = input->IsKeyDown(KeyCode::LeftAlt) ||
+                                input->IsKeyDown(KeyCode::RightAlt);
+
+            float32 mouseX = static_cast<float32>(input->GetMouseX());
+            float32 mouseY = static_cast<float32>(input->GetMouseY());
+            float32 deltaX = mouseX - m_LastMouseX;
+            float32 deltaY = mouseY - m_LastMouseY;
+            m_LastMouseX = mouseX;
+            m_LastMouseY = mouseY;
+
+            bool panMode = m_MiddleMouseDown || (m_AltHeld && input->IsMouseButtonDown(MouseCode::ButtonMiddle));
+            if (panMode) {
+                ProcessPanInput(dt);
+                float32 panSpeed = m_Distance * 0.002f;
+                m_PanOffset.x += -deltaX * panSpeed;
+                m_PanOffset.y +=  deltaY * panSpeed;
+                m_Dirty = true;
+            }
+
+            float32 scroll = input->GetScrollDelta();
+            if (scroll != 0.0f) {
+                m_SmoothZoom -= scroll * (m_Distance * 0.1f);
+                m_SmoothZoom  = (std::max)(m_SmoothZoom, 0.1f);
+                m_Dirty = true;
+            }
+            return;
+        }
+
         // ── 鼠标状态 ──
         IInput* input = Input::Get();
         if (!input) return;
@@ -231,9 +267,22 @@ namespace Engine {
     // ============================================================
 
     void EditorCamera::RecalculateMatrices() {
-        // ── 投影矩阵（透视，Y-up） ──
+        // ── 投影矩阵（根据类型选择透视/正交） ──
         float32 aspect = m_ViewportWidth / m_ViewportHeight;
-        glm::mat4 proj = glm::perspective(glm::radians(60.0f), aspect, 0.1f, 1000.0f);
+        glm::mat4 proj;
+
+        if (m_ProjectionType == CameraProjectionType::Orthographic) {
+            // 正交投影 — 三视图使用，无透视效果
+            float32 zoomLevel = m_Distance * 0.5f;
+            float32 left   = -zoomLevel * aspect;
+            float32 right  =  zoomLevel * aspect;
+            float32 bottom = -zoomLevel;
+            float32 top    =  zoomLevel;
+            proj = glm::ortho(left, right, bottom, top, 0.1f, 1000.0f);
+        } else {
+            // 透视投影 — 默认
+            proj = glm::perspective(glm::radians(60.0f), aspect, 0.1f, 1000.0f);
+        }
         StoreGlm(proj, m_ProjectionMatrix);
 
         // ── 视矩阵 ──

@@ -17,6 +17,12 @@
 #include <ImGuizmo.h>
 #include <glm/gtx/matrix_decompose.hpp>
 
+#ifdef _WIN32
+#include <windows.h>
+#include <commdlg.h>
+#pragma comment(lib, "Comdlg32.lib")
+#endif
+
 namespace Engine {
 
     EngineEditor::EngineEditor() = default;
@@ -45,20 +51,118 @@ namespace Engine {
             }
         });
 
-        m_MenuBar.SetNewSceneCallback([]() {
-            Log::Info("[Editor] New Scene requested");
+        // 新建场景：清空当前场景，创建空场景
+        m_MenuBar.SetNewSceneCallback([this]() {
+            Log::Info("[Editor] New Scene");
+
+            // 获取当前场景管理器绑定的场景
+            Scene* currentScene = m_SceneManager.GetScene();
+            if (currentScene) {
+                currentScene->Clear();
+                currentScene->SetName("Untitled Scene");
+            }
+
+            // 通知 SceneHierarchyPanel 刷新
+            if (m_SceneHierarchy) {
+                m_SceneHierarchy->SetSelected(nullptr);
+            }
+            m_SelectedObject.reset();
         });
 
-        m_MenuBar.SetOpenSceneCallback([](const std::string& path) {
-            Log::Info("[Editor] Open Scene requested: {}", path.empty() ? "(dialog)" : path);
+        m_MenuBar.SetOpenSceneCallback([this](const std::string& path) {
+            std::string filePath = path;
+            if (filePath.empty()) {
+                // 使用原生 Windows 文件打开对话框
+                char szFile[260] = {0};
+                OPENFILENAMEA ofn = {0};
+                ofn.lStructSize = sizeof(ofn);
+                ofn.hwndOwner = nullptr;
+                ofn.lpstrFile = szFile;
+                ofn.nMaxFile = sizeof(szFile);
+                ofn.lpstrFilter = "Engine Scene (*.scene)\0*.scene\0JSON Files (*.json)\0*.json\0All Files (*.*)\0*.*\0\0";
+                ofn.nFilterIndex = 1;
+                ofn.Flags = OFN_PATHMUSTEXIST | OFN_FILEMUSTEXIST | OFN_NOCHANGEDIR;
+                if (GetOpenFileNameA(&ofn)) {
+                    filePath = szFile;
+                }
+            }
+
+            if (!filePath.empty()) {
+                Log::Info("[Editor] Opening scene: {}", filePath);
+
+                Scene* currentScene = m_SceneManager.GetScene();
+                if (currentScene) {
+                    if (currentScene->LoadFromFile(filePath)) {
+                        Log::Info("[Editor] Scene loaded successfully: {}", filePath);
+                        if (m_SceneHierarchy) {
+                            m_SceneHierarchy->SetSelected(nullptr);
+                        }
+                        m_SelectedObject.reset();
+                    } else {
+                        Log::Error("[Editor] Failed to load scene: {}", filePath);
+                    }
+                }
+            }
         });
 
-        m_MenuBar.SetSaveSceneCallback([]() {
-            Log::Info("[Editor] Save Scene requested");
+        m_MenuBar.SetSaveSceneCallback([this]() {
+            Log::Info("[Editor] Save Scene");
+
+            Scene* currentScene = m_SceneManager.GetScene();
+            if (!currentScene) {
+                Log::Error("[Editor] No scene to save");
+                return;
+            }
+
+            // 使用原生 Windows 文件保存对话框
+            char szFile[260] = {0};
+            OPENFILENAMEA ofn = {0};
+            ofn.lStructSize = sizeof(ofn);
+            ofn.hwndOwner = nullptr;
+            ofn.lpstrFile = szFile;
+            ofn.nMaxFile = sizeof(szFile);
+            ofn.lpstrFilter = "Engine Scene (*.scene)\0*.scene\0JSON Files (*.json)\0*.json\0All Files (*.*)\0*.*\0\0";
+            ofn.nFilterIndex = 1;
+            ofn.lpstrDefExt = "scene";
+            ofn.Flags = OFN_PATHMUSTEXIST | OFN_OVERWRITEPROMPT | OFN_NOCHANGEDIR;
+            if (GetSaveFileNameA(&ofn)) {
+                std::string filePath = szFile;
+                if (currentScene->SaveToFile(filePath)) {
+                    Log::Info("[Editor] Scene saved: {}", filePath);
+                } else {
+                    Log::Error("[Editor] Failed to save scene: {}", filePath);
+                }
+            }
         });
 
-        m_MenuBar.SetSaveAsCallback([]() {
-            Log::Info("[Editor] Save As requested");
+        m_MenuBar.SetSaveAsCallback([this]() {
+            Log::Info("[Editor] Save As");
+
+            Scene* currentScene = m_SceneManager.GetScene();
+            if (!currentScene) {
+                Log::Error("[Editor] No scene to save");
+                return;
+            }
+
+            // 使用原生 Windows 文件保存对话框
+            char szFile[260] = {0};
+            OPENFILENAMEA ofn = {0};
+            ofn.lStructSize = sizeof(ofn);
+            ofn.hwndOwner = nullptr;
+            ofn.lpstrFile = szFile;
+            ofn.nMaxFile = sizeof(szFile);
+            ofn.lpstrFilter = "Engine Scene (*.scene)\0*.scene\0JSON Files (*.json)\0*.json\0All Files (*.*)\0*.*\0\0";
+            ofn.nFilterIndex = 1;
+            ofn.lpstrDefExt = "scene";
+            ofn.Flags = OFN_PATHMUSTEXIST | OFN_OVERWRITEPROMPT | OFN_NOCHANGEDIR;
+            if (GetSaveFileNameA(&ofn)) {
+                std::string filePath = szFile;
+                if (currentScene->SaveToFile(filePath)) {
+                    Log::Info("[Editor] Scene saved as: {}", filePath);
+                } else {
+                    Log::Error("[Editor] Failed to save scene: {}", filePath);
+                }
+            }
         });
 
         // ── 工具栏/菜单栏回调 → EditorSceneManager Play/Stop/Pause/Step ──
@@ -132,6 +236,7 @@ namespace Engine {
         m_Visibility.assetBrowser   = false;
         m_Visibility.depGraph       = false;
         m_Visibility.viewport       = true;
+        m_Visibility.rendererDebug  = false;  // 默认隐藏调试面板
     }
 
     void EngineEditor::OnUpdate(float32 dt) {
@@ -247,37 +352,29 @@ namespace Engine {
         m_Toolbar.OnImGui();
         ImGui::End();
 
-        // 6b. Scene Hierarchy
+        // 6b. Scene Hierarchy（自管理 Begin/End）
         if (m_Visibility.sceneHierarchy && m_SceneHierarchy) {
-            ImGui::Begin("Scene Hierarchy", &m_Visibility.sceneHierarchy);
             m_SceneHierarchy->OnImGui();
-            ImGui::End();
         }
 
-        // 6c. Viewport（中央 3D/2D 视口）
+        // 6c. Viewport（中央 3D/2D 视口，自管理 Begin/End）
         if (m_Visibility.viewport) {
             m_Viewport.OnImGui();
         }
 
-        // 6d. Inspector
+        // 6d. Inspector（自管理 Begin/End）
         if (m_Visibility.inspector && m_Inspector) {
-            ImGui::Begin("Inspector", &m_Visibility.inspector);
             m_Inspector->OnImGui();
-            ImGui::End();
         }
 
-        // 6e. Console
+        // 6e. Console（自管理 Begin/End）
         if (m_Visibility.console && m_Console) {
-            ImGui::Begin("Console", &m_Visibility.console);
             m_Console->OnImGui();
-            ImGui::End();
         }
 
-        // 6f. Performance
+        // 6f. Performance（自管理 Begin/End）
         if (m_Visibility.performance && m_Performance) {
-            ImGui::Begin("Performance", &m_Visibility.performance);
             m_Performance->OnImGui();
-            ImGui::End();
         }
 
         // 6g. Content Browser（面板自身管理 Begin/End）
@@ -293,6 +390,32 @@ namespace Engine {
         // 6i. Dependency Graph（面板自身管理 Begin/End）
         if (m_Visibility.depGraph) {
             m_DepGraph.OnImGui();
+        }
+
+        // 6j. Renderer Debug（手动开启 View -> Renderer Debug）
+        if (m_Visibility.rendererDebug) {
+            ImGui::Begin("Renderer Debug", &m_Visibility.rendererDebug);
+
+            ImGui::Text("Renderer Settings");
+            ImGui::Separator();
+
+            // 从渲染上下文获取统计信息
+            IRenderContext* ctx = m_App ? m_App->GetRenderContext() : nullptr;
+            if (ctx) {
+                uint32 drawCalls   = ctx->GetAndResetDrawCallCount();
+                uint32 vertexCount = ctx->GetAndResetVertexCount();
+                uint32 triCount    = ctx->GetAndResetTriangleCount();
+                ImGui::Text("Draw Calls:  %u", drawCalls);
+                ImGui::Text("Vertices:    %u", vertexCount);
+                ImGui::Text("Triangles:   %u", triCount);
+
+                ImGui::Separator();
+                ImGui::TextColored(ImVec4(0.5f,0.5f,0.5f,1), "Use View -> Renderer Debug to toggle this panel");
+            } else {
+                ImGui::TextColored(ImVec4(1,0,0,1), "No render context available");
+            }
+
+            ImGui::End();
         }
 
         // ── 7. ImGui Demo（按需） ──

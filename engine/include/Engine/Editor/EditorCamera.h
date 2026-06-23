@@ -29,6 +29,11 @@
 
 namespace Engine {
 
+    enum class CameraProjectionType : uint8 {
+        Perspective,  ///< 透视投影（默认）
+        Orthographic  ///< 正交投影（三视图使用）
+    };
+
     class EditorCamera {
     public:
         EditorCamera();
@@ -61,6 +66,20 @@ namespace Engine {
         void SetPosition(const Vec3& pos) { m_Position = pos; }
         const Vec3& GetPosition() const { return m_Position; }
 
+        // ── 投影类型 ──
+        void SetProjectionType(CameraProjectionType type) { m_ProjectionType = type; m_Dirty = true; }
+        CameraProjectionType GetProjectionType() const { return m_ProjectionType; }
+
+        // ── 固定角度控制（三视图使用） ──
+        void SetPitch(float32 pitch) { m_Pitch = pitch; m_Dirty = true; }
+        void SetYaw(float32 yaw) { m_Yaw = yaw; m_Dirty = true; }
+        float32 GetPitch() const { return m_Pitch; }
+        float32 GetYaw() const { return m_Yaw; }
+
+        // ── 旋转锁定（锁定后忽略鼠标旋转输入） ──
+        void LockRotation(bool lock) { m_RotationLocked = lock; }
+        bool IsRotationLocked() const { return m_RotationLocked; }
+
         // ── 重置 ──
         void Reset();
 
@@ -80,6 +99,10 @@ namespace Engine {
 
         // ── 状态 ──
         bool m_Active = false;
+
+        // ── 投影类型 ──
+        CameraProjectionType m_ProjectionType = CameraProjectionType::Perspective;
+        bool m_RotationLocked = false;
 
         // ── 视口尺寸（用于构造投影矩阵） ──
         float32 m_ViewportWidth  = 1280.0f;

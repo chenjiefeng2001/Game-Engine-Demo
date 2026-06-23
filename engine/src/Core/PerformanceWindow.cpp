@@ -85,7 +85,7 @@ namespace Engine {
         ImGui::SetNextWindowSize(ImVec2(440, 580), ImGuiCond_FirstUseEver);
         ImGui::SetNextWindowPos(ImVec2(10, 30), ImGuiCond_FirstUseEver);
 
-        ImGui::Begin("Graphics Debug Tools", &m_Visible,
+        ImGui::Begin("Performance", &m_Visible,
                      ImGuiWindowFlags_NoCollapse);
 
         // ── 1. FPS / Frame Time ──
@@ -100,7 +100,7 @@ namespace Engine {
             DrawDrawCalls();
         }
 
-        // ── 3. 三角形/顶点计数 ──
+        // ── 3. 几何体统计 ──
         if (ImGui::CollapsingHeader("Geometry Counts", nullptr,
                                      ImGuiTreeNodeFlags_DefaultOpen)) {
             DrawGeometryCounts();
@@ -118,53 +118,13 @@ namespace Engine {
             DrawGPUProfiler();
         }
 
-        // ── 6. 渲染模式切换 (View Modes) ──
-        if (ImGui::CollapsingHeader("View Modes", nullptr,
-                                     ImGuiTreeNodeFlags_DefaultOpen)) {
-            DrawViewModes();
-        }
-
-        // ── 7. 缓冲区可视化 (Buffer Visualization) ──
-        if (ImGui::CollapsingHeader("Buffer Visualization", nullptr,
-                                     ImGuiTreeNodeFlags_DefaultOpen)) {
-            // 每帧刷新缓存
-            if (m_RenderContext) {
-                m_RenderContext->GetBufferVisData(m_BufferVisData);
-            }
-            DrawBufferVisualization();
-        }
-
-        // ── 8. 光照与阴影 (Lighting & Shadows) ──
-        if (ImGui::CollapsingHeader("Lighting & Shadows", nullptr,
-                                     ImGuiTreeNodeFlags_DefaultOpen)) {
-            DrawLightingAndShadows();
-        }
-
-        // ── 9. 几何体与空间管理 (Geometry & Culling) ──
-        if (ImGui::CollapsingHeader("Geometry & Culling", nullptr,
-                                     ImGuiTreeNodeFlags_DefaultOpen)) {
-            DrawGeometryAndCulling();
-        }
-
-        // ── 10. 后期处理 (Post-Processing) ──
-        if (ImGui::CollapsingHeader("Post-Processing", nullptr,
-                                     ImGuiTreeNodeFlags_DefaultOpen)) {
-            DrawPostProcessing();
-        }
-
-        // ── 11. 纹理与资源 (Textures & Assets) ──
-        if (ImGui::CollapsingHeader("Textures & Assets", nullptr,
-                                     ImGuiTreeNodeFlags_DefaultOpen)) {
-            DrawTexturesAndAssets();
-        }
-
-        // ── 12. 常用调试开关 (Helper Toggles) ──
-        if (ImGui::CollapsingHeader("Helper Toggles", nullptr,
-                                     ImGuiTreeNodeFlags_DefaultOpen)) {
-            DrawHelperToggles();
-        }
-
         ImGui::End();
+
+        // 以下渲染调试功能已移至 Renderer Debug 面板
+        //（在 EngineEditor::OnImGui() 中，仅在 Play 模式下显示）
+        // 包括：View Modes / Buffer Visualization / Lighting & Shadows
+        //       Geometry & Culling / Post-Processing / Textures & Assets
+        //       Helper Toggles
     }
 
     // ── 1. FPS / Frame Time ──────────────────────────────────────

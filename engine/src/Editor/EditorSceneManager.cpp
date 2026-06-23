@@ -71,6 +71,8 @@ namespace Engine {
         // 从快照 JSON 反序列化场景
         try {
             auto json = nlohmann::json::parse(m_Snapshot->jsonData);
+            // 先清空场景，再重新加载，避免对象重复
+            m_Scene->Clear();
             JsonSerializer::Deserialize(*m_Scene, json);
             ENGINE_LOG_INFO("Editor", "Snapshot restored successfully");
         } catch (const std::exception& e) {
