@@ -65,6 +65,20 @@ namespace Engine {
         bool IsEnabled() const noexcept { return m_Enabled; }
         void SetEnabled(bool enabled) noexcept { m_Enabled = enabled; }
 
+        /** 获取组件的类型名称字符串（用于 UI 显示） */
+        template<typename T>
+        static const char* GetTypeName() {
+            // 默认使用 typeid 名称（经 demangle 简化为可读名称）
+            // 特化版本可返回更友好的名称
+            return ParseTypeName(typeid(T).name());
+        }
+
+        /** 获取此实例的类型名称 */
+        virtual const char* GetTypeDisplayName() const { return "Component"; }
+
+        /** 解析编译器 typeid name 为可读字符串（公开工具方法） */
+        static const char* ParseTypeName(const char* mangledName);
+
     private:
         friend class GameObject;
         GameObject* m_Owner = nullptr;

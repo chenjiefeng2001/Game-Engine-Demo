@@ -9,6 +9,7 @@
  *   - 页式切换（MainMenu / Settings / Pause / GameUI）
  *   - 内置 ImGui 渲染（编辑器模式），预留运行时自定义渲染接口
  *   - 与 EngineEditor 分工：Editor = 编辑器UI，MenuManager = 运行时游戏菜单
+ *   - 生命周期控制：仅在 Application::SetPlaying(true) 时激活，编辑器编辑状态下不渲染
  */
 
 #include "Engine/Types.h"
@@ -55,8 +56,8 @@ namespace Engine {
         // 公共状态（可直接读写）
         // ============================================================
 
-        /** 当前所在页面 */
-        Page currentPage = Page::MainMenu;
+        /** 当前所在页面 — 默认 Page::None（不显示），由 Application::SetPlaying(true) 时设为 MainMenu */
+        Page currentPage = Page::None;
 
         /** 菜单是否可见（全局开关，用于渐入/渐出过渡） */
         bool isVisible = true;

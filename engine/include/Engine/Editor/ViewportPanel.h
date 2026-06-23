@@ -5,10 +5,17 @@
  * @brief 视口面板 — 游戏主渲染视图的 ImGui 容器
  *
  * 功能：
- *   - 嵌入游戏渲染结果到 ImGui 窗口
- *   - 处理窗口大小变化 → 通知渲染上下文 Resize
+ *   - 嵌入游戏渲染结果到 ImGui 窗口（通过 FBO 纹理）
+ *   - 处理窗口大小变化 → 重新分配 FBO
  *   - 鼠标事件坐标转换（屏幕 → 世界）
  *   - 支持 Gizmo 操作（预留）
+ *
+ * 使用方式：
+ * @code
+ *   ViewportPanel viewport;
+ *   viewport.SetFramebuffer(&fbo);
+ *   viewport.OnImGui();  // 自动显示 FBO 颜色纹理
+ * @endcode
  */
 
 #include "Engine/Types.h"
@@ -18,6 +25,7 @@
 namespace Engine {
 
     class IRenderContext;
+    class OpenGLFramebuffer;
 
     class ViewportPanel {
     public:
@@ -27,7 +35,11 @@ namespace Engine {
         ViewportPanel(const ViewportPanel&) = delete;
         ViewportPanel& operator=(const ViewportPanel&) = delete;
 
-        // ── 配置 ──
+        // ── FBO 绑定 ──
+        /** 设置要渲染到视口的帧缓冲 */
+        void SetFramebuffer(OpenGLFramebuffer* fbo) { m_Framebuffer = fbo; }
+
+        /** 设置渲染上下文（用于 resize 回调） */
         void SetRenderContext(IRenderContext* ctx) { m_RenderContext = ctx; }
 
         // ── 尺寸查询 ──
@@ -49,7 +61,8 @@ namespace Engine {
         void SetResizeCallback(ResizeCallback cb) { m_ResizeCallback = std::move(cb); }
 
     private:
-        IRenderContext* m_RenderContext = nullptr;
+        IRenderContext*    m_RenderContext = nullptr;
+        OpenGLFramebuffer* m_Framebuffer   = nullptr;
 
         // 上次渲染时的视口尺寸
         float32 m_Width  = 0.0f;

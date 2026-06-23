@@ -1,5 +1,6 @@
 #include "Engine/Editor/ViewportPanel.h"
 #include "Engine/Core/IRenderContext.h"
+#include "Engine/OpenGL/OpenGLFramebuffer.h"
 #include <imgui.h>
 
 namespace Engine {
@@ -34,20 +35,27 @@ namespace Engine {
             }
         }
 
-        // 渲染占位纹理（由外部 Engine 驱动将渲染结果绑定到此区域）
-        // 使用 ImGui::Image() 传递 OpenGL 纹理 ID 来显示渲染结果
-        // 示例：ImGui::Image((ImTextureID)(uint64)m_FramebufferTextureID,
-        //                     ImVec2(m_Width, m_Height), ImVec2(0,1), ImVec2(1,0));
+        // ── 渲染 FBO 纹理到视口区域 ──
+        if (m_Framebuffer && m_Framebuffer->IsValid() &&
+            m_Width > 0.0f && m_Height > 0.0f) {
 
-        // 如果还没有帧缓冲纹理，显示一个提示背景
-        if (m_Width > 0.0f && m_Height > 0.0f) {
-            ImDrawList* drawList = ImGui::GetWindowDrawList();
-            ImVec2 posMin = ImGui::GetCursorScreenPos();
-            ImVec2 posMax = ImVec2(posMin.x + m_Width, posMin.y + m_Height);
-            drawList->AddRectFilled(posMin, posMax,
-                                    IM_COL32(30, 30, 35, 255));
-            drawList->AddText(posMin, IM_COL32(100, 100, 110, 255),
-                              "Viewport - Game Output");
+            uint32 textureID = m_Framebuffer->GetColorTextureID();
+            // ImGui 的 UV 原点在左上角，OpenGL 纹理原点在左下角，
+            // 因此需要翻转 V 坐标：ImVec2(0,1) → ImVec2(1,0)
+            ImGui::Image((ImTextureID)(uint64)textureID,
+                         ImVec2(m_Width, m_Height),
+                         ImVec2(0, 1), ImVec2(1, 0));
+        } else {
+            // 如果还没有 FBO，显示提示背景
+            if (m_Width > 0.0f && m_Height > 0.0f) {
+                ImDrawList* drawList = ImGui::GetWindowDrawList();
+                ImVec2 posMin = ImGui::GetCursorScreenPos();
+                ImVec2 posMax = ImVec2(posMin.x + m_Width, posMin.y + m_Height);
+                drawList->AddRectFilled(posMin, posMax,
+                                        IM_COL32(30, 30, 35, 255));
+                drawList->AddText(posMin, IM_COL32(100, 100, 110, 255),
+                                  "Viewport - Game Output");
+            }
         }
 
         ImGui::End();

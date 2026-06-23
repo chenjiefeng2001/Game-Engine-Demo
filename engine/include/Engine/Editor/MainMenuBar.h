@@ -1,29 +1,20 @@
 #pragma once
 
-/**
- * @file MainMenuBar.h
- * @brief 主菜单栏 — 管理引擎的 File/Edit/View/Help 菜单
- *
- * 所有面板的可见性通过 PanelVisibility 结构体与 EngineEditor 联动。
- * 菜单快捷键：F5=运行, Ctrl+S=保存, Ctrl+Q=退出
- */
-
 #include "Engine/Types.h"
 #include <functional>
 #include <string>
 
 namespace Engine {
 
-    /** 面板可见性状态（由 EngineEditor 填充，菜单栏用于切换） */
     struct PanelVisibility {
-        bool sceneHierarchy  = true;
-        bool inspector       = true;
-        bool console         = false;
-        bool performance     = true;
-        bool contentBrowser  = false;
-        bool assetBrowser    = false;
-        bool depGraph        = false;
-        bool viewport        = true;
+        bool sceneHierarchy = true;
+        bool inspector      = true;
+        bool console        = true;
+        bool performance    = true;
+        bool contentBrowser = true;
+        bool assetBrowser   = true;
+        bool depGraph       = false;
+        bool viewport       = true;
     };
 
     class MainMenuBar {
@@ -34,31 +25,62 @@ namespace Engine {
         MainMenuBar(const MainMenuBar&) = delete;
         MainMenuBar& operator=(const MainMenuBar&) = delete;
 
-        // ── 回调类型 ──
-        using ActionCallback = std::function<void()>;
+        void OnImGui();
 
-        // ── 配置 ──
         void SetPanelVisibility(PanelVisibility* vis) { m_Visibility = vis; }
 
-        /** 注册"退出"回调 */
-        void SetExitCallback(ActionCallback cb) { m_ExitCallback = std::move(cb); }
+        using ExitCallback = std::function<void()>;
+        void SetExitCallback(ExitCallback cb) { m_ExitCallback = std::move(cb); }
 
-        /** 注册"运行"回调 */
-        void SetPlayCallback(ActionCallback cb) { m_PlayCallback = std::move(cb); }
+        using NewSceneCallback = std::function<void()>;
+        void SetNewSceneCallback(NewSceneCallback cb) { m_NewSceneCallback = std::move(cb); }
 
-        // ── 渲染 ──
-        /** 在 OnImGui() 中调用，绘制主菜单栏 */
-        void OnImGui();
+        using OpenSceneCallback = std::function<void()>;
+        void SetOpenSceneCallback(OpenSceneCallback cb) { m_OpenSceneCallback = std::move(cb); }
+
+        using SaveSceneCallback = std::function<void()>;
+        void SetSaveSceneCallback(SaveSceneCallback cb) { m_SaveSceneCallback = std::move(cb); }
+
+        using SaveAsCallback = std::function<void()>;
+        void SetSaveAsCallback(SaveAsCallback cb) { m_SaveAsCallback = std::move(cb); }
+
+        using PlayCallback   = std::function<void()>;
+        using StopCallback   = std::function<void()>;
+        using PauseCallback  = std::function<void()>;
+        using StepCallback   = std::function<void()>;
+
+        void SetPlayCallback(PlayCallback cb)     { m_PlayCallback = std::move(cb); }
+        void SetStopCallback(StopCallback cb)     { m_StopCallback = std::move(cb); }
+        void SetPauseCallback(PauseCallback cb)   { m_PauseCallback = std::move(cb); }
+        void SetStepCallback(StepCallback cb)     { m_StepCallback = std::move(cb); }
+
+        using ToggleDemoCallback = std::function<void()>;
+        void SetToggleDemoCallback(ToggleDemoCallback cb) { m_ToggleDemoCallback = std::move(cb); }
+
+        bool IsDemoVisible() const { return m_ShowDemo; }
+        void SetDemoVisible(bool v) { m_ShowDemo = v; }
 
     private:
         void DrawFileMenu();
         void DrawEditMenu();
+        void DrawSceneMenu();
         void DrawViewMenu();
+        void DrawToolsMenu();
         void DrawHelpMenu();
 
         PanelVisibility* m_Visibility = nullptr;
-        ActionCallback m_ExitCallback;
-        ActionCallback m_PlayCallback;
+        bool m_ShowDemo = false;
+
+        ExitCallback       m_ExitCallback;
+        NewSceneCallback   m_NewSceneCallback;
+        OpenSceneCallback  m_OpenSceneCallback;
+        SaveSceneCallback  m_SaveSceneCallback;
+        SaveAsCallback     m_SaveAsCallback;
+        PlayCallback       m_PlayCallback;
+        StopCallback       m_StopCallback;
+        PauseCallback      m_PauseCallback;
+        StepCallback       m_StepCallback;
+        ToggleDemoCallback m_ToggleDemoCallback;
     };
 
 } // namespace Engine

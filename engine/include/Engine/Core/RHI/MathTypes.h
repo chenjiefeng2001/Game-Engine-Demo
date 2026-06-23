@@ -91,6 +91,17 @@ struct Vec3 {
 
     bool operator==(const Vec3& o) const { return x == o.x && y == o.y && z == o.z; }
     bool operator!=(const Vec3& o) const { return !(*this == o); }
+
+    Vec3 operator+(const Vec3& o) const { return Vec3(x + o.x, y + o.y, z + o.z); }
+    Vec3 operator-(const Vec3& o) const { return Vec3(x - o.x, y - o.y, z - o.z); }
+    Vec3 operator*(float32 s) const { return Vec3(x * s, y * s, z * s); }
+    Vec3 operator/(float32 s) const { return Vec3(x / s, y / s, z / s); }
+    Vec3 operator-() const { return Vec3(-x, -y, -z); }
+
+    Vec3& operator+=(const Vec3& o) { x += o.x; y += o.y; z += o.z; return *this; }
+    Vec3& operator-=(const Vec3& o) { x -= o.x; y -= o.y; z -= o.z; return *this; }
+    Vec3& operator*=(float32 s) { x *= s; y *= s; z *= s; return *this; }
+    Vec3& operator/=(float32 s) { x /= s; y /= s; z /= s; return *this; }
 };
 
 // ──────────────────────────────────────────

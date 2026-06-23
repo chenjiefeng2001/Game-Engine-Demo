@@ -101,6 +101,10 @@ namespace Engine {
         GameObject* FindObject(const std::string& name);
         const GameObject* FindObject(const std::string& name) const;
 
+        /** 按 ID 查找对象（递归，用于 Picking 系统） */
+        GameObject* FindByID(uint32 id);
+        const GameObject* FindByID(uint32 id) const;
+
         /** 根对象数量 */
         size_t GetObjectCount() const noexcept { return m_Objects.size(); }
         /** 场景中所有对象的递归总数 */

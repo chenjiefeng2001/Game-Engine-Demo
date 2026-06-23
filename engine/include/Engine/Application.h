@@ -15,9 +15,15 @@
 #include "Engine/PerformanceWindow.h"
 #include "Engine/Types.h"
 #include "Engine/UIManager.h"
+#include "Engine/Editor/EditorCamera.h"
+#include "Engine/Editor/ViewportPanel.h"
 #include <memory>
 #include <vector>
 #include <unordered_map>
+
+// 前向声明
+struct GladGLContext;
+class OpenGLFramebuffer;
 
 
 namespace Engine {
@@ -73,6 +79,15 @@ public:
   // ── 循环模式控制 ──
   LoopMode GetLoopMode() const { return m_LoopMode; }
   void SetLoopMode(LoopMode mode) { m_LoopMode = mode; }
+
+  // ── 游戏播放状态控制（编辑器运行时切换） ──
+  /** 是否处于游戏运行状态（编辑器内点击 Play/Stop 切换） */
+  bool IsPlaying() const { return m_IsPlaying; }
+  /**
+   * @brief 设置游戏播放状态
+   * @param playing true = 进入游戏运行模式（激活 MenuManager），false = 回到编辑模式
+   */
+  void SetPlaying(bool playing);
 
   /**
    * @brief 获取渲染插值因子（Fixed 模式下用于视觉平滑）
@@ -174,6 +189,15 @@ protected:
   PerformanceWindow m_PerfWindow;
   MenuManager m_MenuManager;
 
+  /** 视口面板（编辑器嵌入） */
+  ViewportPanel m_ViewportPanel;
+
+  /** 编辑器相机 */
+  EditorCamera m_EditorCamera;
+
+  /** 是否处于游戏运行状态（编辑器 Play/Stop 控制） */
+  bool m_IsPlaying = false;
+
   /** 是否由 Application::Run() 自动绘制性能窗口。设为 false 可交给 Editor 管理
    */
   bool m_DrawPerformanceWindow = true;
@@ -189,6 +213,12 @@ private:
   bool InitUI();
   bool InitShader();
   bool InitVertexData();
+
+  // ── 视口 FBO ──
+  void InitViewportFBO();           // 第一次初始化
+  void ResizeViewportFBO(int w, int h);  // resize 回调
+  std::unique_ptr<OpenGLFramebuffer> m_ViewportFBO;
+  GladGLContext* m_GL = nullptr;   // 用于创建 FBO
 
   // ── 内部循环 ──
   void InternalUpdate(float32 dt);

@@ -36,6 +36,8 @@ namespace Engine {
 		/// @param timeoutSec 超时秒数，≤0 表示无限等待
 		virtual void WaitEvents(double timeoutSec = 0.0) = 0;
 		virtual bool ShouldClose() const = 0;
+		/// @brief 设置窗口关闭标志（用于 Exit 菜单项等）
+		virtual void SetShouldClose(bool close) = 0;
 
 		// ── 窗口状态查询 ──
 		/// @brief 窗口是否获得焦点（激活状态）
