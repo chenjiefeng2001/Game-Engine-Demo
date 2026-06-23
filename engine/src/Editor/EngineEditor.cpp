@@ -49,8 +49,8 @@ namespace Engine {
             Log::Info("[Editor] New Scene requested");
         });
 
-        m_MenuBar.SetOpenSceneCallback([]() {
-            Log::Info("[Editor] Open Scene requested");
+        m_MenuBar.SetOpenSceneCallback([](const std::string& path) {
+            Log::Info("[Editor] Open Scene requested: {}", path.empty() ? "(dialog)" : path);
         });
 
         m_MenuBar.SetSaveSceneCallback([]() {

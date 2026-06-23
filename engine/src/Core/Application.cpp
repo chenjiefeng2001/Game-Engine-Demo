@@ -546,6 +546,14 @@ void Application::Run() {
   // ── 初始化高精度计时器 ──
   Time::Init();
 
+  // ── 初始化 Profiler（Tracy GPU 上下文 + 日志输出） ──
+  // 必须在 JobSystem::Init() 之前调用！
+  // Profiler 的初始化（特别是 TRACY_DELAYED_INIT）需要在主线程上完成校准。
+  // 如果工作线程先调用 Tracy 宏（如 PROFILE_SET_THREAD_NAME），
+  // 校准代码会在工作线程上执行并触发 std::system_error 崩溃。
+  Profiler::Init();
+  PROFILE_FRAME_START;
+
   // ── 初始化 Job 系统（线程池） ──
   // 传入 hardware_concurrency 个线程，预留 1 核给未来渲染线程
   JobSystem::Init(0, 1);
@@ -564,10 +572,6 @@ void Application::Run() {
   m_EditorCamera.SetViewportSize(
       static_cast<float32>(m_ViewportPanel.GetWidth()),
       static_cast<float32>(m_ViewportPanel.GetHeight()));
-
-  // ── 初始化 Profiler（Tracy GPU 上下文 + 日志输出） ──
-  Profiler::Init();
-  PROFILE_FRAME_START;
 
   // ── 启动文件监视器（在资源加载完成后） ──
   if (auto *fw = FileWatcher::Get())
