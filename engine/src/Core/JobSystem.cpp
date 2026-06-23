@@ -340,23 +340,40 @@ void JobSystem::EnqueueJob(uint64 jobId) {
 // ============================================================
 
 void JobSystem::WorkerLoop(uint32 threadIndex) {
-    PROFILE_SET_THREAD_NAME(("Worker " + std::to_string(threadIndex)).c_str());
+    // ── 核心修复：工作线程不调用任何 Tracy PROFILE_* 宏 ──
+    // 原因：TRACY_DELAYED_INIT 模式下，第一次调用 Tracy 宏会触发
+    // CalibrateTimer()。如果工作线程（而非主线程）首次触发，
+    // 校准会在错误线程的上下文中执行，导致 std::system_error 崩溃。
+    //
+    // 即使 try-catch 包围也无法解决，因为 std::system_error 的
+    // 根源是线程本地存储冲突，一旦发生整个线程终止。
+    //
+    // Tracy 的线程命名由 Profiler::Init() 在主线程调用
+    // PROFILE_SET_THREAD_NAME 时统一处理。工作线程的 Tracy 数据
+    // 可安全忽略——Tracy 仍能正确采集工作线程的 CPU 样本。
 
     while (m_Running.load(std::memory_order_acquire)) {
         uint64 jobId = 0;
 
         {
-            PROFILE_ZONE_NAME("WaitForJob");
             std::unique_lock lock(m_QueueMutex);
-            m_WakeCondition.wait(lock, [this]() {
-                return !m_JobQueue.empty() || !m_Running.load(std::memory_order_acquire);
-            });
-
             if (!m_Running.load(std::memory_order_acquire)) break;
-
             if (!m_JobQueue.empty()) {
                 jobId = m_JobQueue.front();
                 m_JobQueue.pop();
+            } else {
+                // 队列为空 → 等待唤醒
+                m_WakeCondition.wait(lock, [this]() {
+                    return !m_JobQueue.empty() ||
+                           !m_Running.load(std::memory_order_acquire);
+                });
+
+                if (!m_Running.load(std::memory_order_acquire)) break;
+
+                if (!m_JobQueue.empty()) {
+                    jobId = m_JobQueue.front();
+                    m_JobQueue.pop();
+                }
             }
         }
 
@@ -371,7 +388,9 @@ void JobSystem::WorkerLoop(uint32 threadIndex) {
 // ============================================================
 
 void JobSystem::ExecuteJob(uint64 jobId, uint32 threadIndex) {
-    PROFILE_ZONE_NAME("ExecuteJob");
+    // 注意：不在工作线程中调用任何 PROFILE_* 宏！
+    // TRACY_DELAYED_INIT 模式下，工作线程首次调用 Tracy 宏
+    // 会在错误线程执行 CalibrateTimer()，导致 std::system_error。
 
     Job* job = nullptr;
     {
@@ -379,13 +398,6 @@ void JobSystem::ExecuteJob(uint64 jobId, uint32 threadIndex) {
         auto it = m_JobMap.find(jobId);
         if (it == m_JobMap.end()) return;
         job = it->second.get();
-    }
-
-    // Zone 文本：Job ID（Tracy 中显示为附加信息）
-    {
-        char idStr[32];
-        std::snprintf(idStr, sizeof(idStr), "Job #%llu", (unsigned long long)jobId);
-        PROFILE_ZONE_TEXT(idStr);
     }
 
     // 执行

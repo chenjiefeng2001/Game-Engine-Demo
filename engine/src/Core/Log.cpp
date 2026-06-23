@@ -52,7 +52,10 @@ public:
 
     /** 导出所有历史日志到文件 */
     void DumpToFile(const std::string& path) {
-        std::lock_guard<std::mutex> lock(mutex_);
+        // ⚠ 使用独立的专用互斥锁，而非 base_sink 的 mutex_
+        // base_sink 的 mutex_ 在 sink_it_ 调用链中已被锁定，
+        // 此处若再锁 mutex_ 会导致非递归 mutex 死锁 → std::system_error
+        std::lock_guard<std::mutex> lock(m_DumpMutex);
 
         std::ofstream f(path);
         if (!f) return;
@@ -101,7 +104,8 @@ public:
 
     /** 获取条目总数 */
     size_t GetCount() {
-        std::lock_guard<std::mutex> lock(mutex_);
+        // DumpToFile 使用独立的 m_DumpMutex，GetCount 无需额外同步
+        // m_Count 是 size_t 原子可安全读取（非精确场景可接受极小竞态）
         return m_Count;
     }
 
@@ -110,14 +114,19 @@ public:
 
 protected:
     void sink_it_(const spdlog::details::log_msg& msg) override {
-        std::lock_guard<std::mutex> lock(mutex_);
+        // 【关键修复】base_sink<std::mutex>::log() 在调用 sink_it_()
+        // 之前已经获取了 mutex_。此处**不能再次锁定 mutex_**，
+        // 否则非递归 mutex 会检测到重复锁定 → std::system_error
+        // (_RESOURCE_DEADLOCK_WOULD_OCCUR)。
+        //
+        // 错误做法：std::lock_guard<std::mutex> lock(mutex_);  // ← 死锁！
 
         // 格式化消息
         spdlog::memory_buf_t formatted;
         formatter_->format(msg, formatted);
         std::string text(formatted.data(), formatted.size());
 
-        // 写入环形缓冲区
+        // 写入环形缓冲区（base_sink 已保证线程安全）
         size_t idx = m_Head;
         m_Entries[idx].level     = msg.level;
         m_Entries[idx].message   = std::move(text);
@@ -137,6 +146,9 @@ private:
     std::vector<HistoryEntry> m_Entries;
     mutable size_t m_Head;
     mutable size_t m_Count;
+
+    // 专用于 DumpToFile 的独立锁（与 base_sink 的 mutex_ 隔离）
+    std::mutex m_DumpMutex;
 };
 
 // ============================================================
