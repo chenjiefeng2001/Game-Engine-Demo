@@ -151,6 +151,10 @@ namespace Engine {
 		/** 设置深度比较函数 */
 		virtual void SetDepthFunc(uint32 func) { (void)func; }
 
+		// ── 管道状态重置（用于 UI Pass 前，防止 3D 深度/混合状态污染 ImGui） ──
+		/** 重置所有渲染状态到默认值 */
+		virtual void ResetPipelineState() {}
+
 	protected:
 		ViewMode m_ViewMode = ViewMode::Normal;
 	};

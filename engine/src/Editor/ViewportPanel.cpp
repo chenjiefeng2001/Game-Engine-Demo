@@ -217,16 +217,16 @@ namespace Engine {
 
         m_FBO->Bind();
 
-        if (m_RenderContext) {
-            glClearColor(0.12f, 0.12f, 0.15f, 1.0f);
-            glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
-            glEnable(GL_DEPTH_TEST);
+        if (m_GL) {
+            m_GL->ClearColor(0.12f, 0.12f, 0.15f, 1.0f);
+            m_GL->Clear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+            m_GL->Enable(GL_DEPTH_TEST);
 
             // 根据 ViewMode 设置多边形模式
             if (m_ViewMode == ViewMode::Wireframe) {
-                glPolygonMode(GL_FRONT_AND_BACK, GL_LINE);
+                m_GL->PolygonMode(GL_FRONT_AND_BACK, GL_LINE);
             } else {
-                glPolygonMode(GL_FRONT_AND_BACK, GL_FILL);
+                m_GL->PolygonMode(GL_FRONT_AND_BACK, GL_FILL);
             }
         }
 
@@ -274,8 +274,8 @@ namespace Engine {
                 m_3DShader->SetVec4("u_Color", &gridCol.x);
             }
 
-            glLineWidth(1.0f);
-            glDrawArrays(GL_LINES, 0, m_GridVertexCount);
+            m_GL->LineWidth(1.0f);
+            m_GL->DrawArrays(GL_LINES, 0, m_GridVertexCount);
         }
 
         // ── 绘制演示物体 ──
@@ -298,7 +298,7 @@ namespace Engine {
             m_3DShader->SetVec4("u_Color", &red.x);
 
             m_CubeVAO->Bind();
-            glDrawElements(GL_TRIANGLES, 36, GL_UNSIGNED_INT, nullptr);
+            m_GL->DrawElements(GL_TRIANGLES, 36, GL_UNSIGNED_INT, nullptr);
         }
 
         // 蓝色子物体
@@ -317,7 +317,7 @@ namespace Engine {
             m_3DShader->SetVec4("u_Color", &blue.x);
 
             m_CubeVAO->Bind();
-            glDrawElements(GL_TRIANGLES, 36, GL_UNSIGNED_INT, nullptr);
+            m_GL->DrawElements(GL_TRIANGLES, 36, GL_UNSIGNED_INT, nullptr);
         }
 
         // 黄色光源标记
@@ -336,12 +336,12 @@ namespace Engine {
             m_3DShader->SetVec4("u_Color", &yellow.x);
 
             m_CubeVAO->Bind();
-            glDrawElements(GL_TRIANGLES, 36, GL_UNSIGNED_INT, nullptr);
+            m_GL->DrawElements(GL_TRIANGLES, 36, GL_UNSIGNED_INT, nullptr);
         }
 
         // ── 恢复多边形模式 ──
         if (m_ViewMode == ViewMode::Wireframe) {
-            glPolygonMode(GL_FRONT_AND_BACK, GL_FILL);
+            m_GL->PolygonMode(GL_FRONT_AND_BACK, GL_FILL);
         }
 
         m_FBO->Unbind();

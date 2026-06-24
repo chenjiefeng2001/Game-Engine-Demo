@@ -190,7 +190,7 @@ protected:
   MenuManager m_MenuManager;
 
       /** 视口面板（编辑器嵌入） */
-  ViewportPanel m_ViewportPanel;
+  ViewportPanel m_ViewportPanel{"Viewport"};
 
   /** 编辑器相机 */
   EditorCamera m_EditorCamera;
