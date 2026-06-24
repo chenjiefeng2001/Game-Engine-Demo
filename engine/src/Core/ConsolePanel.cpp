@@ -17,8 +17,9 @@ namespace Engine {
 
 void ConsolePanel::OnImGui()
 {
-    if (!m_Visible)
-        return;
+    // ── 不检查 m_Visible — 由外部（EngineEditor::m_Visibility.console）控制是否调用 ──
+    // ConsolePanel 内部 m_Visible 仅用于 ~ 键切换和 IsCapturingInput 状态查询，
+    // 不再作为 OnImGui 的入口守卫。
 
     // 如果输入框处于激活状态，阻止键盘事件传递到游戏
     if (m_InputActive)
@@ -26,15 +27,9 @@ void ConsolePanel::OnImGui()
 
     ImGui::SetNextWindowSize(ImVec2(600, 300), ImGuiCond_FirstUseEver);
 
-    // 重要：允许键盘输入捕获
-    ImGuiWindowFlags flags = ImGuiWindowFlags_NoScrollbar; // 我们自己在内部处理
-    if (!ImGui::Begin("Console", &m_Visible, flags)) {
-        // Begin 返回 false（窗口已折叠、隐藏或用户点击了 X 关闭按钮）。
-        // 此时不能调用任何 ImGui widget 函数，必须立即 End 并返回。
+    ImGuiWindowFlags flags = ImGuiWindowFlags_NoScrollbar;
+    if (!ImGui::Begin("Console", nullptr, flags)) {
         ImGui::End();
-        // 如果控制台被关闭（点击 X），重置输入状态
-        if (!m_Visible)
-            m_InputActive = false;
         return;
     }
 
@@ -47,10 +42,6 @@ void ConsolePanel::OnImGui()
     DrawInputLine();
 
     ImGui::End();
-
-    // 如果控制台关闭，重置输入状态
-    if (!m_Visible)
-        m_InputActive = false;
 }
 
 // ============================================================
@@ -409,8 +400,19 @@ void ConsolePanel::SubmitCommand()
     ConsoleCommandRegistry::Instance().Execute(cmd, output);
 
     // ── 输出结果 ──
+    // 按换行符分割，使每条日志在控制台表格中独占一行
     if (!output.empty()) {
-        ConsoleLog::Instance().Log(LogLevel::Info, output);
+        size_t start = 0;
+        size_t end;
+        while ((end = output.find('\n', start)) != std::string::npos) {
+            std::string line = output.substr(start, end - start);
+            if (!line.empty())
+                ConsoleLog::Instance().Log(LogLevel::Info, line);
+            start = end + 1;
+        }
+        if (start < output.size()) {
+            ConsoleLog::Instance().Log(LogLevel::Info, output.substr(start));
+        }
     }
 
     // ── 清空输入 ──

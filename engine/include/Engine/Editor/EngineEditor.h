@@ -126,7 +126,8 @@ namespace Engine {
 
         // ── 布局状态 ──
         bool m_DockingInitialized = false;
-        bool m_ShowDockingDemo    = false;  // ImGui 自带的 Docking 演示
+        bool m_ResetLayoutRequested = false; ///< DockBuilder 布局重置请求
+        bool m_ShowDockingDemo      = false; // ImGui 自带的 Docking 演示
 
         // 关联的 Application
         Application* m_App = nullptr;
