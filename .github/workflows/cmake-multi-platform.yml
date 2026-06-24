@@ -12,7 +12,7 @@ on:
       - 'CMakeLists.txt'
       - '**.cmake'
       - 'third_party/**'
-      - '.github/workflows/**' # 修改：兼容脚本重命名
+      - '.github/workflows/**'
 
   pull_request:
     branches: [ "master" ]
@@ -25,6 +25,11 @@ on:
       - 'third_party/**'
 
   workflow_dispatch:
+
+# ── 自动创建 Release 的权限 ──
+permissions:
+  contents: write
+  pull-requests: read
 
 jobs:
   build:
@@ -58,7 +63,7 @@ jobs:
     - name: Checkout Code
       uses: actions/checkout@v4
       with:
-        submodules: recursive # 这里非常正确，保持不变
+        submodules: recursive
         fetch-depth: 0
 
     - name: Install Linux Dependencies
@@ -82,7 +87,7 @@ jobs:
         -DCMAKE_CXX_COMPILER=${{ matrix.cpp_compiler }}
         -DCMAKE_C_COMPILER=${{ matrix.c_compiler }}
         -DCMAKE_BUILD_TYPE=${{ matrix.build_type }}
-        -Wno-dev  # 修改点：添加此参数以忽略 box2d 的 CMake Deprecation 警告
+        -Wno-dev
         -S ${{ github.workspace }}
 
     - name: Build
@@ -91,3 +96,105 @@ jobs:
     - name: Test
       working-directory: ${{ steps.strings.outputs.build-output-dir }}
       run: ctest --build-config ${{ matrix.build_type }}
+
+    # ═══════════════════════════════════════════════════════════════
+    # 打包构建产物：收集可执行文件 + 依赖资源
+    # ═══════════════════════════════════════════════════════════════
+    - name: Package Artifacts (Windows)
+      if: runner.os == 'Windows'
+      shell: bash
+      run: |
+        # 收集的 sandbox 应用（主入口）
+        APPS=("Sandbox" "EditorDemo")
+        
+        # 创建打包目录
+        PKG_DIR="${{ github.workspace }}/pkg/Sandbox"
+        mkdir -p "$PKG_DIR/assets"
+
+        # 复制资产目录
+        cp -r "${{ github.workspace }}/assets"/* "$PKG_DIR/assets/" 2>/dev/null || true
+
+        # 复制可执行文件（MSVC 多配置生成器输出在 Release/ 子目录）
+        BIN_DIR="${{ steps.strings.outputs.build-output-dir }}/sandbox"
+        for app in "${APPS[@]}"; do
+          exe="$BIN_DIR/${app}/Release/${app}.exe"
+          if [ -f "$exe" ]; then
+            cp "$exe" "$PKG_DIR/"
+          fi
+        done
+
+        # 复制 OpenAL32.dll（在 build/bin/Release/ 下）
+        OPENAL_DIR="${{ steps.strings.outputs.build-output-dir }}/bin/Release"
+        if [ -f "$OPENAL_DIR/OpenAL32.dll" ]; then
+          cp "$OPENAL_DIR/OpenAL32.dll" "$PKG_DIR/"
+        elif [ -f "$OPENAL_DIR/soft_oal.dll" ]; then
+          cp "$OPENAL_DIR/soft_oal.dll" "$PKG_DIR/OpenAL32.dll"
+        fi
+
+        # 复制 VC++ 运行时 DLL（可选，目标机可能没有安装 VC++ Redist）
+        # 通常 GitHub Actions 的 windows-latest 会带，但为保险可拷贝
+        # 实际发布时建议使用静态链接或附带 redist 安装包
+
+        # 打包为 ZIP
+        cd "${{ github.workspace }}/pkg"
+        zip -r "Sandbox-windows-x64.zip" "Sandbox/"
+        echo "PACKAGE_PATH=${{ github.workspace }}/pkg/Sandbox-windows-x64.zip" >> "$GITHUB_ENV"
+
+    - name: Package Artifacts (Linux)
+      if: runner.os == 'Linux'
+      shell: bash
+      run: |
+        # 收集的 sandbox 应用
+        APPS=("Sandbox" "EditorDemo")
+
+        PKG_DIR="${{ github.workspace }}/pkg/Sandbox"
+        mkdir -p "$PKG_DIR/assets"
+
+        # 复制资产目录
+        cp -r "${{ github.workspace }}/assets"/* "$PKG_DIR/assets/" 2>/dev/null || true
+
+        # 复制可执行文件
+        BIN_DIR="${{ steps.strings.outputs.build-output-dir }}/sandbox"
+        for app in "${APPS[@]}"; do
+          exe="$BIN_DIR/${app}/${app}"
+          if [ -f "$exe" ]; then
+            cp "$exe" "$PKG_DIR/"
+            chmod +x "$PKG_DIR/${app}"
+          fi
+        done
+
+        # 打包为 tar.gz
+        cd "${{ github.workspace }}/pkg"
+        tar -czf "Sandbox-linux-x64.tar.gz" "Sandbox/"
+        echo "PACKAGE_PATH=${{ github.workspace }}/pkg/Sandbox-linux-x64.tar.gz" >> "$GITHUB_ENV"
+
+    # ═══════════════════════════════════════════════════════════════
+    # 上传到 GitHub Release（仅在 push 到 master 时触发）
+    # ═══════════════════════════════════════════════════════════════
+    - name: Upload to Release
+      if: github.event_name == 'push' && github.ref == 'refs/heads/master'
+      uses: softprops/action-gh-release@v2
+      with:
+        # 自动生成版本号：基于日期 + 短 commit hash
+        tag_name: "nightly-${{ github.sha }}-${{ matrix.os }}-${{ matrix.c_compiler }}"
+        name: "Build ${{ github.sha }} (${{ matrix.os }}, ${{ matrix.c_compiler }})"
+        body: |
+          Automatic build from commit ${{ github.sha }}
+          - OS: ${{ matrix.os }}
+          - Compiler: ${{ matrix.c_compiler }}
+          - Build type: ${{ matrix.build_type }}
+        files: ${{ env.PACKAGE_PATH }}
+        # draft: true   # 如果想要手动审查再发布，取消注释这行
+        # prerelease: true  # 标记为预发布
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+    # ═══════════════════════════════════════════════════════════════
+    # 也作为 workflow artifact 上传（保留最近几次构建）
+    # ═══════════════════════════════════════════════════════════════
+    - name: Upload as Workflow Artifact
+      uses: actions/upload-artifact@v4
+      with:
+        name: Sandbox-${{ matrix.os }}-${{ matrix.c_compiler }}-${{ github.sha }}
+        path: ${{ env.PACKAGE_PATH }}
+        if-no-files-found: warn
