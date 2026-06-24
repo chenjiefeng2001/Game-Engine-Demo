@@ -450,17 +450,11 @@ void Application::InitViewportFBO() {
 
   m_GL = &oglCtx->GetGL();
   m_ViewportFBO = std::make_unique<OpenGLFramebuffer>(*m_GL);
-
-  // 初始尺寸：从窗口尺寸
-  int32 w = 800, h = 600;
-  if (auto* ctx = m_Window->GetContext()) {
-    // 从窗口上下文获取视口尺寸
-  }
   m_ViewportFBO->Resize(800, 600);
 
-  // 连接 ViewportPanel
-  m_ViewportPanel.SetFramebuffer(m_ViewportFBO.get());
+  // ViewportPanel 现在自管理 FBO，只需传递上下文和 GL 库指针
   m_ViewportPanel.SetRenderContext(m_Window->GetContext());
+  m_ViewportPanel.SetGLContext(m_GL);
   // 必须提供 GL 库头文件获取m_GL指针，见OpenGLContext.h
 }
 

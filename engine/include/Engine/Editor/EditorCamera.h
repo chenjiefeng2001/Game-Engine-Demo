@@ -60,11 +60,13 @@ namespace Engine {
         const float32* GetProjectionMatrixPtr() const { return m_ProjectionMatrix.Data(); }
         const float32* GetViewProjectionMatrixPtr() const { return m_ViewProjectionMatrix.Data(); }
 
-        // ── 焦点/位置 ──
+        // ── 焦点/位置/距离 ──
         void SetFocusPoint(const Vec3& point) { m_FocusPoint = point; }
         const Vec3& GetFocusPoint() const { return m_FocusPoint; }
         void SetPosition(const Vec3& pos) { m_Position = pos; }
         const Vec3& GetPosition() const { return m_Position; }
+        float32 GetDistance() const { return m_Distance; }
+        void SetDistance(float32 distance) { m_Distance = distance; m_Dirty = true; }
 
         // ── 投影类型 ──
         void SetProjectionType(CameraProjectionType type) { m_ProjectionType = type; m_Dirty = true; }
@@ -79,6 +81,10 @@ namespace Engine {
         // ── 旋转锁定（锁定后忽略鼠标旋转输入） ──
         void LockRotation(bool lock) { m_RotationLocked = lock; }
         bool IsRotationLocked() const { return m_RotationLocked; }
+
+        // ── 飞行速度控制 ──
+        float32 GetFlySpeed() const { return m_FlySpeed; }
+        void SetFlySpeed(float32 speed) { m_FlySpeed = speed; }
 
         // ── 重置 ──
         void Reset();
