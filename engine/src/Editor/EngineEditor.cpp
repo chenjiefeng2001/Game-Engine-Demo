@@ -17,11 +17,7 @@
 #include <ImGuizmo.h>
 #include <glm/gtx/matrix_decompose.hpp>
 
-#ifdef _WIN32
-#include <windows.h>
-#include <commdlg.h>
-#pragma comment(lib, "Comdlg32.lib")
-#endif
+#include "Engine/Platform/FileDialog.h"
 
 namespace Engine {
 
@@ -55,13 +51,8 @@ namespace Engine {
         m_MenuBar.SetOpenSceneCallback([this](const std::string& path) {
             std::string fp = path;
             if (fp.empty()) {
-                char szFile[260] = {0};
-                OPENFILENAMEA ofn = {0};
-                ofn.lStructSize = sizeof(ofn); ofn.hwndOwner = nullptr;
-                ofn.lpstrFile = szFile; ofn.nMaxFile = sizeof(szFile);
-                ofn.lpstrFilter = "Scene (*.scene)\0*.scene\0All\0*.*\0\0";
-                ofn.nFilterIndex = 1; ofn.Flags = OFN_PATHMUSTEXIST|OFN_FILEMUSTEXIST|OFN_NOCHANGEDIR;
-                if (GetOpenFileNameA(&ofn)) fp = szFile;
+                fp = FileDialog::OpenFile(
+                    "Scene (*.scene)\0*.scene\0All\0*.*\0\0");
             }
             if (!fp.empty()) {
                 Scene* s = m_SceneManager.GetScene();
@@ -75,27 +66,17 @@ namespace Engine {
         m_MenuBar.SetSaveSceneCallback([this]() {
             Scene* s = m_SceneManager.GetScene();
             if (!s) return;
-            char szFile[260] = {0};
-            OPENFILENAMEA ofn = {0};
-            ofn.lStructSize = sizeof(ofn); ofn.hwndOwner = nullptr;
-            ofn.lpstrFile = szFile; ofn.nMaxFile = sizeof(szFile);
-            ofn.lpstrFilter = "Scene (*.scene)\0*.scene\0All\0*.*\0\0";
-            ofn.nFilterIndex = 1; ofn.lpstrDefExt = "scene";
-            ofn.Flags = OFN_PATHMUSTEXIST|OFN_OVERWRITEPROMPT|OFN_NOCHANGEDIR;
-            if (GetSaveFileNameA(&ofn)) s->SaveToFile(szFile);
+            std::string fp = FileDialog::SaveFile(
+                "Scene (*.scene)\0*.scene\0All\0*.*\0\0", "scene");
+            if (!fp.empty()) s->SaveToFile(fp);
         });
 
         m_MenuBar.SetSaveAsCallback([this]() {
             Scene* s = m_SceneManager.GetScene();
             if (!s) return;
-            char szFile[260] = {0};
-            OPENFILENAMEA ofn = {0};
-            ofn.lStructSize = sizeof(ofn); ofn.hwndOwner = nullptr;
-            ofn.lpstrFile = szFile; ofn.nMaxFile = sizeof(szFile);
-            ofn.lpstrFilter = "Scene (*.scene)\0*.scene\0All\0*.*\0\0";
-            ofn.nFilterIndex = 1; ofn.lpstrDefExt = "scene";
-            ofn.Flags = OFN_PATHMUSTEXIST|OFN_OVERWRITEPROMPT|OFN_NOCHANGEDIR;
-            if (GetSaveFileNameA(&ofn)) s->SaveToFile(szFile);
+            std::string fp = FileDialog::SaveFile(
+                "Scene (*.scene)\0*.scene\0All\0*.*\0\0", "scene");
+            if (!fp.empty()) s->SaveToFile(fp);
         });
 
         auto playFn  = [this]() { m_SceneManager.Play(); };
