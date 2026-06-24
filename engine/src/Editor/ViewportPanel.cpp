@@ -3,6 +3,8 @@
 #include "Engine/Core/IGraphicsFactory.h"
 #include "Engine/Core/RenderResources/Shader.h"
 #include "Engine/Core/RenderResources/VertexArray.h"
+#include "Engine/Core/RenderResources/VertexBuffer.h"
+#include "Engine/Core/RenderResources/IndexBuffer.h"
 #include "Engine/OpenGL/OpenGLFramebuffer.h"
 #include "Engine/OpenGL/OpenGLContext.h"
 #include "Engine/Core/Log.h"
@@ -15,8 +17,8 @@
 namespace Engine {
 
     ViewportPanel::ViewportPanel(const std::string& name)
-        : m_Name(name)
     {
+        m_Config.Name = name;
         m_Camera = std::make_unique<EditorCamera>();
     }
 
@@ -34,7 +36,7 @@ namespace Engine {
             return;
         }
 
-        // ── 单位立方体网格 ──
+        // ── 单位立方体网格（演示物体） ──
         float vertices[] = {
             -0.5f,-0.5f, 0.5f, 0.0f, 0.0f, 1.0f, 0.0f,0.0f,
              0.5f,-0.5f, 0.5f, 0.0f, 0.0f, 1.0f, 1.0f,0.0f,
@@ -88,31 +90,12 @@ namespace Engine {
         m_CubeVAO->AddVertexBuffer(vb);
         m_CubeVAO->SetIndexBuffer(ib);
 
-        // ── 地面网格 ──
-        float gridSize = 20.0f;
-        uint32 segments = 20;
-        float halfSz = gridSize / 2.0f;
-        float step = gridSize / segments;
-        uint32 lineCount = (segments + 1) * 2;
-        m_GridVertexCount = lineCount * 2;
-        std::vector<float> gridVerts(m_GridVertexCount * 3);
-
-        uint32 idx = 0;
-        for (uint32 i = 0; i <= segments; ++i) {
-            float pos = -halfSz + i * step;
-            gridVerts[idx++] = pos;    gridVerts[idx++] = -0.5f; gridVerts[idx++] = -halfSz;
-            gridVerts[idx++] = pos;    gridVerts[idx++] = -0.5f; gridVerts[idx++] =  halfSz;
-            gridVerts[idx++] = -halfSz; gridVerts[idx++] = -0.5f; gridVerts[idx++] = pos;
-            gridVerts[idx++] =  halfSz; gridVerts[idx++] = -0.5f; gridVerts[idx++] = pos;
+        // ── 初始化编辑器覆盖层（网格、轴指示器） ──
+        if (m_GL) {
+            m_Overlay.Init(factory, m_GL);
         }
 
-        auto gridVB = factory->CreateVertexBuffer(gridVerts.data(),
-                                                   m_GridVertexCount * 3 * sizeof(float));
-        m_GridVAO = factory->CreateVertexArray();
-        m_GridVAO->AddVertexBuffer(gridVB);
-
-        ENGINE_LOG_INFO("Viewport", "{}: 3D resources initialized (cube={}, grid={})",
-                        m_Name, vertCount, m_GridVertexCount);
+        ENGINE_LOG_INFO("Viewport", "{}: 3D resources initialized (cube={} verts)", m_Config.Name, vertCount);
     }
 
     void ViewportPanel::InitFBO() {
@@ -143,13 +126,20 @@ namespace Engine {
         ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(0, 0));
 
         bool visible = true;
-        ImGui::Begin(m_Name.c_str(), &visible,
+        ImGui::Begin(m_Config.Name.c_str(), &visible,
                      ImGuiWindowFlags_NoScrollbar |
                      ImGuiWindowFlags_NoScrollWithMouse);
 
         ImVec2 viewportSize = ImGui::GetContentRegionAvail();
         m_Hovered = ImGui::IsWindowHovered();
         m_Focused = ImGui::IsWindowFocused();
+
+        // ── 严谨的焦点控制：只有鼠标悬停且没有 ImGui 控件激活时，才允许相机控制 ──
+        // 这防止了当用户操作 Inspector 的 DragFloat 时，鼠标移到视口上触发旋转。
+        bool canControl = m_Hovered && !ImGui::IsAnyItemActive();
+        if (m_Camera) {
+            m_Camera->SetActive(canControl);
+        }
 
         ImVec2 viewPos = ImGui::GetCursorScreenPos();
         m_ViewX = viewPos.x;
@@ -187,7 +177,7 @@ namespace Engine {
                          ImVec2(m_Width, m_Height),
                          ImVec2(0, 1), ImVec2(1, 0));
 
-            // 悬停提示
+            // 悬停提示边框
             if (m_Hovered) {
                 ImDrawList* dl = ImGui::GetWindowDrawList();
                 ImVec2 pMin = ImGui::GetItemRectMin();
@@ -201,7 +191,7 @@ namespace Engine {
             if (m_Width > 0 && m_Height > 0) {
                 dl->AddRectFilled(pMin, pMax, IM_COL32(30, 30, 35, 255));
                 dl->AddText(pMin, IM_COL32(100, 100, 110, 255),
-                            ("Viewport: " + m_Name).c_str());
+                            ("Viewport: " + m_Config.Name).c_str());
             }
         }
 
@@ -217,13 +207,14 @@ namespace Engine {
 
         m_FBO->Bind();
 
+        // ── 清屏 ──
         if (m_GL) {
             m_GL->ClearColor(0.12f, 0.12f, 0.15f, 1.0f);
             m_GL->Clear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
             m_GL->Enable(GL_DEPTH_TEST);
 
             // 根据 ViewMode 设置多边形模式
-            if (m_ViewMode == ViewMode::Wireframe) {
+            if (m_Config.CurrentMode == ViewMode::Wireframe) {
                 m_GL->PolygonMode(GL_FRONT_AND_BACK, GL_LINE);
             } else {
                 m_GL->PolygonMode(GL_FRONT_AND_BACK, GL_FILL);
@@ -246,12 +237,33 @@ namespace Engine {
             glm::vec3(m_Camera->GetFocusPoint().x, m_Camera->GetFocusPoint().y, m_Camera->GetFocusPoint().z),
             glm::vec3(0.0f, 1.0f, 0.0f));
 
-        if (!m_3DShader || !m_CubeVAO) return;
+        // ── 渲染网格（通过 EditorOverlay 系统） ──
+        // 在 3D 物体之前绘制网格，作为场景参考
+        if (m_GL && m_Overlay.IsInitialized()) {
+            // 构建 ViewProj 矩阵
+            glm::mat4 vp = proj * view;
+
+            // 获取相机世界位置
+            Vec3 camPos = m_Camera->GetPosition();
+            float camPosF[3] = { camPos.x, camPos.y, camPos.z };
+
+            m_Overlay.DrawGrid(m_GL, glm::value_ptr(vp), camPosF, m_Config);
+        }
+
+        // ── 渲染 3D 演示物体（仅在有 shader 和 VAO 时绘制） ──
+        if (!m_3DShader || !m_CubeVAO) {
+            // 无 3D 资源：只画网格，跳过物体渲染
+            m_FBO->Unbind();
+            if (m_RenderContext) {
+                m_RenderContext->ResetPipelineState();
+            }
+            return;
+        }
 
         m_3DShader->Bind();
 
-        // ── 绘制网格 ──
-        if (m_GridVAO) {
+        // ── 红色主立方体 ──
+        {
             glm::mat4 model(1.0f);
             glm::mat4 mvp = proj * view * model;
 
@@ -265,35 +277,6 @@ namespace Engine {
             Vec3 camPos = m_Camera->GetPosition();
             m_3DShader->SetVec3("u_CameraPos", &camPos.x);
 
-            // 网格用灰色
-            if (m_ViewMode == ViewMode::Wireframe) {
-                Vec4 brightGrid(0.5f, 0.5f, 0.5f, 1.0f);
-                m_3DShader->SetVec4("u_Color", &brightGrid.x);
-            } else {
-                Vec4 gridCol(0.25f, 0.25f, 0.28f, 1.0f);
-                m_3DShader->SetVec4("u_Color", &gridCol.x);
-            }
-
-            m_GL->LineWidth(1.0f);
-            m_GL->DrawArrays(GL_LINES, 0, m_GridVertexCount);
-        }
-
-        // ── 绘制演示物体 ──
-        Vec3 camPos = m_Camera->GetPosition();
-        m_3DShader->SetVec3("u_CameraPos", &camPos.x);
-        m_3DShader->SetMat4("u_View", glm::value_ptr(view));
-        m_3DShader->SetMat4("u_Projection", glm::value_ptr(proj));
-
-        // 红色主立方体
-        {
-            glm::mat4 model(1.0f);
-            glm::mat4 mvp = proj * view * model;
-
-            m_3DShader->SetMat4("u_Model", glm::value_ptr(model));
-            m_3DShader->SetMat4("u_MVP", glm::value_ptr(mvp));
-            m_3DShader->SetMat4("u_NormalMatrix",
-                                glm::value_ptr(glm::transpose(glm::inverse(model))));
-
             Vec4 red(1.0f, 0.2f, 0.2f, 1.0f);
             m_3DShader->SetVec4("u_Color", &red.x);
 
@@ -301,7 +284,7 @@ namespace Engine {
             m_GL->DrawElements(GL_TRIANGLES, 36, GL_UNSIGNED_INT, nullptr);
         }
 
-        // 蓝色子物体
+        // ── 蓝色子物体 ──
         {
             glm::mat4 model(1.0f);
             model = glm::translate(model, glm::vec3(2.0f, 1.0f, 0.0f));
@@ -320,7 +303,7 @@ namespace Engine {
             m_GL->DrawElements(GL_TRIANGLES, 36, GL_UNSIGNED_INT, nullptr);
         }
 
-        // 黄色光源标记
+        // ── 黄色光源标记 ──
         {
             glm::mat4 model(1.0f);
             model = glm::translate(model, glm::vec3(3.0f, 5.0f, -5.0f));
@@ -340,7 +323,7 @@ namespace Engine {
         }
 
         // ── 恢复多边形模式 ──
-        if (m_ViewMode == ViewMode::Wireframe) {
+        if (m_Config.CurrentMode == ViewMode::Wireframe) {
             m_GL->PolygonMode(GL_FRONT_AND_BACK, GL_FILL);
         }
 

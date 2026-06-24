@@ -290,6 +290,48 @@ namespace Engine {
             if (!cjkLoaded) {
                 s_Log.Warn("No CJK font found, Chinese characters may show as '?'");
             }
+
+            // ── Font Awesome 图标字体（MergeMode 到主字体的 FreeType 渲染器中） ──
+            // 注意: FontAwesome 7 提供 .otf 格式，ImGui 的 AddFontFromFileTTF 能加载 OTF。
+            // 仅合并图标私有使用区字形，不覆盖拉丁字母。
+            {
+                // 候选路径优先级:
+                //   1. assets/fonts/ (工作目录相对路径，兼容开发环境)
+                //   2. third_party/fontawesome/otfs/ (子模块原始路径)
+                //   3. ../ (从某些构建输出目录回溯)
+                const char* faCandidates[] = {
+                    "assets/fonts/fa-solid-900.otf",
+                    "../assets/fonts/fa-solid-900.otf",
+                    "third_party/fontawesome/otfs/Font Awesome 7 Free-Solid-900.otf",
+                };
+
+                // FontAwesome 图标的 Unicode 私有使用区范围
+                // 这些码点对应 ICON_FA_* 宏的 UTF-8 编码。
+                static const ImWchar faRanges[] = {
+                    0xE005, 0xF8FF,  // Private Use Area
+                    0,
+                };
+
+                ImFontConfig faConfig;
+                faConfig.MergeMode = true;
+                faConfig.PixelSnapH = true;
+                faConfig.GlyphMinAdvanceX = sizePixels; // 图标等宽
+                faConfig.SizePixels = sizePixels;
+
+                bool faLoaded = false;
+                for (auto& candidate : faCandidates) {
+                    if (io.Fonts->AddFontFromFileTTF(candidate, sizePixels, &faConfig, faRanges)) {
+                        s_Log.Info("Merged FontAwesome: {} ({}px)", candidate, sizePixels);
+                        faLoaded = true;
+                        break;
+                    }
+                }
+
+                if (!faLoaded) {
+                    s_Log.Warn("FontAwesome not found, editor icons will show as text fallback. "
+                               "Run: git submodule update --init --recursive");
+                }
+            }
         }
         // 非首次调用且无自定义路径：不做任何事（字体已存在，避免重复添加）
     }

@@ -343,12 +343,17 @@ namespace Engine {
         // 6. 编辑面板（由 DockSpace 管理布局，用户可自由拖拽停靠）
         // ═══════════════════════════════════════════════════════════
 
-        // 6a. 工具栏（浮动在 DockSpace 内的小窗口）
+        // 6a. 工具栏（自动适应宽度的水平条）
+        // 设置一个固定高度、自动宽度的窗口，确保所有控件在一行排列。
+        // 使用 ImGuiWindowFlags_AlwaysAutoResize 使窗口宽度自适应内容，
+        // 配合 NoScrollbar 防止任何滚动或换行。
+        ImGui::SetNextWindowSizeConstraints(ImVec2(200, 32), ImVec2(FLT_MAX, 32));
         ImGui::Begin("##Toolbar", nullptr,
                      ImGuiWindowFlags_NoTitleBar |
                      ImGuiWindowFlags_NoResize |
                      ImGuiWindowFlags_NoScrollbar |
-                     ImGuiWindowFlags_NoDocking); // 工具栏不参与停靠
+                     ImGuiWindowFlags_NoDocking |   // 工具栏不参与停靠
+                     ImGuiWindowFlags_AlwaysAutoResize); // 宽度自适应内容，防止换行
         m_Toolbar.OnImGui();
         ImGui::End();
 
