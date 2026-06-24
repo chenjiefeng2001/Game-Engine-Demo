@@ -98,7 +98,7 @@ namespace Engine {
 		void ResolveToDefault();
 
 		// ── 管道状态重置（用于 UI Pass 前，防止 3D 深度/混合状态污染 ImGui） ──
-		void ResetPipelineState();
+		void ResetPipelineState() override;
 
 		// ── 访问器 ──
 		GladGLContext& GetGL() { return m_GL; }
