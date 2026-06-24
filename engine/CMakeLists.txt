@@ -6,6 +6,7 @@ file(GLOB ENGINE_SOURCES CONFIGURE_DEPENDS
     src/Audio/*.cpp
     src/Box2D/*.cpp
     src/Core/*.cpp
+    src/Core/Level/*.cpp
     src/Core/Memory/*.cpp
     src/Core/GameObject/*.cpp
     src/Core/Physics/*.cpp
@@ -28,6 +29,7 @@ file(GLOB ENGINE_HEADERS CONFIGURE_DEPENDS
     include/Engine/*.h
     include/Engine/Animation/*.h
     include/Engine/Core/*.h
+    include/Engine/Core/Level/*.h
     include/Engine/Core/Memory/*.h
     include/Engine/Core/Containers/*.h
     include/Engine/Core/GameObject/*.h

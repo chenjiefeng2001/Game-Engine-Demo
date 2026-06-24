@@ -43,7 +43,19 @@ namespace Engine {
         std::string name;          ///< 命令名（唯一标识）
         std::string description;   ///< 简要描述
         std::string usage;         ///< 用法提示
+        std::string category;      ///< 分类标签（如 "System", "Render", "Editor" 等）
         ConsoleCommandFn callback; ///< 执行回调
+
+        /// 默认构造函数（std::unordered_map 需要）
+        ConsoleCommand() = default;
+
+        /// 4 参数构造函数（兼容旧代码的 initializer list），category 留空由 Register 自动推断
+        ConsoleCommand(std::string n, std::string d, std::string u, ConsoleCommandFn cb)
+            : name(std::move(n)), description(std::move(d)), usage(std::move(u)), callback(std::move(cb)) {}
+
+        /// 5 参数完整构造函数
+        ConsoleCommand(std::string n, std::string d, std::string u, std::string c, ConsoleCommandFn cb)
+            : name(std::move(n)), description(std::move(d)), usage(std::move(u)), category(std::move(c)), callback(std::move(cb)) {}
     };
 
     // ============================================================
@@ -97,11 +109,11 @@ namespace Engine {
 
 } // namespace Engine
 
-/// 便捷宏：在任意初始化代码中快速注册命令
-#define CONSOLE_CMD(name, desc, usage, body)                                \
+/// 便捷宏：在任意初始化代码中快速注册命令（带分类标签）
+#define CONSOLE_CMD(name, cat, desc, usage, body)                            \
     do {                                                                     \
         ::Engine::ConsoleCommandRegistry::Instance().Register({               \
-            (name), (desc), (usage),                                          \
+            (name), (desc), (usage), (cat),                                   \
             [](const std::vector<std::string>& /*args*/, std::string& out) body \
         });                                                                   \
     } while(false)

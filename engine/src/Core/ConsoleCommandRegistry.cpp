@@ -7,6 +7,7 @@
 #include <algorithm>
 #include <sstream>
 #include <ctime>
+#include <map>
 #include <imgui.h>
 
 namespace Engine {
@@ -82,28 +83,35 @@ void ConsoleCommandRegistry::RegisterBuiltins() {
         "help [command]",
         [this](const std::vector<std::string>& args, std::string& out) {
             if (args.size() > 1) {
+                // ── 查看单个命令详情 ──
                 const auto* cmd = Find(args[1]);
                 if (!cmd) {
-                    out = "^1Unknown command:^7 " + args[1];
+                    out = "^1Unknown command:^7 " + args[1] + "\n"
+                          "  Type 'help' or 'cmdlist' to see all available commands.";
                     return;
                 }
                 out = "^2" + cmd->name + "^7 — " + cmd->description + "\n"
+                    + "  ^5Category:^7 " + (cmd->category.empty() ? "General" : cmd->category) + "\n"
                     + "  ^5Usage:^7 " + (cmd->usage.empty() ? cmd->name : cmd->usage);
             } else {
-                out = "^5=== Available Commands (" + std::to_string(m_Commands.size()) + ") ===^7\n";
-                std::vector<std::string> names;
-                for (const auto& [n, _] : m_Commands)
-                    names.push_back(n);
-                std::sort(names.begin(), names.end());
-
-                for (const auto& n : names) {
-                    const auto& cmd = m_Commands.at(n);
-                    out += "  ^2" + cmd.name;
-                    if (cmd.name.size() < 20)
-                        out.append(20 - cmd.name.size(), ' ');
-                    out += "^7 " + cmd.description + "\n";
+                // ── 按分类分组显示所有命令 ──
+                std::map<std::string, std::vector<std::pair<std::string, std::string>>> groups;
+                for (const auto& [name, cmd] : m_Commands) {
+                    std::string cat = cmd.category.empty() ? "General" : cmd.category;
+                    groups[cat].emplace_back(name, cmd.description);
                 }
-                out += "\n^3Tip:^7 'help <command>' for details  |  'cmdlist' for grouped list";
+
+                out = "^5=== Commands (" + std::to_string(m_Commands.size()) + " total) ===^7\n";
+                for (auto& [cat, cmds] : groups) {
+                    std::sort(cmds.begin(), cmds.end());
+                    out += "\n^3[" + cat + "]^7\n";
+                    for (const auto& [n, desc] : cmds) {
+                        out += "  ^2" + n;
+                        if (n.size() < 20) out.append(20 - n.size(), ' ');
+                        out += "^7 " + desc + "\n";
+                    }
+                }
+                out += "\n^3Tip:^7 'help <command>' for details  |  'cmdlist' for same but formatted";
             }
         }
     });
@@ -113,36 +121,21 @@ void ConsoleCommandRegistry::RegisterBuiltins() {
         "按分类显示所有控制台命令",
         "cmdlist",
         [this](const std::vector<std::string>&, std::string& out) {
-            // 用前缀做简单分组
-            struct Group {
-                std::string name;
-                std::vector<std::string> cmds;
-            };
-            std::vector<Group> groups = {
-                {"Help",     {"help","cmdlist","echo","version","credits"}},
-                {"Time",     {"timescale","pause","resume","unpause","slowmo","speed"}},
-                {"Render",   {"r_stats","r_wireframe","r_vsync","r_fps","r_fullscreen","r_resolution","r_aa","r_drawcalls","r_debug"}},
-                {"Physics",  {"phys_gravity","phys_debug","phys_speed","phys_pause"}},
-                {"Audio",    {"s_volume","s_mute","s_debug","s_restart"}},
-                {"Debug",    {"god","noclip","fly","kill","tp","spawn","give","ammo","heal"}},
-                {"Editor",   {"play","stop","pause_game","save","load","undo","redo"}},
-                {"System",   {"quit","exit","exec","config","version","log","crash","memory","profiler","screenshot"}},
-                {"Console",  {"clear","set","get","bind","unbind","con_log","con_height"}},
-                {"Input",    {"cl_sensitivity","cl_invert","cl_showmouse","cl_crosshair"}},
-                {"UI",       {"ui_scale","ui_theme"}},
-            };
+            // 动态按 category 字段分组，不依赖硬编码列表
+            std::map<std::string, std::vector<std::string>> groups;
+            for (const auto& [name, cmd] : m_Commands) {
+                std::string cat = cmd.category.empty() ? "Misc" : cmd.category;
+                groups[cat].push_back(name);
+            }
 
-            out = "^5=== Command Categories ===^7\n";
-            for (const auto& g : groups) {
-                out += "\n^3[" + g.name + "]^7\n";
-                for (const auto& cname : g.cmds) {
-                    const auto* cmd = Find(cname);
-                    if (cmd) {
-                        out += "  ^2" + cmd->name;
-                        if (cmd->name.size() < 18)
-                            out.append(18 - cmd->name.size(), ' ');
-                        out += "^7 " + cmd->description + "\n";
-                    }
+            out = "^5=== Command Categories (" + std::to_string(m_Commands.size()) + " total) ===^7\n";
+            for (auto& [cat, names] : groups) {
+                std::sort(names.begin(), names.end());
+                out += "\n^3[" + cat + "]^7\n";
+                for (const auto& n : names) {
+                    out += "  ^2" + n;
+                    if (n.size() < 20) out.append(20 - n.size(), ' ');
+                    out += "^7 " + m_Commands.at(n).description + "\n";
                 }
             }
         }
@@ -667,130 +660,14 @@ void ConsoleCommandRegistry::RegisterBuiltins() {
         }
     });
 
-    // ================================================================
-    // 8. 调试 / 作弊
-    // ================================================================
-
-    Register({
-        "god",
-        "切换无敌模式",
-        "god",
-        [](const std::vector<std::string>&, std::string& out) {
-            // 实际由 SystemTestApp 的 CVar 处理
-            out = "^2God mode toggled^7 (actual implementation in your game code)\n"
-                  "  Tip: Use 'set god_mode 1' in your app";
-        }
-    });
-
-    Register({
-        "noclip",
-        "切换穿墙/自由飞行模式",
-        "noclip",
-        [](const std::vector<std::string>&, std::string& out) {
-            out = "^2NoClip mode toggled^7 (actual implementation in your game code)\n"
-                  "  Tip: Use 'set noclip 1' in your app";
-        }
-    });
-
-    Register({
-        "fly",
-        "切换飞行模式",
-        "fly",
-        [](const std::vector<std::string>&, std::string& out) {
-            out = "^2Fly mode toggled^7 (implementation in your game code)";
-        }
-    });
-
-    Register({
-        "kill",
-        "杀死玩家角色",
-        "kill",
-        [](const std::vector<std::string>&, std::string& out) {
-            out = "^1Player killed^7 (implementation in your game code)";
-        }
-    });
-
-    Register({
-        "heal",
-        "恢复玩家生命值到满",
-        "heal [amount]",
-        [](const std::vector<std::string>& args, std::string& out) {
-            if (args.size() < 2) {
-                out = "^2Player fully healed^7 (implementation in your game code)";
-            } else {
-                out = "^2Player healed for^7 " + args[1] + " HP (implementation in your game code)";
-            }
-        }
-    });
-
-    Register({
-        "ammo",
-        "补充弹药",
-        "ammo",
-        [](const std::vector<std::string>&, std::string& out) {
-            out = "^2Ammo refilled^7 (implementation in your game code)";
-        }
-    });
-
-    Register({
-        "give",
-        "给予指定物品/武器",
-        "give <item_name> [count]",
-        [](const std::vector<std::string>& args, std::string& out) {
-            if (args.size() < 2) {
-                out = "Usage: give <item_name> [count]\n"
-                      "  e.g. 'give health' or 'give weapon_rifle'";
-                return;
-            }
-            out = "^2Given^7 " + args[1]
-                + (args.size() > 2 ? " x" + args[2] : "")
-                + " ^3(implementation in your game code)^7";
-        }
-    });
-
-    Register({
-        "tp",
-        "传送玩家到指定坐标",
-        "tp <x> <y> [z]",
-        [](const std::vector<std::string>& args, std::string& out) {
-            if (args.size() < 3) {
-                out = "Usage: tp <x> <y> [z]\n"
-                      "  e.g. 'tp 400 300' — teleport to center";
-                return;
-            }
-            out = "^2Teleported to^7 (" + args[1];
-            out += ", " + args[2];
-            if (args.size() > 3) out += ", " + args[3];
-            out += ") ^3(implementation in your game code)^7";
-        }
-    });
-
-    Register({
-        "spawn",
-        "生成实体",
-        "spawn <entity_type> [count]",
-        [](const std::vector<std::string>& args, std::string& out) {
-            if (args.size() < 2) {
-                out = "Usage: spawn <entity_type> [count]\n"
-                      "  e.g. 'spawn enemy' or 'spawn pickup 5'";
-                return;
-            }
-            int32 count = 1;
-            if (args.size() > 2) SafeStoi(args[2], count);
-            out = "^2Spawned^7 " + std::to_string(count) + " x '" + args[1] + "'"
-                + " ^3(implementation in your game code)^7";
-        }
-    });
-
-    Register({
-        "sv_cheats",
-        "启用/禁用作弊模式",
-        "sv_cheats [on|off]",
-        [](const std::vector<std::string>& args, std::string& out) {
-            bool enable = (args.size() < 2) || (ToLower(args[1]) != "off");
-            out = "^5Cheats^7 " + std::string(enable ? "ENABLED" : "DISABLED");
-        }
-    });
+    // ── 作弊命令已移除 ──
+    // 游戏相关的作弊命令（god, noclip, fly, kill, heal, ammo, give, tp, spawn, sv_cheats）
+    // 不再在引擎内置实现。请在各应用的 OnStartup() 中使用 CONSOLE_CMD 宏注册：
+    //
+    // CONSOLE_CMD("god", "Game", "Toggle god mode", "", {
+    //     g_GodMode = !g_GodMode;
+    //     out = g_GodMode ? "^5God mode ON^7" : "^5God mode OFF^7";
+    // });
 
     // ================================================================
     // 9. 编辑器
@@ -1129,7 +1006,36 @@ void ConsoleCommandRegistry::RegisterBuiltins() {
 
 void ConsoleCommandRegistry::Register(const ConsoleCommand& cmd) {
     RegisterBuiltins();
-    m_Commands[cmd.name] = cmd;
+
+    // ── 智能分类：如果 category 为空，根据命令名前缀自动推断 ──
+    ConsoleCommand enriched = cmd;
+    if (enriched.category.empty()) {
+        const std::string& n = enriched.name;
+
+        // 按前缀自动分类
+        if (n.rfind("r_", 0) == 0)             enriched.category = "Render";
+        else if (n.rfind("phys_", 0) == 0)      enriched.category = "Physics";
+        else if (n.rfind("s_", 0) == 0)         enriched.category = "Audio";
+        else if (n.rfind("cl_", 0) == 0)        enriched.category = "Input";
+        else if (n.rfind("ui_", 0) == 0)        enriched.category = "UI";
+        else if (n.rfind("con_", 0) == 0)       enriched.category = "Console";
+        else if (n.rfind("sv_", 0) == 0)        enriched.category = "Server";
+        else if (n == "help" || n == "cmdlist" || n == "echo" || n == "version" || n == "credits")
+                                                enriched.category = "Info";
+        else if (n == "timescale" || n == "pause" || n == "resume" || n == "unpause" || n == "slowmo" || n == "speed")
+                                                enriched.category = "Time";
+        else if (n == "clear" || n == "set" || n == "get" || n == "bind" || n == "unbind")
+                                                enriched.category = "Console";
+        else if (n == "play" || n == "stop" || n == "save" || n == "load" || n == "undo" || n == "redo")
+                                                enriched.category = "Editor";
+        else if (n == "quit" || n == "exit" || n == "exec" || n == "config" || n == "log" || n == "crash" || n == "screenshot")
+                                                enriched.category = "System";
+        else if (n == "profiler" || n == "memory" || n == "memory_panel")
+                                                enriched.category = "Debug";
+        else                                    enriched.category = "General";
+    }
+
+    m_Commands[enriched.name] = std::move(enriched);
 }
 
 void ConsoleCommandRegistry::Unregister(const std::string& name) {
