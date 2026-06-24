@@ -49,6 +49,9 @@ namespace Engine {
 
         /** 层级内序号 */
         int orderInLayer = 0;
+
+        /** 可见性层级（位掩码对应 ViewportConfig::VisibilityMask） */
+        uint32 layerMask = 0xFFFFFFFF;
     };
 
 } // namespace Engine

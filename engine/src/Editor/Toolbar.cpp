@@ -4,6 +4,21 @@
 
 namespace Engine {
 
+    /// 垂直分隔线 — 用 DrawList 在 BeginChild 本地坐标中绘制
+    /// 兼容 ImGui 1.92.x（无 SeparatorEx）
+    static void VerticalSeparator() {
+        ImGui::SameLine();
+        ImVec2 pMin = ImGui::GetCursorScreenPos();
+        ImVec2 pMax = ImGui::GetContentRegionMax();
+        ImDrawList* dl = ImGui::GetWindowDrawList();
+        float y0 = pMin.y;
+        float y1 = pMin.y + 24.0f;  // 分隔线高度=按钮高度
+        float x  = pMin.x + 2.0f;
+        dl->AddLine(ImVec2(x, y0), ImVec2(x, y1),
+                    IM_COL32(60, 60, 70, 160), 1.0f);
+        ImGui::Dummy(ImVec2(4.0f, 0.0f));
+    }
+
     // ============================================================
     // 设置方法（带回调通知）
     // ============================================================
@@ -36,43 +51,46 @@ namespace Engine {
             if (ImGui::IsKeyPressed(ImGuiKey_R)) SetGizmoMode(2);  // Scale
         }
 
-        // ── 紧凑工具栏样式 ──
+        // ── 直接在主窗口 ##Toolbar 中布局 ──
+        // 没有 BeginChild，所有按钮通过 SameLine 串在同一行。
+        // 父窗口已在 EngineEditor 中设置 ImGuiWindowFlags_NoScrollbar 等标志。
+        // 按钮间距由 ImGuiStyleVar_ItemSpacing 控制
         ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, 3.0f);
         ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(6, 4));
 
-        ImGui::SetCursorPosY(4);
+        // 让按钮组垂直居中
+        ImGui::SetCursorPosY(4.0f);
+        ImGui::Indent(8.0f);
 
         // ─── 1. 播放控制组 ───
         DrawPlayGroup();
-
-        ImGui::SameLine();
-        ImGui::SeparatorEx(ImGuiSeparatorFlags_Vertical);
-        ImGui::SameLine();
+        VerticalSeparator();
 
         // ─── 2. 变换工具组 (Gizmo) ───
         DrawTransformGroup();
-
-        ImGui::SameLine();
-        ImGui::SeparatorEx(ImGuiSeparatorFlags_Vertical);
-        ImGui::SameLine();
+        VerticalSeparator();
 
         // ─── 3. 吸附与坐标空间 ───
         DrawSnappingGroup();
-
-        ImGui::SameLine();
-        ImGui::SeparatorEx(ImGuiSeparatorFlags_Vertical);
-        ImGui::SameLine();
+        VerticalSeparator();
 
         // ─── 4. 视口设置（Overlays 菜单 + 相机速度） ───
         DrawViewSettingsGroup();
 
-        // ─── 5. 布局重置（右对齐） ───
-        ImGui::SameLine(ImGui::GetWindowWidth() - 115);
-        if (ImGui::Button(ICON_FA_REDO " Reset Layout", ImVec2(105, 22))) {
+        // ─── 5. 布局重置（右对齐，使用 CursorPos 硬坐标确保不受换行影响） ───
+        // 计算从窗口右边缘偏移的位置
+        float windowWidth = ImGui::GetWindowContentRegionMax().x + ImGui::GetWindowPos().x - ImGui::GetCursorStartPos().x;
+        float rightBtnWidth = 110.0f;
+        float cursorX = ImGui::GetCursorPosX();
+        float available = windowWidth - cursorX;
+        if (available > rightBtnWidth) {
+            ImGui::SameLine(ImGui::GetCursorPosX() + available - rightBtnWidth);
+        }
+
+        if (ImGui::Button(ICON_FA_REDO " Reset", ImVec2(72, 22))) {
             if (m_ResetLayoutCallback) m_ResetLayoutCallback();
         }
 
-        // ─── 6. 快捷键提示 ───
         ImGui::SameLine();
         ImGui::TextDisabled(ICON_FA_QUESTION_CIRCLE);
         if (ImGui::IsItemHovered()) {

@@ -178,6 +178,12 @@ class GameObject : public IRenderable {
         bool IsActive() const noexcept { return m_Active; }
         bool IsActiveInHierarchy() const;
 
+        // ── 可见性层级（Layer 系统，对应 ViewportConfig::VisibilityMask） ──
+        void SetLayer(uint32 layer) { m_Layer = layer; }
+        uint32 GetLayer() const noexcept { return m_Layer; }
+        void SetLayerMask(uint32 mask) { m_LayerMask = mask; }
+        uint32 GetLayerMask() const noexcept { return m_LayerMask; }
+
         // ── IRenderable ──
         void CollectRenderCommands(IRenderQueue& queue) override;
 
@@ -201,6 +207,8 @@ class GameObject : public IRenderable {
 
         TransformComponent  m_Transform;   // 每个 GameObject 都有的内置变换
 
+        uint32 m_Layer = 0;          ///< 渲染层级（0=Default, 1=UI, 2=Effects...）
+        uint32 m_LayerMask = 0xFFFFFFFF; ///< 自身可见性掩码（默认全可见）
         bool m_Active = true;
 
         GameObject* m_Parent = nullptr;
