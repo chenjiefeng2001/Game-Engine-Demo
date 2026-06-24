@@ -135,9 +135,9 @@ jobs:
         # 通常 GitHub Actions 的 windows-latest 会带，但为保险可拷贝
         # 实际发布时建议使用静态链接或附带 redist 安装包
 
-        # 打包为 ZIP
+        # 打包为 ZIP（Windows 使用 7z 代替 zip）
         cd "${{ github.workspace }}/pkg"
-        zip -r "Sandbox-windows-x64.zip" "Sandbox/"
+        7z a "Sandbox-windows-x64.zip" "Sandbox/"
         echo "PACKAGE_PATH=${{ github.workspace }}/pkg/Sandbox-windows-x64.zip" >> "$GITHUB_ENV"
 
     - name: Package Artifacts (Linux)
