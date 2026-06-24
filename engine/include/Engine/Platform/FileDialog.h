@@ -40,14 +40,14 @@ namespace Engine {
                                     const std::string& defaultExt = "",
                                     const std::string& defaultName = "");
 
+        /** 从完整路径中提取扩展名（不含点号，小写） */
+        static std::string GetExtension(const std::string& path);
+
     private:
         // ── 内部辅助 ──
 
         /** 解析 Windows 风格过滤器，提取文件扩展名列表 */
         static std::vector<std::string> ParseFilterExtensions(const std::string& filter);
-
-        /** 从完整路径中提取扩展名（不含点号，小写） */
-        static std::string GetExtension(const std::string& path);
     };
 
 } // namespace Engine
