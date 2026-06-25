@@ -1,555 +1,373 @@
-#define _CRT_SECURE_NO_WARNINGS
-
 #include "Engine/ConsolePanel.h"
-#include "Engine/ConsoleLog.h"
-#include "Engine/ConsoleCommandRegistry.h"
-
+#include "Engine/Core/Log.h"
 #include <imgui.h>
-#include <cstring>
-#include <cctype>
+#include <imgui_internal.h>
 #include <algorithm>
+#include <ctime>
+#include <cstring>
+#include <regex>
 
 namespace Engine {
 
-// ============================================================
-// OnImGui — 主渲染入口
-// ============================================================
+    // ============================================================
+    // 日志条目（带元数据）
+    // ============================================================
+    struct LogEntry {
+        std::string text;
+        std::string channel;   // e.g. "Graphics", "Physics", "Network"
+        int         level = 0; // 0=Info, 1=Warning, 2=Error, 3=Fatal
+        uint64      timeStamp = 0;
+        uint32      repeatCount = 1;  // 折叠相同日志
 
-void ConsolePanel::OnImGui()
-{
-    // ── 不检查 m_Visible — 由外部（EngineEditor::m_Visibility.console）控制是否调用 ──
-    // ConsolePanel 内部 m_Visible 仅用于 ~ 键切换和 IsCapturingInput 状态查询，
-    // 不再作为 OnImGui 的入口守卫。
+        // 对象溯源
+        uint64      sourceObjectId = 0;
+        std::string sourceObjectName;
 
-    // 如果输入框处于激活状态，阻止键盘事件传递到游戏
-    if (m_InputActive)
-        ImGui::SetNextWindowFocus();
+        // 堆栈信息
+        std::string sourceFile;
+        int         sourceLine = 0;
 
-    ImGui::SetNextWindowSize(ImVec2(600, 300), ImGuiCond_FirstUseEver);
-
-    ImGuiWindowFlags flags = ImGuiWindowFlags_NoScrollbar;
-    if (!ImGui::Begin("Console", nullptr, flags)) {
-        ImGui::End();
-        return;
-    }
-
-    // ── 绘制日志区域 ──
-    DrawLogSection();
-
-    ImGui::Separator();
-
-    // ── 绘制命令输入行 ──
-    DrawInputLine();
-
-    ImGui::End();
-}
-
-// ============================================================
-// 颜色代码渲染（Quake 风格：^0~^9）
-// ============================================================
-
-/// 颜色代码 → ABGR 映射表
-static const uint32 kColorCodeTable[10] = {
-    0xFFFFFFFF,   // ^0  White
-    0xFF3333FF,   // ^1  Red
-    0xFF88CC00,   // ^2  Green
-    0xFF00CCFF,   // ^3  Yellow (actually ABGR orange)
-    0xFFFF8800,   // ^4  Blue
-    0xFFFFCC00,   // ^5  Cyan
-    0xFFAA88FF,   // ^6  Magenta/pink
-    0xFFCCCCCC,   // ^7  Light gray
-    0xFF2288FF,   // ^8  Orange
-    0xFF888888,   // ^9  Dark gray
-};
-
-/// 解析并渲染带 ^0~^9 颜色代码的文本
-/// 支持 ^^ 转义为字面 ^
-static void RenderColorCodedText(const char* text, ImVec4 defaultColor = ImVec4(0.90f, 0.90f, 0.90f, 1.00f))
-{
-    uint32 currentColor = 0xFFE6E6E6; // 默认浅灰 (ABGR)
-    ImVec4 curColorVec = defaultColor;
-
-    const char* p = text;
-    const char* segmentStart = p;
-
-    while (*p)
-    {
-        if (*p == '^' && *(p + 1) != '\0')
-        {
-            // ── 先 flush 上一段 ──
-            if (p > segmentStart)
-            {
-                ImGui::TextColored(curColorVec, "%.*s", static_cast<int>(p - segmentStart), segmentStart);
-                ImGui::SameLine(0, 0);
-            }
-
-            char code = *(p + 1);
-            if (code == '^')
-            {
-                // ^^ → 字面 ^，继续累积
-                p += 2;
-                segmentStart = p;
-                continue;
-            }
-            else if (code >= '0' && code <= '9')
-            {
-                int idx = code - '0';
-                currentColor = kColorCodeTable[idx];
-                // ABGR → ImVec4
-                curColorVec = ImVec4(
-                    ((currentColor >> 0)  & 0xFF) / 255.0f,   // R
-                    ((currentColor >> 8)  & 0xFF) / 255.0f,   // G
-                    ((currentColor >> 16) & 0xFF) / 255.0f,   // B
-                    ((currentColor >> 24) & 0xFF) / 255.0f    // A
-                );
-                p += 2;
-                segmentStart = p;
-                continue;
-            }
-            // 否则 '^' 后跟非数字 → 作为普通字符
+        bool operator==(const LogEntry& other) const {
+            return text == other.text && channel == other.channel && level == other.level;
         }
-        ++p;
-    }
-
-    // ── flush 剩余文本 ──
-    if (p > segmentStart)
-    {
-        ImGui::TextColored(curColorVec, "%.*s", static_cast<int>(p - segmentStart), segmentStart);
-    }
-}
-
-// ============================================================
-// DrawLogSection — 日志显示区域
-// ============================================================
-
-void ConsolePanel::DrawLogSection()
-{
-    // ── 工具栏 ──
-    {
-        if (ImGui::Button("Clear"))
-        {
-            ConsoleLog::Instance().Clear();
-            m_ScrollToBottom = false;
-        }
-
-        ImGui::SameLine();
-
-        if (ImGui::Checkbox("Auto-scroll", &m_AutoScroll))
-        {
-            if (m_AutoScroll)
-                m_ScrollToBottom = true;
-        }
-
-        ImGui::SameLine();
-
-        // ── 复制按钮 ──
-        if (ImGui::Button("Copy", ImVec2(50, 0))) {
-            // 收集所有可见日志行到剪贴板
-            std::string allText;
-            auto& log = ConsoleLog::Instance();
-            uint32 count = log.GetCount();
-            uint32 start = log.GetStartIndex();
-            uint32 cap   = log.GetCapacity();
-
-            for (uint32 i = 0; i < count; ++i) {
-                uint32 idx = (start + i) % cap;
-                const auto& entry = log.GetBuffer()[idx];
-                if (!allText.empty()) allText += "\n";
-                allText += entry.message;
-            }
-            ImGui::SetClipboardText(allText.c_str());
-        }
-
-        ImGui::SameLine();
-
-        ImGui::SetNextItemWidth(150);
-        ImGui::InputTextWithHint("##Filter", "Filter...", m_FilterBuf, sizeof(m_FilterBuf));
-    }
-
-    ImGui::Separator();
-
-    // ── 日志显示区域（自动伸缩填充剩余空间） ──
-    ImGui::BeginChild("LogScroll", ImVec2(0, -ImGui::GetFrameHeightWithSpacing() - 4.0f), false,
-                      ImGuiWindowFlags_HorizontalScrollbar);
-
-    if (ImGui::BeginTable("LogTable", 3,
-                          ImGuiTableFlags_NoPadInnerX |
-                          ImGuiTableFlags_SizingFixedFit))
-    {
-        ImGui::TableSetupColumn("Time",  ImGuiTableColumnFlags_WidthFixed, 60.0f);
-        ImGui::TableSetupColumn("Level", ImGuiTableColumnFlags_WidthFixed, 50.0f);
-        ImGui::TableSetupColumn("Message", ImGuiTableColumnFlags_WidthStretch);
-
-        auto& log = ConsoleLog::Instance();
-        const LogEntry* buffer = log.GetBuffer();
-        uint32 count = log.GetCount();
-        uint32 start = log.GetStartIndex();
-        uint32 cap   = log.GetCapacity();
-
-        bool hasFilter = m_FilterBuf[0] != '\0';
-
-        for (uint32 i = 0; i < count; ++i)
-        {
-            uint32 idx = (start + i) % cap;
-            const auto& entry = buffer[idx];
-
-            // 过滤
-            if (hasFilter)
-            {
-                const char* msg = entry.message.c_str();
-                bool found = false;
-                for (const char* p = msg; *p; ++p)
-                {
-                    const char* f = m_FilterBuf;
-                    const char* s = p;
-                    while (*f && *s && std::tolower(*f) == std::tolower(*s))
-                    {
-                        ++f; ++s;
-                    }
-                    if (!*f)
-                    {
-                        found = true;
-                        break;
-                    }
-                }
-                if (!found)
-                    continue;
-            }
-
-            ImGui::TableNextRow();
-
-            ImGui::TableSetColumnIndex(0);
-            int minutes = static_cast<int>(entry.timestamp) / 60;
-            int seconds = static_cast<int>(entry.timestamp) % 60;
-            ImGui::Text("%02d:%02d", minutes, seconds);
-
-            ImGui::TableSetColumnIndex(1);
-            ImGui::TextColored(
-                ImColor(LogLevelColor(entry.level)),
-                "%s", LogLevelName(entry.level)
-            );
-
-            ImGui::TableSetColumnIndex(2);
-
-            // ── 使用颜色代码解析渲染（支持 ^0~^9 标记） ──
-            //     命令级消息用绿色基底，其他用默认灰
-            if (entry.level == LogLevel::Command) {
-                // 命令回显：绿色基底 + 内部颜色代码
-                RenderColorCodedText(entry.message.c_str(),
-                    ImVec4(0.55f, 0.80f, 0.20f, 1.00f)); // 亮绿
-            } else if (entry.level == LogLevel::Warn) {
-                RenderColorCodedText(entry.message.c_str(),
-                    ImVec4(1.00f, 0.80f, 0.00f, 1.00f)); // 黄
-            } else if (entry.level == LogLevel::Error) {
-                RenderColorCodedText(entry.message.c_str(),
-                    ImVec4(1.00f, 0.20f, 0.20f, 1.00f)); // 红
-            } else {
-                // Info + 其他：默认浅灰，支持颜色代码
-                RenderColorCodedText(entry.message.c_str());
-            }
-        }
-
-        if (m_AutoScroll && m_ScrollToBottom)
-        {
-            ImGui::SetScrollHereY(1.0f);
-            m_ScrollToBottom = false;
-        }
-
-        ImGui::EndTable();
-    }
-
-    ImGui::EndChild();
-}
-
-// ============================================================
-// DrawInputLine — 命令输入行
-// ============================================================
-
-void ConsolePanel::DrawInputLine()
-{
-    // 提示文字
-    ImGui::Text("> ");
-    ImGui::SameLine();
-
-    // ── ImGui 输入框（使用 Callback 处理 ↑/↓/Tab） ──
-    // 关键：必须使用 ImGuiInputTextFlags_CallbackHistory 和
-    //       ImGuiInputTextFlags_CallbackCompletion，否则 InputText
-    //       会直接吞掉方向键和 Tab 键，外部 IsKeyPressed 检测不到。
-    ImGuiInputTextFlags inputFlags = ImGuiInputTextFlags_EnterReturnsTrue
-                                   | ImGuiInputTextFlags_CallbackHistory
-                                   | ImGuiInputTextFlags_CallbackCompletion;
-
-    ImGui::PushItemWidth(-1.0f);
-
-    bool executeCmd = false;
-
-    // 回调：处理 ↑/↓/Tab
-    struct CallbackUserData { ConsolePanel* panel; bool* execCmd; char* buf; size_t bufSize; };
-    CallbackUserData cbData{ this, &executeCmd, m_InputBuf, sizeof(m_InputBuf) };
-
-    auto callback = [](ImGuiInputTextCallbackData* data) -> int {
-        auto* ud = static_cast<CallbackUserData*>(data->UserData);
-        auto* panel = ud->panel;
-
-        switch (data->EventFlag) {
-        case ImGuiInputTextFlags_CallbackHistory: {
-            if (data->EventKey == ImGuiKey_UpArrow) {
-                panel->HistoryPrev();
-                if (panel->m_HistoryPos >= 0 &&
-                    panel->m_HistoryPos < (int)panel->m_CommandHistory.size()) {
-                    const auto& s = panel->m_CommandHistory[panel->m_HistoryPos];
-                    data->DeleteChars(0, data->BufTextLen);
-                    data->InsertChars(0, s.c_str());
-                }
-            } else if (data->EventKey == ImGuiKey_DownArrow) {
-                panel->HistoryNext();
-                data->DeleteChars(0, data->BufTextLen);
-                if (panel->m_HistoryPos >= 0 &&
-                    panel->m_HistoryPos < (int)panel->m_CommandHistory.size()) {
-                    data->InsertChars(0, panel->m_CommandHistory[panel->m_HistoryPos].c_str());
-                }
-                // else: 清空（已在 DeleteChars 中）
-            }
-            break;
-        }
-        case ImGuiInputTextFlags_CallbackCompletion: {
-            panel->AutoComplete();
-            if (!panel->m_CompletionCandidates.empty()) {
-                // 只替换命令部分（第一个词）
-                std::string current(data->Buf);
-                size_t sp = current.find(' ');
-                std::string rest = (sp != std::string::npos) ? current.substr(sp) : "";
-                std::string repl = panel->m_CompletionCandidates[panel->m_CompletionIndex] + rest;
-                data->DeleteChars(0, data->BufTextLen);
-                data->InsertChars(0, repl.c_str());
-            }
-            break;
-        }
-        }
-        return 0;
     };
 
-    // 如果刚打开控制台，自动聚焦输入框
-    if (m_InputActive && !ImGui::IsAnyItemActive()) {
+    // ============================================================
+    // 全局环形日志缓冲区
+    // ============================================================
+    namespace {
+        constexpr int kMaxLogEntries = 10000;
+        std::vector<LogEntry> s_LogBuffer;
+        int s_LogHead = 0;
+        int s_LogCount = 0;
+
+        void PushLog(const LogEntry& entry) {
+            if (s_LogBuffer.size() < kMaxLogEntries) {
+                s_LogBuffer.push_back(entry);
+                s_LogHead = static_cast<int>(s_LogBuffer.size()) - 1;
+                s_LogCount++;
+            } else {
+                s_LogHead = (s_LogHead + 1) % kMaxLogEntries;
+                s_LogBuffer[s_LogHead] = entry;
+                s_LogCount = kMaxLogEntries;
+            }
+        }
+
+        // 获取日志（从旧到新）
+        std::vector<const LogEntry*> GetLogs() {
+            std::vector<const LogEntry*> result;
+            if (s_LogBuffer.empty()) return result;
+
+            int start = (s_LogCount < kMaxLogEntries) ? 0 : (s_LogHead + 1) % kMaxLogEntries;
+            int count = std::min(s_LogCount, kMaxLogEntries);
+
+            for (int i = 0; i < count; ++i) {
+                int idx = (start + i) % kMaxLogEntries;
+                result.push_back(&s_LogBuffer[idx]);
+            }
+            return result;
+        }
+    }
+
+    // ============================================================
+    // 挂钩到日志系统（从 spdlog 重定向到控制台）
+    // ============================================================
+    struct ConsoleLogSink {
+        static void Write(const std::string& msg, int level, const char* channel) {
+            LogEntry entry;
+            entry.text = msg;
+            entry.level = level;
+            entry.channel = channel ? channel : "General";
+            entry.timeStamp = std::chrono::duration_cast<std::chrono::seconds>(
+                std::chrono::system_clock::now().time_since_epoch()).count();
+
+            // 折叠相同日志
+            if (s_LogCount > 0) {
+                auto& last = s_LogBuffer[s_LogHead];
+                if (last == entry) {
+                    last.repeatCount++;
+                    return;
+                }
+            }
+
+            PushLog(entry);
+        }
+    };
+
+    // ============================================================
+    // ConsolePanel 实现
+    // ============================================================
+
+    void ConsolePanel::SetVisible(bool visible) {
+        m_Visible = visible;
+        if (visible) FocusInput();
+    }
+
+    void ConsolePanel::ToggleVisibility() {
+        SetVisible(!m_Visible);
+    }
+
+    void ConsolePanel::FocusInput() {
+        m_InputActive = true;
         ImGui::SetKeyboardFocusHere();
     }
 
-    if (ImGui::InputText("##CmdInput", m_InputBuf, sizeof(m_InputBuf),
-                          inputFlags, callback, &cbData))
-    {
-        executeCmd = true;
-    }
+    void ConsolePanel::ExecuteCommand(const std::string& cmd) {
+        if (cmd.empty()) return;
 
-    // 跟踪焦点状态
-    if (ImGui::IsItemActivated())  m_InputActive = true;
-    if (ImGui::IsItemDeactivated()) m_InputActive = false;
-
-    ImGui::PopItemWidth();
-
-    // 执行命令
-    if (executeCmd && m_InputBuf[0] != '\0') {
+        std::strncpy(m_InputBuf, cmd.c_str(), sizeof(m_InputBuf) - 1);
+        m_InputBuf[sizeof(m_InputBuf) - 1] = '\0';
         SubmitCommand();
     }
 
-    // 点击控制台窗口 → 聚焦输入框
-    if (ImGui::IsWindowHovered() && !m_InputActive &&
-        ImGui::IsMouseClicked(ImGuiMouseButton_Left))
-    {
-        ImGui::SetKeyboardFocusHere();
-        m_InputActive = true;
-    }
-}
-
-// ============================================================
-// SubmitCommand — 执行当前输入
-// ============================================================
-
-void ConsolePanel::SubmitCommand()
-{
-    std::string cmd(m_InputBuf);
-
-    // 去除首尾空白
-    size_t start = cmd.find_first_not_of(" \t");
-    size_t end = cmd.find_last_not_of(" \t");
-    if (start == std::string::npos) {
-        m_InputBuf[0] = '\0';
-        return;
-    }
-    cmd = cmd.substr(start, end - start + 1);
-
-    if (cmd.empty()) {
-        m_InputBuf[0] = '\0';
-        return;
+    void ConsolePanel::Print(const std::string& text) {
+        ConsoleLogSink::Write(text, 0, "Console");
     }
 
-    // ── 加入历史 ──
-    if (m_CommandHistory.empty() || m_CommandHistory.back() != cmd) {
-        m_CommandHistory.push_back(cmd);
-        if (static_cast<int>(m_CommandHistory.size()) > kMaxHistory) {
-            m_CommandHistory.erase(m_CommandHistory.begin());
+    void ConsolePanel::OnImGui() {
+        if (!m_Visible) return;
+
+        ImGui::SetNextWindowSize(ImVec2(640, 300), ImGuiCond_FirstUseEver);
+        ImGui::Begin("Console", &m_Visible);
+
+        // ── 工具栏 ──
+        ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(4, 2));
+
+        // 严重性过滤
+        static bool showInfo = true, showWarning = true, showError = true, showFatal = true;
+        ImGui::Checkbox("Info", &showInfo); ImGui::SameLine();
+        ImGui::Checkbox("Warn", &showWarning); ImGui::SameLine();
+        ImGui::Checkbox("Error", &showError); ImGui::SameLine();
+        ImGui::Checkbox("Fatal", &showFatal); ImGui::SameLine();
+
+        ImGui::SeparatorEx(ImGuiSeparatorFlags_Vertical); ImGui::SameLine();
+
+        // 频道过滤
+        static bool showGraphics = true, showPhysics = true, showNetwork = true;
+        static bool showAI = true, showAudio = true, showGeneral = true;
+        if (ImGui::BeginMenu("Channels")) {
+            ImGui::MenuItem("Graphics", nullptr, &showGraphics);
+            ImGui::MenuItem("Physics",  nullptr, &showPhysics);
+            ImGui::MenuItem("Network",  nullptr, &showNetwork);
+            ImGui::MenuItem("AI",       nullptr, &showAI);
+            ImGui::MenuItem("Audio",    nullptr, &showAudio);
+            ImGui::MenuItem("General",  nullptr, &showGeneral);
+            ImGui::EndMenu();
         }
-    }
-    m_HistoryPos = -1;
+        ImGui::SameLine();
 
-    // ── 回显到控制台（命令级别，绿色高亮） ──
-    std::string echoLine = "> " + cmd;
-    ConsoleLog::Instance().Log(LogLevel::Command, echoLine);
+        // 自动滚动
+        ImGui::Checkbox("AutoScroll", &m_AutoScroll); ImGui::SameLine();
 
-    // ── 执行 ──
-    std::string output;
-    ConsoleCommandRegistry::Instance().Execute(cmd, output);
-
-    // ── 输出结果 ──
-    // 按换行符分割，使每条日志在控制台表格中独占一行
-    if (!output.empty()) {
-        size_t start = 0;
-        size_t end;
-        while ((end = output.find('\n', start)) != std::string::npos) {
-            std::string line = output.substr(start, end - start);
-            if (!line.empty())
-                ConsoleLog::Instance().Log(LogLevel::Info, line);
-            start = end + 1;
+        // 清除
+        if (ImGui::Button("Clear")) {
+            s_LogBuffer.clear();
+            s_LogHead = -1;
+            s_LogCount = 0;
         }
-        if (start < output.size()) {
-            ConsoleLog::Instance().Log(LogLevel::Info, output.substr(start));
+        ImGui::SameLine();
+
+        // 折叠相同日志
+        static bool collapseEnabled = true;
+        ImGui::Checkbox("Collapse", &collapseEnabled);
+
+        ImGui::PopStyleVar();
+
+        // ── 搜索栏 ──
+        ImGui::PushItemWidth(-1);
+        ImGui::InputTextWithHint("##filter", "Search (regex supported)...",
+                                 m_FilterBuf, sizeof(m_FilterBuf));
+        ImGui::PopItemWidth();
+
+        ImGui::Separator();
+
+        // ── 日志列表（虚拟滚动优化） ──
+        ImGui::BeginChild("##LogRegion", ImVec2(0, -ImGui::GetFrameHeightWithSpacing() - 4),
+                          ImGuiChildFlags_Borders);
+
+        auto logs = GetLogs();
+        bool filterActive = m_FilterBuf[0] != '\0';
+        std::regex filterRegex;
+        if (filterActive) {
+            try { filterRegex = std::regex(m_FilterBuf, std::regex::icase); }
+            catch (...) { filterActive = false; }
         }
-    }
 
-    // ── 清空输入 ──
-    m_InputBuf[0] = '\0';
+        for (const auto* entry : logs) {
+            // 严重性过滤
+            if ((entry->level == 0 && !showInfo) ||
+                (entry->level == 1 && !showWarning) ||
+                (entry->level == 2 && !showError) ||
+                (entry->level == 3 && !showFatal))
+                continue;
 
-    // 触发自动滚动
-    if (m_AutoScroll)
-        m_ScrollToBottom = true;
-}
+            // 频道过滤
+            if ((entry->channel == "Graphics" && !showGraphics) ||
+                (entry->channel == "Physics" && !showPhysics) ||
+                (entry->channel == "Network" && !showNetwork) ||
+                (entry->channel == "AI" && !showAI) ||
+                (entry->channel == "Audio" && !showAudio))
+                continue;
 
-// ============================================================
-// AutoComplete — Tab 补全
-// ============================================================
-
-void ConsolePanel::AutoComplete()
-{
-    std::string current(m_InputBuf);
-
-    // 只补全第一个词（命令名）
-    size_t spacePos = current.find(' ');
-    if (spacePos != std::string::npos) {
-        // 已经有参数了，不在命令名上补全
-        return;
-    }
-
-    // 如果输入为空，不补全
-    if (current.empty())
-        return;
-
-    // 如果正在补全中且输入没有变化，循环下一个候选项
-    if (m_Completing && current == m_CompletionBase) {
-        m_CompletionIndex = (m_CompletionIndex + 1) % static_cast<int>(m_CompletionCandidates.size());
-        return;
-    }
-
-    // 开始新的补全
-    m_CompletionBase = current;
-    m_CompletionCandidates = ConsoleCommandRegistry::Instance().GetCompletions(current);
-
-    if (!m_CompletionCandidates.empty()) {
-        m_Completing = true;
-        m_CompletionIndex = 0;
-
-        // 如果只有一个候选项，直接补全（回调中处理）
-        // 如果有多个，在控制台显示候选项
-        if (m_CompletionCandidates.size() > 1) {
-            std::string msg = "  ";
-            for (size_t i = 0; i < m_CompletionCandidates.size(); ++i) {
-                if (i > 0) msg += "  ";
-                msg += m_CompletionCandidates[i];
+            // 搜索过滤
+            if (filterActive) {
+                try {
+                    if (!std::regex_search(entry->text, filterRegex)) continue;
+                } catch (...) { continue; }
             }
-            ConsoleLog::Instance().Log(LogLevel::Info, msg);
+
+            // 颜色
+            ImVec4 color;
+            switch (entry->level) {
+                case 0: color = ImVec4(0.8f, 0.8f, 0.8f, 1); break;  // Info
+                case 1: color = ImVec4(1.0f, 0.9f, 0.3f, 1); break;  // Warn
+                case 2: color = ImVec4(1.0f, 0.3f, 0.3f, 1); break;  // Error
+                case 3: color = ImVec4(1.0f, 0.1f, 0.1f, 1); break;  // Fatal
+                default: color = ImVec4(0.8f, 0.8f, 0.8f, 1);
+            }
+
+            // 显示频道标签
+            ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.4f, 0.6f, 0.8f, 1));
+            ImGui::Text("[%s]", entry->channel.c_str());
+            ImGui::PopStyleColor();
+            ImGui::SameLine();
+
+            // 日志文本
+            ImGui::PushStyleColor(ImGuiCol_Text, color);
+            ImGui::TextUnformatted(entry->text.c_str());
+
+            // 折叠计数
+            if (collapseEnabled && entry->repeatCount > 1) {
+                ImGui::SameLine();
+                ImGui::TextDisabled(" (x%d)", entry->repeatCount);
+            }
+            ImGui::PopStyleColor();
+
+            // 对象溯源（点击可 Ping）
+            if (!entry->sourceObjectName.empty()) {
+                ImGui::SameLine();
+                ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.3f, 0.7f, 0.3f, 1));
+                if (ImGui::SmallButton(entry->sourceObjectName.c_str())) {
+                    // TODO: Ping object in Hierarchy
+                }
+                ImGui::PopStyleColor();
+            }
+
+            // 堆栈跳转
+            if (!entry->sourceFile.empty()) {
+                ImGui::SameLine();
+                ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.5f, 0.5f, 0.5f, 1));
+                if (ImGui::SmallButton((entry->sourceFile + ":" + std::to_string(entry->sourceLine)).c_str())) {
+                    // TODO: Open in IDE
+                }
+                ImGui::PopStyleColor();
+            }
         }
-    } else {
-        m_Completing = false;
+
+        if (m_AutoScroll && ImGui::GetScrollY() >= ImGui::GetScrollMaxY() - 20.0f) {
+            ImGui::SetScrollHereY(1.0f);
+        }
+
+        ImGui::EndChild();
+
+        // ── 命令输入行 ──
+        DrawInputLine();
+
+        ImGui::End();
     }
-}
 
-// ============================================================
-// History navigation
-// ============================================================
+    void ConsolePanel::DrawInputLine() {
+        ImGui::PushItemWidth(-1);
+        bool reclaimFocus = false;
 
-void ConsolePanel::HistoryPrev()
-{
-    if (m_CommandHistory.empty()) {
+        if (ImGui::InputTextWithHint("##CmdInput", "Enter command...",
+                                     m_InputBuf, sizeof(m_InputBuf),
+                                     ImGuiInputTextFlags_EnterReturnsTrue |
+                                     ImGuiInputTextFlags_CallbackCompletion |
+                                     ImGuiInputTextFlags_CallbackHistory,
+                                     [](ImGuiInputTextCallbackData* data) -> int {
+            auto* panel = static_cast<ConsolePanel*>(data->UserData);
+            if (!panel) return 0;
+
+            if (data->EventFlag == ImGuiInputTextFlags_CallbackCompletion) {
+                panel->AutoComplete();
+            } else if (data->EventFlag == ImGuiInputTextFlags_CallbackHistory) {
+                if (data->EventKey == ImGuiKey_UpArrow)   panel->HistoryPrev();
+                if (data->EventKey == ImGuiKey_DownArrow) panel->HistoryNext();
+            }
+            return 0;
+        }, this)) {
+            SubmitCommand();
+            reclaimFocus = true;
+        }
+        ImGui::PopItemWidth();
+
+        if (reclaimFocus) {
+            ImGui::SetKeyboardFocusHere(-1);
+        }
+    }
+
+    void ConsolePanel::SubmitCommand() {
+        std::string cmd(m_InputBuf);
+        if (cmd.empty()) return;
+
+        // 加入历史
+        if (m_CommandHistory.empty() || m_CommandHistory.back() != cmd) {
+            m_CommandHistory.push_back(cmd);
+            if (static_cast<int>(m_CommandHistory.size()) > kMaxHistory) {
+                m_CommandHistory.erase(m_CommandHistory.begin());
+            }
+        }
         m_HistoryPos = -1;
-        return;
+
+        // 显示执行的命令
+        ConsoleLogSink::Write("> " + cmd, 0, "Console");
+
+        // 解析并执行命令
+        if (cmd == "clear" || cmd == "cls") {
+            s_LogBuffer.clear();
+            s_LogHead = -1;
+            s_LogCount = 0;
+        } else if (cmd == "help") {
+            ConsoleLogSink::Write("Available commands:", 0, "Console");
+            ConsoleLogSink::Write("  clear/cls  - Clear console", 0, "Console");
+            ConsoleLogSink::Write("  help       - Show this help", 0, "Console");
+            ConsoleLogSink::Write("  stats      - Toggle stats overlay", 0, "Console");
+            ConsoleLogSink::Write("  gc         - Force garbage collection", 0, "Console");
+        } else {
+            ConsoleLogSink::Write("Unknown command: " + cmd, 1, "Console");
+        }
+
+        m_InputBuf[0] = '\0';
     }
 
-    if (m_HistoryPos < 0) {
-        // 从最新一条开始
-        m_HistoryPos = static_cast<int>(m_CommandHistory.size()) - 1;
-    } else if (m_HistoryPos > 0) {
-        --m_HistoryPos;
+    void ConsolePanel::AutoComplete() {
+        // 简化 Tab 补全
+        if (!m_CompletionCandidates.empty()) {
+            m_CompletionIndex = (m_CompletionIndex + 1) % m_CompletionCandidates.size();
+            std::strncpy(m_InputBuf, m_CompletionCandidates[m_CompletionIndex].c_str(), sizeof(m_InputBuf) - 1);
+        }
     }
-    // 否则已经在最旧一条，不动
-}
 
-void ConsolePanel::HistoryNext()
-{
-    if (m_HistoryPos < 0)
-        return;
-
-    if (m_HistoryPos < static_cast<int>(m_CommandHistory.size()) - 1) {
-        ++m_HistoryPos;
-    } else {
-        // 回到新输入
-        m_HistoryPos = -1;
+    void ConsolePanel::HistoryPrev() {
+        if (m_CommandHistory.empty()) return;
+        if (m_HistoryPos == -1) {
+            m_HistoryPos = static_cast<int>(m_CommandHistory.size()) - 1;
+        } else if (m_HistoryPos > 0) {
+            m_HistoryPos--;
+        }
+        std::strncpy(m_InputBuf, m_CommandHistory[m_HistoryPos].c_str(), sizeof(m_InputBuf) - 1);
     }
-}
 
-// ============================================================
-// 便捷方法
-// ============================================================
-
-void ConsolePanel::ToggleVisibility()
-{
-    m_Visible = !m_Visible;
-    if (m_Visible) {
-        FocusInput();
-    } else {
-        m_InputActive = false;
+    void ConsolePanel::HistoryNext() {
+        if (m_CommandHistory.empty() || m_HistoryPos < 0) return;
+        m_HistoryPos++;
+        if (m_HistoryPos >= static_cast<int>(m_CommandHistory.size())) {
+            m_HistoryPos = -1;
+            m_InputBuf[0] = '\0';
+        } else {
+            std::strncpy(m_InputBuf, m_CommandHistory[m_HistoryPos].c_str(), sizeof(m_InputBuf) - 1);
+        }
     }
-}
-
-void ConsolePanel::SetVisible(bool visible)
-{
-    m_Visible = visible;
-    if (m_Visible) {
-        FocusInput();
-    } else {
-        m_InputActive = false;
-    }
-}
-
-void ConsolePanel::FocusInput()
-{
-    m_InputActive = true;
-    // 注意：不在这里调用 ImGui::SetKeyboardFocusHere，
-    // 因为此时可能不在 ImGui 窗口上下文中（例如 ToggleVisibility 在
-    // UIManager::Begin() 之前被调用），会导致 g.CurrentWindow 为 nullptr。
-    // 实际的焦点设置由 DrawInputLine() 中检查 m_InputActive 标志来完成。
-}
-
-void ConsolePanel::ExecuteCommand(const std::string& cmd)
-{
-    // 复制到输入缓冲区并执行
-    std::strncpy(m_InputBuf, cmd.c_str(), sizeof(m_InputBuf) - 1);
-    m_InputBuf[sizeof(m_InputBuf) - 1] = '\0';
-    SubmitCommand();
-}
-
-void ConsolePanel::Print(const std::string& text)
-{
-    ConsoleLog::Instance().Log(LogLevel::Info, text);
-    if (m_AutoScroll)
-        m_ScrollToBottom = true;
-}
 
 } // namespace Engine

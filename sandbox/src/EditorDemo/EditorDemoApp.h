@@ -2,13 +2,14 @@
 
 /**
  * @file EditorDemoApp.h
- * @brief 引擎编辑器演示 — 多视口 3D 渲染
+ * @brief 引擎编辑器演示 — 多视口 3D 渲染 + 编辑器组件集成测试
  *
  * 演示内容：
  *   - EngineEditor 自动布局（SceneHierarchy / Inspector / Console 等）
  *   - 主菜单栏 + 工具栏（新建/保存场景，Play/Stop/Pause）
  *   - 多个可停靠的 3D 视口（透视/顶/前视图）
  *   - 每个视口拥有独立的 FBO、EditorCamera 和渲染状态
+ *   - EditorDemoTest 集成测试（状态栏 / Profiler / 控制台 / 撤销系统等）
  */
 
 #include <Engine/Application.h>
@@ -25,11 +26,13 @@
 #include <memory>
 #include <vector>
 
+#include "EditorDemoTest.h"
+
 namespace Engine {
 
 class EditorDemoApp : public Application {
 public:
-  EditorDemoApp(IGraphicsFactory &factory) : Application(factory) {
+  EditorDemoApp(IGraphicsFactory &factory) : Application(factory), m_Test(this) {
     m_UseEngineEditorDockspace = true;
     m_DrawPerformanceWindow = false;
     m_RenderDefaultQuad = false;
@@ -47,8 +50,6 @@ protected:
     m_Editor.RegisterInspector(&m_InspectorPanel);
     m_Editor.RegisterConsole(&m_ConsolePanel);
     m_Editor.RegisterPerformance(&m_PerfWindow);
-    m_Editor.RegisterSceneHierarchy(&m_HierarchyPanel);
-    m_Editor.RegisterInspector(&m_InspectorPanel);
 
     // ── 创建默认场景 ──
     m_Scene = std::make_shared<Scene>("DefaultScene");
@@ -73,6 +74,9 @@ protected:
 
     // ── 初始化多视口 ──
     InitViewports();
+
+    // ── 初始化集成测试 ──
+    m_Test.Init();
 
     std::cout << "=== EditorDemo Started ===" << std::endl;
     std::cout << "  Scene: " << m_Scene->GetName()
@@ -150,6 +154,9 @@ protected:
   void OnUpdate(float32 dt) override {
     m_Editor.OnUpdate(dt);
 
+    // ── 更新集成测试 ──
+    m_Test.OnUpdate(dt);
+
     // ── 焦点控制：只有一个视口获得输入 ──
     // 找出当前聚焦/悬停的视口（优先级：focused > hovered）
     ViewportPanel* focusedVp = nullptr;
@@ -182,9 +189,10 @@ protected:
     // ── Editor 绘制 DockSpace + 菜单栏 + 工具栏 ──
     m_Editor.OnImGui();
 
+    // ── 绘制集成测试 UI（状态栏 / 测试面板 / Profiler / Console 等） ──
+    m_Test.OnImGui();
+
     // ── 在 DockSpace 中绘制额外的视口 ──
-    // EngineEditor 的 OnImGui() 已经绘制了默认 ViewportPanel
-    // 我们再绘制额外的自定义视口
     for (size_t i = 0; i < m_Viewports.size(); ++i) {
       m_Viewports[i]->OnImGui();
     }
@@ -196,6 +204,9 @@ private:
   SceneHierarchyPanel m_HierarchyPanel;
   InspectorPanel m_InspectorPanel;
   ConsolePanel m_ConsolePanel;
+
+  // 编辑器组件集成测试
+  EditorDemoTest m_Test;
 
   // 多视口系统 — 每个视口拥有独立的 FBO + Camera
   std::vector<std::shared_ptr<ViewportPanel>> m_Viewports;
