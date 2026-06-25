@@ -45,6 +45,7 @@ set(ALSOFT_INSTALL_UTILS   OFF CACHE BOOL "" FORCE)
 set(ALSOFT_INSTALL_EXAMPLES OFF CACHE BOOL "" FORCE)
 set(ALSOFT_INSTALL_CONFIG  OFF CACHE BOOL "" FORCE)
 set(ALSOFT_INSTALL_HRTF_DATA OFF CACHE BOOL "" FORCE)
+
 add_subdirectory(openal-soft)
 
 # =============================================================================
