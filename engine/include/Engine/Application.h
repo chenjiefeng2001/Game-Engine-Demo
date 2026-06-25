@@ -12,6 +12,7 @@
 #include "Engine/Core/SubsystemConfig.h"
 #include "Engine/Core/JobSystem.h"
 #include "Engine/Core/MenuManager.h"
+#include "Engine/Core/Scene/SceneManager.h"
 #include "Engine/PerformanceWindow.h"
 #include "Engine/Types.h"
 #include "Engine/UIManager.h"

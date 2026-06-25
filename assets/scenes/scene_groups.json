@@ -1,0 +1,124 @@
+{
+    "groups": [
+        {
+            "groupName": "MainMenu",
+            "masterScene": "MainMenu",
+            "description": "主菜单场景组",
+            "boundingRadius": 0.0,
+            "isStreaming": false,
+            "subScenes": [
+                {
+                    "sceneName": "MenuBackground",
+                    "required": true,
+                    "loadAsync": true,
+                    "loadPriority": 10
+                },
+                {
+                    "sceneName": "MenuUI",
+                    "required": true,
+                    "loadAsync": true,
+                    "loadPriority": 5
+                }
+            ]
+        },
+        {
+            "groupName": "Level1",
+            "masterScene": "Level1_Main",
+            "description": "第一关：森林关卡",
+            "boundingRadius": 200.0,
+            "isStreaming": false,
+            "subScenes": [
+                {
+                    "sceneName": "Level1_Environment",
+                    "required": true,
+                    "loadAsync": true,
+                    "loadPriority": 80
+                },
+                {
+                    "sceneName": "Level1_NPCs",
+                    "required": true,
+                    "loadAsync": true,
+                    "loadPriority": 50
+                },
+                {
+                    "sceneName": "Level1_Lighting",
+                    "required": true,
+                    "loadAsync": true,
+                    "loadPriority": 70
+                },
+                {
+                    "sceneName": "Level1_Props",
+                    "required": false,
+                    "loadAsync": true,
+                    "loadPriority": 30
+                },
+                {
+                    "sceneName": "Level1_Particles",
+                    "required": false,
+                    "loadAsync": true,
+                    "loadPriority": 20
+                }
+            ]
+        },
+        {
+            "groupName": "Level2",
+            "masterScene": "Level2_Main",
+            "description": "第二关：地下城关卡",
+            "boundingRadius": 150.0,
+            "isStreaming": false,
+            "subScenes": [
+                {
+                    "sceneName": "Level2_Environment",
+                    "required": true,
+                    "loadAsync": true,
+                    "loadPriority": 80
+                },
+                {
+                    "sceneName": "Level2_NPCs",
+                    "required": true,
+                    "loadAsync": true,
+                    "loadPriority": 50
+                },
+                {
+                    "sceneName": "Level2_Lighting",
+                    "required": true,
+                    "loadAsync": true,
+                    "loadPriority": 70
+                }
+            ]
+        },
+        {
+            "groupName": "Streaming_Forest",
+            "masterScene": "Forest_Streaming",
+            "description": "流式加载：森林区域（根据玩家位置动态加载）",
+            "boundingRadius": 100.0,
+            "isStreaming": true,
+            "subScenes": [
+                {
+                    "sceneName": "Forest_North",
+                    "required": false,
+                    "loadAsync": true,
+                    "loadPriority": 40
+                },
+                {
+                    "sceneName": "Forest_South",
+                    "required": false,
+                    "loadAsync": true,
+                    "loadPriority": 40
+                },
+                {
+                    "sceneName": "Forest_East",
+                    "required": false,
+                    "loadAsync": true,
+                    "loadPriority": 40
+                },
+                {
+                    "sceneName": "Forest_West",
+                    "required": false,
+                    "loadAsync": true,
+                    "loadPriority": 40
+                }
+            ]
+        }
+    ]
+}

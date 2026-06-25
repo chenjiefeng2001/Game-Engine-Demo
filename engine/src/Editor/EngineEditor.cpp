@@ -124,6 +124,7 @@ namespace Engine {
         m_Visibility.depGraph       = false;
         m_Visibility.viewport       = true;
         m_Visibility.rendererDebug  = false;
+        m_Visibility.sceneManager   = true;   // 默认显示场景管理器面板
 
         m_MenuBar.ConsumeResetLayoutSignal();
     }
@@ -235,6 +236,12 @@ namespace Engine {
         if (m_Visibility.contentBrowser) m_ContentBrowser.OnImGui();
         if (m_Visibility.assetBrowser)   m_AssetBrowser.OnImGui();
         if (m_Visibility.depGraph)       m_DepGraph.OnImGui();
+
+        // ── 场景管理器面板 ──
+        if (m_Visibility.sceneManager) {
+            // SceneManagerPanel::OnImGui 内部调用 ImGui::Begin("Scene Manager")
+            m_SceneManagerPanel.OnImGui();
+        }
 
         // ── Renderer Debug ──
         if (m_Visibility.rendererDebug) {

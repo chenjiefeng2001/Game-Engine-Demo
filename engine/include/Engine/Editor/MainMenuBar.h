@@ -16,6 +16,7 @@ namespace Engine {
         bool depGraph       = false;
         bool viewport       = true;
         bool rendererDebug  = false;
+        bool sceneManager   = true;  // 工业级场景管理器面板
     };
 
     /**

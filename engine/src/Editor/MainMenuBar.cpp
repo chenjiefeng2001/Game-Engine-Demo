@@ -160,6 +160,9 @@ namespace Engine {
             // 渲染调试面板
             ImGui::MenuItem("Renderer Debug", nullptr, &m_Visibility->rendererDebug);
 
+            // 工业级场景管理器面板
+            ImGui::MenuItem("Scene Manager", nullptr, &m_Visibility->sceneManager);
+
             ImGui::Separator();
 
             // 布局重置：通过信号机制通知 EngineEditor 消费

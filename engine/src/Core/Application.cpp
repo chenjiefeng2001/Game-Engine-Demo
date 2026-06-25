@@ -535,8 +535,6 @@ void Application::Run() {
     return;
   }
 
-
-
   // ── 初始化高精度计时器 ──
   Time::Init();
 
@@ -551,6 +549,9 @@ void Application::Run() {
   // ── 初始化 Job 系统（线程池） ──
   // 传入 hardware_concurrency 个线程，预留 1 核给未来渲染线程
   JobSystem::Init(0, 1);
+
+  // ── 初始化场景管理器（工业级异步加载/切换/预加载） ──
+  SceneManager::Init();
 
   OnStartup();
 
@@ -611,6 +612,9 @@ void Application::Run() {
 
     if (auto *ui = UIManager::Get())
       ui->Begin();
+
+    // ── 阶段 3.3：更新场景管理器（异步加载流水线轮询、分帧激活、超时检测） ──
+    SceneManager::Update(dt);
 
     // ============================================================
     // 阶段 3.5：编辑器相机输入处理（在 UI 帧开始后，更新之前）
@@ -783,6 +787,9 @@ void Application::Run() {
     // ── 内存帧快照 ──
     MemoryTracker::FrameEnd();
   }
+
+  // ── 关闭场景管理器 ──
+  SceneManager::Shutdown();
 
   // ── 先关闭 UI（必须在 SubsystemManager 析构前，因为后者会销毁窗口，
   //     而 ImGui 后端清理需要有效的 GLFW/OpenGL 上下文） ──
