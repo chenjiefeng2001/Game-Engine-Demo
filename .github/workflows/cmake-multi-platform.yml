@@ -169,28 +169,7 @@ jobs:
         echo "PACKAGE_PATH=${{ github.workspace }}/pkg/Sandbox-linux-x64.tar.gz" >> "$GITHUB_ENV"
 
     # ═══════════════════════════════════════════════════════════════
-    # 上传到 GitHub Release（仅在 push 到 master 时触发）
-    # ═══════════════════════════════════════════════════════════════
-    - name: Upload to Release
-      if: github.event_name == 'push' && github.ref == 'refs/heads/master'
-      uses: softprops/action-gh-release@v2
-      with:
-        # 自动生成版本号：基于日期 + 短 commit hash
-        tag_name: "nightly-${{ github.sha }}-${{ matrix.os }}-${{ matrix.c_compiler }}"
-        name: "Build ${{ github.sha }} (${{ matrix.os }}, ${{ matrix.c_compiler }})"
-        body: |
-          Automatic build from commit ${{ github.sha }}
-          - OS: ${{ matrix.os }}
-          - Compiler: ${{ matrix.c_compiler }}
-          - Build type: ${{ matrix.build_type }}
-        files: ${{ env.PACKAGE_PATH }}
-        # draft: true   # 如果想要手动审查再发布，取消注释这行
-        # prerelease: true  # 标记为预发布
-      env:
-        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
-    # ═══════════════════════════════════════════════════════════════
-    # 也作为 workflow artifact 上传（保留最近几次构建）
+    # 上传构建产物作为 workflow artifact
     # ═══════════════════════════════════════════════════════════════
     - name: Upload as Workflow Artifact
       uses: actions/upload-artifact@v4

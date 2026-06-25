@@ -70,10 +70,11 @@ Testing/
 .cache/
 /.vs
 .vscode/
-build_test/
+build_test
 
 # Visual Studio project files in third-party libraries (imgui examples etc.)
 third_party/**/*.vcxproj
 third_party/**/*.vcxproj.filters
 third_party/**/*.sln
+
 
