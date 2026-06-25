@@ -42,7 +42,7 @@
 # Build directories
 build/
 Build/
-build-*/、
+build-*/
 build_vs/
 
 # CMake generated files
@@ -77,6 +77,4 @@ third_party/**/*.vcxproj
 third_party/**/*.vcxproj.filters
 third_party/**/*.sln
 
-
-build_test/build.ninja
 third_party/fontawesome
