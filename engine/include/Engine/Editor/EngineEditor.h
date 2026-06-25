@@ -29,6 +29,7 @@
 #include "Engine/Editor/ContentBrowserPanel.h"
 #include "Engine/Editor/AssetBrowserPanel.h"
 #include "Engine/Editor/DependencyGraphPanel.h"
+#include "Engine/Editor/SceneManagerPanel.h"
 #include <glm/glm.hpp>
 #include <glm/gtc/type_ptr.hpp>
 
@@ -114,6 +115,7 @@ namespace Engine {
         ContentBrowserPanel   m_ContentBrowser;
         AssetBrowserPanel     m_AssetBrowser;
         DependencyGraphPanel  m_DepGraph;
+        SceneManagerPanel     m_SceneManagerPanel;
 
         // ── 面板可见性（EngineEditor 拥有，MainMenuBar 持有指针） ──
         PanelVisibility m_Visibility;
