@@ -1,0 +1,76 @@
+name: Create Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Release version (e.g. v1.0.0)'
+        required: true
+        type: string
+      prerelease:
+        description: 'Mark as pre-release'
+        required: false
+        default: false
+        type: boolean
+
+permissions:
+  contents: write
+  pull-requests: read
+
+jobs:
+  create-release:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Generate Release Notes
+        id: notes
+        run: |
+          # 获取从上一个 tag 到当前版本的提交记录
+          PREV_TAG=$(git describe --tags --abbrev=0 2>/dev/null || echo "")
+          if [ -z "$PREV_TAG" ]; then
+            CHANGELOG=$(git log --oneline --no-decorate HEAD | head -50)
+          else
+            CHANGELOG=$(git log --oneline --no-decorate "$PREV_TAG..HEAD")
+          fi
+          echo "CHANGELOG<<EOF" >> $GITHUB_OUTPUT
+          echo "$CHANGELOG" >> $GITHUB_OUTPUT
+          echo "EOF" >> $GITHUB_OUTPUT
+
+      - name: Download Latest Build Artifacts
+        uses: dawidd6/action-download-artifact@v2
+        with:
+          workflow: cmake-multi-platform.yml
+          branch: master
+          skip_unpack: false
+          name: "*"
+          search_artifacts: true
+
+      - name: Create Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ inputs.version }}
+          name: "Release ${{ inputs.version }}"
+          body: |
+            ## Release ${{ inputs.version }}
+
+            ### 审核确认
+            此 Release 已经过手动审核并确认发布。
+
+            ### 变更日志
+            ${{ steps.notes.outputs.CHANGELOG }}
+
+            ### 构建说明
+            - 请从下方 Assets 下载对应平台的构建包
+            - Windows: `Sandbox-windows-x64-*.zip`
+            - Linux: `Sandbox-linux-x64-*.tar.gz`
+          files: |
+            Sandbox-windows-x64-*.zip
+            Sandbox-linux-x64-*.tar.gz
+          draft: true
+          prerelease: ${{ inputs.prerelease }}
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
