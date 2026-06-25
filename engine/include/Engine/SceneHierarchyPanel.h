@@ -2,22 +2,63 @@
 
 /**
  * @file SceneHierarchyPanel.h
- * @brief 场景层级面板 — 遍历场景中的 GameObject，以列表形式展示并支持选中
- *
- * 在 Application::OnImGui() 中调用 OnImGui() 即可显示。
- * 选中实体后可通过 GetSelected() 获取，供检视器等其他面板使用。
+ * @brief 工业级场景层级面板
  */
 
 #include "Engine/Types.h"
+#include "Engine/Core/Scene/Scene.h"
+#include "Engine/Core/Scene/SceneManager.h"
+#include "Engine/Core/Level/Level.h"
+#include "Engine/Core/GameObject/GameObject.h"
 #include <memory>
 #include <string>
 #include <vector>
 #include <functional>
+#include <unordered_map>
+#include <unordered_set>
+#include <set>
 
 namespace Engine {
 
-    class Scene;
-    class GameObject;
+    enum class SearchFilterMode : uint8 {
+        Name, Type, Status, Mixed
+    };
+
+    struct HierarchyFilter {
+        std::string  searchText;
+        std::string  nameFilter;
+        std::string  typeFilter;
+        bool         showHidden   = true;
+        bool         showDisabled = true;
+        bool         showError    = true;
+        bool         activeOnly   = false;
+    };
+
+    enum class PrefabStatus : uint8 {
+        None,
+        Instance,
+        InstanceModified,
+        InstanceMissing,
+        Variant
+    };
+
+    struct HierarchyNodeData {
+        bool visible      = true;
+        bool locked       = false;
+        uint32 colorTag   = 0;
+        PrefabStatus prefabStatus = PrefabStatus::None;
+        float estimatedMemoryKB = 0.0f;
+        bool  hasScript   = false;
+        bool  isStatic    = false;
+        uint32 tagId      = 0;
+        uint32 layer      = 0;
+    };
+
+    struct MemoryCache {
+        std::unordered_map<uint32, float> objectMemoryKB;
+        float totalSceneMemoryKB = 0.0f;
+        uint32 lastUpdateFrame = 0;
+    };
 
     class SceneHierarchyPanel {
     public:
@@ -25,45 +66,67 @@ namespace Engine {
         explicit SceneHierarchyPanel(Scene* scene);
         ~SceneHierarchyPanel() = default;
 
-        // 禁止拷贝
         SceneHierarchyPanel(const SceneHierarchyPanel&) = delete;
         SceneHierarchyPanel& operator=(const SceneHierarchyPanel&) = delete;
 
-        // ── 场景绑定 ──
-        void SetScene(Scene* scene) { m_Scene = scene; }
+        void SetScene(Scene* scene);
         Scene* GetScene() const { return m_Scene; }
 
-        // ── 渲染 ──
-        /** 在 OnImGui() 中调用，绘制场景层级面板 */
         void OnImGui();
 
-        // ── 选中管理 ──
-        /** 获取当前选中的对象（可为 nullptr） */
         GameObject* GetSelected() const { return m_Selected; }
+        void SetSelected(GameObject* obj);
+        void ClearSelection();
 
-        /** 手动设置选中对象 */
-        void SetSelected(GameObject* obj) { m_Selected = obj; }
-
-        /** 选中对象发生变化时触发的回调 */
         using SelectionCallback = std::function<void(GameObject*)>;
         void SetSelectionCallback(SelectionCallback callback) { m_SelectionCallback = std::move(callback); }
 
-        // ── 显示控制 ──
         void SetVisible(bool visible) { m_Visible = visible; }
         bool IsVisible() const { return m_Visible; }
         void ToggleVisibility() { m_Visible = !m_Visible; }
 
     private:
-        /** 递归遍历节点树，绘制 ImGui 树形节点 */
-        void DrawEntityNode(GameObject* obj);
+        void DrawToolbar();
+        void DrawSceneList();
+        void DrawSceneNode(const std::string& sceneName, Level* level);
+        void DrawEntityNode(GameObject* obj, int depth = 0, bool forceDraw = false);
+        void DrawPrefabStatusIcon(PrefabStatus status);
+        void DrawVisibilityToggle(GameObject* obj, bool& visible);
+        void DrawLockToggle(GameObject* obj, bool& locked);
+        void DrawContextMenu(GameObject* obj);
 
-        /** 清除当前选中 */
-        void ClearSelection();
+        bool PassesFilter(GameObject* obj, const std::string& name) const;
+        void ParseSearchText();
+        bool IsNodeVisible(GameObject* obj) const;
+
+        HierarchyNodeData& GetNodeData(GameObject* obj);
+        float EstimateMemoryKB(GameObject* obj);
+        void UpdateMemoryCache();
+
+        void UnloadScene(const std::string& name);
+        void SetActiveScene(const std::string& name);
+        PrefabStatus DetectPrefabStatus(GameObject* obj) const;
 
         Scene* m_Scene = nullptr;
         GameObject* m_Selected = nullptr;
         SelectionCallback m_SelectionCallback = nullptr;
         bool m_Visible = true;
+
+        char m_SearchBuffer[256] = {};
+        HierarchyFilter m_Filter;
+        std::unordered_map<uint32, HierarchyNodeData> m_NodeData;
+        MemoryCache m_MemCache;
+        uint32 m_FrameCount = 0;
+        std::unordered_set<uint32> m_HiddenObjects;
+        std::unordered_set<uint32> m_LockedObjects;
+        std::unordered_set<std::string> m_CollapsedScenes;
+        float m_ScrollY = 0.0f;
+        GameObject* m_DragSource = nullptr;
+        GameObject* m_DragTarget = nullptr;
+        bool m_IsDragging = false;
+        std::unordered_set<GameObject*> m_MultiSelected;
+        bool m_MultiSelectActive = false;
+        SearchFilterMode m_SearchMode = SearchFilterMode::Name;
     };
 
 } // namespace Engine

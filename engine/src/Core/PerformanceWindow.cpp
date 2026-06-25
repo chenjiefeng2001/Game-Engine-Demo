@@ -701,21 +701,21 @@ namespace Engine {
             ViewMode::Wireframe,
             ViewMode::Unlit,
             ViewMode::LightingOnly,
-            ViewMode::NormalMap
+            ViewMode::GBuffer_Normal  // was NormalMap — now G-Buffer Normal
         };
         static const char* basicDesc[] = {
             "Standard shaded rendering",
             "Show wireframe only — inspect topology & tiny triangles",
             "Texture-only (Albedo) — eliminate lighting interference",
             "Grey objects with lighting only — inspect shadows & highlights",
-            "Visualize normal map direction — detect flipped green channel"
+            "Visualize world-space normals — detect inverted channels"
         };
         static const ImVec4 basicColors[] = {
             ImVec4(0.4f,1.0f,0.4f,1),  // Normal: green
             ImVec4(1.0f,1.0f,0.4f,1),  // Wireframe: yellow
             ImVec4(0.4f,0.6f,1.0f,1),  // Unlit: blue
             ImVec4(1.0f,0.6f,0.4f,1),  // Lighting: orange
-            ImVec4(0.6f,0.4f,1.0f,1),  // NormalMap: purple
+            ImVec4(0.6f,0.4f,1.0f,1),  // G-Buffer Normal: purple
         };
 
         for (int i = 0; i < 5; ++i) {
@@ -759,10 +759,10 @@ namespace Engine {
         ImGui::Separator();
 
         static const ViewMode pbrModes[] = {
-            ViewMode::PBR_BaseColor,
-            ViewMode::PBR_Roughness,
-            ViewMode::PBR_Metallic,
-            ViewMode::PBR_Specular
+            ViewMode::GBuffer_Albedo,    // was PBR_BaseColor
+            ViewMode::GBuffer_Roughness, // was PBR_Roughness
+            ViewMode::GBuffer_Metallic,  // was PBR_Metallic
+            ViewMode::GBuffer_Specular   // was PBR_Specular
         };
         static const char* pbrDesc[] = {
             "Display Base Color (Albedo) only",

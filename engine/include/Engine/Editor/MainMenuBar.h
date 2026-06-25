@@ -7,7 +7,8 @@
 namespace Engine {
 
     struct PanelVisibility {
-        bool sceneHierarchy = true;
+        // ── 基础面板 ──
+        bool sceneHierarchy = true;   // 实体层级树 (兼容旧名)
         bool inspector      = true;
         bool console        = true;
         bool performance    = true;
@@ -16,7 +17,11 @@ namespace Engine {
         bool depGraph       = false;
         bool viewport       = true;
         bool rendererDebug  = false;
-        bool sceneManager   = true;  // 工业级场景管理器面板
+
+        // ── 场景面板 ──
+        bool sceneManager   = true;   // 场景管理器（兼容旧名）
+        bool sceneViewerPanel  = true;  // 场景查看器面板
+        bool scenePanelTabbed  = false; // 合并 Tab 视图模式
     };
 
     /**
