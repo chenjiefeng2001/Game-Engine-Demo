@@ -644,8 +644,8 @@ void _3DTestApp::PopulateLightingDebugData() {
 
   if (m_ShadowMapper) {
     ld->shadowTextureHandle = m_ShadowMapper->GetShadowTexture();
-    ld->shadowTexWidth = m_ShadowMapper->GetConfig().resolution;
-    ld->shadowTexHeight = m_ShadowMapper->GetConfig().resolution;
+    ld->shadowTexWidth = m_ShadowMapper->GetShadowMapSize();
+    ld->shadowTexHeight = m_ShadowMapper->GetShadowMapSize();
   }
 }
 
