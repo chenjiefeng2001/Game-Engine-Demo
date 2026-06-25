@@ -5,6 +5,8 @@
 #include <vector>
 #include "Engine/Types.h"
 #include "Engine/Core/RHI/AntiAliasingTypes.h"
+#include "Engine/Core/RHI/GBuffer.h"
+#include "Engine/Core/RHI/ShadowMapper.h"
 
 namespace Engine {
 
@@ -21,6 +23,8 @@ namespace Engine {
 	class IUIManager;
 	class StackAllocator;
 	struct ShaderStage;
+	class GBuffer;
+	class ShadowMapper;
 
 // ============================================================
 // RHI 抽象工厂 — 完全与具体图形 API 解耦
@@ -133,6 +137,13 @@ namespace Engine {
 		 * @brief 查询抗锯齿能力
 		 */
 		virtual AntiAliasingCaps GetAntiAliasingCaps() const { return AntiAliasingCaps{}; }
+
+		// ---- 延迟渲染 ----
+		virtual std::unique_ptr<GBuffer> CreateGBuffer(
+			IRenderContext& context) = 0;
+
+		virtual std::unique_ptr<ShadowMapper> CreateShadowMapper(
+			IRenderContext& context) = 0;
 
 		// ---- UI 管理器 ----
 		virtual std::unique_ptr<IUIManager> CreateUIManager() = 0;

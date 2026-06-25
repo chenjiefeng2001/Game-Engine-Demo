@@ -1,4 +1,3 @@
-
 # 精确 GLOB + CONFIGURE_DEPENDS（新文件自动发现，CMake 3.12+）
 file(GLOB ENGINE_SOURCES CONFIGURE_DEPENDS
     src/*.cpp
@@ -23,6 +22,7 @@ file(GLOB ENGINE_SOURCES CONFIGURE_DEPENDS
     src/Platform/*.cpp
     src/Platform/glfw/*.cpp
     src/Rendering/*.cpp
+    src/Scripting/*.cpp
 )
 file(GLOB ENGINE_HEADERS CONFIGURE_DEPENDS
     include/*.h
@@ -48,6 +48,7 @@ file(GLOB ENGINE_HEADERS CONFIGURE_DEPENDS
     include/Engine/Box2D/*.h
     include/Engine/Platform/*.h
     include/Engine/Rendering/*.h
+    include/Engine/Scripting/*.h
 )
 
 add_library(EngineCore STATIC
@@ -56,7 +57,6 @@ add_library(EngineCore STATIC
 )
 
 target_include_directories(EngineCore
-
     PUBLIC
     "${CMAKE_CURRENT_SOURCE_DIR}/include"
     "${PROJECT_SOURCE_DIR}/third_party/glm"
@@ -83,10 +83,48 @@ endif()
 target_precompile_headers(EngineCore PRIVATE include/Engine/PCH.h)
 
 # 确保第三方 include 路径可用（仅添加实际需要的子目录）
-# 注：third_party/ 用于 nlohmann/json.hpp（#include <nlohmann/json.hpp> 需要父目录）
 target_include_directories(EngineCore PUBLIC
     "${PROJECT_SOURCE_DIR}/third_party/box2d/include"
     "${PROJECT_SOURCE_DIR}/third_party"
 )
+
+# ── Lua 脚本支持（可选） ──
+# 如需启用 Lua 脚本功能，请将 Lua 源码放入 third_party/lua/
+# 并取消下方注释
+# if(EXISTS "${PROJECT_SOURCE_DIR}/third_party/lua/src/lua.h")
+#     add_library(lua STATIC
+#         third_party/lua/src/lapi.c
+#         third_party/lua/src/lcode.c
+#         third_party/lua/src/lctype.c
+#         third_party/lua/src/ldebug.c
+#         third_party/lua/src/ldo.c
+#         third_party/lua/src/ldump.c
+#         third_party/lua/src/lfunc.c
+#         third_party/lua/src/lgc.c
+#         third_party/lua/src/llex.c
+#         third_party/lua/src/lmem.c
+#         third_party/lua/src/lobject.c
+#         third_party/lua/src/lopcodes.c
+#         third_party/lua/src/lparser.c
+#         third_party/lua/src/lstate.c
+#         third_party/lua/src/lstring.c
+#         third_party/lua/src/ltable.c
+#         third_party/lua/src/ltm.c
+#         third_party/lua/src/lundump.c
+#         third_party/lua/src/lvm.c
+#         third_party/lua/src/lzio.c
+#         third_party/lua/src/lauxlib.c
+#         third_party/lua/src/lbaselib.c
+#         third_party/lua/src/ldblib.c
+#         third_party/lua/src/liolib.c
+#         third_party/lua/src/lmathlib.c
+#         third_party/lua/src/loslib.c
+#         third_party/lua/src/lstrlib.c
+#         third_party/lua/src/ltablib.c
+#     )
+#     target_include_directories(lua PUBLIC third_party/lua/src)
+#     target_link_libraries(EngineCore PUBLIC lua)
+#     target_compile_definitions(EngineCore PRIVATE ENGINE_ENABLE_LUA)
+# endif()
 
 source_group(TREE ${CMAKE_CURRENT_SOURCE_DIR} FILES ${ENGINE_SOURCES} ${ENGINE_HEADERS})

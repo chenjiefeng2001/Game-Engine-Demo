@@ -9,6 +9,8 @@
  *   RT2: Albedo (RGBA8)        — 漫反射颜色 + metallic
  *   RT3: PBR (RGBA8)           — R:ao, G:specular, B:unused, A:unused
  *   Depth: 共享深度缓冲
+ *
+ * 纯抽象接口 — 不包含任何后端特定类型或实现。
  */
 
 #include "Engine/Types.h"
@@ -18,7 +20,6 @@
 namespace Engine {
 
     class IRenderContext;
-
     class Shader;
 
     struct GBufferConfig {
@@ -28,50 +29,30 @@ namespace Engine {
 
     class GBuffer {
     public:
-        GBuffer(IRenderContext& context);
-        ~GBuffer();
+        GBuffer() = default;
+        virtual ~GBuffer() = default;
 
         GBuffer(const GBuffer&) = delete;
         GBuffer& operator=(const GBuffer&) = delete;
 
-        bool Initialize(const GBufferConfig& cfg);
-        void Shutdown();
-        bool IsValid() const { return m_FBO != 0; }
+        virtual bool Initialize(const GBufferConfig& cfg) = 0;
+        virtual void Shutdown() = 0;
+        virtual bool IsValid() const = 0;
 
-        // ── 绑定 ──
-        /** 绑定为渲染目标（几何通道写入） */
-        void BindForGeometryPass();
+        virtual void BindForGeometryPass() = 0;
+        virtual void Unbind() = 0;
+        virtual void BindTexturesForLighting() const = 0;
+        virtual void Clear() = 0;
 
-        /** 解绑（回到默认 FBO） */
-        void Unbind();
+        virtual uint32 GetFBO() const = 0;
+        virtual uint32 GetPositionTex() const = 0;
+        virtual uint32 GetNormalTex()   const = 0;
+        virtual uint32 GetAlbedoTex()   const = 0;
+        virtual uint32 GetPBRTex()      const = 0;
+        virtual uint32 GetDepthTex()    const = 0;
 
-        /** 绑定 G-Buffer 纹理为光照通道输入 */
-        void BindTexturesForLighting() const;
-
-        // ── 清空 ──
-        void Clear();
-
-        // ── 访问器 ──
-        uint32 GetFBO() const { return m_FBO; }
-        uint32 GetPositionTex() const { return m_PositionTex; }
-        uint32 GetNormalTex()   const { return m_NormalTex; }
-        uint32 GetAlbedoTex()   const { return m_AlbedoTex; }
-        uint32 GetPBRTex()      const { return m_PBRTex; }
-        uint32 GetDepthTex()    const { return m_DepthTex; }
-
-        uint32 GetWidth()  const { return m_Config.width; }
-        uint32 GetHeight() const { return m_Config.height; }
-
-    private:
-        void* m_GLContext = nullptr;
-        GBufferConfig m_Config;
-
-        uint32 m_FBO       = 0;
-        uint32 m_PositionTex = 0;
-        uint32 m_NormalTex   = 0;
-        uint32 m_AlbedoTex   = 0;
-        uint32 m_PBRTex      = 0;
-        uint32 m_DepthTex    = 0;
+        virtual uint32 GetWidth()  const = 0;
+        virtual uint32 GetHeight() const = 0;
     };
 
 } // namespace Engine
