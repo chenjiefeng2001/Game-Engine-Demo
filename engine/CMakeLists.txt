@@ -53,7 +53,6 @@ file(GLOB ENGINE_HEADERS CONFIGURE_DEPENDS
 add_library(EngineCore STATIC
     ${ENGINE_SOURCES}
     ${ENGINE_HEADERS}
-    include/Engine/Core/Scene/Serializer.h
 )
 
 target_include_directories(EngineCore

@@ -147,21 +147,35 @@ namespace Engine {
         if (!m_Visibility) return;
 
         if (ImGui::BeginMenu("View")) {
-            // 面板可见性切换（ImGui MenuItem 自动绑定布尔值）
+            // ── 核心面板 ──
             ImGui::MenuItem("Scene Hierarchy",  nullptr, &m_Visibility->sceneHierarchy);
             ImGui::MenuItem("Inspector",         nullptr, &m_Visibility->inspector);
             ImGui::MenuItem("Console",           nullptr, &m_Visibility->console);
             ImGui::MenuItem("Performance",       nullptr, &m_Visibility->performance);
-            ImGui::MenuItem("Content Browser",   nullptr, &m_Visibility->contentBrowser);
-            ImGui::MenuItem("Asset Browser",     nullptr, &m_Visibility->assetBrowser);
-            ImGui::MenuItem("Dependency Graph",  nullptr, &m_Visibility->depGraph);
             ImGui::MenuItem("Viewport",          nullptr, &m_Visibility->viewport);
 
-            // 渲染调试面板
-            ImGui::MenuItem("Renderer Debug", nullptr, &m_Visibility->rendererDebug);
+            ImGui::Separator();
 
-            // 工业级场景管理器面板
-            ImGui::MenuItem("Scene Manager", nullptr, &m_Visibility->sceneManager);
+            // ── 场景面板组 ──
+            if (ImGui::BeginMenu("Scene Panels")) {
+                ImGui::MenuItem("Hierarchy (Entity Tree)",  nullptr, &m_Visibility->sceneHierarchy);
+                ImGui::MenuItem("Scene Viewer (Runtime)",   nullptr, &m_Visibility->sceneViewerPanel);
+                ImGui::MenuItem("Scene Manager (Groups)",   nullptr, &m_Visibility->sceneManager);
+                ImGui::Separator();
+                ImGui::MenuItem("Merged Tab View",          nullptr, &m_Visibility->scenePanelTabbed);
+                ImGui::EndMenu();
+            }
+
+            // ── 浏览器面板 ──
+            if (ImGui::BeginMenu("Browsers")) {
+                ImGui::MenuItem("Content Browser",   nullptr, &m_Visibility->contentBrowser);
+                ImGui::MenuItem("Asset Browser",     nullptr, &m_Visibility->assetBrowser);
+                ImGui::MenuItem("Dependency Graph",  nullptr, &m_Visibility->depGraph);
+                ImGui::EndMenu();
+            }
+
+            // ── 调试面板 ──
+            ImGui::MenuItem("Renderer Debug", nullptr, &m_Visibility->rendererDebug);
 
             ImGui::Separator();
 

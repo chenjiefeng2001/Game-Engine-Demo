@@ -227,21 +227,17 @@ namespace Engine {
 			m_GL.Uniform1i(location, ViewModeToShaderInt(m_ViewMode));
 		}
 
-		int32 pbrChannel = 0;
+		int32 pbrChannel = -1;
 		switch (m_ViewMode) {
-			case ViewMode::PBR_BaseColor: pbrChannel = 0; break;
-			case ViewMode::PBR_Roughness: pbrChannel = 1; break;
-			case ViewMode::PBR_Metallic:  pbrChannel = 2; break;
-			case ViewMode::PBR_Specular:  pbrChannel = 3; break;
+			case ViewMode::GBuffer_Albedo:    pbrChannel = 0; break;
+			case ViewMode::GBuffer_Roughness: pbrChannel = 1; break;
+			case ViewMode::GBuffer_Metallic:  pbrChannel = 2; break;
+			case ViewMode::GBuffer_Specular:  pbrChannel = 3; break;
 			default: break;
 		}
 		GLint pbrLoc = m_GL.GetUniformLocation(programID, "u_PBRChannel");
 		if (pbrLoc != -1) {
-			if (pbrChannel > 0 || m_ViewMode == ViewMode::PBR_BaseColor) {
-				m_GL.Uniform1i(pbrLoc, pbrChannel);
-			} else {
-				m_GL.Uniform1i(pbrLoc, -1);
-			}
+			m_GL.Uniform1i(pbrLoc, pbrChannel);
 		}
 	}
 

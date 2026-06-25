@@ -1,4 +1,9 @@
 #include "Engine/Editor/EngineEditor.h"
+#include "Engine/Editor/SceneManagerPanel.h"
+#include "Engine/Editor/SceneViewerPanel.h"
+#include "Engine/Editor/ViewModePanel.h"
+#include "Engine/Editor/EditorTools.h"
+#include "Engine/Editor/EditorDefs.h"
 
 // glm 实验性扩展声明（必须在包含 glm 相关头文件之前）
 #define GLM_ENABLE_EXPERIMENTAL
@@ -115,16 +120,19 @@ namespace Engine {
 
         m_Toolbar.SetResetLayoutCallback([this]() { m_ResetLayoutRequested = true; });
 
-        m_Visibility.sceneHierarchy = true;
-        m_Visibility.inspector      = true;
-        m_Visibility.console        = true;
-        m_Visibility.performance    = true;
-        m_Visibility.contentBrowser = false;
-        m_Visibility.assetBrowser   = false;
-        m_Visibility.depGraph       = false;
-        m_Visibility.viewport       = true;
-        m_Visibility.rendererDebug  = false;
-        m_Visibility.sceneManager   = true;   // 默认显示场景管理器面板
+        m_Visibility.sceneHierarchy  = true;
+        m_Visibility.inspector       = true;
+        m_Visibility.console         = true;
+        m_Visibility.performance     = true;
+        m_Visibility.contentBrowser  = false;
+        m_Visibility.assetBrowser    = false;
+        m_Visibility.depGraph        = false;
+        m_Visibility.viewport        = true;
+        m_Visibility.rendererDebug   = false;
+        m_Visibility.sceneManager    = true;   // 场景管理器
+        m_Visibility.sceneViewerPanel = true;  // 场景查看器
+        m_Visibility.scenePanelTabbed = false; // 默认不合并
+        // 其他面板通过 View → Editor Settings 控制
 
         m_MenuBar.ConsumeResetLayoutSignal();
     }
@@ -216,10 +224,6 @@ namespace Engine {
             // ViewportPanel::OnImGui 内部调用 ImGui::Begin("Viewport")
             m_Viewport.OnImGui();
         }
-        if (m_Visibility.sceneHierarchy && m_SceneHierarchy) {
-            // SceneHierarchyPanel::OnImGui 内部调用 ImGui::Begin("Scene Hierarchy")
-            m_SceneHierarchy->OnImGui();
-        }
         if (m_Visibility.inspector && m_Inspector) {
             // InspectorPanel::OnImGui 内部调用 ImGui::Begin("Inspector")
             m_Inspector->OnImGui();
@@ -237,11 +241,52 @@ namespace Engine {
         if (m_Visibility.assetBrowser)   m_AssetBrowser.OnImGui();
         if (m_Visibility.depGraph)       m_DepGraph.OnImGui();
 
-        // ── 场景管理器面板 ──
-        if (m_Visibility.sceneManager) {
-            // SceneManagerPanel::OnImGui 内部调用 ImGui::Begin("Scene Manager")
-            m_SceneManagerPanel.OnImGui();
+        // ── 场景面板 — 三种视图 ──
+        // 根据 PanelVisibility 决定渲染哪个/哪些窗口
+        if (m_Visibility.scenePanelTabbed) {
+            // 合并模式：所有场景面板在一个 Tab 窗口中
+            // 首次使用时注册所有面板指针（m_SceneHierarchy 可能稍后才注册）
+            static bool panelsRegistered = false;
+            if (!panelsRegistered && m_SceneHierarchy) {
+                m_ScenePanel.RegisterPanels(m_SceneHierarchy,
+                                             &m_SceneViewerPanel,
+                                             &m_SceneManagerPanel);
+                panelsRegistered = true;
+            }
+            m_ScenePanel.OnImGui();
+        } else {
+            // 独立模式：三个面板各自独立渲染
+            if (m_Visibility.sceneHierarchy) {
+                m_SceneHierarchy->OnImGui();
+            }
+            if (m_Visibility.sceneViewerPanel) {
+                m_SceneViewerPanel.OnImGui();
+            }
+            if (m_Visibility.sceneManager) {
+                m_SceneManagerPanel.OnImGui();
+            }
         }
+
+        // ── View Mode Debug 面板 ──
+        // 由 ViewModePanel 管理其可见性
+
+        // ── 编辑器设置面板（变换/吸附/书签等） ──
+        // 由 DrawEditorSettingsWindow 管理可见性
+
+        // ── 性能统计悬浮窗（使用 EditorTools 中的自由函数） ──
+        // 需要渲染上下文数据填充
+        if (auto* ctx = m_App ? m_App->GetRenderContext() : nullptr) {
+            float fps = (ImGui::GetIO().DeltaTime > 0.0f) ? 1.0f / ImGui::GetIO().DeltaTime : 0.0f;
+            float frameTime = ImGui::GetIO().DeltaTime * 1000.0f;
+            uint32 dc = ctx->GetAndResetDrawCallCount();
+            uint32 verts = ctx->GetAndResetVertexCount();
+            uint32 tris = ctx->GetAndResetTriangleCount();
+            uint64 vram = ctx->GetTextureVRAMBytes() + ctx->GetBufferVRAMBytes();
+            DrawStatsOverlay(m_StatsCfg, fps, frameTime, dc, verts, tris, vram);
+        }
+
+        // ── 书签快捷键 ──
+        HandleCameraBookmarkShortcuts(m_Viewport.GetCamera());
 
         // ── Renderer Debug ──
         if (m_Visibility.rendererDebug) {
