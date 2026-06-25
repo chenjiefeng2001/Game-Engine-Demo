@@ -166,7 +166,7 @@ namespace Engine {
         return result;
     }
 
-    nlohmann::json DependencyTracker::Serialize() const {
+    std::string DependencyTracker::SerializeToJson() const {
         std::lock_guard<std::mutex> lock(m_Mutex);
         nlohmann::json j = nlohmann::json::object();
 
@@ -181,17 +181,23 @@ namespace Engine {
         return j;
     }
 
-    void DependencyTracker::Deserialize(const nlohmann::json& j) {
-        std::lock_guard<std::mutex> lock(m_Mutex);
-        m_Dependencies.clear();
-        m_ReverseDependencies.clear();
+    bool DependencyTracker::DeserializeFromJson(const std::string& jsonStr) {
+        try {
+            auto j = nlohmann::json::parse(jsonStr);
+            std::lock_guard<std::mutex> lock(m_Mutex);
+            m_Dependencies.clear();
+            m_ReverseDependencies.clear();
 
-        for (auto it = j.begin(); it != j.end(); ++it) {
-            GUID guid = GUID::FromString(it.key());
-            for (const auto& depStr : it.value()) {
-                GUID depGUID = GUID::FromString(depStr);
-                AddDependency(guid, depGUID, true);
+            for (auto it = j.begin(); it != j.end(); ++it) {
+                GUID guid = GUID::FromString(it.key());
+                for (const auto& depStr : it.value()) {
+                    GUID depGUID = GUID::FromString(depStr);
+                    AddDependency(guid, depGUID, true);
+                }
             }
+            return true;
+        } catch (...) {
+            return false;
         }
     }
 
