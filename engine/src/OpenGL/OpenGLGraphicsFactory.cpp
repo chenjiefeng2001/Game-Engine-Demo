@@ -13,6 +13,7 @@
 #include "Resources/OpenGLSpriteBatch.h"
 #include "Resources/OpenGLPrimitiveBatch.h"
 #include "Resources/ImGuiUIManager.h"
+#include "OpenGLGBuffer.h"
 
 #include "Engine/Core/Log.h"
 #include <GLFW/glfw3.h>
@@ -233,6 +234,25 @@ namespace Engine {
 			if (aa) return aa->GetCaps();
 		}
 		return AntiAliasingCaps{};
+	}
+
+	std::unique_ptr<GBuffer> OpenGLGraphicsFactory::CreateGBuffer(
+		IRenderContext& context)
+	{
+		auto* ctx = dynamic_cast<OpenGLContext*>(&context);
+		if (!ctx) {
+			s_Log.Error("CreateGBuffer: context is not OpenGLContext");
+			return nullptr;
+		}
+		return std::make_unique<OpenGLGBuffer>(context);
+	}
+
+	std::unique_ptr<ShadowMapper> OpenGLGraphicsFactory::CreateShadowMapper(
+		IRenderContext& context)
+	{
+		// 暂时返回 nullptr，等待 OpenGLShadowMapper 实现
+		// return std::make_unique<OpenGLShadowMapper>(context);
+		return nullptr;
 	}
 
 } // namespace Engine

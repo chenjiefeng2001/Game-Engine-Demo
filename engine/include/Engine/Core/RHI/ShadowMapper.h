@@ -1,94 +1,65 @@
 #pragma once
-
 /**
  * @file ShadowMapper.h
- * @brief 阴影映射 — 从光源视角渲染深度图，主渲染时采样做阴影判定
+ * @brief 阴影映射器 — 纯抽象接口
  *
- * 支持：
- *   - 方向光/点光源阴影
- *   - PCF (Percentage Closer Filtering) 软阴影
- *   - 级联阴影映射 (CSM) 预留接口
+ * 不包含任何后端特定类型或实现。
  */
 
 #include "Engine/Types.h"
 #include "Engine/Core/RHI/MathTypes.h"
-#include <memory>
 #include <cstdint>
 
 namespace Engine {
 
     class IRenderContext;
-    class Shader;
-    class MeshRenderer;
 
-    struct ShadowMapConfig {
-        uint32 resolution = 2048;
-        float  bias       = 0.005f;
-        float  pcfRadius  = 1.0f;     // PCF 采样半径
-        int    pcfSamples = 4;         // PCF 采样次数
-        bool   enabled    = true;
-        // 级联参数（预留）
-        int    cascadeCount = 1;
-        float  cascadeSplit = 0.1f;
+    struct ShadowMapperConfig {
+        uint32 shadowMapSize = 1024;
+        uint32 numCascades   = 4;
+        float  cascadeSplitLambda = 0.95f;
+        float  shadowBias    = 0.005f;
     };
+
+    class Shader;
 
     class ShadowMapper {
     public:
-        ShadowMapper(IRenderContext& context);
-        ~ShadowMapper();
+        ShadowMapper() = default;
+        virtual ~ShadowMapper() = default;
 
         ShadowMapper(const ShadowMapper&) = delete;
         ShadowMapper& operator=(const ShadowMapper&) = delete;
 
-        // ── 配置 ──
-        void SetConfig(const ShadowMapConfig& cfg);
-        const ShadowMapConfig& GetConfig() const { return m_Config; }
+        virtual bool Initialize(const ShadowMapperConfig& cfg) = 0;
+        virtual void Shutdown() = 0;
+        virtual bool IsValid() const = 0;
 
-        // ── 初始化 ──
-        bool Initialize(uint32 resolution);
-        void Shutdown();
+        virtual void BindForShadowPass() = 0;
+        virtual void Unbind() = 0;
+        virtual void BindShadowTexture(int slot) = 0;
+        virtual void Clear() = 0;
 
-        bool IsValid() const { return m_FBO != 0; }
+        virtual uint32 GetDepthTexture() const = 0;
+        virtual uint32 GetShadowMapSize() const = 0;
+        virtual uint32 GetShadowTexture() const { return GetDepthTexture(); }
 
-        // ── 渲染阴影深度 ──
-        /** 绑定阴影深度 FBO */
-        void BindForShadowPass();
+        // ── 阴影渲染所需额外方法 ──
+        virtual void EndShadowPass() = 0;
+        virtual void BindShadowMap(int slot) = 0;
+        virtual void SetShaderUniforms(Shader* shader) = 0;
+        virtual const Mat4& GetLightVP() const = 0;
 
-        /** 解绑并准备采样 */
-        void EndShadowPass();
+        // ── 配置访问 ──
+        virtual const ShadowMapperConfig& GetConfig() const = 0;
 
-        /** 获取光空间的 VP 矩阵 */
-        const class Mat4& GetLightVP() const { return m_LightVP; }
+        // ── 光源控制 ──
+        virtual void SetLightPosition(const Vec3& pos) = 0;
+        virtual void SetLightDirection(const Vec3& dir) = 0;
+        virtual void SetLightDistance(float dist) = 0;
 
-        /** 设置光源位置（用于计算光空间矩阵） */
-        void SetLightPosition(const Vec3& pos);
-        void SetLightDirection(const Vec3& dir);
-
-        // ── 采样 ──
-        /** 绑定阴影贴图到纹理单元 */
-        void BindShadowMap(uint32 slot = 3) const;
-
-        /** 获取阴影贴图纹理 ID */
-        uint32 GetShadowTexture() const { return m_DepthTex; }
-
-        // ── Uniform 设置 ──
-        void SetShaderUniforms(class Shader* shader) const;
-
-    private:
-        bool CreateShadowResources();
-        void DestroyShadowResources();
-        Mat4 ComputeLightMatrix();
-
-        ShadowMapConfig m_Config;
-        uint32 m_FBO      = 0;
-        uint32 m_DepthTex = 0;
-        uint32 m_Resolution = 0;
-
-        Vec3 m_LightPos    = {5.0f, 10.0f, 5.0f};
-        Vec3 m_LightDir    = {-0.3f, -0.8f, -0.5f};
-        Mat4 m_LightVP;
-        float m_LightDistance = 30.0f;
-        void* m_GLContext = nullptr;
+        // ── 参数 ──
+        virtual void SetBias(float bias) = 0;
     };
 
 } // namespace Engine
