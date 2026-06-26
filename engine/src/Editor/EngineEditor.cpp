@@ -1,9 +1,10 @@
-#include "Engine/Editor/EngineEditor.h"
-#include "Engine/Editor/SceneManagerPanel.h"
-#include "Engine/Editor/SceneViewerPanel.h"
-#include "Engine/Editor/ViewModePanel.h"
-#include "Engine/Editor/EditorTools.h"
-#include "Engine/Editor/EditorDefs.h"
+    #include "Engine/Editor/EngineEditor.h"
+    #include "Engine/Editor/SceneManagerPanel.h"
+    #include "Engine/Editor/SceneViewerPanel.h"
+    #include "Engine/Editor/ViewModePanel.h"
+    #include "Engine/Editor/EditorTools.h"
+    #include "Engine/Editor/EditorDefs.h"
+    #include "Engine/Editor/ShaderGraph/ShaderNodes.h"
 
 // glm 实验性扩展声明（必须在包含 glm 相关头文件之前）
 #define GLM_ENABLE_EXPERIMENTAL
@@ -133,6 +134,53 @@ namespace Engine {
         m_Visibility.sceneViewerPanel = true;  // 场景查看器
         m_Visibility.scenePanelTabbed = false; // 默认不合并
         // 其他面板通过 View → Editor Settings 控制
+
+        // ── 初始化 Shader Graph 编辑器 — 创建默认示例图 ──
+        {
+            m_ShaderGraphPanel.SetGraph(&m_ShaderGraph);
+            m_ShaderGraphPanel.SetTitle("Shader Graph Editor");
+
+            // 创建默认的 PBR Master + Color 节点
+            auto masterNode = std::make_unique<ShaderGraph::PBRMasterNode>(0);
+            uint32 masterId = m_ShaderGraph.AddNode(std::move(masterNode));
+            m_ShaderGraph.SetMasterNodeId(masterId);
+
+            auto colorNode = std::make_unique<ShaderGraph::ColorNode>(0);
+            uint32 colorId = m_ShaderGraph.AddNode(std::move(colorNode));
+            auto* color = m_ShaderGraph.GetNode(colorId);
+            if (color) {
+                color->SetPosition(50, 200);
+            }
+
+            auto fresnelNode = std::make_unique<ShaderGraph::FresnelNode>(0);
+            uint32 fresnelId = m_ShaderGraph.AddNode(std::move(fresnelNode));
+            auto* fresnel = m_ShaderGraph.GetNode(fresnelId);
+            if (fresnel) {
+                fresnel->SetPosition(50, 350);
+            }
+
+            auto multiplyNode = std::make_unique<ShaderGraph::MultiplyNode>(0);
+            uint32 mulId = m_ShaderGraph.AddNode(std::move(multiplyNode));
+            auto* mul = m_ShaderGraph.GetNode(mulId);
+            if (mul) {
+                mul->SetPosition(350, 250);
+            }
+
+            auto* master = m_ShaderGraph.GetNode(masterId);
+            if (master) {
+                master->SetPosition(600, 200);
+            }
+
+            // Connect: Color -> Multiply.A, Fresnel -> Multiply.B, Multiply -> Master.Albedo
+            if (color && fresnel && mul && master) {
+                m_ShaderGraph.AddLink(colorId, color->GetOutputPins()[0].id,
+                                     mulId, mul->GetInputPins()[0].id);
+                m_ShaderGraph.AddLink(fresnelId, fresnel->GetOutputPins()[0].id,
+                                     mulId, mul->GetInputPins()[1].id);
+                m_ShaderGraph.AddLink(mulId, mul->GetOutputPins()[0].id,
+                                     masterId, master->GetInputPins()[0].id);
+            }
+        }
 
         m_MenuBar.ConsumeResetLayoutSignal();
     }
@@ -296,6 +344,21 @@ namespace Engine {
                 ImGui::Text("Vertices:    %u", ctx->GetAndResetVertexCount());
                 ImGui::Text("Triangles:   %u", ctx->GetAndResetTriangleCount());
             }
+            ImGui::End();
+        }
+
+        // ── 工具面板（通过 Tools 菜单触发） ──
+        if (m_Visibility.shaderGraph) {
+            m_ShaderGraphPanel.OnImGui();
+        }
+        if (m_Visibility.vfxEditor) {
+            ImGui::Begin("VFX Editor", &m_Visibility.vfxEditor);
+            ImGui::Text("VFX Graph Editor - Coming Soon");
+            ImGui::End();
+        }
+        if (m_Visibility.animationEditor) {
+            ImGui::Begin("Animation Editor", &m_Visibility.animationEditor);
+            ImGui::Text("Animation Editor - Coming Soon");
             ImGui::End();
         }
 

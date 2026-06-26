@@ -204,8 +204,14 @@ namespace Engine {
             // ImGui Stack Tool（控件堆栈追踪）
             ImGui::MenuItem("Stack Tool", nullptr, &m_ShowStackTool);
 
-            // 预留
-            // ImGui::MenuItem("Style Editor", nullptr, nullptr, false);
+            ImGui::Separator();
+
+            // ── 编辑器工具（通过 PanelVisibility 控制可见性） ──
+            if (m_Visibility) {
+                ImGui::MenuItem("Shader Graph Editor", nullptr, &m_Visibility->shaderGraph);
+                ImGui::MenuItem("VFX Editor",          nullptr, &m_Visibility->vfxEditor);
+                ImGui::MenuItem("Animation Editor",    nullptr, &m_Visibility->animationEditor);
+            }
 
             ImGui::EndMenu();
         }
