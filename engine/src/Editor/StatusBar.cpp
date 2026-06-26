@@ -1,5 +1,6 @@
 #include "Engine/Editor/StatusBar.h"
 #include <imgui.h>
+#include <imgui_internal.h>
 #include <algorithm>
 
 namespace Engine {

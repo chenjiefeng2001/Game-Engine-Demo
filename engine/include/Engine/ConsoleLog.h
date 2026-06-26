@@ -12,10 +12,22 @@
  * @endcode
  *
  * 配合 ConsolePanel 在 ImGui 中显示。
+ *
+ * ── 线程安全 ──
+ * 非线程安全。预期仅在主线程使用。若需线程安全请在 Log() 内加锁。
+ *
+ * ── 架构说明 ──
+ * 使用 Meyer's Singleton（static 局部变量）避免静态初始化顺序问题。
+ * m_Buffer 使用 unique_ptr<LogEntry[]> 在堆上分配，避免全局/静态对象的
+ * ASan redzone 保护与 MSVC std::string constexpr 初始化之间的冲突。
+ * （全局 redzone 中的对象若包含 std::array<LogEntry,N> 且 LogEntry::message
+ *  是 std::string，MSVC ASan 会在 `eh vector ctor iterator` 循环中误报
+ *  global-buffer-overflow。）
  */
 
 #include "Engine/Types.h"
 #include <string>
+#include <memory>
 #include <array>
 #include <ctime>
 
@@ -60,19 +72,22 @@ namespace Engine {
     struct LogEntry {
         LogLevel    level     = LogLevel::Info;
         double      timestamp = 0.0;   ///< 自程序启动以来的秒数
-        std::string message;           ///< 日志内容
+        char        message[1024];      ///< 日志内容（固定缓冲区，避开 std::string 的 ASan 初始化冲突）
     };
 
     // ============================================================
-    // 环形缓冲区日志系统（Meyer's 单例）
+    // 环形缓冲区日志系统（Meyer's 单例，堆分配缓冲区）
     // ============================================================
     class ConsoleLog {
     public:
         /// 环形缓冲区容量
         static constexpr uint32 kBufferSize = 512;
 
-        /// 获取单例引用
-        static ConsoleLog& Instance();
+        /// 获取单例引用（Meyer's Singleton）
+        static ConsoleLog& Instance() {
+            static ConsoleLog instance;
+            return instance;
+        }
 
         /// 写入一条日志
         void Log(LogLevel level, const std::string& message);
@@ -83,7 +98,7 @@ namespace Engine {
         // ── 数据访问（供 ConsolePanel 使用） ──
 
         /// 获取底层环形缓冲区指针
-        const LogEntry* GetBuffer() const { return m_Buffer.data(); }
+        const LogEntry* GetBuffer() const { return m_Buffer.get(); }
 
         /// 获取有效条目数（≤ kBufferSize）
         uint32 GetCount() const { return m_Count; }
@@ -103,16 +118,24 @@ namespace Engine {
         void SetLogPath(const std::string& path) { m_LogPath = path; }
 
     private:
-        ConsoleLog() = default;
+        ConsoleLog()
+            : m_Buffer(new LogEntry[kBufferSize])
+        {
+            // 堆分配的数组，避开全局 redzone 的 ASan 保护问题
+        }
         ~ConsoleLog() = default;
         ConsoleLog(const ConsoleLog&) = delete;
         ConsoleLog& operator=(const ConsoleLog&) = delete;
 
-        std::array<LogEntry, kBufferSize> m_Buffer;
-        uint32 m_StartIndex = 0;   ///< 环形缓冲区中最旧条目的索引
-        uint32 m_Count = 0;        ///< 有效条目数
-        std::string m_LogPath;     ///< 日志文件持久化路径（空=禁用）
+        std::unique_ptr<LogEntry[]> m_Buffer;  // 堆分配，避开全局 redzone
+        uint32 m_StartIndex = 0;
+        uint32 m_Count = 0;
+        std::string m_LogPath;
     };
+
+    // ── 编译时一致性断言 ──
+    static_assert(ConsoleLog::kBufferSize == 512,
+        "ConsoleLog::kBufferSize must be exactly 512 across all translation units.");
 
 } // namespace Engine
 

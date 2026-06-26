@@ -64,6 +64,9 @@ namespace Engine {
         void OnUpdate(float32 dt, bool isFocusedViewport = false);
         void OnImGui();
 
+        // ── 资源清理（必须在 OpenGL 上下文销毁前调用） ──
+        void Cleanup();
+
         // ── 访问器 ──
         const std::string& GetName() const { return m_Config.Name; }
         EditorCamera& GetCamera() { return *m_Camera; }
@@ -82,6 +85,7 @@ namespace Engine {
     private:
         void InitFBO();
         void Render3DScene();
+        void UpdateFBOIfNeeded();
 
         // ── 配置 ──
         ViewportConfig m_Config;
@@ -107,6 +111,9 @@ namespace Engine {
         // ── 演示 3D 资源（后续移至 SceneRenderer） ──
         std::shared_ptr<Shader>      m_3DShader;
         std::shared_ptr<VertexArray> m_CubeVAO;
+
+        // ── 延迟 FBO 更新标记（避免在 ImGui 渲染中销毁/创建 GPU 资源） ──
+        bool m_NeedsFBOUpdate = false;
 
         // ── 回调 ──
         ResizeCallback m_ResizeCallback;

@@ -37,6 +37,7 @@ namespace Engine {
         }
 
         // ── 单位立方体网格（演示物体） ──
+        // 36 个三角形顶点 × 8 分量（pos3 + normal3 + uv2）
         float vertices[] = {
             -0.5f,-0.5f, 0.5f, 0.0f, 0.0f, 1.0f, 0.0f,0.0f,
              0.5f,-0.5f, 0.5f, 0.0f, 0.0f, 1.0f, 1.0f,0.0f,
@@ -44,30 +45,35 @@ namespace Engine {
              0.5f, 0.5f, 0.5f, 0.0f, 0.0f, 1.0f, 1.0f,1.0f,
             -0.5f, 0.5f, 0.5f, 0.0f, 0.0f, 1.0f, 0.0f,1.0f,
             -0.5f,-0.5f, 0.5f, 0.0f, 0.0f, 1.0f, 0.0f,0.0f,
+
             -0.5f,-0.5f,-0.5f, 0.0f, 0.0f,-1.0f, 0.0f,0.0f,
              0.5f,-0.5f,-0.5f, 0.0f, 0.0f,-1.0f, 1.0f,0.0f,
              0.5f, 0.5f,-0.5f, 0.0f, 0.0f,-1.0f, 1.0f,1.0f,
              0.5f, 0.5f,-0.5f, 0.0f, 0.0f,-1.0f, 1.0f,1.0f,
             -0.5f, 0.5f,-0.5f, 0.0f, 0.0f,-1.0f, 0.0f,1.0f,
             -0.5f,-0.5f,-0.5f, 0.0f, 0.0f,-1.0f, 0.0f,0.0f,
+
             -0.5f, 0.5f, 0.5f,-1.0f, 0.0f, 0.0f, 0.0f,0.0f,
             -0.5f, 0.5f,-0.5f,-1.0f, 0.0f, 0.0f, 1.0f,0.0f,
             -0.5f,-0.5f,-0.5f,-1.0f, 0.0f, 0.0f, 1.0f,1.0f,
             -0.5f,-0.5f,-0.5f,-1.0f, 0.0f, 0.0f, 1.0f,1.0f,
             -0.5f,-0.5f, 0.5f,-1.0f, 0.0f, 0.0f, 0.0f,1.0f,
             -0.5f, 0.5f, 0.5f,-1.0f, 0.0f, 0.0f, 0.0f,0.0f,
+
              0.5f, 0.5f, 0.5f, 1.0f, 0.0f, 0.0f, 0.0f,0.0f,
              0.5f, 0.5f,-0.5f, 1.0f, 0.0f, 0.0f, 1.0f,0.0f,
              0.5f,-0.5f,-0.5f, 1.0f, 0.0f, 0.0f, 1.0f,1.0f,
              0.5f,-0.5f,-0.5f, 1.0f, 0.0f, 0.0f, 1.0f,1.0f,
              0.5f,-0.5f, 0.5f, 1.0f, 0.0f, 0.0f, 0.0f,1.0f,
              0.5f, 0.5f, 0.5f, 1.0f, 0.0f, 0.0f, 0.0f,0.0f,
+
             -0.5f, 0.5f,-0.5f, 0.0f, 1.0f, 0.0f, 0.0f,0.0f,
              0.5f, 0.5f,-0.5f, 0.0f, 1.0f, 0.0f, 1.0f,0.0f,
              0.5f, 0.5f, 0.5f, 0.0f, 1.0f, 0.0f, 1.0f,1.0f,
              0.5f, 0.5f, 0.5f, 0.0f, 1.0f, 0.0f, 1.0f,1.0f,
             -0.5f, 0.5f, 0.5f, 0.0f, 1.0f, 0.0f, 0.0f,1.0f,
             -0.5f, 0.5f,-0.5f, 0.0f, 1.0f, 0.0f, 0.0f,0.0f,
+
             -0.5f,-0.5f,-0.5f, 0.0f,-1.0f, 0.0f, 0.0f,0.0f,
              0.5f,-0.5f,-0.5f, 0.0f,-1.0f, 0.0f, 1.0f,0.0f,
              0.5f,-0.5f, 0.5f, 0.0f,-1.0f, 0.0f, 1.0f,1.0f,
@@ -76,9 +82,13 @@ namespace Engine {
             -0.5f,-0.5f,-0.5f, 0.0f,-1.0f, 0.0f, 0.0f,0.0f,
         };
 
-        uint32 vertCount = 36;
-        uint32 floatsPerVert = 8;
-        auto vb = factory->CreateVertexBuffer(vertices, vertCount * floatsPerVert * sizeof(float));
+        static constexpr uint32 vertCount = 36;
+        static constexpr uint32 floatsPerVert = 8;
+        // 验证数组大小匹配 36 个三角形顶点 × 8 分量
+        static_assert(sizeof(vertices) / sizeof(float) == vertCount * floatsPerVert,
+                      "Cube vertex count mismatch");
+
+        auto vb = factory->CreateVertexBuffer(vertices, sizeof(vertices));
         if (!vb) return;
 
         uint32 indices[36];
@@ -104,6 +114,19 @@ namespace Engine {
         uint32 fboW = static_cast<uint32>((m_Width > 0) ? m_Width : 1280);
         uint32 fboH = static_cast<uint32>((m_Height > 0) ? m_Height : 720);
         m_FBO->Resize(fboW, fboH);
+    }
+
+    // ── 显式清理 OpenGL 资源（由外部在 OpenGL 上下文销毁前调用） ──
+    void ViewportPanel::Cleanup() {
+        // 先释放 FBO（包含 GL 纹理/渲染缓冲/FBO对象）
+        m_FBO.reset();
+        // 释放 VAO/Shader（包含 GL 顶点数组/缓冲/着色器对象）
+        m_CubeVAO.reset();
+        m_3DShader.reset();
+        // 释放编辑器覆盖层资源
+        m_Overlay.Shutdown();
+        m_GL = nullptr;
+        ENGINE_LOG_INFO("Viewport", "{}: OpenGL resources cleaned up", m_Config.Name);
     }
 
     void ViewportPanel::OnUpdate(float32 dt, bool isFocusedViewport) {
@@ -135,7 +158,6 @@ namespace Engine {
         m_Focused = ImGui::IsWindowFocused();
 
         // ── 严谨的焦点控制：只有鼠标悬停且没有 ImGui 控件激活时，才允许相机控制 ──
-        // 这防止了当用户操作 Inspector 的 DragFloat 时，鼠标移到视口上触发旋转。
         bool canControl = m_Hovered && !ImGui::IsAnyItemActive();
         if (m_Camera) {
             m_Camera->SetActive(canControl);
@@ -153,12 +175,8 @@ namespace Engine {
             m_Width  = newW;
             m_Height = newH;
 
-            if (!m_FBO && m_GL) {
-                InitFBO();
-            } else if (m_FBO && m_FBO->IsValid()) {
-                m_FBO->Resize(static_cast<uint32>(m_Width),
-                              static_cast<uint32>(m_Height));
-            }
+            // 标记 FBO 需要刷新，在 Render3DScene() 中安全执行（不在 ImGui 渲染中销毁 GPU 资源）
+            m_NeedsFBOUpdate = true;
 
             if (m_Camera) {
                 m_Camera->SetViewportSize(m_Width, m_Height);
@@ -199,9 +217,30 @@ namespace Engine {
         ImGui::PopStyleVar();
     }
 
+    // ── 在 Render3DScene 中安全地初始化/重新创建 FBO（不在 ImGui 渲染过程中销毁 GPU 资源） ──
+    void ViewportPanel::UpdateFBOIfNeeded() {
+        if (!m_NeedsFBOUpdate) return;
+        m_NeedsFBOUpdate = false;
+
+        if (!m_GL) return;
+
+        if (!m_FBO) {
+            m_FBO = std::make_unique<OpenGLFramebuffer>(*m_GL);
+        }
+        m_FBO->Resize(static_cast<uint32>(m_Width),
+                      static_cast<uint32>(m_Height));
+    }
+
     void ViewportPanel::Render3DScene() {
+        // 在渲染前安全地处理 FBO 大小变更（不在 ImGui 渲染中销毁/创建 GPU 资源）
+        UpdateFBOIfNeeded();
+
         if (!m_FBO || !m_FBO->IsValid()) {
-            if (m_GL) InitFBO();
+            if (m_GL) {
+                m_FBO = std::make_unique<OpenGLFramebuffer>(*m_GL);
+                m_FBO->Resize(static_cast<uint32>((m_Width > 0) ? m_Width : 1280),
+                              static_cast<uint32>((m_Height > 0) ? m_Height : 720));
+            }
             if (!m_FBO || !m_FBO->IsValid()) return;
         }
 
@@ -238,21 +277,16 @@ namespace Engine {
             glm::vec3(0.0f, 1.0f, 0.0f));
 
         // ── 渲染网格（通过 EditorOverlay 系统） ──
-        // 在 3D 物体之前绘制网格，作为场景参考
         if (m_GL && m_Overlay.IsInitialized()) {
-            // 构建 ViewProj 矩阵
             glm::mat4 vp = proj * view;
-
-            // 获取相机世界位置
             Vec3 camPos = m_Camera->GetPosition();
             float camPosF[3] = { camPos.x, camPos.y, camPos.z };
-
             m_Overlay.DrawGrid(m_GL, glm::value_ptr(vp), camPosF, m_Config);
         }
 
         // ── 渲染 3D 演示物体（仅在有 shader 和 VAO 时绘制） ──
         if (!m_3DShader || !m_CubeVAO) {
-            // 无 3D 资源：只画网格，跳过物体渲染
+            // 无 3D 资源：跳过物体渲染
             m_FBO->Unbind();
             if (m_RenderContext) {
                 m_RenderContext->ResetPipelineState();
@@ -275,6 +309,7 @@ namespace Engine {
                                 glm::value_ptr(glm::transpose(glm::inverse(model))));
 
             Vec3 camPos = m_Camera->GetPosition();
+            // Vec3 为 12 字节 float[3] 标准布局，&camPos.x 指向连续 3 个 float
             m_3DShader->SetVec3("u_CameraPos", &camPos.x);
 
             Vec4 red(1.0f, 0.2f, 0.2f, 1.0f);

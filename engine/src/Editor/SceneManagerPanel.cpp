@@ -7,6 +7,7 @@
 #include "Engine/Core/Log.h"
 #include "Engine/Core/JobSystem.h"
 
+#include "Engine/Editor/IconsFontAwesome6.h"
 #include <imgui.h>
 #include <imgui_internal.h>
 
@@ -67,7 +68,8 @@ namespace Engine {
 
         // 窗口标志 — 可停靠、可调整大小
         ImGuiWindowFlags flags = ImGuiWindowFlags_NoCollapse;
-        if (!ImGui::Begin("Scene Manager", &m_Visible, flags)) {
+        ImGui::SetNextWindowSizeConstraints(ImVec2(400, 200), ImVec2(FLT_MAX, FLT_MAX));
+        if (!ImGui::Begin(ICON_FA_CUBES " Scene Manager", &m_Visible, flags)) {
             ImGui::End();
             return;
         }

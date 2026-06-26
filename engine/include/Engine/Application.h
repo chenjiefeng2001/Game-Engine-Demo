@@ -178,8 +178,14 @@ protected:
   virtual void OnImGui() {}
 
   // ── 引擎成员（protected 供子类访问） ──
-  SubsystemManager m_SubsystemManager;
+  // 注意：成员析构顺序 = 声明顺序的反序。
+  // m_SubsystemAllocator 必须在 m_SubsystemManager 之后析构，
+  // 因为 SubsystemManager::Shutdown() 中注册的 lambda 可能引用
+  // StackAllocator 分配的内存，如果在 SubsystemManager 析构前
+  // 释放内存池会导致 use-after-free。
+  // 所以 m_SubsystemAllocator 声明在 m_SubsystemManager 之前。
   StackAllocator m_SubsystemAllocator{256 * 1024}; // 256KB 连续内存池
+  SubsystemManager m_SubsystemManager;
   IGraphicsFactory &m_Factory;
   TextureManager m_TextureManager;
   std::unique_ptr<class IWindow> m_Window;
