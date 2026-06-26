@@ -19,6 +19,7 @@
 #include "Engine/Editor/ViewModePanel.h"
 #include "Engine/Editor/EditorTools.h"
 #include "Engine/Editor/EditorDefs.h"
+#include "Engine/Editor/ShaderGraph/ShaderGraphPanel.h"
 #include <glm/glm.hpp>
 #include <glm/gtc/type_ptr.hpp>
 
@@ -95,6 +96,10 @@ namespace Engine {
         SceneManagerPanel     m_SceneManagerPanel;    // 场景管理器（独立窗口）
         SceneViewerPanel      m_SceneViewerPanel;     // 场景查看器（独立窗口）
         ViewModePanel         m_ViewModePanel;
+
+        // ── 工具面板 ──
+        ShaderGraph::ShaderGraphPanel m_ShaderGraphPanel;
+        ShaderGraph::ShaderGraph      m_ShaderGraph;
 
         // ── 编辑器工具状态 ──
         GizmoOperation  m_GizmoOp     = GizmoOperation::Translate;

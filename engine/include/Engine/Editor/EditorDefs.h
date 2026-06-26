@@ -14,6 +14,33 @@
 namespace Engine {
 
     // ═══════════════════════════════════════════════════════════════
+    // 0. 面板可见性
+    // ═══════════════════════════════════════════════════════════════
+
+    struct PanelVisibility {
+        // ── 基础面板 ──
+        bool sceneHierarchy = true;   // 实体层级树
+        bool inspector      = true;
+        bool console        = true;
+        bool performance    = true;
+        bool contentBrowser = true;
+        bool assetBrowser   = true;
+        bool depGraph       = false;
+        bool viewport       = true;
+        bool rendererDebug  = false;
+
+        // ── 工具面板 ──
+        bool shaderGraph    = false;  // 着色器图编辑器
+        bool vfxEditor      = false;  // VFX 编辑器
+        bool animationEditor = false; // 动画编辑器
+
+        // ── 场景面板 ──
+        bool sceneManager    = true;
+        bool sceneViewerPanel = true;
+        bool scenePanelTabbed = false;
+    };
+
+    // ═══════════════════════════════════════════════════════════════
     // 1. 变换工具模式
     // ═══════════════════════════════════════════════════════════════
 
