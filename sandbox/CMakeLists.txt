@@ -23,7 +23,7 @@ macro(add_sandbox_executable targetName)
     add_sandbox_asan(${targetName})
 endmacro()
 
-add_sandbox_executable(Sandbox src/main.cpp)
+add_sandbox_executable(Sandbox src/main.cpp src/EditorDemo/EditorDemoTest.cpp)
 add_sandbox_executable(InputTest src/InputTest/main.cpp src/InputTest/InputTestApp.cpp)
 add_sandbox_executable(SpriteBatchTest src/SpriteBatchTest/main.cpp src/SpriteBatchTest/SpriteBatchTest.cpp)
 add_sandbox_executable(GameObjectTest src/GameObjectTest/main.cpp src/GameObjectTest/GameObjectTest.cpp)
