@@ -1,6 +1,8 @@
 #include "Engine/Editor/ProfilerPanel.h"
 #include "Engine/Debug/ProfilerCore.h"
+#include "Engine/Editor/IconsFontAwesome6.h"
 #include <imgui.h>
+#include <imgui_internal.h>
 #include <algorithm>
 #include <cmath>
 
@@ -12,15 +14,18 @@ namespace Engine {
         if (!m_Visible) return;
 
         ImGui::SetNextWindowSize(ImVec2(600, 400), ImGuiCond_FirstUseEver);
-        ImGui::Begin("Profiler", &m_Visible);
+        ImGui::SetNextWindowSizeConstraints(ImVec2(320, 200), ImVec2(FLT_MAX, FLT_MAX));
+        ImGui::Begin(ICON_FA_COG " Profiler", &m_Visible);
 
         // Tab 栏：CPU / GPU / Memory / Physics
-        const char* modules[] = { "CPU", "GPU", "Memory", "Physics" };
-        ImGui::TabItemButton("##modules");
-        ImGui::SameLine();
-        for (int i = 0; i < 4; ++i) {
-            if (ImGui::SmallButton(modules[i])) m_SelectedModule = i;
-            if (i < 3) ImGui::SameLine();
+        if (ImGui::BeginTabBar("##ProfilerModules", ImGuiTabBarFlags_FittingPolicyScroll)) {
+            const char* modules[] = { "CPU", "GPU", "Memory", "Physics" };
+            for (int i = 0; i < 4; ++i) {
+                if (ImGui::TabItemButton(modules[i], ImGuiTabItemFlags_NoReorder)) {
+                    m_SelectedModule = i;
+                }
+            }
+            ImGui::EndTabBar();
         }
         ImGui::Separator();
 

@@ -3,6 +3,15 @@
 # ==============================================================================
 
 # 将每个可执行文件放入独立子目录的辅助宏
+# 辅助宏：为沙盒可执行文件添加 ASan 编译选项
+macro(add_sandbox_asan targetName)
+    if(MSVC AND ENABLE_ASAN)
+        target_compile_options(${targetName} PRIVATE
+            "$<$<OR:$<CONFIG:Debug>,$<CONFIG:RelWithDebInfo>>:/fsanitize=address>"
+        )
+    endif()
+endmacro()
+
 macro(add_sandbox_executable targetName)
     add_executable(${targetName} ${ARGN})
     target_link_libraries(${targetName} PRIVATE EngineCore)
@@ -11,6 +20,7 @@ macro(add_sandbox_executable targetName)
     set_target_properties(${targetName} PROPERTIES
         RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/${targetName}"
     )
+    add_sandbox_asan(${targetName})
 endmacro()
 
 add_sandbox_executable(Sandbox src/main.cpp)
@@ -48,15 +58,17 @@ set(SANDBOX_TARGETS
 
 add_custom_target(SyncSandboxResources ALL
     COMMAND ${CMAKE_COMMAND} -E copy_directory "${PROJECT_SOURCE_DIR}/assets" "${CMAKE_CURRENT_BINARY_DIR}/assets"
-    COMMAND ${CMAKE_COMMAND} -E copy_if_different "$<TARGET_FILE:OpenAL>" "${CMAKE_CURRENT_BINARY_DIR}/$<TARGET_FILE_NAME:OpenAL>"
 )
 
+# 为每个沙盒目标复制资源 + DLL（到生成的可执行文件输出目录）
 foreach(target ${SANDBOX_TARGETS})
-    add_custom_command(TARGET SyncSandboxResources POST_BUILD
-        COMMAND ${CMAKE_COMMAND} -E copy_directory "${CMAKE_CURRENT_BINARY_DIR}/assets"
-                    "${CMAKE_CURRENT_BINARY_DIR}/${target}/assets"
-        COMMAND ${CMAKE_COMMAND} -E copy_if_different "$<TARGET_FILE:OpenAL>"
-                    "${CMAKE_CURRENT_BINARY_DIR}/${target}/$<TARGET_FILE_NAME:OpenAL>"
-        COMMENT "  -> syncing resources to ${target}/"
+    # 使用 $<TARGET_FILE_DIR:${target}> 获取当前配置下的实际输出目录
+    # 例如：build/sandbox/EditorDemo/Debug/  （VS generator 会自动追加 $(Configuration)）
+    add_custom_command(TARGET ${target} POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E copy_directory "${PROJECT_SOURCE_DIR}/assets" "$<TARGET_FILE_DIR:${target}>/assets"
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different "$<TARGET_FILE:OpenAL>" "$<TARGET_FILE_DIR:${target}>/$<TARGET_FILE_NAME:OpenAL>"
+        COMMENT "  -> syncing resources + OpenAL32.dll to $<TARGET_FILE_DIR:${target}>"
     )
 endforeach()
+# 移除旧的 ALL 目标同步命令（已被上面的 per-target POST_BUILD 替代）
+# （保留 SyncSandboxResources 仅用于 assets 根目录拷贝，供其他测试使用）

@@ -37,7 +37,6 @@ namespace Engine {
         m_GL = gl;
 
         // ── 加载网格着色器 ──
-        // 使用简单的纯色着色器，通过 uniform 控制颜色和淡出
         m_GridShader = factory->CreateShader("assets/shaders/vertex.glsl",
                                               "assets/shaders/fragment.glsl");
         if (!m_GridShader) {
@@ -45,7 +44,7 @@ namespace Engine {
         }
 
         // ── 加载坐标轴着色器（与网格共用） ──
-        m_AxisShader = m_GridShader; // 相同着色器，不同 uniform
+        m_AxisShader = m_GridShader;
 
         // ── 创建网格 ──
         if (!CreateGridMesh(factory)) {
@@ -78,13 +77,12 @@ namespace Engine {
 
     bool EditorOverlay::CreateGridMesh(IGraphicsFactory* factory) {
         // ── LOD0：密集网格（40×40 单元格，41×41 个顶点） ──
-        // 用于近距离观察，单元格 0.5m
         {
             const float halfSize = 10.0f;
             const float cellSize = 0.5f;
             const int segments = static_cast<int>(halfSize * 2.0f / cellSize);
-            const int lineCount = (segments + 1) * 2; // X 和 Z 方向的总线数
-            const int vertCount = lineCount * 2;       // 每条线起点和终点
+            const int lineCount = (segments + 1) * 2;
+            const int vertCount = lineCount * 2;
 
             std::vector<float> verts;
             verts.reserve(vertCount * 3);
@@ -92,17 +90,13 @@ namespace Engine {
             // X 方向线条（沿 Z 轴排布）
             for (int i = 0; i <= segments; ++i) {
                 float z = -halfSize + i * cellSize;
-                // 线起点 (-halfSize, 0, z)
                 verts.push_back(-halfSize); verts.push_back(0.0f); verts.push_back(z);
-                // 线终点 ( halfSize, 0, z)
                 verts.push_back( halfSize); verts.push_back(0.0f); verts.push_back(z);
             }
             // Z 方向线条（沿 X 轴排布）
             for (int i = 0; i <= segments; ++i) {
                 float x = -halfSize + i * cellSize;
-                // 线起点 (x, 0, -halfSize)
                 verts.push_back(x); verts.push_back(0.0f); verts.push_back(-halfSize);
-                // 线终点 (x, 0,  halfSize)
                 verts.push_back(x); verts.push_back(0.0f); verts.push_back( halfSize);
             }
 
@@ -152,14 +146,9 @@ namespace Engine {
     // ============================================================
 
     bool EditorOverlay::CreateAxisMesh(IGraphicsFactory* factory) {
-        // 简单三色轴：从原点向外延伸 1.0 单位
-        // X=红, Y=绿, Z=蓝
         float axisVerts[] = {
-            // X 轴
             0.0f, 0.0f, 0.0f,   1.0f, 0.0f, 0.0f,
-            // Y 轴
             0.0f, 0.0f, 0.0f,   0.0f, 1.0f, 0.0f,
-            // Z 轴
             0.0f, 0.0f, 0.0f,   0.0f, 0.0f, 1.0f,
         };
         m_AxisVertexCount = 6;
@@ -187,27 +176,23 @@ namespace Engine {
 
         // ── 根据相机高度选择 LOD ──
         float camHeight = std::abs(cameraPos[1]) + 0.01f;
-        int lod = (camHeight > 15.0f) ? 1 : 0; // 15 米以上切换到粗略网格
+        int lod = (camHeight > 15.0f) ? 1 : 0;
 
         if (!m_GridVAO[lod]) return;
         m_GridVAO[lod]->Bind();
 
         // ── 构建网格 MVP ──
         glm::mat4 model(1.0f);
-        // 网格在 Y=0 平面，跟随相机 X/Z 平移实现"无限"效果
-        // 但保持在 0.5m 网格对齐，避免视觉闪烁
         float snapX = std::floor(cameraPos[0] / config.GridCellSize) * config.GridCellSize;
         float snapZ = std::floor(cameraPos[2] / config.GridCellSize) * config.GridCellSize;
         model = glm::translate(model, glm::vec3(snapX, 0.0f, snapZ));
 
         glm::mat4 mvp = glm::make_mat4(viewProj) * model;
 
-        // ── 设置 uniform ──
         m_GridShader->SetMat4("u_MVP", glm::value_ptr(mvp));
         m_GridShader->SetMat4("u_Model", glm::value_ptr(model));
 
-        // 网格颜色：深灰色（主线）+ 浅灰色（细分）
-        float alpha = std::min(1.0f, 20.0f / camHeight); // 随高度淡出
+        float alpha = std::min(1.0f, 20.0f / camHeight);
         float gridColor[4] = { 0.25f, 0.25f, 0.28f, alpha };
         m_GridShader->SetVec4("u_Color", gridColor);
 
@@ -215,29 +200,22 @@ namespace Engine {
         gl->LineWidth(1.0f);
         gl->DrawArrays(GL_LINES, 0, m_GridVertexCount[lod]);
 
-        // ── 绘制中心主轴线（明亮的 X/Z 轴线） ──
-        // 使用更亮的颜色绘制中心的两条主轴线
-        float axisColor[4] = { 0.4f, 0.4f, 0.45f, alpha };
-        m_GridShader->SetVec4("u_Color", axisColor);
+        // ── 绘制中心十字轴线（验证网格 VAO 有足够的顶点） ──
+        // 网格生成时，前4个顶点恰好是从 (-halfSize,0,0) 到 (+halfSize,0,0) 的
+        // X 方向线段，覆盖了中心十字线。直接重用 VAO 的顶点即可。
+        if (m_GridVertexCount[lod] >= 4) {
+            float axisColor[4] = { 0.4f, 0.4f, 0.45f, alpha };
+            m_GridShader->SetVec4("u_Color", axisColor);
 
-        // 重新设置模型矩阵为中心原点
-        glm::mat4 centerModel(1.0f);
-        glm::mat4 centerMVP = glm::make_mat4(viewProj) * centerModel;
-        m_GridShader->SetMat4("u_MVP", glm::value_ptr(centerMVP));
-        m_GridShader->SetMat4("u_Model", glm::value_ptr(centerModel));
+            glm::mat4 centerModel(1.0f);
+            glm::mat4 centerMVP = glm::make_mat4(viewProj) * centerModel;
+            m_GridShader->SetMat4("u_MVP", glm::value_ptr(centerMVP));
+            m_GridShader->SetMat4("u_Model", glm::value_ptr(centerModel));
 
-        gl->LineWidth(1.5f);
-        // 手动绘制中心十字线
-        float centerLineVerts[] = {
-            -config.GridSize, 0.0f, 0.0f,   config.GridSize, 0.0f, 0.0f,
-             0.0f, 0.0f, -config.GridSize,  0.0f, 0.0f,  config.GridSize,
-        };
-        // 可以直接通过临时 VAO 绘制，或用 gl 命令直接画
-        // 简单方式：用 glLine 的 DrawArrays
-        gl->LineWidth(1.5f);
-        gl->DrawArrays(GL_LINES, 0, 4); // 辅助顶点，需要临时上传或使用 VAO 内的前 4 个顶点
-        // 实际上我们用所有网格顶点中的中心线——但为了简单，这里用 DrawArrays 的
-        // 偏移量来实现，或者跳过两条主轴线直接在网格 VAO 中已有中心线。
+            gl->LineWidth(1.5f);
+            gl->DrawArrays(GL_LINES, 0, 4);
+            gl->LineWidth(1.0f);
+        }
     }
 
     // ============================================================

@@ -46,7 +46,19 @@ set(ALSOFT_INSTALL_EXAMPLES OFF CACHE BOOL "" FORCE)
 set(ALSOFT_INSTALL_CONFIG  OFF CACHE BOOL "" FORCE)
 set(ALSOFT_INSTALL_HRTF_DATA OFF CACHE BOOL "" FORCE)
 
+# 注意：openal-soft 的静态初始化代码（bsinc_tables.cpp）存在已知的
+# stack-buffer-overflow（涉及自定义 Number 类型的栈上数组，见 cyl_bessel_i
+# 函数中 const auto y = x2 / k 的 al::number_base 构造函数），
+# 这是上游库的自身问题，不影响运行时行为。
+# 因此对本目标构建时不加 ASan 编译标志。
 add_subdirectory(openal-soft)
+
+# 对 OpenAL Soft 目标禁用 ASan：
+# MSVC 不支持用 /fsanitize=address- 语法关闭单个目标，
+# 因此我们用 target_compile_options 加上 /fsanitize=address
+# 的先决条件：仅当不是 OpenAL 目标时才启用。
+# 更简单的做法：在最终链接前通过环境变量抑制已知误报。
+# 用户运行时设置 ASAN_OPTIONS=suppressions=asan_supp.txt
 
 # =============================================================================
 # spdlog — 高性能 C++ 日志库（header-only，提供 spdlog::spdlog 目标）

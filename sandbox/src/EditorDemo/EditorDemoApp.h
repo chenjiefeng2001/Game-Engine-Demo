@@ -39,6 +39,11 @@ public:
   }
 
   ~EditorDemoApp() override {
+    // ── 显式清理 OpenGL 资源（必须在 OpenGL 上下文销毁前） ──
+    for (auto& vp : m_Viewports) {
+      vp->Cleanup();
+    }
+    m_Viewports.clear();
     std::cout << "=== EditorDemo Shutdown ===" << std::endl;
   }
 
