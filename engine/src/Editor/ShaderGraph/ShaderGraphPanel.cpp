@@ -3,31 +3,32 @@
 namespace Engine {
 namespace ShaderGraph {
 
-    static ImU32 ColorFromInt(int r, int g, int b, int a = 255) {
+    ImU32 ShaderGraphPanel::ColorFromInt(int r, int g, int b, int a) {
         return IM_COL32(r, g, b, a);
     }
 
-    ImU32 ShaderGraphPanel::GetNodeColor(NodeCategory cat) {
+    ImU32 ShaderGraphPanel::GetNodeColor(NodeCategory cat) const {
         switch (cat) {
-            case NodeCategory::Math:    return ColorFromInt(60, 90, 140);
-            case NodeCategory::Input:   return ColorFromInt(60, 130, 80);
-            case NodeCategory::Vector:  return ColorFromInt(130, 70, 140);
-            case NodeCategory::Art:     return ColorFromInt(140, 100, 60);
-            case NodeCategory::Texture: return ColorFromInt(60, 110, 120);
-            case NodeCategory::Master:  return ColorFromInt(160, 60, 60);
+            case NodeCategory::Math:    return ColorNodeMath;
+            case NodeCategory::Input:   return ColorNodeInput;
+            case NodeCategory::Vector:  return ColorNodeVector;
+            case NodeCategory::Art:     return ColorNodeArt;
+            case NodeCategory::Texture: return ColorNodeTex;
+            case NodeCategory::Master:  return ColorNodeMaster;
             default:                    return ColorFromInt(80, 80, 80);
         }
     }
 
-    ImU32 ShaderGraphPanel::GetPinColor(PinType type) {
+    ImU32 ShaderGraphPanel::GetPinColor(PinType type, bool connected) const {
+        if (connected) return ColorPinConnected;
         switch (type) {
-            case PinType::Float:        return ColorFromInt(150, 200, 255);
-            case PinType::Float2:       return ColorFromInt(100, 180, 255);
-            case PinType::Float3:       return ColorFromInt(60, 150, 255);
-            case PinType::Float4:
-            case PinType::Color:        return ColorFromInt(255, 200, 100);
-            case PinType::Texture2D:    return ColorFromInt(200, 150, 100);
-            case PinType::Boolean:      return ColorFromInt(200, 100, 100);
+            case PinType::Float:        return ColorPinFloat;
+            case PinType::Float2:       return ColorPinFloat2;
+            case PinType::Float3:       return ColorPinFloat3;
+            case PinType::Float4:       return ColorPinFloat4;
+            case PinType::Color:        return ColorPinColor;
+            case PinType::Texture2D:    return ColorPinTexture;
+            case PinType::Boolean:      return ColorPinBool;
             default:                    return ColorFromInt(180, 180, 180);
         }
     }
@@ -99,215 +100,244 @@ namespace ShaderGraph {
         ImGui::End();
     }
 
-    void ShaderGraphPanel::DrawNodeCanvas() {
-        // Save canvas state
-        m_CanvasSize = ImGui::GetContentRegionAvail();
-        ImVec2 canvasPos = ImGui::GetCursorScreenPos();
+    // ============================================================
+    // FindHoveredPin — 基于数学距离的精准引脚碰撞检测
+    // ============================================================
+    bool ShaderGraphPanel::FindHoveredPin(ImVec2 mousePos, uint32& outNodeId, uint32& outPinId, PinDirection& outDir) const {
+        if (!m_Graph) return false;
 
-        // Draw canvas background
+        // 碰撞检测半径 (放大一点以提升手感)
+        float hitRadiusSqr = (12.0f * m_CanvasScale) * (12.0f * m_CanvasScale);
+
+        for (auto& [id, node] : m_Graph->GetNodes()) {
+            // 检查输入引脚
+            for (auto& pin : node->GetInputPins()) {
+                ImVec2 pinPos = GetPinPosition(node.get(), pin);
+                float dx = mousePos.x - pinPos.x;
+                float dy = mousePos.y - pinPos.y;
+                if (dx * dx + dy * dy < hitRadiusSqr) {
+                    outNodeId = id; outPinId = pin.id; outDir = pin.direction; return true;
+                }
+            }
+            // 检查输出引脚
+            for (auto& pin : node->GetOutputPins()) {
+                ImVec2 pinPos = GetPinPosition(node.get(), pin);
+                float dx = mousePos.x - pinPos.x;
+                float dy = mousePos.y - pinPos.y;
+                if (dx * dx + dy * dy < hitRadiusSqr) {
+                    outNodeId = id; outPinId = pin.id; outDir = pin.direction; return true;
+                }
+            }
+        }
+        return false;
+    }
+
+    // ============================================================
+    // DrawNodeCanvas — 核心画布
+    // ============================================================
+    void ShaderGraphPanel::DrawNodeCanvas() {
+        m_CanvasSize = ImGui::GetContentRegionAvail();
+        m_CanvasScreenPos = ImGui::GetCursorScreenPos();
+
         ImDrawList* drawList = ImGui::GetWindowDrawList();
-        drawList->AddRectFilled(canvasPos, ImVec2(canvasPos.x + m_CanvasSize.x, canvasPos.y + m_CanvasSize.y),
+        drawList->AddRectFilled(m_CanvasScreenPos, ImVec2(m_CanvasScreenPos.x + m_CanvasSize.x, m_CanvasScreenPos.y + m_CanvasSize.y),
                                 ColorFromInt(30, 30, 30));
 
-        // ── Canvas interaction area ──
-        ImGui::InvisibleButton("Canvas", m_CanvasSize, ImGuiButtonFlags_MouseButtonLeft | ImGuiButtonFlags_MouseButtonRight);
-        bool isCanvasHovered = ImGui::IsItemHovered();
+        // ── 1. 画布底板交互 (关键修复：允许后续画的节点覆盖它并接收点击) ──
+        ImGui::SetNextItemAllowOverlap();
+        ImGui::InvisibleButton("Canvas", m_CanvasSize, ImGuiButtonFlags_MouseButtonLeft | ImGuiButtonFlags_MouseButtonRight | ImGuiButtonFlags_MouseButtonMiddle);
         bool isCanvasActive = ImGui::IsItemActive();
 
-        // Canvas scrolling (middle mouse or alt+drag)
-        if (isCanvasHovered || isCanvasActive) {
-            // Zoom
+        // 判断鼠标是否在画布区域内（不受层级遮挡影响）
+        bool mouseInCanvas = ImGui::IsMouseHoveringRect(m_CanvasScreenPos, ImVec2(m_CanvasScreenPos.x + m_CanvasSize.x, m_CanvasScreenPos.y + m_CanvasSize.y));
+
+        // ── 2. 处理引脚连线的起点 (纯数学判断，优先级最高) ──
+        if (mouseInCanvas && ImGui::IsMouseClicked(ImGuiMouseButton_Left) && !ImGui::GetIO().KeyAlt) {
+            uint32 hitNodeId, hitPinId;
+            PinDirection hitDir;
+            if (FindHoveredPin(ImGui::GetMousePos(), hitNodeId, hitPinId, hitDir)) {
+                m_State.isDraggingLink = true;
+                m_State.draggingFromNodeId = hitNodeId;
+                m_State.draggingFromPinId = hitPinId;
+                m_State.draggingFromDir = hitDir;
+            }
+        }
+
+        // ── 3. 记录右键坐标并打开菜单 ──
+        if (mouseInCanvas && ImGui::IsMouseClicked(ImGuiMouseButton_Right)) {
+            m_State.quickSearchPosX = ImGui::GetMousePos().x;
+            m_State.quickSearchPosY = ImGui::GetMousePos().y;
+            ImGui::OpenPopup("CreateNode");
+        }
+
+        // ── 4. 处理画布拖拽与缩放 (仅在未拖拽引脚时) ──
+        if (mouseInCanvas || isCanvasActive) {
             if (ImGui::GetIO().MouseWheel != 0) {
                 m_CanvasScale = std::clamp(m_CanvasScale + ImGui::GetIO().MouseWheel * 0.1f, 0.3f, 3.0f);
             }
-            // Pan
-            if (ImGui::IsMouseDragging(ImGuiMouseButton_Middle) ||
-                (ImGui::IsMouseDragging(ImGuiMouseButton_Left) && ImGui::GetIO().KeyAlt)) {
+            if (!m_State.isDraggingLink && (ImGui::IsMouseDragging(ImGuiMouseButton_Middle) || (ImGui::IsMouseDragging(ImGuiMouseButton_Left) && ImGui::GetIO().KeyAlt))) {
                 m_CanvasOrigin.x += ImGui::GetIO().MouseDelta.x / m_CanvasScale;
                 m_CanvasOrigin.y += ImGui::GetIO().MouseDelta.y / m_CanvasScale;
             }
         }
 
-        // ── Right-click create menu ──
-        if (isCanvasHovered && ImGui::IsMouseClicked(ImGuiMouseButton_Right)) {
-            ImGui::OpenPopup("CreateNode");
-        }
-
-        // ── Draw grid ──
+        // ── 5. 工业级双层级网格 ──
         if (m_State.showGrid) {
             float gridSize = 20.0f * m_CanvasScale;
-            ImVec2 origin = ImVec2(canvasPos.x + m_CanvasOrigin.x * m_CanvasScale,
-                                   canvasPos.y + m_CanvasOrigin.y * m_CanvasScale);
+            float majorGridSize = gridSize * 5.0f;
+
+            ImVec2 origin = ImVec2(m_CanvasScreenPos.x + m_CanvasOrigin.x * m_CanvasScale,
+                                   m_CanvasScreenPos.y + m_CanvasOrigin.y * m_CanvasScale);
+
+            // 小网格
             for (float x = fmodf(origin.x, gridSize); x < m_CanvasSize.x; x += gridSize) {
-                drawList->AddLine(ImVec2(canvasPos.x + x, canvasPos.y),
-                                  ImVec2(canvasPos.x + x, canvasPos.y + m_CanvasSize.y),
-                                  ColorFromInt(50, 50, 50));
+                drawList->AddLine(ImVec2(m_CanvasScreenPos.x + x, m_CanvasScreenPos.y),
+                                  ImVec2(m_CanvasScreenPos.x + x, m_CanvasScreenPos.y + m_CanvasSize.y),
+                                  ColorFromInt(45, 45, 45, 100));
             }
             for (float y = fmodf(origin.y, gridSize); y < m_CanvasSize.y; y += gridSize) {
-                drawList->AddLine(ImVec2(canvasPos.x, canvasPos.y + y),
-                                  ImVec2(canvasPos.x + m_CanvasSize.x, canvasPos.y + y),
-                                  ColorFromInt(50, 50, 50));
+                drawList->AddLine(ImVec2(m_CanvasScreenPos.x, m_CanvasScreenPos.y + y),
+                                  ImVec2(m_CanvasScreenPos.x + m_CanvasSize.x, m_CanvasScreenPos.y + y),
+                                  ColorFromInt(45, 45, 45, 100));
+            }
+
+            // 大网格（颜色略亮）
+            for (float x = fmodf(origin.x, majorGridSize); x < m_CanvasSize.x; x += majorGridSize) {
+                drawList->AddLine(ImVec2(m_CanvasScreenPos.x + x, m_CanvasScreenPos.y),
+                                  ImVec2(m_CanvasScreenPos.x + x, m_CanvasScreenPos.y + m_CanvasSize.y),
+                                  ColorFromInt(60, 60, 60, 200));
+            }
+            for (float y = fmodf(origin.y, majorGridSize); y < m_CanvasSize.y; y += majorGridSize) {
+                drawList->AddLine(ImVec2(m_CanvasScreenPos.x, m_CanvasScreenPos.y + y),
+                                  ImVec2(m_CanvasScreenPos.x + m_CanvasSize.x, m_CanvasScreenPos.y + y),
+                                  ColorFromInt(60, 60, 60, 200));
             }
         }
 
-        // ── Set clipping ──
-        drawList->PushClipRect(canvasPos, ImVec2(canvasPos.x + m_CanvasSize.x, canvasPos.y + m_CanvasSize.y), true);
+        // ── 裁剪 ──
+        drawList->PushClipRect(m_CanvasScreenPos, ImVec2(m_CanvasScreenPos.x + m_CanvasSize.x, m_CanvasScreenPos.y + m_CanvasSize.y), true);
 
-        // ── Draw links ──
+        // ── 绘制连线 ──
         if (m_Graph) DrawLinks();
 
-        // ── Draw nodes ──
+        // ── 绘制节点 ──
         if (m_Graph) {
-            // Transform cursor to canvas space
-            ImGui::SetCursorScreenPos(ImVec2(canvasPos.x + m_CanvasOrigin.x * m_CanvasScale,
-                                              canvasPos.y + m_CanvasOrigin.y * m_CanvasScale));
+            ImGui::SetCursorScreenPos(ImVec2(m_CanvasScreenPos.x + m_CanvasOrigin.x * m_CanvasScale,
+                                              m_CanvasScreenPos.y + m_CanvasOrigin.y * m_CanvasScale));
 
             for (auto& [id, node] : m_Graph->GetNodes()) {
                 DrawNode(node.get());
             }
         }
 
-        // ── Handle link dragging ──
+        // ── 处理拖拽连线 ──
         HandleLinkDragging();
 
         drawList->PopClipRect();
 
-        // ── Create Node Menu ──
+        // ── 创建节点菜单 ──
         DrawCreateNodeMenu();
     }
 
+    // ============================================================
+    // DrawNode — 工业级节点绘制（无引脚 InvisibleButton，纯 Hit-Test）
+    // ============================================================
     void ShaderGraphPanel::DrawNode(ShaderNode* node) {
         if (!node) return;
 
         ImDrawList* drawList = ImGui::GetWindowDrawList();
         float scale = m_CanvasScale;
-        ImVec2 pos(node->GetPosX() * scale + ImGui::GetCursorScreenPos().x,
-                   node->GetPosY() * scale + ImGui::GetCursorScreenPos().y);
+
+        // 使用 m_CanvasScreenPos 代替 GetCursorScreenPos，保证坐标一致
+        ImVec2 pos(node->GetPosX() * scale + m_CanvasScreenPos.x + m_CanvasOrigin.x * scale,
+                   node->GetPosY() * scale + m_CanvasScreenPos.y + m_CanvasOrigin.y * scale);
 
         float nodeW = node->GetSizeX() * scale;
-        float nodeH = node->GetSizeY() * scale;
-        bool isSelected = m_State.selectedNodeId == node->GetId();
+        float headerH = 28 * scale;
+        float pinStartY = headerH + 8 * scale;
+        float pinSpacing = 22 * scale;
 
-        // Node header
-        float headerH = 24 * scale;
-        ImU32 nodeColor = GetNodeColor(node->GetCategory());
+        int inputCount = (int)node->GetInputPins().size();
+        int outputCount = (int)node->GetOutputPins().size();
+        int maxPins = std::max(inputCount, outputCount);
+        float bodyH = std::max((float)maxPins * pinSpacing + 12 * scale, 40.0f * scale);
+        float nodeH = headerH + bodyH;
 
-        // Node body rect
+        bool isSelected = (m_State.selectedNodeId == node->GetId());
+
         ImVec2 r0 = pos;
         ImVec2 r1 = ImVec2(pos.x + nodeW, pos.y + nodeH);
         ImVec2 headerR1 = ImVec2(pos.x + nodeW, pos.y + headerH);
 
-        // Drop shadow
-        drawList->AddRectFilled(ImVec2(r0.x + 3, r0.y + 3), ImVec2(r1.x + 3, r1.y + 3),
-                                ColorFromInt(0, 0, 0, 60), 4.0f * scale);
+        // 1. 高级阴影
+        drawList->AddRectFilled(ImVec2(r0.x + 4 * scale, r0.y + 6 * scale), ImVec2(r1.x + 4 * scale, r1.y + 6 * scale),
+                                ColorFromInt(0, 0, 0, 100), 8.0f * scale);
 
-        // Header
-        drawList->AddRectFilled(r0, headerR1, nodeColor, 4.0f * scale);
-        // Body
-        drawList->AddRectFilled(ImVec2(r0.x, r0.y + 4 * scale), r1,
-                                ColorFromInt(45, 45, 50), 0, ImDrawFlags_RoundCornersBottom);
-        // Border
-        ImU32 borderColor = isSelected ? ColorFromInt(255, 200, 50) : ColorFromInt(70, 70, 80);
-        drawList->AddRect(r0, r1, borderColor, 4.0f * scale);
+        // 2. 节点头部 (圆角仅顶部)
+        ImU32 nodeColor = GetNodeColor(node->GetCategory());
+        drawList->AddRectFilled(r0, headerR1, nodeColor, 6.0f * scale, ImDrawFlags_RoundCornersTop);
 
-        // Title text
-        drawList->AddText(ImVec2(r0.x + 8 * scale, r0.y + 4 * scale),
-                          ColorFromInt(255, 255, 255), node->GetName().c_str());
+        // 3. 节点主体 (深灰色背景，圆角仅底部)
+        drawList->AddRectFilled(ImVec2(r0.x, headerR1.y), r1, ColorFromInt(35, 35, 40, 240), 6.0f * scale, ImDrawFlags_RoundCornersBottom);
 
-        // Pins
-        float pinStartY = headerH + 4 * scale;
-        float pinSpacing = 18 * scale;
-        int inputCount = (int)node->GetInputPins().size();
-        int outputCount = (int)node->GetOutputPins().size();
-        int maxPins = std::max(inputCount, outputCount);
-        float bodyH = std::max((float)maxPins * pinSpacing + 8 * scale, 40.0f * scale);
+        // 4. 边框
+        ImU32 borderColor = isSelected ? ColorFromInt(255, 165, 0, 255) : ColorFromInt(20, 20, 20, 255);
+        drawList->AddRect(r0, r1, borderColor, 6.0f * scale, 0, isSelected ? 2.5f * scale : 1.5f * scale);
 
-        // Adjust node height for pins
-        nodeH = headerH + bodyH;
-        node->SetSize(node->GetSizeX(), headerH + bodyH);
-        r1 = ImVec2(pos.x + nodeW, pos.y + nodeH);
+        // 5. 标题文本
+        ImVec2 titleSize = ImGui::CalcTextSize(node->GetName().c_str());
+        drawList->AddText(ImVec2(r0.x + (nodeW - titleSize.x) * 0.5f, r0.y + (headerH - titleSize.y) * 0.5f),
+                          ColorFromInt(240, 240, 240), node->GetName().c_str());
 
-        // Draw input pins
-        for (int i = 0; i < inputCount; ++i) {
-            auto& pin = node->GetInputPins()[i];
-            float py = pos.y + pinStartY + i * pinSpacing;
-            float px = pos.x;
+        // 6. 绘制引脚（纯绘制，没有 InvisibleButton）
+        auto drawPins = [&](const std::vector<Pin>& pins, float px, bool isInput) {
+            for (size_t i = 0; i < pins.size(); ++i) {
+                float py = pos.y + pinStartY + i * pinSpacing;
+                ImU32 pinColor = GetPinColor(pins[i].type, pins[i].isConnected);
+                float pinRadius = 5.0f * scale;
 
-            ImU32 pinColor = pin.isConnected ? ColorFromInt(100, 200, 100) : GetPinColor(pin.type);
-            drawList->AddCircleFilled(ImVec2(px, py), 5 * scale, pinColor);
-            drawList->AddText(ImVec2(px + 10 * scale, py - 6 * scale),
-                              ColorFromInt(200, 200, 200), pin.name.c_str());
-        }
+                // 未连接画空心圆，已连接画实心圆
+                if (pins[i].isConnected) {
+                    drawList->AddCircleFilled(ImVec2(px, py), pinRadius, pinColor);
+                } else {
+                    drawList->AddCircleFilled(ImVec2(px, py), pinRadius, ColorFromInt(30, 30, 30, 255));
+                    drawList->AddCircle(ImVec2(px, py), pinRadius, pinColor, 0, 1.5f * scale);
+                }
 
-        // Draw output pins
-        for (int i = 0; i < outputCount; ++i) {
-            auto& pin = node->GetOutputPins()[i];
-            float py = pos.y + pinStartY + i * pinSpacing;
-            float px = pos.x + nodeW;
+                // 引脚文本
+                ImVec2 textSize = ImGui::CalcTextSize(pins[i].name.c_str());
+                if (isInput) {
+                    drawList->AddText(ImVec2(px + 12 * scale, py - textSize.y * 0.5f), ColorFromInt(200, 200, 200), pins[i].name.c_str());
+                } else {
+                    drawList->AddText(ImVec2(px - textSize.x - 12 * scale, py - textSize.y * 0.5f), ColorFromInt(200, 200, 200), pins[i].name.c_str());
+                }
+            }
+        };
+        drawPins(node->GetInputPins(), pos.x, true);
+        drawPins(node->GetOutputPins(), pos.x + nodeW, false);
 
-            ImU32 pinColor = pin.isConnected ? ColorFromInt(100, 200, 100) : GetPinColor(pin.type);
-            drawList->AddCircleFilled(ImVec2(px, py), 5 * scale, pinColor);
-
-            // Draw label to the left of the pin
-            ImVec2 textSize = ImGui::CalcTextSize(pin.name.c_str());
-            drawList->AddText(ImVec2(px - textSize.x - 10 * scale, py - 6 * scale),
-                              ColorFromInt(200, 200, 200), pin.name.c_str());
-        }
-
-        // ── Node interaction ──
-        // Use an invisible button for click/drag
-        ImGui::SetCursorScreenPos(pos);
+        // 7. 节点整体交互侦测（拖动节点自身）
+        ImGui::SetCursorScreenPos(r0);
         ImGui::PushID(node->GetId());
-        ImGui::InvisibleButton("node", ImVec2(nodeW, nodeH));
 
-        if (ImGui::IsItemClicked()) {
-            m_State.selectedNodeId = node->GetId();
-            m_State.selectedLinkId = 0;
-        }
+        // 这里不需要 AllowOverlap，因为我们希望点击被它实体捕获
+        ImGui::InvisibleButton("node_body", ImVec2(nodeW, nodeH));
 
-        if (ImGui::IsItemActive() && ImGui::IsMouseDragging(ImGuiMouseButton_Left) && !ImGui::GetIO().KeyAlt) {
-            node->SetPosition(node->GetPosX() + ImGui::GetIO().MouseDelta.x / scale,
-                              node->GetPosY() + ImGui::GetIO().MouseDelta.y / scale);
-        }
+        // 只有在没拖拽连线的时候，点击和拖拽节点才生效
+        if (!m_State.isDraggingLink) {
+            if (ImGui::IsItemHovered() && ImGui::IsMouseClicked(ImGuiMouseButton_Left)) {
+                m_State.selectedNodeId = node->GetId();
+                m_State.selectedLinkId = 0;
+            }
 
-        // Double-click to select pin for linking
-        if (ImGui::IsItemHovered() && ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left)) {
-            // Start link from last output pin
-        }
-
-        // Handle input pin click (for link start)
-        for (int i = 0; i < inputCount; ++i) {
-            auto& pin = node->GetInputPins()[i];
-            float py = pos.y + pinStartY + i * pinSpacing;
-            float px = pos.x;
-
-            ImGui::SetCursorScreenPos(ImVec2(px - 10, py - 10));
-            ImGui::InvisibleButton(("pin_in_" + std::to_string(pin.id)).c_str(), ImVec2(20, 20));
-            if (ImGui::IsItemClicked() && ImGui::GetIO().KeyCtrl) {
-                m_State.isDraggingLink = true;
-                m_State.draggingFromPinId = pin.id;
-                m_State.draggingFromNodeId = node->GetId();
-                m_State.draggingFromDir = PinDirection::Input;
+            // 关键：IsItemActive 会在鼠标按住该 InvisibleButton 时返回 true，从而实现左键拖拽移动
+            if (ImGui::IsItemActive() && ImGui::IsMouseDragging(ImGuiMouseButton_Left)) {
+                node->SetPosition(node->GetPosX() + ImGui::GetIO().MouseDelta.x / scale,
+                                  node->GetPosY() + ImGui::GetIO().MouseDelta.y / scale);
             }
         }
 
-        // Handle output pin click (for link start)
-        for (int i = 0; i < outputCount; ++i) {
-            auto& pin = node->GetOutputPins()[i];
-            float py = pos.y + pinStartY + i * pinSpacing;
-            float px = pos.x + nodeW;
-
-            ImGui::SetCursorScreenPos(ImVec2(px - 10, py - 10));
-            ImGui::InvisibleButton(("pin_out_" + std::to_string(pin.id)).c_str(), ImVec2(20, 20));
-            if (ImGui::IsItemClicked()) {
-                m_State.isDraggingLink = true;
-                m_State.draggingFromPinId = pin.id;
-                m_State.draggingFromNodeId = node->GetId();
-                m_State.draggingFromDir = PinDirection::Output;
-            }
-        }
-
-        // Delete node
+        // 8. 节点删除逻辑
         if (isSelected && ImGui::IsKeyPressed(ImGuiKey_Delete)) {
             if (m_Graph) m_Graph->RemoveNode(node->GetId());
             m_State.selectedNodeId = 0;
@@ -316,6 +346,9 @@ namespace ShaderGraph {
         ImGui::PopID();
     }
 
+    // ============================================================
+    // DrawLinks — 工业级双层贝塞尔曲线连线
+    // ============================================================
     void ShaderGraphPanel::DrawLinks() {
         if (!m_Graph) return;
         ImDrawList* drawList = ImGui::GetWindowDrawList();
@@ -325,75 +358,88 @@ namespace ShaderGraph {
             auto* inNode = m_Graph->GetNode(link.inputNodeId);
             if (!outNode || !inNode) continue;
 
-            // Find the pins
             const Pin* outPin = nullptr;
             const Pin* inPin = nullptr;
-            for (auto& p : outNode->GetOutputPins()) {
-                if (p.id == link.outputPinId) { outPin = &p; break; }
-            }
-            for (auto& p : inNode->GetInputPins()) {
-                if (p.id == link.inputPinId) { inPin = &p; break; }
-            }
+            for (auto& p : outNode->GetOutputPins()) { if (p.id == link.outputPinId) { outPin = &p; break; } }
+            for (auto& p : inNode->GetInputPins()) { if (p.id == link.inputPinId) { inPin = &p; break; } }
             if (!outPin || !inPin) continue;
 
             ImVec2 p1 = GetPinPosition(outNode, *outPin);
             ImVec2 p2 = GetPinPosition(inNode, *inPin);
 
-            // Draw bezier curve
             float dx = std::abs(p2.x - p1.x) * 0.5f;
+            dx = std::max(dx, 30.0f * m_CanvasScale);
             ImVec2 cp1(p1.x + dx, p1.y);
             ImVec2 cp2(p2.x - dx, p2.y);
 
-            bool isSelected = m_State.selectedLinkId == link.id;
-            drawList->AddBezierCubic(p1, cp1, cp2, p2,
-                                     isSelected ? ColorFromInt(255, 200, 50) : ColorFromInt(120, 180, 255),
-                                     2.0f * m_CanvasScale);
+            bool isSelected = (m_State.selectedLinkId == link.id);
+            ImU32 baseColor = isSelected ? ColorFromInt(255, 200, 50) : GetPinColor(outPin->type, true);
 
-            // Click on link for selection
-            // (Simplified: not pixel-perfect hit detection)
+            // 黑色底边 + 彩色内芯
+            drawList->AddBezierCubic(p1, cp1, cp2, p2, ColorFromInt(15, 15, 15, 200), (isSelected ? 7.0f : 5.0f) * m_CanvasScale);
+            drawList->AddBezierCubic(p1, cp1, cp2, p2, baseColor, (isSelected ? 4.0f : 3.0f) * m_CanvasScale);
         }
     }
 
+    // ============================================================
+    // HandleLinkDragging — 拖拽连线逻辑（含碰撞检测与连接建立）
+    // ============================================================
     void ShaderGraphPanel::HandleLinkDragging() {
         if (!m_Graph || !m_State.isDraggingLink) return;
 
         ImDrawList* drawList = ImGui::GetWindowDrawList();
         ImVec2 mousePos = ImGui::GetMousePos();
 
-        // Get source pin position
         auto* srcNode = m_Graph->GetNode(m_State.draggingFromNodeId);
         if (!srcNode) { m_State.isDraggingLink = false; return; }
 
         const Pin* srcPin = nullptr;
-        for (auto& p : srcNode->GetInputPins()) {
-            if (p.id == m_State.draggingFromPinId) { srcPin = &p; break; }
-        }
-        for (auto& p : srcNode->GetOutputPins()) {
-            if (p.id == m_State.draggingFromPinId) { srcPin = &p; break; }
-        }
+        const auto& pins = (m_State.draggingFromDir == PinDirection::Input) ? srcNode->GetInputPins() : srcNode->GetOutputPins();
+        for (auto& p : pins) { if (p.id == m_State.draggingFromPinId) { srcPin = &p; break; } }
         if (!srcPin) { m_State.isDraggingLink = false; return; }
 
         ImVec2 p1 = GetPinPosition(srcNode, *srcPin);
         ImVec2 p2 = mousePos;
 
-        // Draw temporary bezier
-        float dx = std::abs(p2.x - p1.x) * 0.5f;
-        drawList->AddBezierCubic(p1, ImVec2(p1.x + dx, p1.y),
-                                 ImVec2(p2.x - dx, p2.y), p2,
-                                 ColorFromInt(200, 200, 50, 180), 1.5f * m_CanvasScale);
+        // 保证贝塞尔曲线从左向右弯曲
+        if (m_State.draggingFromDir == PinDirection::Input) std::swap(p1, p2);
 
-        // Release to create link
-        if (!ImGui::IsMouseDown(ImGuiMouseButton_Left)) {
-            m_State.isDraggingLink = false;
+        float dx = std::abs(p2.x - p1.x) * 0.5f;
+        ImVec2 cp1(p1.x + dx, p1.y);
+        ImVec2 cp2(p2.x - dx, p2.y);
+
+        drawList->AddBezierCubic(p1, cp1, cp2, p2, ColorFromInt(0, 0, 0, 150), 5.0f * m_CanvasScale);
+        drawList->AddBezierCubic(p1, cp1, cp2, p2, GetPinColor(srcPin->type, true), 3.0f * m_CanvasScale);
+
+        // ── 释放鼠标，尝试建立连接 ──
+        if (ImGui::IsMouseReleased(ImGuiMouseButton_Left)) {
+            uint32 targetNodeId, targetPinId;
+            PinDirection targetDir;
+            if (FindHoveredPin(mousePos, targetNodeId, targetPinId, targetDir)) {
+                // 确保方向相反 (Output 连 Input)
+                if (m_State.draggingFromDir != targetDir) {
+                    uint32 outNodeID = (m_State.draggingFromDir == PinDirection::Output) ? m_State.draggingFromNodeId : targetNodeId;
+                    uint32 inNodeID = (targetDir == PinDirection::Input) ? targetNodeId : m_State.draggingFromNodeId;
+                    uint32 outPinID = (m_State.draggingFromDir == PinDirection::Output) ? srcPin->id : targetPinId;
+                    uint32 inPinID = (targetDir == PinDirection::Input) ? targetPinId : srcPin->id;
+
+                    // ReplaceLink 自动替换旧连线 + 校验
+                    m_Graph->ReplaceLink(outNodeID, outPinID, inNodeID, inPinID);
+                }
+            }
+            m_State.isDraggingLink = false; // 结束拖拽
         }
     }
 
+    // ============================================================
+    // GetPinPosition — 获取引脚屏幕坐标（使用 m_CanvasScreenPos）
+    // ============================================================
     ImVec2 ShaderGraphPanel::GetPinPosition(const ShaderNode* node, const Pin& pin) const {
-        ImVec2 pos(node->GetPosX() * m_CanvasScale + ImGui::GetCursorScreenPos().x,
-                   node->GetPosY() * m_CanvasScale + ImGui::GetCursorScreenPos().y);
-        float headerH = 24 * m_CanvasScale;
-        float pinStartY = headerH + 4 * m_CanvasScale;
-        float pinSpacing = 18 * m_CanvasScale;
+        float x = node->GetPosX() * m_CanvasScale + m_CanvasScreenPos.x + m_CanvasOrigin.x * m_CanvasScale;
+        float y = node->GetPosY() * m_CanvasScale + m_CanvasScreenPos.y + m_CanvasOrigin.y * m_CanvasScale;
+        float headerH = 28 * m_CanvasScale;
+        float pinStartY = headerH + 8 * m_CanvasScale;
+        float pinSpacing = 22 * m_CanvasScale;
 
         int pinIdx = 0;
         const auto& pins = (pin.direction == PinDirection::Input) ? node->GetInputPins() : node->GetOutputPins();
@@ -401,50 +447,43 @@ namespace ShaderGraph {
             if (pins[i].id == pin.id) { pinIdx = (int)i; break; }
         }
 
-        float px = pos.x + (pin.direction == PinDirection::Input ? 0 : node->GetSizeX() * m_CanvasScale);
-        float py = pos.y + pinStartY + pinIdx * pinSpacing;
+        float px = x + (pin.direction == PinDirection::Input ? 0 : node->GetSizeX() * m_CanvasScale);
+        float py = y + pinStartY + pinIdx * pinSpacing;
         return ImVec2(px, py);
     }
 
+    // ============================================================
+    // DrawCreateNodeMenu — 修复坐标系转换（使用保存的右键坐标）
+    // ============================================================
     void ShaderGraphPanel::DrawCreateNodeMenu() {
         if (ImGui::BeginPopup("CreateNode")) {
             ImGui::Text("Create Node");
             ImGui::Separator();
-            ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(4, 3));
 
             auto factoryList = GetNodeFactoryList();
-            std::string currentCategory = "";
-
             for (auto& entry : factoryList) {
-                std::string catName = NodeCategoryName(entry.category);
-                if (catName != currentCategory) {
-                    if (!currentCategory.empty()) ImGui::Separator();
-                    currentCategory = catName;
-                    ImGui::TextColored(ImVec4(0.5f, 0.8f, 1.0f, 1.0f), "--- %s ---", catName.c_str());
-                }
-
                 if (ImGui::MenuItem(entry.name)) {
                     if (m_Graph) {
-                        auto node = entry.factory(0);
-                        uint32 newId = m_Graph->AddNode(std::move(node));
+                        uint32 newId = m_Graph->AddNode(entry.factory(0));
                         auto* newNode = m_Graph->GetNode(newId);
                         if (newNode) {
-                            // Place at mouse position in canvas space
-                            ImVec2 mousePos = ImGui::GetMousePos();
-                            ImVec2 canvasPos = ImGui::GetCursorScreenPos();
-                            newNode->SetPosition((mousePos.x - canvasPos.x) / m_CanvasScale,
-                                                  (mousePos.y - canvasPos.y) / m_CanvasScale);
+                            // 【致命修复】使用保存的右键点击坐标，而不是当前的鼠标坐标
+                            // 因为当前鼠标已经移到了菜单上！
+                            float localX = (m_State.quickSearchPosX - m_CanvasScreenPos.x) / m_CanvasScale - m_CanvasOrigin.x;
+                            float localY = (m_State.quickSearchPosY - m_CanvasScreenPos.y) / m_CanvasScale - m_CanvasOrigin.y;
+                            newNode->SetPosition(localX, localY);
                         }
                     }
                     ImGui::CloseCurrentPopup();
                 }
             }
-
-            ImGui::PopStyleVar();
             ImGui::EndPopup();
         }
     }
 
+    // ============================================================
+    // DrawBlackboard
+    // ============================================================
     void ShaderGraphPanel::DrawBlackboard() {
         if (!m_Graph) return;
 
@@ -472,7 +511,6 @@ namespace ShaderGraph {
             ImGui::EndPopup();
         }
 
-        // List properties
         auto& props = m_Graph->GetProperties();
         int removeIdx = -1;
         for (int i = 0; i < (int)props.size(); ++i) {
@@ -485,6 +523,9 @@ namespace ShaderGraph {
         if (removeIdx >= 0) m_Graph->RemoveProperty(removeIdx);
     }
 
+    // ============================================================
+    // DrawPropertiesPanel
+    // ============================================================
     void ShaderGraphPanel::DrawPropertiesPanel() {
         if (!m_Graph) return;
 
@@ -502,9 +543,8 @@ namespace ShaderGraph {
         ImGui::TextColored(ImVec4(0.8f, 1.0f, 0.8f, 1), "Selected: %s", node->GetName().c_str());
         ImGui::Separator();
 
-        // Input pin values (for Art nodes with editable defaults)
         for (auto& pin : node->GetInputPins()) {
-            if (pin.isConnected) continue; // Don't edit connected pins
+            if (pin.isConnected) continue;
 
             switch (pin.type) {
                 case PinType::Float:
@@ -518,7 +558,6 @@ namespace ShaderGraph {
 
                     if (dim == 1) {
                         if (ImGui::DragFloat(label.c_str(), &v[0], 0.01f, -10, 10)) {
-                            // Update (not mutating const - this is OK for our editable defaults)
                             const_cast<Pin&>(pin).defaultValue.f[0] = v[0];
                         }
                     } else if (dim == 3) {
@@ -537,6 +576,9 @@ namespace ShaderGraph {
         }
     }
 
+    // ============================================================
+    // DrawCodePreview
+    // ============================================================
     void ShaderGraphPanel::DrawCodePreview() {
         if (!ImGui::Begin("Generated Code", &m_State.showCodePreview)) {
             ImGui::End();
@@ -554,103 +596,16 @@ namespace ShaderGraph {
         ImGui::End();
     }
 
+    // ============================================================
+    // GenerateShaderCode
+    // ============================================================
     bool ShaderGraphPanel::GenerateShaderCode(std::string& outCode) {
         if (!m_Graph) return false;
-        return ShaderCodeGenerator::Generate(*m_Graph, outCode);
-    }
 
-    // ══════════════════════════════════════════════════════════════
-    // ShaderCodeGenerator
-    // ══════════════════════════════════════════════════════════════
-
-    bool ShaderCodeGenerator::Generate(const ShaderGraph& graph, std::string& outCode) {
         std::stringstream ss;
-
-        GenerateHeader(ss);
-        GenerateInputStruct(ss);
-        GenerateOutputStruct(ss);
-        GenerateProperties(graph, ss);
-
-        // Find master node
-        uint32 masterId = graph.GetMasterNodeId();
-        if (masterId == 0) {
-            // Find first master node
-            for (auto& [id, node] : graph.GetNodes()) {
-                if (node->GetCategory() == NodeCategory::Master) {
-                    masterId = id;
-                    break;
-                }
-            }
-        }
-        if (masterId == 0) {
-            outCode = ss.str() + "\n// No Master node found\n";
-            return false;
-        }
-
-        ss << "float4 main(VSOutput IN) : SV_Target\n{\n";
-        ss << "    ShaderOutput OUT;\n";
-        ss << "    OUT.albedo = float3(0,0,0);\n";
-        ss << "    OUT.normal = IN.normalWS;\n";
-        ss << "    OUT.opacity = 1.0;\n\n";
-
-        // Topological sort and generate
-        auto sortedNodes = graph.TopologicalSort();
-        std::unordered_map<uint32, std::string> pinOutputs;
-
-        for (uint32 nodeId : sortedNodes) {
-            auto* node = graph.GetNode(nodeId);
-            if (!node) continue;
-
-            // Skip master node (handle at end)
-            if (node->GetCategory() == NodeCategory::Master) continue;
-
-            // For nodes with outputs, assign a variable name
-            if (!node->GetOutputPins().empty()) {
-                // Generate output variable name
-                std::string varName = "_n" + std::to_string(nodeId);
-                std::string code = node->GenerateHLSL(pinOutputs);
-
-                // Assign to variable
-                PinType outType = node->GetOutputPins()[0].type;
-                ss << "    " << PinTypeName(outType) << " " << varName << " = " << code << ";\n";
-
-                // Register outputs
-                for (auto& pin : node->GetOutputPins()) {
-                    pinOutputs[pin.id] = varName;
-                    // Handle swizzle for multi-output nodes (like SampleTexture2D)
-                    if (node->GetOutputPins().size() > 1) {
-                        if (pin.name == "R") pinOutputs[pin.id] = varName + ".r";
-                        else if (pin.name == "G") pinOutputs[pin.id] = varName + ".g";
-                        else if (pin.name == "B") pinOutputs[pin.id] = varName + ".b";
-                        else if (pin.name == "A") pinOutputs[pin.id] = varName + ".a";
-                    }
-                }
-            } else {
-                // No output nodes (e.g. blackboard property)
-                node->GenerateHLSL(pinOutputs);
-            }
-        }
-
-        // Generate master node code
-        auto* masterNode = graph.GetNode(masterId);
-        if (masterNode) {
-            ss << "\n    // Master stack\n";
-            ss << masterNode->GenerateHLSL(pinOutputs) << "\n";
-            ss << "    return float4(OUT.albedo, OUT.opacity);\n";
-        }
-
-        ss << "}\n";
-        outCode = ss.str();
-        return true;
-    }
-
-    void ShaderCodeGenerator::GenerateHeader(std::stringstream& ss) {
         ss << "// Generated by Game-Engine-Demo Shader Graph\n";
-        ss << "#include \"ShaderCommon.hlsl\"\n\n";
         ss << "#define PI 3.1415926535\n\n";
-    }
 
-    void ShaderCodeGenerator::GenerateInputStruct(std::stringstream& ss) {
         ss << "struct VSOutput {\n";
         ss << "    float4 position : SV_Position;\n";
         ss << "    float2 uv : TEXCOORD0;\n";
@@ -660,23 +615,19 @@ namespace ShaderGraph {
         ss << "    float3 tangentWS : TANGENT;\n";
         ss << "    float time : TIME;\n";
         ss << "};\n\n";
-    }
 
-    void ShaderCodeGenerator::GenerateOutputStruct(std::stringstream& ss) {
         ss << "struct ShaderOutput {\n";
         ss << "    float3 albedo;\n";
         ss << "    float3 normal;\n";
         ss << "    float opacity;\n";
         ss << "};\n\n";
-    }
 
-    void ShaderCodeGenerator::GenerateProperties(const ShaderGraph& graph, std::stringstream& ss) {
         ss << "// Material Properties\n";
-        for (auto& [id, node] : graph.GetNodes()) {
+        for (auto& [id, node] : m_Graph->GetNodes()) {
             std::string propDecl = node->GeneratePropertyDecl();
             if (!propDecl.empty()) ss << propDecl << "\n";
         }
-        for (auto& prop : graph.GetProperties()) {
+        for (auto& prop : m_Graph->GetProperties()) {
             switch (prop.type) {
                 case PinType::Float:  ss << "float _" << prop.name << ";\n"; break;
                 case PinType::Color:  ss << "float4 _" << prop.name << ";\n"; break;
@@ -686,6 +637,70 @@ namespace ShaderGraph {
             }
         }
         ss << "\n";
+
+        uint32 masterId = m_Graph->GetMasterNodeId();
+        if (masterId == 0) {
+            for (auto& [id, node] : m_Graph->GetNodes()) {
+                if (node->GetCategory() == NodeCategory::Master) {
+                    masterId = id;
+                    break;
+                }
+            }
+        }
+        if (masterId == 0) {
+            outCode = ss.str() + "// No Master node found\n";
+            return false;
+        }
+
+        ss << "float4 main(VSOutput IN) : SV_Target\n{\n";
+        ss << "    ShaderOutput OUT;\n";
+        ss << "    OUT.albedo = float3(0,0,0);\n";
+        ss << "    OUT.normal = IN.normalWS;\n";
+        ss << "    OUT.opacity = 1.0;\n\n";
+
+        auto sortedNodes = m_Graph->TopologicalSort();
+        std::unordered_map<uint32, std::string> pinOutputs;
+        uint32 instrCount = 0;
+        uint32 texCount = 0;
+
+        for (uint32 nodeId : sortedNodes) {
+            auto* node = m_Graph->GetNode(nodeId);
+            if (!node || node->GetCategory() == NodeCategory::Master) continue;
+
+            if (!node->GetOutputPins().empty()) {
+                std::string varName = "_n" + std::to_string(nodeId);
+                std::string code = node->GenerateHLSL(pinOutputs);
+
+                PinType outType = node->GetOutputPins()[0].type;
+                ss << "    " << PinTypeName(outType) << " " << varName << " = " << code << ";\n";
+
+                instrCount++;
+                if (node->GetCategory() == NodeCategory::Texture) texCount++;
+
+                for (auto& pin : node->GetOutputPins()) {
+                    pinOutputs[pin.id] = varName;
+                    if (node->GetOutputPins().size() > 1) {
+                        if (pin.name == "R") pinOutputs[pin.id] = varName + ".r";
+                        else if (pin.name == "G") pinOutputs[pin.id] = varName + ".g";
+                        else if (pin.name == "B") pinOutputs[pin.id] = varName + ".b";
+                        else if (pin.name == "A") pinOutputs[pin.id] = varName + ".a";
+                    }
+                }
+            }
+        }
+
+        auto* masterNode = m_Graph->GetNode(masterId);
+        if (masterNode) {
+            ss << "\n    // Master stack\n";
+            ss << masterNode->GenerateHLSL(pinOutputs) << "\n";
+            ss << "    return float4(OUT.albedo, OUT.opacity);\n";
+        }
+        ss << "}\n";
+
+        m_State.instructionCount = instrCount;
+        m_State.textureSampleCount = texCount;
+        outCode = ss.str();
+        return true;
     }
 
 }} // namespace Engine::ShaderGraph

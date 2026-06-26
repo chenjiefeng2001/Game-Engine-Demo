@@ -54,9 +54,10 @@ _3DTestApp::_3DTestApp(IGraphicsFactory &factory, const char* title)
                                          "assets/shaders/depth_only.frag");
   m_MeshRenderer->SetDepthShader(m_DepthShader);
 
-  m_ShadowMapper = std::make_unique<ShadowMapper>(*ctx);
-  m_MeshRenderer->SetShadowMapper(m_ShadowMapper.get());
-  m_MeshRenderer->SetShadowEnabled(true);
+  // ShadowMapper 是纯抽象接口，暂未有具体实现，注释掉以允许编译
+  // m_ShadowMapper = std::make_unique<ShadowMapper>(*ctx);
+  // m_MeshRenderer->SetShadowMapper(m_ShadowMapper.get());
+  m_MeshRenderer->SetShadowEnabled(false);
   m_MeshRenderer->AddLight({{15, 20, 15}, {1, 1, 1}, 1.5f});
   m_MeshRenderer->AddLight({{-10, 8, 12}, {0.8f, 0.6f, 1.0f}, 0.8f});
   m_MeshRenderer->AddLight({{5, 3, -12}, {1.0f, 0.4f, 0.2f}, 0.6f});
@@ -353,8 +354,6 @@ void _3DTestApp::DrawDebugImGui() {
   ImGui::End();
 }
 
-// ── SyncDebugLights ──
-// 从 m_DebugLights 写回到 MeshRenderer，确保 UI 修改生效
 void _3DTestApp::SyncDebugLights() {
     for (uint32 i = 0; i < m_DebugLights.size() && i < m_MeshRenderer->GetLightCount(); ++i) {
         auto& dl = m_DebugLights[i];
@@ -451,9 +450,7 @@ void _3DTestApp::Run() {
     ctx->ClearColor(0.02f, 0.02f, 0.02f, 1.0f);
 
     // ═══ 3D 渲染管线 ═══
-    // Pass 无条件创建以维持 GPU Profiler 固定表
-
-    // Shadow Pass
+    // Shadow Pass（m_ShadowMapper 为 nullptr 时跳过阴影渲染）
     {
       int32 q = ctx->BeginGPUPass("ShadowPass");
       if (canRender3D && m_ShadowMapper) {
@@ -490,9 +487,7 @@ void _3DTestApp::Run() {
       static_cast<OpenGLContext *>(ctx)->ResolveToDefault();
     }
 
-    // 【幻影修复】清除 Backbuffer 深度缓冲
-    // 3D 渲染在 MSAA FBO 上进行；ResolveToDefault 只复制颜色数据到默认 Backbuffer，
-    // 而深度缓冲保留了旧帧数据。若不清除，ImGui 会被该残留深度值剔除（消失/闪烁）。
+    // 清除 Backbuffer 深度缓冲
     {
       static_cast<OpenGLContext*>(ctx)->GetGL().Clear(GL_DEPTH_BUFFER_BIT);
     }
@@ -501,12 +496,9 @@ void _3DTestApp::Run() {
     {
       int32 q = ctx->BeginGPUPass("UIPass");
 
-      // 重置 OpenGL 管道状态（防止深度/混合残留污染 ImGui）
       auto* glCtx = static_cast<OpenGLContext*>(ctx);
       glCtx->ResetPipelineState();
 
-      // 【防御性修复】显式确认 ImGui 所需的 2D 渲染状态
-      // ImGui 基于画家算法，必须禁用所有 3D 状态以避免碰撞剔除
       auto& gl = glCtx->GetGL();
       gl.Disable(GL_DEPTH_TEST);
       gl.DepthMask(GL_FALSE);
@@ -515,7 +507,6 @@ void _3DTestApp::Run() {
       gl.BlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
       gl.Enable(GL_SCISSOR_TEST);
 
-      // 同步持久化光源数据
       SyncDebugLights();
 
       if (m_UIInitialized && UIManager::Get()) {
@@ -545,7 +536,6 @@ void _3DTestApp::Run() {
           m_PerfWindow.SetVRAMUsage(ctx->GetTextureVRAMBytes(), ctx->GetBufferVRAMBytes(), 0);
         }
 
-        // 同步 AA 配置
         {
           auto *pp = ctx->GetPostProcessingDebugData();
           if (pp && glCtx) {
@@ -593,8 +583,6 @@ void _3DTestApp::Run() {
   }
 }
 
-// ── PopulateLightingDebugData ──
-// 使用 m_DebugLights 持久化状态，避免 UI 修改被覆盖
 void _3DTestApp::PopulateLightingDebugData() {
   auto *ctx = m_Window->GetContext();
   if (!ctx) return;
@@ -617,8 +605,6 @@ void _3DTestApp::PopulateLightingDebugData() {
     dst.enabled   = true;
     dst.isShadowCaster = (i == 0);
 
-    // 检查用户是否在 DebugUI 中修改了值（DrawLightingAndShadows 会直接写 ld->lights）
-    // 将修改写回 m_DebugLights 并标记 dirty
     const auto& rl = m_MeshRenderer->GetLight(i);
     if (src.position.x != rl.position.x || src.position.y != rl.position.y || src.position.z != rl.position.z ||
         src.color.x != rl.color.x || src.color.y != rl.color.y || src.color.z != rl.color.z ||

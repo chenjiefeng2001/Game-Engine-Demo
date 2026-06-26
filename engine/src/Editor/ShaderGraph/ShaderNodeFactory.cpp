@@ -89,22 +89,22 @@ namespace ShaderGraph {
         return true;
     }
 
-    std::vector<uint32> ShaderGraph::TopologicalSort() const {
+    std::vector<uint32> ShaderGraph::TopologicalSort(std::vector<CompileError>* outErrors) const {
         std::vector<uint32> result;
         std::unordered_map<uint32, int> inDegree;
 
         // Initialize in-degrees
-        for (auto& [id, node] : m_Nodes) {
-            inDegree[id] = 0;
+        for (const auto& pair : m_Nodes) {
+            inDegree[pair.first] = 0;
         }
-        for (auto& link : m_Links) {
+        for (const auto& link : m_Links) {
             inDegree[link.inputNodeId]++;
         }
 
         // Kahn's algorithm
         std::vector<uint32> queue;
-        for (auto& [id, deg] : inDegree) {
-            if (deg == 0) queue.push_back(id);
+        for (const auto& pair : inDegree) {
+            if (pair.second == 0) queue.push_back(pair.first);
         }
 
         while (!queue.empty()) {
@@ -112,7 +112,7 @@ namespace ShaderGraph {
             queue.pop_back();
             result.push_back(nodeId);
 
-            for (auto& link : m_Links) {
+            for (const auto& link : m_Links) {
                 if (link.outputNodeId == nodeId) {
                     if (--inDegree[link.inputNodeId] == 0) {
                         queue.push_back(link.inputNodeId);
@@ -120,7 +120,149 @@ namespace ShaderGraph {
                 }
             }
         }
+
+        // Check for cycles
+        if (outErrors && result.size() < m_Nodes.size()) {
+            CompileError err;
+            err.severity = CompileError::Error;
+            err.message = "Graph contains a cycle — topological sort incomplete";
+            outErrors->push_back(err);
+        }
+
         return result;
+    }
+
+    bool ShaderGraph::HasCycles() const {
+        std::vector<uint32> sorted = const_cast<ShaderGraph*>(this)->TopologicalSort(nullptr);
+        return sorted.size() < m_Nodes.size();
+    }
+
+    std::vector<uint32> ShaderGraph::GetNodeInputs(uint32 nodeId) const {
+        std::vector<uint32> inputs;
+        for (const auto& link : m_Links) {
+            if (link.inputNodeId == nodeId) inputs.push_back(link.outputNodeId);
+        }
+        return inputs;
+    }
+
+    std::vector<uint32> ShaderGraph::GetNodeOutputs(uint32 nodeId) const {
+        std::vector<uint32> outputs;
+        for (const auto& link : m_Links) {
+            if (link.outputNodeId == nodeId) outputs.push_back(link.inputNodeId);
+        }
+        return outputs;
+    }
+
+    std::vector<uint32> ShaderGraph::FindPath(uint32 fromNodeId, uint32 toNodeId) const {
+        // BFS shortest path
+        std::unordered_map<uint32, uint32> parent;
+        std::vector<uint32> queue;
+        std::unordered_set<uint32> visited;
+
+        queue.push_back(fromNodeId);
+        visited.insert(fromNodeId);
+
+        size_t head = 0;
+        while (head < queue.size()) {
+            uint32 cur = queue[head++];
+            if (cur == toNodeId) break;
+            for (const auto& link : m_Links) {
+                if (link.outputNodeId == cur && visited.find(link.inputNodeId) == visited.end()) {
+                    queue.push_back(link.inputNodeId);
+                    visited.insert(link.inputNodeId);
+                    parent[link.inputNodeId] = cur;
+                }
+            }
+        }
+
+        std::vector<uint32> path;
+        uint32 cur = toNodeId;
+        while (cur != fromNodeId && parent.find(cur) != parent.end()) {
+            path.push_back(cur);
+            cur = parent[cur];
+        }
+        if (cur == fromNodeId) {
+            path.push_back(fromNodeId);
+            std::reverse(path.begin(), path.end());
+        }
+        return path;
+    }
+
+    bool ShaderGraph::HasPathTo(uint32 fromNodeId, uint32 toNodeId, std::unordered_set<uint32>& visited) const {
+        if (fromNodeId == toNodeId) return true;
+        visited.insert(fromNodeId);
+
+        for (const auto& link : m_Links) {
+            if (link.outputNodeId == fromNodeId && visited.find(link.inputNodeId) == visited.end()) {
+                if (HasPathTo(link.inputNodeId, toNodeId, visited)) return true;
+            }
+        }
+        return false;
+    }
+
+    bool ShaderGraph::CanConnectPins(const Pin& outPin, const Pin& inPin, std::string& outReason) const {
+        // 1. Direction check
+        if (outPin.direction != PinDirection::Output || inPin.direction != PinDirection::Input) {
+            outReason = "Must connect Output → Input";
+            return false;
+        }
+        // 2. Same node check
+        if (outPin.nodeId == inPin.nodeId) {
+            outReason = "Cannot connect a node to itself";
+            return false;
+        }
+        // 3. Type compatibility
+        if (!CanAutoConvert(outPin.type, inPin.type)) {
+            outReason = std::string("Type mismatch: ") + PinTypeName(outPin.type) + " → " + PinTypeName(inPin.type);
+            return false;
+        }
+        // 4. DAG check — no cycles
+        auto it = m_Nodes.find(outPin.nodeId);
+        if (it != m_Nodes.end()) {
+            std::unordered_set<uint32> visited;
+            if (HasPathTo(inPin.nodeId, outPin.nodeId, visited)) {
+                outReason = "Connection would create a cycle";
+                return false;
+            }
+        }
+        return true;
+    }
+
+    uint32 ShaderGraph::ReplaceLink(uint32 outputNodeId, uint32 outputPinId, uint32 inputNodeId, uint32 inputPinId) {
+        // Check if input pin already has a connection
+        for (auto it = m_Links.begin(); it != m_Links.end(); ) {
+            if (it->inputPinId == inputPinId) {
+                it = m_Links.erase(it);
+            } else {
+                ++it;
+            }
+        }
+        return AddLink(outputNodeId, outputPinId, inputNodeId, inputPinId);
+    }
+
+    bool ShaderGraph::RemoveLinkByPins(uint32 outputNodeId, uint32 outputPinId, uint32 inputNodeId, uint32 inputPinId) {
+        for (auto it = m_Links.begin(); it != m_Links.end(); ++it) {
+            if (it->outputNodeId == outputNodeId && it->outputPinId == outputPinId &&
+                it->inputNodeId == inputNodeId && it->inputPinId == inputPinId) {
+                // Unmark pins
+                auto* outNode = GetNode(outputNodeId);
+                if (outNode) {
+                    for (auto& pin : outNode->GetOutputPins()) {
+                        if (pin.id == outputPinId) { pin.isConnected = false; break; }
+                    }
+                }
+                auto* inNode = GetNode(inputNodeId);
+                if (inNode) {
+                    for (auto& pin : inNode->GetInputPins()) {
+                        if (pin.id == inputPinId) { pin.isConnected = false; break; }
+                    }
+                }
+                m_Links.erase(it);
+                MarkDirty();
+                return true;
+            }
+        }
+        return false;
     }
 
     void ShaderGraph::Clear() {
@@ -128,20 +270,33 @@ namespace ShaderGraph {
         m_Links.clear();
         m_Properties.clear();
         m_MasterNodeId = 0;
+        m_GraphStack.clear();
+        MarkDirty();
     }
 
-    void ShaderGraph::RemoveProperty(int index) {
-        if (index >= 0 && index < (int)m_Properties.size())
-            m_Properties.erase(m_Properties.begin() + index);
+    std::vector<CompileError> ShaderGraph::Validate() const {
+        std::vector<CompileError> errors;
+        TopologicalSort(&errors);
+        return errors;
+    }
+
+    std::string ShaderGraph::ToJSON() const {
+        // Placeholder — will serialize nodes/links/properties to JSON
+        return "{}";
+    }
+
+    bool ShaderGraph::FromJSON(const std::string& json) {
+        // Placeholder — will deserialize from JSON
+        return false;
     }
 
     bool ShaderGraph::SaveToFile(const std::string& path) const {
-        // TODO: JSON serialization using nlohmann/json
+        // TODO: JSON file save via ToJSON()
         return false;
     }
 
     bool ShaderGraph::LoadFromFile(const std::string& path) {
-        // TODO: JSON deserialization
+        // TODO: JSON file load via FromJSON()
         return false;
     }
 
