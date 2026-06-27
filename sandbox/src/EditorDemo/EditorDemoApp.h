@@ -77,6 +77,30 @@ protected:
     m_Editor.GetSceneManager().SetScene(m_Scene.get());
     m_HierarchyPanel.SetScene(m_Scene.get());
 
+    // ── 设置场景渲染注入器：编辑器的主视口通过此回调绘制场景 ──
+    // ViewportPanel 已在 Render3DScene 中绑定了 FBO 并清空，
+    // 此回调只需使用传入的 viewProj 矩阵绘制场景内容。
+    m_Editor.SetSceneRenderInjector([this](const float* viewProj16, const float* camPos3) {
+      if (!m_Scene) return;
+
+      // 使用引擎的默认 Shader 绘制场景
+      // Shader 已由 Application::InitShader() 在启动时创建
+      if (m_Shader && m_VAO && m_Texture) {
+        auto* oglCtx = static_cast<OpenGLContext*>(GetRenderContext());
+        if (oglCtx) {
+          m_Shader->Bind();
+          m_Shader->SetMat4("u_ViewProjection", viewProj16);
+          oglCtx->BindViewModeUniform(m_Shader.get());
+          m_Texture->Bind(0);
+          m_VAO->Bind();
+          oglCtx->DrawIndexed(m_VAO);
+        }
+      }
+
+      // TODO: 遍历场景 GameObject 进行每个物体的绘制（需要 RenderComponent 系统）
+      // 当前先绘制引擎默认的测试四边形作为占位
+    });
+
     // ── 初始化多视口 ──
     InitViewports();
 

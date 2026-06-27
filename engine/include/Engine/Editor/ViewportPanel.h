@@ -103,9 +103,14 @@ namespace Engine {
         void InitFBO();
         void Render3DScene();
         void UpdateFBOIfNeeded();
-        void DrawViewportToolbarOverlay();
-        void DrawImGuizmo();
-        void HandleMousePicking();
+
+        // ── ImGui 渲染管线阶段（SRP 拆分） ──
+        void UpdateBoundsAndFocus();  // 1. 计算视口边界、焦点与尺寸
+        void Draw3DImage();           // 2. 绘制 3D FBO 画面（底层）
+        void DrawOverlay();           // 3. 绘制悬浮工具栏（顶层，使用屏幕绝对坐标）
+        void DrawGizmos();            // 4. 绘制 ImGuizmo 变换控件（中层）
+        void HandleDragAndDrop();     // 5. 处理资源拖拽
+        void HandleMousePicking();    // 6. 处理鼠标射线拾取
 
         // ── 配置 ──
         ViewportConfig m_Config;

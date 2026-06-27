@@ -19,6 +19,7 @@
 #include "Engine/Core/IRenderContext.h"
 #include "Engine/Core/Scene/Scene.h"
 #include "Engine/Core/Log.h"
+#include "Engine/OpenGL/OpenGLContext.h"
 #include <imgui.h>
 #include <ImGuizmo.h>
 #include <glm/gtx/matrix_decompose.hpp>
@@ -27,8 +28,68 @@
 
 namespace Engine {
 
+    // 在子对象层级中递归查找指定 GameObject 的 shared_ptr
+    static std::shared_ptr<GameObject> FindInChildren(const std::shared_ptr<GameObject>& parent, GameObject* target) {
+        if (parent.get() == target) return parent;
+        for (const auto& child : parent->GetChildren()) {
+            if (child.get() == target) return child;
+            auto found = FindInChildren(child, target);
+            if (found) return found;
+        }
+        return nullptr;
+    }
+
     EngineEditor::EngineEditor() = default;
     EngineEditor::~EngineEditor() = default;
+
+    void EngineEditor::RegisterSceneHierarchy(SceneHierarchyPanel* panel) {
+        m_SceneHierarchy = panel;
+        if (panel) {
+            // 连接 Hierarchy 的选择信号 → EngineEditor 的统一选择回调
+            panel->SetSelectionCallback([this](GameObject* obj) {
+                OnSelectionChanged(obj);
+            });
+        }
+    }
+
+    // ── 统一选择回调（Hierarchy ↔ Inspector ↔ Viewport Gizmo 联动） ──
+    void EngineEditor::OnSelectionChanged(GameObject* obj) {
+        // 更新 Inspector 目标
+        if (m_Inspector) {
+            m_Inspector->SetTarget(obj);
+        }
+
+        // 更新 Gizmo 选中对象
+        // 通过 Scene::GetObjects() 找到对应的 shared_ptr（因为 GameObject 生命周期由 Scene 管理）
+        if (obj) {
+            Scene* scene = m_SceneManager.GetScene();
+            if (scene) {
+                for (const auto& sharedObj : scene->GetObjects()) {
+                    if (sharedObj.get() == obj) {
+                        m_SelectedObject = sharedObj;
+                        m_Viewport.SetSelectedObject(sharedObj);
+                        break;
+                    }
+                    // 也在子对象中查找
+                    auto found = FindInChildren(sharedObj, obj);
+                    if (found) {
+                        m_SelectedObject = found;
+                        m_Viewport.SetSelectedObject(found);
+                        break;
+                    }
+                }
+            }
+        } else {
+            m_SelectedObject.reset();
+            std::shared_ptr<GameObject> nullObj;
+            m_Viewport.SetSelectedObject(nullObj);
+        }
+
+        // 同步摄像机焦点（用于聚焦等操作）
+        if (obj) {
+            m_Viewport.GetCamera().SetFocusPoint(obj->GetTransform().GetPosition());
+        }
+    }
 
     void EngineEditor::Init(Application* app) {
         m_App = app;
@@ -36,9 +97,31 @@ namespace Engine {
 
         m_MenuBar.SetPanelVisibility(&m_Visibility);
 
+        // ── 初始化主视口 OpenGL 上下文 ──
+        {
+            auto* ctx = app->GetRenderContext();
+            if (ctx) {
+                auto* oglCtx = static_cast<OpenGLContext*>(ctx);
+                GladGLContext& gl = oglCtx->GetGL();
+                m_Viewport.SetRenderContext(ctx);
+                m_Viewport.SetGLContext(&gl);
+                m_Viewport.InitResources(&app->GetFactory(),
+                                          "assets/shaders/3d_lit.vert",
+                                          "assets/shaders/3d_lit.frag");
+            }
+        }
+
         m_Viewport.SetResizeCallback([app](int32 w, int32 h) {
             if (auto* ctx = app->GetRenderContext()) {
                 ctx->OnResize(w, h);
+            }
+        });
+
+        // 设置场景渲染回调：由 Application 子类（如 EditorDemoApp）接管具体绘制逻辑
+        // 通过 SceneRenderInjector 桥接
+        m_Viewport.SetSceneRenderCallback([this, app](const float* viewProj16, const float* camPos3) {
+            if (m_SceneRenderInjector) {
+                m_SceneRenderInjector(viewProj16, camPos3);
             }
         });
 
@@ -200,6 +283,10 @@ namespace Engine {
             scene->Update(dt);
             m_SceneManager.ConsumeStepRequest();
         }
+
+        // ── 更新主视口（相机输入 + 场景渲染到 FBO） ──
+        // 主视口始终视为焦点视口
+        m_Viewport.OnUpdate(dt, true);
     }
 
     // ═══════════════════════════════════════════════════════════════
