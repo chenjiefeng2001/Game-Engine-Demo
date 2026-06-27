@@ -117,13 +117,30 @@ namespace Engine {
             }
         });
 
-        // 设置场景渲染回调：由 Application 子类（如 EditorDemoApp）接管具体绘制逻辑
-        // 通过 SceneRenderInjector 桥接
+        // 设置场景渲染回调：由 Application 子类注入具体绘制逻辑
         m_Viewport.SetSceneRenderCallback([this, app](const float* viewProj16, const float* camPos3) {
             if (m_SceneRenderInjector) {
                 m_SceneRenderInjector(viewProj16, camPos3);
             }
         });
+
+        // ── 通过 EventBus 订阅拾取结果（解耦：Viewport → EngineEditor） ──
+        m_PickSubscription = EventBus::Subscribe<EntitySelectedEvent>(
+            [this](const EntitySelectedEvent& e) {
+                if (e.Entity) {
+                    OnSelectionChanged(e.Entity);
+                }
+            }
+        );
+
+        // ── 通过 EventBus 订阅场景切换（解耦：EditorSceneManager → 所有面板） ──
+        m_SceneSwitchSubscription = EventBus::Subscribe<SceneSwitchedEvent>(
+            [this](const SceneSwitchedEvent& e) {
+                if (m_SceneHierarchy) {
+                    m_SceneHierarchy->SetScene(e.ActiveScene);
+                }
+            }
+        );
 
         m_MenuBar.SetExitCallback([app]() {
             if (app) { app->GetWindow().SetShouldClose(true); }
@@ -271,6 +288,59 @@ namespace Engine {
                                      masterId, master->GetInputPins()[0].id);
             }
         }
+
+        // ── 设置 PIE 面板切换回调 ──
+        m_SceneManager.SetPanelSwitchCallback([this](Scene* activeScene) {
+            // 切换 Hierarchy 的数据源
+            if (m_SceneHierarchy) {
+                m_SceneHierarchy->SetScene(activeScene);
+            }
+
+            // 切换 Inspector 目标（如果当前选中的对象在新场景中存在）
+            if (m_Inspector) {
+                auto selected = m_SelectedObject.lock();
+                if (selected) {
+                    // 按 ID 在激活场景中查找对应对象
+                    GameObject* newTarget = activeScene ? activeScene->FindByID(selected->GetID()) : nullptr;
+                    m_Inspector->SetTarget(newTarget);
+                    if (!newTarget) {
+                        m_SelectedObject.reset();
+                    }
+                } else {
+                    m_Inspector->SetTarget(nullptr);
+                }
+            }
+
+            // 更新 Viewport 的场景引用（用于 Gizmo 的选中对象查找）
+            // 注：Viewport 只持有选中对象的 shared_ptr，场景切换后路径已失效，
+            // 需要在 Play 前用 m_SelectedObject 重新匹配
+            if (m_Inspector) {
+                auto selected = m_SelectedObject.lock();
+                if (selected && activeScene) {
+                    GameObject* newTarget = activeScene->FindByID(selected->GetID());
+                    if (newTarget) {
+                        // 从新场景中重建 shared_ptr
+                        for (const auto& obj : activeScene->GetObjects()) {
+                            if (obj.get() == newTarget) {
+                                m_SelectedObject = obj;
+                                m_Viewport.SetSelectedObject(obj);
+                                break;
+                            }
+                            auto found = FindInChildren(obj, newTarget);
+                            if (found) {
+                                m_SelectedObject = found;
+                                m_Viewport.SetSelectedObject(found);
+                                break;
+                            }
+                        }
+                    } else {
+                        m_SelectedObject.reset();
+                        std::shared_ptr<GameObject> nullObj;
+                        m_Viewport.SetSelectedObject(nullObj);
+                    }
+                }
+            }
+        });
 
         m_MenuBar.ConsumeResetLayoutSignal();
     }

@@ -2,24 +2,19 @@
 
 /**
  * @file OpenGLFramebuffer.h
- * @brief OpenGL 帧缓冲对象（FBO）— 用于离屏渲染
+ * @brief OpenGL 帧缓冲对象（FBO）— 离屏渲染 + Entity ID Picking
  *
- * 创建颜色附件（RGBA8 纹理）+ 深度附件（DEPTH24_STENCIL8 渲染缓冲）。
- * 渲染到 FBO 后，颜色纹理可直接传给 ImGui::Image() 在视口面板显示。
+ * 创建三个附件：
+ *   1. 颜色附件（RGBA8 纹理）— 供 ImGui::Image() 显示
+ *   2. 深度模板附件（DEPTH24_STENCIL8 渲染缓冲）
+ *   3. 拾取附件（R32I 纹理）— 存储每个像素的 GameObject ID
  *
- * 使用方式：
+ * 拾取使用方式：
  * @code
- *   OpenGLFramebuffer fbo(gl);
- *   fbo.Resize(viewportWidth, viewportHeight);
- *
- *   // 渲染
- *   fbo.Bind();
- *   RenderScene();
- *   fbo.Unbind();
- *
- *   // 显示
- *   ImGui::Image((ImTextureID)(uint64)fbo.GetColorTextureID(),
- *                ImVec2(width, height));
+ *   // 渲染场景时，用拾取 Shader 将 GameObject ID 写入 Pick Texture
+ *   // 鼠标点击时：
+ *   uint32 pickedID = fbo.ReadPixelID(mouseX, mouseY);
+ *   GameObject* obj = scene->FindByID(pickedID);
  * @endcode
  */
 
@@ -65,6 +60,31 @@ namespace Engine {
         /** 检查 FBO 是否有效 */
         bool IsValid() const { return m_FBO != 0; }
 
+    public:
+        // ── ID 拾取 ──
+        /**
+         * @brief 读取鼠标位置处的 GameObject ID（绝对屏幕坐标）
+         * @param mouseX 绝对屏幕 X（物理像素）
+         * @param mouseY 绝对屏幕 Y（物理像素）
+         * @param viewportMinX 视口左上角绝对 X
+         * @param viewportMinY 视口左上角绝对 Y
+         * @return GameObject ID，0 表示空白
+         *
+         * 使用 glReadPixels 从拾取纹理（R32I）中读取像素值。
+         * mouseX/mouseY 为操作系统绝对坐标，viewportMinX/Y 为视口左上角。
+         */
+        uint32 ReadPixelID(float mouseX, float mouseY,
+                           float viewportMinX, float viewportMinY) const;
+
+        /** 获取拾取纹理的 OpenGL ID（用于多渲染目标绑定） */
+        uint32 GetPickTextureID() const { return m_PickTexture; }
+
+        /** 是否支持 ID 拾取 */
+        bool HasPickTexture() const { return m_PickTexture != 0; }
+
+        /** 绑定拾取纹理为第二个颜色输出（在场景渲染前设置） */
+        void BindForPickRendering();
+
     private:
         /** 销毁所有 GL 资源 */
         void Destroy();
@@ -74,6 +94,7 @@ namespace Engine {
         uint32 m_FBO           = 0;   // 帧缓冲对象
         uint32 m_ColorTexture  = 0;   // 颜色附件（RGBA8 纹理）
         uint32 m_DepthStencil  = 0;   // 深度模板附件（Renderbuffer）
+        uint32 m_PickTexture   = 0;   // 拾取附件（R32I 纹理）
 
         uint32 m_Width  = 0;
         uint32 m_Height = 0;

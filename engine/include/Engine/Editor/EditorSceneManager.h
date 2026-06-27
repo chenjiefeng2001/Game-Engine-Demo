@@ -2,26 +2,25 @@
 
 /**
  * @file EditorSceneManager.h
- * @brief 编辑器场景管理器 — 场景快照 + Play/Stop 模式切换
+ * @brief 编辑器场景管理器 — PIE (Play-In-Editor) 状态隔离
  *
  * 核心功能：
- *   1. Play/Stop 状态管理 — 点击 Play 时创建场景快照，Stop 时恢复
- *   2. 系统挂起 — Edit 模式下屏蔽物理/脚本更新
- *   3. 场景序列化/反序列化到内存缓冲区
+ *   1. Play/Stop 状态管理 — 点击 Play 时克隆运行时场景，Stop 时销毁
+ *   2. 双向隔离 — 编辑器数据与运行时数据严格分离（深拷贝克隆）
+ *   3. 面板切换回调 — 通知 EngineEditor 切换 Hierarchy/Inspector/Viewport 的数据源
+ *
+ * 架构：
+ *   - m_EditorScene : 始终指向编辑器场景（永不修改）
+ *   - m_RuntimeScene: Play 时从编辑器克隆，Stop 时销毁
+ *   - GetScene()    : 编辑器模式返回 m_EditorScene，运行时返回 m_RuntimeScene.get()
  *
  * 使用方式：
  * @code
  *   EditorSceneManager sceneMgr;
- *   sceneMgr.SetScene(&myScene);
- *
- *   // 工具栏按钮
- *   if (sceneMgr.OnPlayButton()) { ... }
- *   if (sceneMgr.OnStopButton()) { ... }
+ *   sceneMgr.SetEditorScene(&myScene);
  *
  *   // 主循环中
- *   if (sceneMgr.IsPlaying()) {
- *       sceneMgr.GetScene()->Update(dt);
- *   }
+ *   sceneMgr.GetScene()->Update(dt);  // 自动返回正确场景
  * @endcode
  */
 
@@ -49,8 +48,22 @@ namespace Engine {
         EditorSceneManager& operator=(const EditorSceneManager&) = delete;
 
         // ── 场景绑定 ──
-        void SetScene(Scene* scene) { m_Scene = scene; }
-        Scene* GetScene() const { return m_Scene; }
+        /** 设置编辑器场景（不可为空，生命周期由外部管理） */
+        void SetEditorScene(Scene* scene) { m_EditorScene = scene; }
+        Scene* GetEditorScene() const { return m_EditorScene; }
+
+        /**
+         * @brief 获取当前激活的场景
+         * 编辑器模式 → 返回 m_EditorScene
+         * 运行时模式 → 返回 m_RuntimeScene 的裸指针
+         */
+        Scene* GetScene() const {
+            return (m_State != EditorState::Edit && m_RuntimeScene)
+                ? m_RuntimeScene.get() : m_EditorScene;
+        }
+
+        // ── PIE 运行时场景访问 ──
+        std::shared_ptr<Scene> GetRuntimeScene() const { return m_RuntimeScene; }
 
         // ── 状态管理 ──
         EditorState GetState() const { return m_State; }
@@ -58,10 +71,10 @@ namespace Engine {
         bool IsPaused() const { return m_State == EditorState::Pause; }
         bool IsEditing() const { return m_State == EditorState::Edit; }
 
-        /** 切换到 Play 模式（创建快照） */
+        /** 切换到 Play 模式（克隆编辑器场景 → 启动运行时） */
         void Play();
 
-        /** 切换到 Stop 模式（恢复快照） */
+        /** 切换到 Stop 模式（销毁运行时 → 恢复编辑器状态） */
         void Stop();
 
         /** 暂停/继续切换 */
@@ -70,49 +83,39 @@ namespace Engine {
         /** 单帧步进（Pause 状态下） */
         void StepFrame();
 
-        /** 是否请求了单帧步进（OnUpdate 中消费后应自动清除） */
+        /** 是否请求了单帧步进 */
         bool IsStepRequested() const { return m_StepRequested; }
 
-        /** 消费单帧步进请求（由 OnUpdate 调用，清除标记） */
+        /** 消费单帧步进请求 */
         void ConsumeStepRequest() { m_StepRequested = false; }
 
         // ── ImGui 工具栏控件 ──
-        /** 绘制 Play/Stop 按钮组，返回当前是否处于播放状态 */
         bool DrawPlayToolbar();
 
         // ── 场景持久化 ──
-        /** 保存当前场景到文件 */
         bool SaveSceneToFile(const std::string& filePath);
-
-        /** 从文件加载场景（替换当前场景） */
         bool LoadSceneFromFile(const std::string& filePath);
 
         // ── 状态通知回调 ──
         using StateChangeCallback = std::function<void(EditorState newState)>;
         void SetStateChangeCallback(StateChangeCallback cb) { m_StateCallback = std::move(cb); }
 
+        // ── 面板切换回调（Play/Stop 时通知 EngineEditor 切换面板数据源） ──
+        using PanelSwitchCallback = std::function<void(Scene* activeScene)>;
+        void SetPanelSwitchCallback(PanelSwitchCallback cb) { m_PanelSwitchCallback = std::move(cb); }
+
     private:
-        /** 内部快照结构：序列化场景到 JSON 字符串 */
-        struct Snapshot {
-            std::string jsonData;  ///< 完整的场景 JSON 序列化
-        };
-
-        /** 拍摄当前场景快照 */
-        void TakeSnapshot();
-
-        /** 恢复场景快照 */
-        void RestoreSnapshot();
-
         EditorState m_State = EditorState::Edit;
-        Scene* m_Scene = nullptr;
 
-        // 场景快照（Stop 时恢复用）
-        std::unique_ptr<Snapshot> m_Snapshot;
+        // 双向隔离：编辑器场景 vs 运行时场景
+        Scene* m_EditorScene = nullptr;                   ///< 不可变编辑器场景（生命周期外部）
+        std::shared_ptr<Scene> m_RuntimeScene;             ///< 运行时场景（Play 时从编辑器克隆）
 
         // 单帧步进
         bool m_StepRequested = false;
 
         StateChangeCallback m_StateCallback;
+        PanelSwitchCallback m_PanelSwitchCallback;         ///< 面板数据源切换回调
     };
 
 } // namespace Engine

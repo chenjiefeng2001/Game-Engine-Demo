@@ -5,6 +5,7 @@
 #include "Engine/Core/Level/LevelManager.h"
 #include "Engine/Core/GameObject/GameObject.h"
 #include "Engine/Core/Log.h"
+#include "Engine/Core/EventBus.h"
 #include "Engine/Editor/IconsFontAwesome6.h"
 
 #include <imgui.h>
@@ -266,7 +267,7 @@ namespace Engine {
         std::snprintf(label, sizeof(label), "%s", name.c_str());
         bool open = ImGui::TreeNodeEx("##node", flags, "%s", label);
 
-        // Click -> select
+        // Click -> select + 通过 EventBus 发布选中事件
         if (ImGui::IsItemClicked() && !ImGui::IsItemToggledOpen()) {
             if (ImGui::GetIO().KeyCtrl) {
                 if (m_MultiSelected.count(obj)) m_MultiSelected.erase(obj);
@@ -274,6 +275,8 @@ namespace Engine {
             } else {
                 m_Selected = obj;
                 if (m_SelectionCallback) m_SelectionCallback(obj);
+                // 通过 EventBus 解耦发布：Inspector / Viewport 自动响应
+                EventBus::Publish(EntitySelectedEvent(obj));
             }
         }
 

@@ -95,9 +95,29 @@ namespace Engine {
         using SceneRenderCallback = std::function<void(const float* viewProj16, const float* camPos3)>;
         void SetSceneRenderCallback(SceneRenderCallback cb) { m_SceneRenderCallback = std::move(cb); }
 
-        // ── 射线拾取回调 ──
-        using PickCallback = std::function<void(float ndcX, float ndcY)>;
+        // ── ID 缓冲区拾取回调 ──
+        /**
+         * @brief 拾取回调（由 HandleMousePicking 在鼠标点击时触发）
+         * @param ndcX    鼠标在视口的 NDC X [-1, 1]
+         * @param ndcY    鼠标在视口的 NDC Y [-1, 1]
+         * @param entityId 从拾取纹理读取的 GameObject ID（0=无物体）
+         */
+        using PickCallback = std::function<void(float ndcX, float ndcY, uint32 entityId)>;
         void SetPickCallback(PickCallback cb) { m_PickCallback = std::move(cb); }
+
+        /// 执行 ID 缓冲区拾取：读取鼠标位置像素的 GameObject ID
+        uint32 PickAtMouse(float mouseScreenX, float mouseScreenY) const;
+
+        /**
+         * @brief 拾取渲染回调 — 在 Render3DScene 的拾取 Pass 中被调用
+         * @param viewProj16 View-Projection 矩阵
+         * @param pickTextureID 拾取纹理的 OpenGL ID（用于绑定 frame buffer）
+         *
+         * 实现此回调时，应将每个 GameObject 的 ID 写入 layout(location=1) 输出。
+         * 使用 FBO::BindForPickRendering() 切换到拾取模式。
+         */
+        using PickRenderCallback = std::function<void(const float* viewProj16)>;
+        void SetPickRenderCallback(PickRenderCallback cb) { m_PickRenderCallback = std::move(cb); }
 
     private:
         void InitFBO();
@@ -142,9 +162,10 @@ namespace Engine {
         bool m_NeedsFBOUpdate = false;
 
         // ── 回调 ──
-        ResizeCallback      m_ResizeCallback;
-        PickCallback        m_PickCallback;
-        SceneRenderCallback m_SceneRenderCallback;
+        ResizeCallback       m_ResizeCallback;
+        PickCallback         m_PickCallback;
+        SceneRenderCallback  m_SceneRenderCallback;
+        PickRenderCallback   m_PickRenderCallback;
 
         // ── Gizmo 状态 ──
         int  m_GizmoType = 0;   // -1=None, 0=Translate, 1=Rotate, 2=Scale

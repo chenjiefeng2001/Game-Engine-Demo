@@ -74,7 +74,7 @@ protected:
     lightObj->GetTransform().SetPosition(3.0f, 5.0f, -5.0f);
     m_Scene->AddObject(lightObj);
 
-    m_Editor.GetSceneManager().SetScene(m_Scene.get());
+    m_Editor.GetSceneManager().SetEditorScene(m_Scene.get());
     m_HierarchyPanel.SetScene(m_Scene.get());
 
     // ── 设置场景渲染注入器：编辑器的主视口通过此回调绘制场景 ──

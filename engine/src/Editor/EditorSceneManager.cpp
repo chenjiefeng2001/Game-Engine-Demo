@@ -9,32 +9,92 @@ namespace Engine {
     EditorSceneManager::EditorSceneManager() = default;
     EditorSceneManager::~EditorSceneManager() = default;
 
+    // ═══════════════════════════════════════════════════════════════
+    // PIE (Play-In-Editor) — 双向隔离
+    //
+    // Play:
+    //   1. 检查 m_EditorScene 非空
+    //   2. 通过 JSON 序列化 → 反序列化 深度克隆编辑器场景
+    //   3. 存储到 m_RuntimeScene（shared_ptr 管理生命周期）
+    //   4. 调用 m_PanelSwitchCallback 通知 EngineEditor 切换面板
+    //   5. 调用 m_RuntimeScene->OnCreate() 启动物理/脚本
+    //
+    // Stop:
+    //   1. 调用 m_RuntimeScene->OnDestroy()
+    //   2. 销毁 m_RuntimeScene（自动释放）
+    //   3. 调用 m_PanelSwitchCallback 通知 EngineEditor 切回编辑器场景
+    //
+    // 结果：
+    //   - 编辑器场景在 Play 期间完全不被污染
+    //   - Stop 后编辑器场景瞬间恢复原始状态（零开销）
+    // ═══════════════════════════════════════════════════════════════
+
     void EditorSceneManager::Play() {
         if (m_State == EditorState::Play) return;
-        if (!m_Scene) return;
+        if (!m_EditorScene) {
+            ENGINE_LOG_ERROR("Editor", "Cannot Play: no editor scene set");
+            return;
+        }
 
-        // 拍摄场景快照（保存编辑状态）
-        TakeSnapshot();
+        // ── 1. 通过 JSON 序列化深度克隆编辑器场景 ──
+        ENGINE_LOG_INFO("Editor", "=== PIE Play: cloning scene ===");
+        try {
+            auto json = JsonSerializer::Serialize(*m_EditorScene);
 
+            // 创建运行时场景并反序列化
+            m_RuntimeScene = std::make_shared<Scene>(m_EditorScene->GetName() + " (Runtime)");
+            JsonSerializer::Deserialize(*m_RuntimeScene, json);
+        } catch (const std::exception& e) {
+            ENGINE_LOG_ERROR("Editor", "PIE scene clone failed: {}", e.what());
+            return;
+        }
+
+        // ── 2. 切换状态 ──
         m_State = EditorState::Play;
-        ENGINE_LOG_INFO("Editor", "Scene Play started");
 
-        if (m_StateCallback)
+        // ── 3. 启动物理/脚本等运行时系统 ──
+        m_RuntimeScene->OnCreate();
+
+        // ── 4. 通知 EngineEditor 切换面板数据源 ──
+        if (m_PanelSwitchCallback) {
+            m_PanelSwitchCallback(m_RuntimeScene.get());
+        }
+
+        // ── 5. 通知状态变更 ──
+        if (m_StateCallback) {
             m_StateCallback(m_State);
+        }
+
+        ENGINE_LOG_INFO("Editor", "=== PIE Play started ===");
     }
 
     void EditorSceneManager::Stop() {
         if (m_State == EditorState::Edit) return;
-        if (!m_Scene) return;
+        if (!m_RuntimeScene) return;
 
-        // 恢复场景快照（回到编辑前的状态）
-        RestoreSnapshot();
+        ENGINE_LOG_INFO("Editor", "=== PIE Stop ===");
 
+        // ── 1. 停止运行时系统 ──
+        m_RuntimeScene->OnDestroy();
+
+        // ── 2. 销毁运行时场景（shared_ptr 自动释放） ──
+        m_RuntimeScene.reset();
+        m_StepRequested = false;
+
+        // ── 3. 恢复编辑状态 ──
         m_State = EditorState::Edit;
-        ENGINE_LOG_INFO("Editor", "Scene Stopped, snapshot restored");
 
-        if (m_StateCallback)
+        // ── 4. 通知 EngineEditor 切回编辑器场景 ──
+        if (m_PanelSwitchCallback) {
+            m_PanelSwitchCallback(m_EditorScene);
+        }
+
+        // ── 5. 通知状态变更 ──
+        if (m_StateCallback) {
             m_StateCallback(m_State);
+        }
+
+        ENGINE_LOG_INFO("Editor", "=== PIE Stopped, editor scene restored ===");
     }
 
     void EditorSceneManager::TogglePause() {
@@ -55,35 +115,10 @@ namespace Engine {
         }
     }
 
-    // ── 快照管理 ──
-    void EditorSceneManager::TakeSnapshot() {
-        if (!m_Scene) return;
+    // ═══════════════════════════════════════════════════════════════
+    // ImGui 工具栏
+    // ═══════════════════════════════════════════════════════════════
 
-        // 将场景序列化到 JSON 字符串（内存快照）
-        auto json = JsonSerializer::Serialize(*m_Scene);
-        m_Snapshot = std::make_unique<Snapshot>();
-        m_Snapshot->jsonData = json.dump(2);  // 带缩进，方便调试
-    }
-
-    void EditorSceneManager::RestoreSnapshot() {
-        if (!m_Snapshot || !m_Scene) return;
-
-        // 从快照 JSON 反序列化场景
-        try {
-            auto json = nlohmann::json::parse(m_Snapshot->jsonData);
-            // 先清空场景，再重新加载，避免对象重复
-            m_Scene->Clear();
-            JsonSerializer::Deserialize(*m_Scene, json);
-            ENGINE_LOG_INFO("Editor", "Snapshot restored successfully");
-        } catch (const std::exception& e) {
-            ENGINE_LOG_ERROR("Editor", "Failed to restore snapshot: {}", e.what());
-        }
-
-        m_Snapshot.reset();
-        m_StepRequested = false;
-    }
-
-    // ── ImGui 工具栏 ──
     bool EditorSceneManager::DrawPlayToolbar() {
         bool isPlaying = IsPlaying();
 
@@ -115,21 +150,24 @@ namespace Engine {
         return isPlaying;
     }
 
-    // ── 场景持久化 ──
+    // ═══════════════════════════════════════════════════════════════
+    // 场景持久化
+    // ═══════════════════════════════════════════════════════════════
+
     bool EditorSceneManager::SaveSceneToFile(const std::string& filePath) {
-        if (!m_Scene) {
+        if (!m_EditorScene) {
             ENGINE_LOG_ERROR("Editor", "SaveScene: no scene bound");
             return false;
         }
-        return m_Scene->SaveToFile(filePath);
+        return m_EditorScene->SaveToFile(filePath);
     }
 
     bool EditorSceneManager::LoadSceneFromFile(const std::string& filePath) {
-        if (!m_Scene) {
+        if (!m_EditorScene) {
             ENGINE_LOG_ERROR("Editor", "LoadScene: no scene bound");
             return false;
         }
-        return m_Scene->LoadFromFile(filePath);
+        return m_EditorScene->LoadFromFile(filePath);
     }
 
 } // namespace Engine

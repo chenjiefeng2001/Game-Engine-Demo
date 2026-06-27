@@ -21,10 +21,11 @@
 #include "Engine/Editor/EditorDefs.h"
 #include "Engine/Editor/ShaderGraph/ShaderGraphPanel.h"
 #include "Engine/Editor/VFXGraph/VFXGraphPanel.h"
-#include "Engine/Editor/VFXGraph/VFXGraphCore.h"
+    #include "Engine/Editor/VFXGraph/VFXGraphCore.h"
 #include "Engine/Editor/VFXGraph/VFXNodeFactory.h"
-#include <glm/glm.hpp>
-#include <glm/gtc/type_ptr.hpp>
+#include "Engine/Core/EventBus.h"
+    #include <glm/glm.hpp>
+    #include <glm/gtc/type_ptr.hpp>
 
 namespace Engine {
 
@@ -141,6 +142,10 @@ namespace Engine {
         Application* m_App = nullptr;
 
         std::weak_ptr<class GameObject> m_SelectedObject;
+
+        // ── EventBus 订阅句柄（RAII 自动取消订阅） ──
+        SubscriptionHandle m_PickSubscription;
+        SubscriptionHandle m_SceneSwitchSubscription;
 
         // ── 场景渲染注入器（由 Application 子类设置，用于绘制场景到主视口 FBO） ──
         SceneRenderInjector m_SceneRenderInjector;

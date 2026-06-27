@@ -6,6 +6,7 @@
 #include "Engine/Core/GameObject/TransformComponent.h"
 #include "Engine/Core/Physics/PhysicsComponent.h"
 #include "Engine/Core/Log.h"
+#include "Engine/Editor/Reflect.h"
 
 #include <imgui.h>
 #include <cstring>
@@ -441,6 +442,121 @@ namespace Engine {
             }
             ImGui::End();
         }
+    }
+
+    // ═══════════════════════════════════════════════════════════════
+    // 反射自动绘制 — 无需手动 ImGui 代码
+    // ═══════════════════════════════════════════════════════════════
+    bool InspectorPanel::AutoDrawComponent(Component& comp) {
+        using namespace Inspector;
+
+        const auto* meta = Reflect::GetClass(std::type_index(typeid(comp)));
+        if (!meta) {
+            return false;  // 未注册反射，让 fallback 显示
+        }
+
+        if (!PassesFilter(meta->GetName())) return false;
+
+        bool enabled = comp.IsEnabled();
+        if (!DrawComponentHeader(meta->GetName().c_str(), &enabled, nullptr)) {
+            return true;
+        }
+        if (enabled != comp.IsEnabled()) comp.SetEnabled(enabled);
+
+        ImGui::Indent();
+
+        for (const auto& field : meta->GetFields()) {
+            if (!PassesFilter(field.name)) continue;
+
+            // 通过偏移量获取字段地址
+            void* fieldAddr = reinterpret_cast<uint8*>(&comp) + field.offset;
+
+            bool modified = false;
+
+            switch (field.type) {
+                case Reflect::FieldType::Float: {
+                    float* val = static_cast<float*>(fieldAddr);
+                    if (field.range.max > field.range.min) {
+                        modified = ImGui::SliderFloat(field.name.c_str(), val,
+                                                       field.range.min, field.range.max);
+                    } else {
+                        modified = ImGui::DragFloat(field.name.c_str(), val,
+                                                     field.range.step);
+                    }
+                    break;
+                }
+                case Reflect::FieldType::Int: {
+                    int* val = static_cast<int*>(fieldAddr);
+                    if (field.range.max > field.range.min) {
+                        modified = ImGui::SliderInt(field.name.c_str(), val,
+                                                     static_cast<int>(field.range.min),
+                                                     static_cast<int>(field.range.max));
+                    } else {
+                        modified = ImGui::DragInt(field.name.c_str(), val,
+                                                   static_cast<int>(field.range.step));
+                    }
+                    break;
+                }
+                case Reflect::FieldType::UInt32: {
+                    uint32* val = static_cast<uint32*>(fieldAddr);
+                    modified = ImGui::InputScalar(field.name.c_str(),
+                                                   ImGuiDataType_U32, val);
+                    break;
+                }
+                case Reflect::FieldType::Bool: {
+                    bool* val = static_cast<bool*>(fieldAddr);
+                    modified = ImGui::Checkbox(field.name.c_str(), val);
+                    break;
+                }
+                case Reflect::FieldType::Vec2: {
+                    float* val = static_cast<float*>(fieldAddr);
+                    modified = ImGui::DragFloat2(field.name.c_str(), val,
+                                                  field.range.step);
+                    break;
+                }
+                case Reflect::FieldType::Vec3:
+                case Reflect::FieldType::ColorRGB: {
+                    float* val = static_cast<float*>(fieldAddr);
+                    if (field.isColor) {
+                        modified = ImGui::ColorEdit3(field.name.c_str(), val);
+                    } else {
+                        modified = ImGui::DragFloat3(field.name.c_str(), val,
+                                                      field.range.step);
+                    }
+                    break;
+                }
+                case Reflect::FieldType::Vec4:
+                case Reflect::FieldType::Color: {
+                    float* val = static_cast<float*>(fieldAddr);
+                    if (field.isColor) {
+                        modified = ImGui::ColorEdit4(field.name.c_str(), val,
+                                                      field.colorAlpha ? ImGuiColorEditFlags_AlphaPreviewHalf
+                                                                       : ImGuiColorEditFlags_None);
+                    } else {
+                        modified = ImGui::DragFloat4(field.name.c_str(), val,
+                                                      field.range.step);
+                    }
+                    break;
+                }
+                default:
+                    break;
+            }
+
+            if (modified && m_ModifyCallback) {
+                m_ModifyCallback(m_Target, field.name.c_str());
+            }
+        }
+
+        // 如果开启了 Debug 模式，显示原始字段信息
+        if (m_DebugMode) {
+            ImGui::Separator();
+            ImGui::TextDisabled("Fields: %zu | TypeID: 0x%zx",
+                                meta->GetFields().size(),
+                                typeid(comp).hash_code());
+        }
+
+        ImGui::Unindent();
+        return true;
     }
 
     void InspectorPanel::DrawDebugInfo(GameObject* obj) {
