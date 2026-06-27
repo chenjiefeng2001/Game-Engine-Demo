@@ -61,13 +61,20 @@ namespace Engine {
         bool IsPaused()  const { return m_SceneManager.IsPaused(); }
         bool IsEditing() const { return m_SceneManager.IsEditing(); }
 
-        void RegisterSceneHierarchy(SceneHierarchyPanel* panel) { m_SceneHierarchy = panel; }
+        void RegisterSceneHierarchy(SceneHierarchyPanel* panel);
         void RegisterInspector(InspectorPanel* panel)           { m_Inspector = panel; }
         void RegisterConsole(ConsolePanel* panel)               { m_Console = panel; }
         void RegisterPerformance(PerformanceWindow* window)     { m_Performance = window; }
 
         void SetSelectedObject(std::shared_ptr<class GameObject> obj) { m_SelectedObject = obj; }
         std::shared_ptr<class GameObject> GetSelectedObject() const { return m_SelectedObject.lock(); }
+
+        // ── 统一选择回调（Hierarchy ↔ Inspector ↔ Viewport Gizmo 联动） ──
+        void OnSelectionChanged(GameObject* obj);
+
+        // ── 场景渲染注入器（由 Application 子类设置，将场景绘制到视口 FBO） ──
+        using SceneRenderInjector = std::function<void(const float* viewProj16, const float* camPos3)>;
+        void SetSceneRenderInjector(SceneRenderInjector injector) { m_SceneRenderInjector = std::move(injector); }
 
     private:
         void DrawGizmo(const glm::mat4& viewMatrix, const glm::mat4& projMatrix);
@@ -134,6 +141,9 @@ namespace Engine {
         Application* m_App = nullptr;
 
         std::weak_ptr<class GameObject> m_SelectedObject;
+
+        // ── 场景渲染注入器（由 Application 子类设置，用于绘制场景到主视口 FBO） ──
+        SceneRenderInjector m_SceneRenderInjector;
     };
 
 } // namespace Engine
