@@ -58,6 +58,7 @@ namespace ShaderGraph {
         std::string generatedCode;
         uint32 instructionCount = 0;
         uint32 textureSampleCount = 0;
+        std::vector<std::string> compileErrors;
 
         // 连接拖拽状态
         uint32 draggingFromPinId = 0;
@@ -106,6 +107,7 @@ namespace ShaderGraph {
         // ── 画布系统 ──
         void DrawToolbar();
         void DrawNodeCanvas();
+        void DrawMainEditorLayout();
         void DrawDotGrid(ImDrawList* drawList, const ImVec2& canvasPos, const ImVec2& size);
         void DrawNode(ShaderNode* node);
         void DrawNodePins(ShaderNode* node, bool isInput);

@@ -138,6 +138,25 @@ namespace ShaderGraph {
     DECLARE_SHADER_NODE(NoiseNode,        "Noise",        NodeCategory::Art)
 
     // ══════════════════════════════════════════════════════════════
+    // Property 节点（黑板拖拽生成）
+    // ══════════════════════════════════════════════════════════════
+    class PropertyNode : public ShaderNode {
+    public:
+        PropertyNode(uint32 id, const std::string& propName, PinType propType)
+            : ShaderNode(id, "Get " + propName, NodeCategory::Input), m_PropertyName(propName) {
+            AddOutputPin(propName, propType);
+            m_SizeX = 120.0f; m_SizeY = 60.0f;
+        }
+        std::string GenerateHLSL(const std::unordered_map<uint32, std::string>&) const override {
+            return "_" + m_PropertyName;
+        }
+        std::unique_ptr<ShaderNode> Clone(uint32 newId) const override {
+            return std::make_unique<PropertyNode>(newId, m_PropertyName, m_OutputPins[0].type);
+        }
+        std::string m_PropertyName;
+    };
+
+    // ══════════════════════════════════════════════════════════════
     // 节点工厂
     // ══════════════════════════════════════════════════════════════
     struct NodeFactoryEntry {
