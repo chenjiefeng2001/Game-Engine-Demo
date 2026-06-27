@@ -206,6 +206,21 @@ namespace Engine {
                 shapeId = b2CreateSegmentShape(m_BodyId, &shapeDef, &segment);
                 break;
             }
+            case ShapeType::Polygon: {
+                if (def.shape.polygonVertices && def.shape.polygonVertexCount >= 3) {
+                    b2Vec2 vertices[B2_MAX_POLYGON_VERTICES];
+                    int32 count = (std::min)(def.shape.polygonVertexCount, static_cast<int32>(B2_MAX_POLYGON_VERTICES));
+                    for (int32 i = 0; i < count; ++i) {
+                        vertices[i] = ToB2(def.shape.polygonVertices[i]);
+                    }
+                    b2Hull hull = b2ComputeHull(vertices, count);
+                    if (hull.count > 0) {
+                        b2Polygon polygon = b2MakeOffsetPolygon(&hull, ToB2(def.shape.offset), b2MakeRot(0.0f));
+                        shapeId = b2CreatePolygonShape(m_BodyId, &shapeDef, &polygon);
+                    }
+                }
+                break;
+            }
             case ShapeType::Chain: {
                 if (def.shape.chainVertices && def.shape.chainVertexCount >= 2) {
                     // v3 链形状：逐段创建 segment
