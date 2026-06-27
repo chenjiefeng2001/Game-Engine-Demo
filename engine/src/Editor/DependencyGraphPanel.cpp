@@ -357,7 +357,7 @@ namespace Engine {
         if (ImGui::Button("Validate Integrity", ImVec2(200, 0))) {
             if (m_Database) {
                 auto result = m_Database->ValidateIntegrity();
-                if (result.IsClean()) {
+                if (result.IsClean) {
                     ImGui::OpenPopup("IntegrityOK");
                 } else {
                     ImGui::OpenPopup("IntegrityIssues");
@@ -388,8 +388,8 @@ namespace Engine {
             }
             ImGui::Separator();
             if (ImGui::Button("Repair", ImVec2(120, 0))) {
-                uint32 fixed = m_Database->RepairIntegrity("repaired from panel");
-                ImGui::Text("Fixed %u references.", fixed);
+                auto result = m_Database->RepairIntegrity("repaired from panel");
+                ImGui::Text("Validation: %s", result.valid ? "OK" : "Failed");
             }
             ImGui::SameLine();
             if (ImGui::Button("Close", ImVec2(120, 0))) ImGui::CloseCurrentPopup();

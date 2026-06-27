@@ -57,6 +57,10 @@ namespace Engine {
             m_GL.DeleteRenderbuffers(1, &m_DepthStencil);
             m_DepthStencil = 0;
         }
+        if (m_PickTexture) {
+            m_GL.DeleteTextures(1, &m_PickTexture);
+            m_PickTexture = 0;
+        }
         m_Width  = 0;
         m_Height = 0;
     }
@@ -94,25 +98,42 @@ namespace Engine {
                                  static_cast<GLint>(width),
                                  static_cast<GLint>(height));
 
-        // ── 3. 创建 FBO ──
+        // ── 3. 创建拾取纹理（R32I） ──
+        m_GL.GenTextures(1, &m_PickTexture);
+        m_GL.BindTexture(GL_TEXTURE_2D, m_PickTexture);
+        m_GL.TexImage2D(GL_TEXTURE_2D, 0, GL_R32I,
+                        static_cast<GLint>(width), static_cast<GLint>(height),
+                        0, GL_RED_INTEGER, GL_INT, nullptr);
+        m_GL.TexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+        m_GL.TexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+        m_GL.TexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+        m_GL.TexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+
+        // ── 4. 创建 FBO ──
         m_GL.GenFramebuffers(1, &m_FBO);
         m_GL.BindFramebuffer(GL_FRAMEBUFFER, m_FBO);
 
-        // 附加颜色纹理
+        // 附加颜色纹理 (GL_COLOR_ATTACHMENT0)
         m_GL.FramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0,
                                   GL_TEXTURE_2D, m_ColorTexture, 0);
+        // 附加拾取纹理 (GL_COLOR_ATTACHMENT1)
+        m_GL.FramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT1,
+                                  GL_TEXTURE_2D, m_PickTexture, 0);
         // 附加深度模板
         m_GL.FramebufferRenderbuffer(GL_FRAMEBUFFER, GL_DEPTH_STENCIL_ATTACHMENT,
                                      GL_RENDERBUFFER, m_DepthStencil);
 
-        // ── 4. 检查完整性 ──
+        // 设置多渲染目标：写入两个颜色附件
+        GLenum drawBuffers[2] = { GL_COLOR_ATTACHMENT0, GL_COLOR_ATTACHMENT1 };
+        m_GL.DrawBuffers(2, drawBuffers);
+
+        // ── 5. 检查完整性 ──
         GLenum status = m_GL.CheckFramebufferStatus(GL_FRAMEBUFFER);
         if (status != GL_FRAMEBUFFER_COMPLETE) {
-            // 完整性检查失败，销毁并记录
             Destroy();
         }
 
-        // 解绑（调用方会在需要时 Bind）
+        // 解绑
         m_GL.BindFramebuffer(GL_FRAMEBUFFER, 0);
     }
 
@@ -127,6 +148,49 @@ namespace Engine {
 
     void OpenGLFramebuffer::Unbind() {
         m_GL.BindFramebuffer(GL_FRAMEBUFFER, 0);
+    }
+
+    // ═══════════════════════════════════════════════════════════════
+    // ID 拾取 — glReadPixels 从拾取纹理读取像素
+    // ═══════════════════════════════════════════════════════════════
+
+    void OpenGLFramebuffer::BindForPickRendering() {
+        // 绑定 FBO 后，设置只写入 GL_COLOR_ATTACHMENT1（拾取纹理）
+        // 这样场景渲染的片段 Shader 可以将 entity ID 输出到 layout(location=1)
+        // 注意：调用前需要已经 Bind() 了 FBO
+        if (!m_FBO) return;
+
+        GLenum drawBuffers[2] = { GL_NONE, GL_COLOR_ATTACHMENT1 };
+        m_GL.DrawBuffers(2, drawBuffers);
+    }
+
+    uint32 OpenGLFramebuffer::ReadPixelID(float mouseX, float mouseY,
+                                           float viewportMinX,
+                                           float viewportMinY) const {
+        if (!m_PickTexture || !m_FBO) return 0;
+
+        // 将 OS 绝对坐标转换为 FBO 内部坐标
+        // ImGui 的坐标系 Y 轴向下，OpenGL 的 Y 轴向上，需要翻转
+        int px = static_cast<int>(mouseX - viewportMinX);
+        int py = static_cast<int>(viewportMinY - mouseY + static_cast<float>(m_Height));
+
+        // 边界检查
+        if (px < 0 || px >= static_cast<int>(m_Width) ||
+            py < 0 || py >= static_cast<int>(m_Height)) {
+            return 0;
+        }
+
+        // 绑定 FBO 并读取拾取纹理的一个像素
+        m_GL.BindFramebuffer(GL_FRAMEBUFFER, m_FBO);
+        m_GL.ReadBuffer(GL_COLOR_ATTACHMENT1);
+
+        int32 pixelValue = 0;
+        m_GL.ReadPixels(px, py, 1, 1, GL_RED_INTEGER, GL_INT, &pixelValue);
+
+        m_GL.ReadBuffer(GL_COLOR_ATTACHMENT0);  // 恢复默认读取缓冲区
+        m_GL.BindFramebuffer(GL_FRAMEBUFFER, 0); // 解绑
+
+        return static_cast<uint32>(std::max(0, pixelValue));
     }
 
 } // namespace Engine

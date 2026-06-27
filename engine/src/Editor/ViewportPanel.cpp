@@ -320,15 +320,27 @@ namespace Engine {
     }
 
     // ═══════════════════════════════════════════════════════════════
-    // 6. 处理鼠标点击与射线拾取
+    // 6. ID 缓冲区像素级拾取 — O(1) 精准点击
     // ═══════════════════════════════════════════════════════════════
+    uint32 ViewportPanel::PickAtMouse(float mouseScreenX, float mouseScreenY) const {
+        if (!m_FBO) return 0;
+        return m_FBO->ReadPixelID(mouseScreenX, mouseScreenY,
+                                   m_ViewportBounds[0].x,
+                                   m_ViewportBounds[0].y);
+    }
+
     void ViewportPanel::HandleMousePicking() {
         if (m_Hovered && !ImGuizmo::IsOver() && !ImGui::IsAnyItemHovered()) {
             if (ImGui::IsMouseClicked(ImGuiMouseButton_Left)) {
                 if (m_PickCallback) {
                     float ndcX, ndcY;
                     GetMouseViewportSpace(ndcX, ndcY);
-                    m_PickCallback(ndcX, ndcY);
+
+                    // 使用 ID 缓冲区读取点击像素下的 GameObject ID
+                    ImVec2 mousePos = ImGui::GetMousePos();
+                    uint32 entityId = PickAtMouse(mousePos.x, mousePos.y);
+
+                    m_PickCallback(ndcX, ndcY, entityId);
                 }
             }
         }

@@ -141,6 +141,18 @@ namespace Engine {
         void DrawAddComponentMenu();
         void DrawDebugInfo(GameObject* obj);
 
+        // ── 反射自动绘制 ──
+        /**
+         * @brief 使用反射系统自动绘制组件属性
+         * @param comp 组件指针
+         * @return true 如果反射绘制成功
+         *
+         * 如果组件已通过 REFLECT_REGISTER 注册反射元数据，
+         * 则自动遍历所有 FieldDesc 并根据类型生成对应的 ImGui 控件。
+         * 如果未注册反射，返回 false，由 fallback 接管。
+         */
+        bool AutoDrawComponent(Component& comp);
+
         // ── 注册内置组件绘制器 ──
         void RegisterBuiltins();
 
