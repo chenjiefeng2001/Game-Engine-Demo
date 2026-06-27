@@ -124,8 +124,14 @@ namespace Engine {
     struct TagInfo { size_t bytes=0, count=0; };
     static MemAllocRecord s_Recent[kRecentMax]{};
     static int s_RecentIdx = 0;
-    static std::mutex s_TagMutex;
-    static std::unordered_map<std::string, TagInfo> s_Tags[(int)MemCategory::COUNT];
+    static std::mutex& GetTagMutex() {
+        static std::mutex s_TagMutex;
+        return s_TagMutex;
+    }
+    static std::unordered_map<std::string, TagInfo>* GetTags() {
+        static std::unordered_map<std::string, TagInfo> s_Tags[(int)MemCategory::COUNT];
+        return s_Tags;
+    }
 
     void MemoryTracker::FrameStart() {
         for (auto& c : s_Cat) { c.fAlloc = 0; c.fFree = 0; c.fAllocCnt = 0; c.fFreeCnt = 0; }
@@ -162,7 +168,7 @@ namespace Engine {
         }
         s_RecentIdx++;
 
-        if (tag && tag[0]) { std::lock_guard g(s_TagMutex); auto& ti = s_Tags[(int)cat][tag]; ti.bytes += s; ti.count++; }
+        if (tag && tag[0]) { std::lock_guard g(GetTagMutex()); auto& ti = GetTags()[(int)cat][tag]; ti.bytes += s; ti.count++; }
     }
     void MemoryTracker::OnFree(MemCategory cat, size_t s, const char* tag) {
         auto& c = s_Cat[(int)cat];
@@ -186,7 +192,7 @@ namespace Engine {
         }
         s_RecentIdx++;
 
-        if (tag && tag[0] && s > 0) { std::lock_guard g(s_TagMutex); auto& ti = s_Tags[(int)cat][tag]; if(ti.bytes>=s)ti.bytes-=s; ti.count++; }
+        if (tag && tag[0] && s > 0) { std::lock_guard g(GetTagMutex()); auto& ti = GetTags()[(int)cat][tag]; if(ti.bytes>=s)ti.bytes-=s; ti.count++; }
     }
 
     // 新增查询
@@ -196,9 +202,9 @@ namespace Engine {
     }
 
     std::vector<MemTagStat> MemoryTracker::GetTagStats(MemCategory cat) {
-        std::lock_guard g(s_TagMutex);
+        std::lock_guard g(GetTagMutex());
         std::vector<MemTagStat> result;
-        for (auto& [tag, info] : s_Tags[(int)cat])
+        for (auto& [tag, info] : GetTags()[(int)cat])
             result.push_back({tag, info.bytes, info.count});
         std::sort(result.begin(), result.end(), [](auto& a, auto& b) { return a.bytes > b.bytes; });
         return result;
@@ -206,8 +212,8 @@ namespace Engine {
 
     std::vector<size_t> MemoryTracker::GetSizeHistogram(MemCategory cat) {
         std::array<size_t, 8> buckets{};
-        std::lock_guard g(s_TagMutex);
-        for (auto& [tag, info] : s_Tags[(int)cat]) {
+        std::lock_guard g(GetTagMutex());
+        for (auto& [tag, info] : GetTags()[(int)cat]) {
             size_t avg = info.count ? info.bytes / info.count : 0;
             if (avg <= 64) buckets[0]++; else if (avg <= 256) buckets[1]++;
             else if (avg <= 1024) buckets[2]++; else if (avg <= 4096) buckets[3]++;
