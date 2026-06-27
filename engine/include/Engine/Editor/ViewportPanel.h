@@ -119,6 +119,14 @@ namespace Engine {
         using PickRenderCallback = std::function<void(const float* viewProj16)>;
         void SetPickRenderCallback(PickRenderCallback cb) { m_PickRenderCallback = std::move(cb); }
 
+        // ── 场景编辑回调 ──
+        using SceneCreateCallback = std::function<void(const std::string& type)>;
+        using SceneDeleteCallback = std::function<void()>;
+        using DropAssetCallback = std::function<void(const char* assetPath)>;
+        void SetSceneCreateCallback(SceneCreateCallback cb) { m_SceneCreateCallback = std::move(cb); }
+        void SetSceneDeleteCallback(SceneDeleteCallback cb) { m_SceneDeleteCallback = std::move(cb); }
+        void SetDropAssetCallback(DropAssetCallback cb) { m_DropAssetCallback = std::move(cb); }
+
     private:
         void InitFBO();
         void Render3DScene();
@@ -131,6 +139,8 @@ namespace Engine {
         void DrawGizmos();            // 4. 绘制 ImGuizmo 变换控件（中层）
         void HandleDragAndDrop();     // 5. 处理资源拖拽
         void HandleMousePicking();    // 6. 处理鼠标射线拾取
+        void HandleViewportInteraction(); // 7. 视口交互闭环（右键菜单 + 快捷键）
+        void FocusOnSelected();           // 8. 聚焦选中物体（F 键 + 菜单触发）
 
         // ── 配置 ──
         ViewportConfig m_Config;
@@ -166,6 +176,9 @@ namespace Engine {
         PickCallback         m_PickCallback;
         SceneRenderCallback  m_SceneRenderCallback;
         PickRenderCallback   m_PickRenderCallback;
+        SceneCreateCallback  m_SceneCreateCallback;
+        SceneDeleteCallback  m_SceneDeleteCallback;
+        DropAssetCallback    m_DropAssetCallback;
 
         // ── Gizmo 状态 ──
         int  m_GizmoType = 0;   // -1=None, 0=Translate, 1=Rotate, 2=Scale

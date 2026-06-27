@@ -11,9 +11,9 @@ namespace Engine {
         ImDrawList* dl = ImGui::GetWindowDrawList();
         float y0 = p.y;
         float y1 = p.y + 24.0f;
-        float x  = p.x + 2.0f;
+        float x  = p.x + 4.0f;
         dl->AddLine(ImVec2(x, y0), ImVec2(x, y1), IM_COL32(60, 60, 70, 160), 1.0f);
-        ImGui::Dummy(ImVec2(4.0f, 0.0f));
+        ImGui::Dummy(ImVec2(8.0f, 0.0f));
     }
 
     void Toolbar::SetGizmoMode(int mode) {
@@ -31,24 +31,17 @@ namespace Engine {
     }
 
     // ============================================================
-    // 主渲染入口 — 直接绘制内容（无 Begin/End 包裹，由调用者提供窗口）
+    // 主渲染入口 — 响应式布局，自动适应窗口宽度
     // ============================================================
 
     void Toolbar::OnImGui() {
-        // 快捷键
-        if (!ImGui::IsAnyItemActive() && !ImGui::IsAnyItemFocused()) {
-            if (ImGui::IsKeyPressed(ImGuiKey_W)) SetGizmoMode(0);
-            if (ImGui::IsKeyPressed(ImGuiKey_E)) SetGizmoMode(1);
-            if (ImGui::IsKeyPressed(ImGuiKey_R)) SetGizmoMode(2);
-        }
-
         ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, 3.0f);
         ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(4, 2));
 
         // 垂直居中
         float contentH = ImGui::GetContentRegionAvail().y;
         ImGui::SetCursorPosY(ImGui::GetCursorPosY() + (contentH - 24.0f) * 0.5f);
-        ImGui::Indent(8.0f);
+        ImGui::Indent(4.0f);
 
         // ─── 1. 播放控制 ───
         DrawPlayGroup();
@@ -65,27 +58,23 @@ namespace Engine {
         // ─── 4. 视口设置 ───
         DrawViewSettingsGroup();
 
-        // ─── 5. 右对齐：快捷键提示 + 布局重置 ───
-        ImGui::SameLine(ImGui::GetContentRegionMax().x - 104.0f);
-        ImGui::TextDisabled(ICON_FA_QUESTION_CIRCLE);
-        if (ImGui::IsItemHovered()) {
-            ImGui::SetTooltip(
-                "Gizmo: W=Translate E=Rotate R=Scale\n"
-                "Play: F5=F5 F6=Pause F7=Stop\n"
-                "Snap: Toggle magnet icon");
-        }
-
-        ImGui::SameLine();
-        if (ImGui::Button(ICON_FA_REDO " Reset", ImVec2(72, 22))) {
-            if (m_ResetLayoutCallback) m_ResetLayoutCallback();
+        // ─── 5. 右对齐：布局重置 ───
+        // 使用 ImGui::GetContentRegionMax().x 动态计算右对齐位置
+        float remainingWidth = ImGui::GetContentRegionMax().x - ImGui::GetCursorPosX() - 10.0f;
+        if (remainingWidth > 80.0f) {
+            ImGui::SameLine(ImGui::GetContentRegionMax().x - 80.0f);
+            if (ImGui::Button(ICON_FA_REDO, ImVec2(24, 22))) {
+                if (m_ResetLayoutCallback) m_ResetLayoutCallback();
+            }
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Reset Layout");
         }
 
         ImGui::PopStyleVar(2);
     }
 
-    // ============================================================
+    // ═══════════════════════════════════════════════════════════════
     // 1. 播放控制组
-    // ============================================================
+    // ═══════════════════════════════════════════════════════════════
 
     void Toolbar::DrawPlayGroup() {
         if (m_PlayState == PlayState::Stopped) {
@@ -121,9 +110,9 @@ namespace Engine {
         }
     }
 
-    // ============================================================
+    // ═══════════════════════════════════════════════════════════════
     // 2. 变换工具组
-    // ============================================================
+    // ═══════════════════════════════════════════════════════════════
 
     void Toolbar::DrawTransformGroup() {
         auto GizmoButton = [this](const char* icon, int mode, ImVec2 size, const char* tip) {
@@ -153,9 +142,9 @@ namespace Engine {
         if (localChanged && m_GizmoSpaceCallback) m_GizmoSpaceCallback(m_GizmoLocal);
     }
 
-    // ============================================================
+    // ═══════════════════════════════════════════════════════════════
     // 3. 吸附组
-    // ============================================================
+    // ═══════════════════════════════════════════════════════════════
 
     void Toolbar::DrawSnappingGroup() {
         ImGui::PushStyleColor(ImGuiCol_Text,
@@ -177,9 +166,9 @@ namespace Engine {
         if (ImGui::IsItemHovered()) ImGui::SetTooltip("Snap Value");
     }
 
-    // ============================================================
+    // ═══════════════════════════════════════════════════════════════
     // 4. 视口设置组
-    // ============================================================
+    // ═══════════════════════════════════════════════════════════════
 
     void Toolbar::DrawViewSettingsGroup() {
         if (ImGui::Button(ICON_FA_EYE " Overlays", ImVec2(75, 22))) {
@@ -200,14 +189,17 @@ namespace Engine {
             ImGui::EndPopup();
         }
 
+        // 相机速度滑块放在 Overlays 按钮后面，不用 right-justify
         ImGui::SameLine();
+        ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, 3.0f);
         ImGui::TextDisabled(ICON_FA_VIDEO);
         ImGui::SameLine();
-        ImGui::SetNextItemWidth(90);
+        ImGui::SetNextItemWidth(90.0f);
         if (ImGui::SliderFloat("##CamSpeed", &m_CameraSpeed, 0.1f, 10.0f, "%.1fx", ImGuiSliderFlags_Logarithmic)) {
             if (m_CameraSpeedCallback) m_CameraSpeedCallback(m_CameraSpeed);
         }
         if (ImGui::IsItemHovered()) ImGui::SetTooltip("Camera Fly Speed");
+        ImGui::PopStyleVar();
     }
 
 } // namespace Engine
