@@ -8,7 +8,14 @@ namespace ShaderGraph {
     // ══════════════════════════════════════════════════════════════
     uint32 ShaderGraph::AddNode(std::unique_ptr<ShaderNode> node) {
         uint32 id = m_NextNodeId++;
-        node->SetName(node->GetName()); // keep name
+        node->SetId(id); // 修复：将新分配的 ID 写回节点，确保 node->GetId() 与 map key 一致
+        // 同步更新所有引脚的 nodeId
+        for (auto& pin : node->GetInputPins()) {
+            pin.nodeId = id;
+        }
+        for (auto& pin : node->GetOutputPins()) {
+            pin.nodeId = id;
+        }
         m_Nodes[id] = std::move(node);
         return id;
     }

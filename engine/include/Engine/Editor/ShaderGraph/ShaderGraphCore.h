@@ -168,6 +168,7 @@ namespace ShaderGraph {
         virtual ~ShaderNode() = default;
 
         uint32              GetId() const { return m_Id; }
+        void                SetId(uint32 id) { m_Id = id; }
         const std::string&  GetName() const { return m_Name; }
         void                SetName(const std::string& n) { m_Name = n; }
         NodeCategory        GetCategory() const { return m_Category; }
