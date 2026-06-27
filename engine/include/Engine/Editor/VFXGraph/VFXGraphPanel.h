@@ -2,15 +2,17 @@
 
 /**
  * @file VFXGraphPanel.h
- * @brief VFX 图编辑器面板 — 对标 Unity VFX Graph 的工业级节点编辑器
+ * @brief VFX 图编辑器面板 — 工业级节点编辑器
  *
  * 核心面板设计：
  *   - 左栏：Block 目录浏览器 + 参数黑板
  *   - 中栏：节点画布（五大生命周期 Context 容器 + Block 拖入）
  *   - 右栏：属性面板 + Block 指令统计
  *   - 浮动窗口：实时预览视口 + 粒子计数分析
+ *   - 节点级错误反馈（红框 + 感叹号标记）
+ *   - 框选 + 分组 (Group)
  *
- * 遵循 RHI 抽象原则：不直接创建 GPU 资源，通过 VFXRuntime 间接调用 IGraphicsFactory
+ * 遵循 RHI 抽象原则：不直接创建 GPU 资源
  */
 
 #include "VFXGraphCore.h"
@@ -69,6 +71,19 @@ namespace VFX {
     };
 
     // ============================================================
+    // 分组框 (Group)
+    // ============================================================
+    struct VFXNodeGroup {
+        uint32 id;
+        std::string name = "Comment Group";
+        ImColor color = ImColor(100, 100, 200, 50);
+        float posX = 0, posY = 0;
+        float sizeX = 300, sizeY = 200;
+        std::vector<uint32> memberBlockIds;
+        bool collapsed = false;
+    };
+
+    // ============================================================
     // VFX 图编辑器面板
     // ============================================================
     class VFXGraphPanel {
@@ -79,10 +94,8 @@ namespace VFX {
         void SetGraph(VFXGraph* graph) { m_Graph = graph; }
         VFXGraph* GetGraph() const { return m_Graph; }
         void SetTitle(const std::string& title) { m_Title = title; }
-
         void OnImGui();
 
-        /// 编译 VFX 图生成 Compute Shader 代码
         bool GenerateVFXCode(std::string& outCode);
 
     private:
@@ -96,10 +109,12 @@ namespace VFX {
         void DrawBlockNode(VFXBlock* block);
         void DrawBlockPins(VFXBlock* block, bool isInput);
         void DrawLinks();
-        void DrawBlockGroupBorders();
+        void DrawNodeGroupBoxes();
 
         // ── 交互系统 ──
         void HandleLinkDragging();
+        void HandleMultiselect();
+        void HandleCreateGroup();
         void FindHoveredPin(ImVec2 mousePos, uint32& outBlockId, uint32& outPinId, PinDirection& outDir) const;
         void HandleCreateMenu();
         void HandleDragDropToContext();
@@ -134,6 +149,15 @@ namespace VFX {
         ContextType m_EditingContext = ContextType::Spawn;
         bool m_ShowContextSettings = false;
 
+        // ── 分组系统 ──
+        std::vector<VFXNodeGroup> m_Groups;
+        uint32 m_NextGroupId = 1;
+
+        // ── 框选状态 ──
+        bool m_IsBoxSelecting = false;
+        ImVec2 m_BoxSelectStart;
+        ImVec2 m_BoxSelectEnd;
+
         // ── 颜色常量 ──
         static constexpr ImU32 ColorBlockSpawn     = IM_COL32(60, 140, 80, 255);
         static constexpr ImU32 ColorBlockInit      = IM_COL32(60, 110, 150, 255);
@@ -161,7 +185,7 @@ namespace VFX {
         std::vector<int> m_FilteredBlockIndices;
         char m_SearchBuf[128] = "";
 
-        // 延迟删除：避免在迭代 m_Graph->GetBlocks() 时直接删除导致崩溃
+        // 延迟删除
         std::vector<uint32> m_PendingDeleteBlockIds;
         void ProcessPendingDeletions();
     };

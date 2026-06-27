@@ -404,12 +404,16 @@ namespace VFX {
         uint32 AddLink(uint32 outputBlockId, uint32 outputPinId, uint32 inputBlockId, uint32 inputPinId);
         bool   RemoveLink(uint32 linkId);
         bool   RemoveLinkByPins(uint32 outputBlockId, uint32 outputPinId, uint32 inputBlockId, uint32 inputPinId);
+        void   RemoveLinksConnectedToPin(uint32 pinId);
         const std::vector<VFXLink>& GetLinks() const { return m_Links; }
         bool CanConnectPins(const VFXPin& outPin, const VFXPin& inPin, std::string& outReason) const;
         uint32 ReplaceLink(uint32 outputBlockId, uint32 outputPinId, uint32 inputBlockId, uint32 inputPinId);
 
         // ── 上下文管理 ──
         VFXContext& GetOrCreateContext(ContextType type);
+        VFXContext& CreateNewContext(ContextType type);
+        bool RemoveContext(ContextType type);
+        void RemoveBlockFromAllContexts(uint32 blockId);
         VFXContext* GetContext(ContextType type);
         const VFXContext* GetContext(ContextType type) const;
         std::vector<VFXContext>& GetContexts() { return m_Contexts; }
@@ -439,6 +443,12 @@ namespace VFX {
 
         // ── 清除 ──
         void Clear();
+
+        /// 创建默认模板（空的生命周期 Context + 默认 Spawn Rate Block）
+        void CreateDefaultTemplate();
+
+        /// 根据 BlockCategory 创建 Block 实例（用于反序列化）
+        std::unique_ptr<VFXBlock> CreateBlockByCategory(BlockCategory category, uint32 id) const;
 
         // ── 运行时参数 ──
         uint32 GetParticleCapacity() const { return m_ParticleCapacity; }

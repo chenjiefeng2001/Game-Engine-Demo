@@ -25,7 +25,42 @@ namespace Engine {
 namespace VFX {
 
     // ═══════════════════════════════════════════════════════════
-    // Spawn Context Blocks
+    // PropertyNode — 黑板属性引用节点
+    // ═══════════════════════════════════════════════════════════
+    class VFXPropertyNode : public VFXBlock {
+    public:
+        VFXPropertyNode(uint32 id, const std::string& propName, VFXPinType type)
+            : VFXBlock(id, "Get " + propName, BlockCategory::Utility_Constant),
+              m_PropName(propName) {
+            AddOutputPin(propName, type);
+            m_SizeX = 140.0f;
+            m_SizeY = 45.0f;
+        }
+        std::string GenerateHLSL(const std::unordered_map<uint32, std::string>&) const override {
+            return "_" + m_PropName;
+        }
+        std::unique_ptr<VFXBlock> Clone(uint32 newId) const override {
+            return std::make_unique<VFXPropertyNode>(newId, m_PropName, m_OutputPins[0].type);
+        }
+        void DrawInlineContent() override {
+            ImGui::SetCursorPosY(ImGui::GetCursorPosY() + 5);
+            ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.7f, 0.7f, 1.0f, 1.0f));
+            ImGui::Text("Linked: %s", m_PropName.c_str());
+            ImGui::PopStyleColor();
+            char buf[64];
+            strncpy_s(buf, m_PropName.c_str(), sizeof(buf) - 1);
+            buf[sizeof(buf) - 1] = '\0';
+            if (ImGui::InputText("Source Property", buf, sizeof(buf))) {
+                m_PropName = buf;
+                m_Name = "Get " + m_PropName;
+            }
+        }
+    private:
+        std::string m_PropName;
+    };
+
+    // ═══════════════════════════════════════════════════════════
+    // Utility Context Blocks
     // ═══════════════════════════════════════════════════════════
 
     // ── Spawn Burst: 单次爆发 ──

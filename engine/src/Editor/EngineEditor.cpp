@@ -135,52 +135,11 @@ namespace Engine {
         m_Visibility.scenePanelTabbed = false; // 默认不合并
         // 其他面板通过 View → Editor Settings 控制
 
-        // ── 初始化 VFX 编辑器 — 创建默认示例图 ──
+        // ── 初始化 VFX 编辑器 — 使用 CreateDefaultTemplate ──
         {
             m_VFXGraphPanel.SetGraph(&m_VFXGraph);
             m_VFXGraphPanel.SetTitle("VFX Graph Editor");
-
-            // 手动创建默认的 Block
-            struct BlockInit {
-                const char* name;
-                VFX::BlockCategory category;
-                float posX, posY;
-            };
-            BlockInit initBlocks[] = {
-                {"Spawn Rate",      VFX::BlockCategory::Spawn_Rate,      30,  10},
-                {"Init Life",       VFX::BlockCategory::Init_Life,      30,  10},
-                {"Init Position",   VFX::BlockCategory::Init_Position,  220, 10},
-                {"Init Velocity",   VFX::BlockCategory::Init_Velocity,  30,  100},
-                {"Gravity",         VFX::BlockCategory::Update_Gravity,     30, 10},
-                {"Color Over Life", VFX::BlockCategory::Update_Color,       30, 100},
-                {"Size Over Life",  VFX::BlockCategory::Update_Size,        30, 190},
-                {"Quad Billboard",  VFX::BlockCategory::Output_Quad,    30,  10},
-            };
-
-            // 通过名称匹配工厂
-            auto& factoryList = VFX::GetVFXBlockFactoryList();
-            for (auto& init : initBlocks) {
-                uint32 newId = 0;
-                for (auto& entry : factoryList) {
-                    if (entry.category == init.category) {
-                        newId = m_VFXGraph.AddBlock(entry.factory(0));
-                        break;
-                    }
-                }
-
-                auto* newBlock = m_VFXGraph.GetBlock(newId);
-                if (newBlock) {
-                    VFX::ContextType ctxType = VFX::BlockCategoryToContext(init.category);
-                    VFX::VFXContext& ctx = m_VFXGraph.GetOrCreateContext(ctxType);
-                    ctx.blockIds.push_back(newId);
-
-                    float baseX = ctx.posX + 20.0f;
-                    float baseY = ctx.posY + 40.0f;
-                    newBlock->SetPosition(baseX + init.posX, baseY + init.posY);
-                }
-            }
-
-            m_VFXGraph.MarkDirty(false);
+            m_VFXGraph.CreateDefaultTemplate();
         }
 
         // ── 初始化 Shader Graph 编辑器 — 创建默认示例图 ──
