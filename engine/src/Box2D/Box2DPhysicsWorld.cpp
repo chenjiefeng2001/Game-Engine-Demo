@@ -104,6 +104,21 @@ namespace Engine {
                     b2CreateSegmentShape(bodyId, &shapeDef, &seg);
                     break;
                 }
+                case ShapeType::Polygon: {
+                    if (def.shape.polygonVertices && def.shape.polygonVertexCount >= 3) {
+                        b2Vec2 vertices[B2_MAX_POLYGON_VERTICES];
+                        int32 count = (std::min)(def.shape.polygonVertexCount, static_cast<int32>(B2_MAX_POLYGON_VERTICES));
+                        for (int32 i = 0; i < count; ++i) {
+                            vertices[i] = ToB2(def.shape.polygonVertices[i]);
+                        }
+                        b2Hull hull = b2ComputeHull(vertices, count);
+                        if (hull.count > 0) {
+                            b2Polygon poly = b2MakeOffsetPolygon(&hull, ToB2(def.shape.offset), b2MakeRot(0.0f));
+                            b2CreatePolygonShape(bodyId, &shapeDef, &poly);
+                        }
+                    }
+                    break;
+                }
                 case ShapeType::Chain:
                     // 链形状在 Box2DPhysicsBody::AddFixture 中处理
                     break;
