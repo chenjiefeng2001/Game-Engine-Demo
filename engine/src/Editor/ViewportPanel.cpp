@@ -117,6 +117,9 @@ namespace Engine {
         HandleDragAndDrop();     // 交互：处理资源拖拽
         HandleMousePicking();    // 交互：处理鼠标点击拾取
 
+        // ── 视口交互闭环（右键菜单 + 快捷键） ──
+        HandleViewportInteraction();
+
         ImGui::End();
         ImGui::PopStyleVar();
     }
@@ -186,26 +189,20 @@ namespace Engine {
     // 3. 绘制悬浮工具栏 (Overlay) — 使用屏幕绝对坐标解决遮挡
     // ═══════════════════════════════════════════════════════════════
     void ViewportPanel::DrawOverlay() {
-        // 【核心修复】：使用基于渲染画面物理边界的绝对坐标！
-        // SetCursorScreenPos 忽略所有 Padding / 标题栏 / Tab 栏的影响，
-        // 强制将下一个 UI 元素的起始位置锚定到 3D 画布的左上角。
         ImVec2 overlayPos = ImVec2(m_ViewportBounds[0].x + 10.0f,
                                     m_ViewportBounds[0].y + 10.0f);
         ImGui::SetCursorScreenPos(overlayPos);
 
-        ImGui::PushStyleColor(ImGuiCol_ChildBg, ImVec4(0.12f, 0.12f, 0.12f, 0.85f)); // 磨砂黑
+        ImGui::PushStyleColor(ImGuiCol_ChildBg, ImVec4(0.12f, 0.12f, 0.12f, 0.85f));
         ImGui::PushStyleVar(ImGuiStyleVar_ChildRounding, 4.0f);
         ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(8.0f, 4.0f));
 
-        // 创建一个自适应内容的紧凑型工具条
         if (ImGui::BeginChild("ViewportToolbar", ImVec2(280.0f, 32.0f), false,
                               ImGuiWindowFlags_NoScrollbar)) {
-            ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0, 0, 0, 0)); // 按钮去背景
+            ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0, 0, 0, 0));
             ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(4.0f, 0.0f));
+            ImGui::SetCursorPosY(ImGui::GetCursorPosY() + 3.0f);
 
-            ImGui::SetCursorPosY(ImGui::GetCursorPosY() + 3.0f); // 垂直居中微调
-
-            // ── 变换模式按钮 ──
             if (ImGui::Button(ICON_FA_ARROWS)) m_GizmoType = 0;
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Translate (W)");
             ImGui::SameLine();
@@ -220,7 +217,6 @@ namespace Engine {
 
             ImGui::TextDisabled("|"); ImGui::SameLine();
 
-            // ── 局部/世界空间切换 ──
             if (ImGui::Button(m_GizmoLocal ? ICON_FA_CUBE : ICON_FA_DOT_CIRCLE))
                 m_GizmoLocal = !m_GizmoLocal;
             if (ImGui::IsItemHovered()) ImGui::SetTooltip(m_GizmoLocal ? "Local Space" : "World Space");
@@ -228,7 +224,6 @@ namespace Engine {
 
             ImGui::TextDisabled("|"); ImGui::SameLine();
 
-            // ── 相机速度滑条 ──
             ImGui::TextDisabled(ICON_FA_CAMERA); ImGui::SameLine();
             ImGui::SetNextItemWidth(60.0f);
             float speed = m_Camera ? m_Camera->GetFlySpeed() : 10.0f;
@@ -255,16 +250,13 @@ namespace Engine {
         ImGuizmo::SetOrthographic(m_Camera && m_Camera->GetProjectionType() == CameraProjectionType::Orthographic);
         ImGuizmo::SetDrawlist();
 
-        // 严格约束在物理边界内
         ImGuizmo::SetRect(m_ViewportBounds[0].x, m_ViewportBounds[0].y,
                           m_ViewportBounds[1].x - m_ViewportBounds[0].x,
                           m_ViewportBounds[1].y - m_ViewportBounds[0].y);
 
-        // 从 EditorCamera 获取矩阵
         glm::mat4 cameraView = glm::make_mat4(m_Camera->GetViewMatrixPtr());
         glm::mat4 cameraProj = glm::make_mat4(m_Camera->GetProjectionMatrixPtr());
 
-        // 从选中物体的 Transform 获取世界矩阵
         glm::mat4 transformMatrix(1.0f);
         {
             auto gameObj = std::static_pointer_cast<GameObject>(m_SelectedObject.lock());
@@ -276,7 +268,7 @@ namespace Engine {
 
         bool snap = Input::Get() && Input::IsKeyDown(KeyCode::LeftCtrl);
         if (!snap) snap = m_SnapEnabled;
-        float snapValue = (m_GizmoType == 1) ? 45.0f : m_SnapValue; // 旋转用 45°
+        float snapValue = (m_GizmoType == 1) ? 45.0f : m_SnapValue;
         float snapValues[3] = { snapValue, snapValue, snapValue };
 
         ImGuizmo::Manipulate(glm::value_ptr(cameraView), glm::value_ptr(cameraProj),
@@ -286,7 +278,6 @@ namespace Engine {
             nullptr,
             snap ? snapValues : nullptr);
 
-        // 如果 Gizmo 被使用，回写变换
         if (ImGuizmo::IsUsing()) {
             auto gameObj = std::static_pointer_cast<GameObject>(m_SelectedObject.lock());
             if (gameObj) {
@@ -307,20 +298,27 @@ namespace Engine {
     }
 
     // ═══════════════════════════════════════════════════════════════
-    // 5. 处理资源拖拽到场景
+    // 5. 处理资源拖拽到场景（DND 实例化）
     // ═══════════════════════════════════════════════════════════════
     void ViewportPanel::HandleDragAndDrop() {
         if (ImGui::BeginDragDropTarget()) {
             if (const ImGuiPayload* payload = ImGui::AcceptDragDropPayload("CONTENT_BROWSER_ITEM")) {
-                ENGINE_LOG_INFO("Viewport", "Dropped asset into scene");
-                // 处理实例化逻辑...
+                // 从 AssetBrowser 拖拽资源到视口
+                const char* assetPath = (const char*)payload->Data;
+
+                // 通知外部创建实例（通过回调）
+                if (m_DropAssetCallback) {
+                    m_DropAssetCallback(assetPath);
+                }
+
+                ENGINE_LOG_INFO("Viewport", "Dropped asset: {}", assetPath ? assetPath : "null");
             }
             ImGui::EndDragDropTarget();
         }
     }
 
     // ═══════════════════════════════════════════════════════════════
-    // 6. ID 缓冲区像素级拾取 — O(1) 精准点击
+    // 6. ID 缓冲区像素级拾取
     // ═══════════════════════════════════════════════════════════════
     uint32 ViewportPanel::PickAtMouse(float mouseScreenX, float mouseScreenY) const {
         if (!m_FBO) return 0;
@@ -336,7 +334,6 @@ namespace Engine {
                     float ndcX, ndcY;
                     GetMouseViewportSpace(ndcX, ndcY);
 
-                    // 使用 ID 缓冲区读取点击像素下的 GameObject ID
                     ImVec2 mousePos = ImGui::GetMousePos();
                     uint32 entityId = PickAtMouse(mousePos.x, mousePos.y);
 
@@ -344,6 +341,80 @@ namespace Engine {
                 }
             }
         }
+    }
+
+    // ═══════════════════════════════════════════════════════════════
+    // 7. 视口交互闭环 — 右键菜单 + 快捷键
+    // ═══════════════════════════════════════════════════════════════
+    void ViewportPanel::HandleViewportInteraction() {
+        // ── 右键创建菜单 ──
+        if (m_Hovered && ImGui::IsMouseClicked(ImGuiMouseButton_Right) && !ImGuizmo::IsOver()) {
+            ImGui::OpenPopup("ViewportContextMenu");
+        }
+
+        if (ImGui::BeginPopup("ViewportContextMenu")) {
+            if (ImGui::BeginMenu(ICON_FA_PLUS " Add Entity")) {
+                if (ImGui::MenuItem(ICON_FA_CUBE " Cube")) {
+                    if (m_SceneCreateCallback) m_SceneCreateCallback("Cube");
+                }
+                if (ImGui::MenuItem(ICON_FA_CIRCLE " Sphere")) {
+                    if (m_SceneCreateCallback) m_SceneCreateCallback("Sphere");
+                }
+                if (ImGui::MenuItem(ICON_FA_GRID " Plane")) {
+                    if (m_SceneCreateCallback) m_SceneCreateCallback("Plane");
+                }
+                ImGui::EndMenu();
+            }
+            if (ImGui::BeginMenu(ICON_FA_SUN " Add Light")) {
+                if (ImGui::MenuItem("Point Light")) {
+                    if (m_SceneCreateCallback) m_SceneCreateCallback("PointLight");
+                }
+                if (ImGui::MenuItem("Directional Light")) {
+                    if (m_SceneCreateCallback) m_SceneCreateCallback("DirectionalLight");
+                }
+                ImGui::EndMenu();
+            }
+            ImGui::Separator();
+            if (ImGui::MenuItem(ICON_FA_TRASH " Delete", "Del", false, !m_SelectedObject.expired())) {
+                if (m_SceneDeleteCallback) m_SceneDeleteCallback();
+            }
+            ImGui::EndPopup();
+        }
+
+        // ── 快捷键 ──
+        if (m_Focused) {
+            // F 键聚焦
+            if (ImGui::IsKeyPressed(ImGuiKey_F)) {
+                FocusOnSelected();
+            }
+            // Delete 键删除
+            if (ImGui::IsKeyPressed(ImGuiKey_Delete)) {
+                if (m_SceneDeleteCallback && !m_SelectedObject.expired()) {
+                    m_SceneDeleteCallback();
+                }
+            }
+            // W/E/R 切换 Gizmo 模式
+            if (ImGui::IsKeyPressed(ImGuiKey_W)) m_GizmoType = 0;
+            if (ImGui::IsKeyPressed(ImGuiKey_E)) m_GizmoType = 1;
+            if (ImGui::IsKeyPressed(ImGuiKey_R)) m_GizmoType = 2;
+        }
+    }
+
+    // ═══════════════════════════════════════════════════════════════
+    // 聚焦选中物体 — F 键 / 菜单触发
+    // ═══════════════════════════════════════════════════════════════
+    void ViewportPanel::FocusOnSelected() {
+        auto sel = m_SelectedObject.lock();
+        if (!sel || !m_Camera) return;
+
+        auto* obj = static_cast<GameObject*>(sel.get());
+        Vec3 pos = obj->GetTransform().GetPosition();
+
+        // 平滑聚焦：设置焦点到物体位置，调整距离为 5 米
+        m_Camera->SetFocusPoint(pos);
+        m_Camera->SetDistance(5.0f);
+
+        ENGINE_LOG_INFO("Viewport", "Focused on: {}", obj->GetName());
     }
 
     // ═══════════════════════════════════════════════════════════════
@@ -364,7 +435,6 @@ namespace Engine {
     // 3D 场景渲染（每帧调用）
     // ═══════════════════════════════════════════════════════════════
     void ViewportPanel::Render3DScene() {
-        // 确保 FBO 有效
         if (!m_GL) return;
         if (!m_FBO || !m_FBO->IsValid()) {
             InitFBO();
@@ -374,10 +444,8 @@ namespace Engine {
 
         UpdateFBOIfNeeded();
 
-        // ── 1. 绑定 FBO ──
         m_FBO->Bind();
 
-        // ── 2. 设置 OpenGL 状态 ──
         m_GL->Viewport(0, 0, static_cast<int32>(m_Width), static_cast<int32>(m_Height));
         m_GL->ClearColor(0.15f, 0.15f, 0.15f, 1.0f);
         m_GL->Clear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
@@ -389,7 +457,6 @@ namespace Engine {
             m_GL->PolygonMode(GL_FRONT_AND_BACK, GL_FILL);
         }
 
-        // ── 3. 构建相机矩阵（使用 EditorCamera） ──
         if (m_Camera) {
             float aspect = (m_Height > 0.0f) ? m_Width / m_Height : 1.778f;
             glm::mat4 proj;
@@ -406,13 +473,11 @@ namespace Engine {
 
             glm::mat4 viewProj = proj * view;
 
-            // ── 4. 渲染场景（通过回调，外部 EngineEditor 注入具体实现） ──
             if (m_SceneRenderCallback) {
                 Vec3 camPos = m_Camera->GetPosition();
                 m_SceneRenderCallback(glm::value_ptr(viewProj), &camPos.x);
             }
 
-            // ── 5. 渲染编辑器辅助层（网格/轴） ──
             if (m_Overlay.IsInitialized()) {
                 Vec3 camPos = m_Camera->GetPosition();
                 float camPosF[3] = { camPos.x, camPos.y, camPos.z };
@@ -420,7 +485,6 @@ namespace Engine {
             }
         }
 
-        // ── 6. 恢复管线状态 ──
         if (m_Config.CurrentMode == ViewMode::Wireframe && m_GL) {
             m_GL->PolygonMode(GL_FRONT_AND_BACK, GL_FILL);
         }

@@ -54,6 +54,7 @@
 #define ICON_FA_SEARCH_MINUS  "\xef\x80\x90" // f010
 
 // ── 通用/操作图标 ──
+#define ICON_FA_GEAR        "\xef\x80\x93"  // f013 (alias for cog)
 #define ICON_FA_COG         "\xef\x80\x93"  // f013 (settings)
 #define ICON_FA_WRENCH      "\xef\x82\xad"  // f0ad
 #define ICON_FA_TRASH       "\xef\x87\xb8"  // f1f8
