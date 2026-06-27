@@ -201,7 +201,7 @@ void main() {
     void OpenGLComputeParticles::OnUpdate(float dt) {
         if (!m_Initialized || !IsPlaying()) return;
         m_TotalTime += dt;
-        VFX::EmitterConfig cfg = GetConfig();
+        VFX::EmitterConfig& cfg = m_Config;
         m_EmitAccumulator += cfg.emitRate * dt;
         if (m_EmitAccumulator >= 1.0f) {
             uint32 n = (uint32)m_EmitAccumulator;
@@ -213,7 +213,7 @@ void main() {
         m_GL.Uniform1f(m_TimeLoc, m_TotalTime);
         m_GL.DispatchCompute((m_Capacity + 63) / 64, 1, 1);
         m_GL.MemoryBarrier(GL_SHADER_STORAGE_BARRIER_BIT | GL_VERTEX_ATTRIB_ARRAY_BARRIER_BIT);
-        m_AliveCount = (uint32)std::min((size_t)m_Capacity, (size_t)(m_AliveCount + cfg.emitRate * dt));
+        m_AliveCount = (uint32)(std::min)((uint64_t)m_Capacity, (uint64_t)(m_AliveCount + (uint32)(cfg.emitRate * dt)));
     }
 
     void OpenGLComputeParticles::UploadEmitData(uint32 count, const glm::vec3& pos) {

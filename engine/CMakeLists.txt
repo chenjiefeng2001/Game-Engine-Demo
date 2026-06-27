@@ -17,6 +17,7 @@ file(GLOB ENGINE_SOURCES CONFIGURE_DEPENDS
     src/Debug/*.cpp
     src/Editor/*.cpp
     src/Editor/ShaderGraph/*.cpp
+    src/Editor/VFXGraph/*.cpp
     src/OpenAL/*.cpp
     src/OpenGL/*.cpp
     src/OpenGL/Resources/*.cpp
@@ -43,6 +44,7 @@ file(GLOB ENGINE_HEADERS CONFIGURE_DEPENDS
     include/Engine/Core/Audio/*.h
     include/Engine/Debug/*.h
     include/Engine/Editor/*.h
+    include/Engine/Editor/VFXGraph/*.h
     include/Engine/Audio/*.h
     include/Engine/OpenGL/*.h
     include/Engine/OpenAL/*.h

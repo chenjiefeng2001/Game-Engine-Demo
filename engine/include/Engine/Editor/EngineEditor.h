@@ -20,6 +20,9 @@
 #include "Engine/Editor/EditorTools.h"
 #include "Engine/Editor/EditorDefs.h"
 #include "Engine/Editor/ShaderGraph/ShaderGraphPanel.h"
+#include "Engine/Editor/VFXGraph/VFXGraphPanel.h"
+#include "Engine/Editor/VFXGraph/VFXGraphCore.h"
+#include "Engine/Editor/VFXGraph/VFXNodeFactory.h"
 #include <glm/glm.hpp>
 #include <glm/gtc/type_ptr.hpp>
 
@@ -100,6 +103,10 @@ namespace Engine {
         // ── 工具面板 ──
         ShaderGraph::ShaderGraphPanel m_ShaderGraphPanel;
         ShaderGraph::ShaderGraph      m_ShaderGraph;
+
+        // ── VFX 编辑器 ──
+        VFX::VFXGraphPanel m_VFXGraphPanel;
+        VFX::VFXGraph      m_VFXGraph;
 
         // ── 编辑器工具状态 ──
         GizmoOperation  m_GizmoOp     = GizmoOperation::Translate;
