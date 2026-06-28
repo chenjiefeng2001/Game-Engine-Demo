@@ -39,6 +39,13 @@ namespace Engine {
         }
     }
 
+    void ViewportPanel::SetSnapMode(SnapMode mode) {
+        if (m_Camera) m_Camera->SetSnapMode(mode);
+    }
+    SnapMode ViewportPanel::GetSnapMode() const {
+        return m_Camera ? m_Camera->GetSnapMode() : SnapMode::None;
+    }
+
     void ViewportPanel::InitResources(IGraphicsFactory* factory,
                                        const std::string& vertPath,
                                        const std::string& fragPath) {

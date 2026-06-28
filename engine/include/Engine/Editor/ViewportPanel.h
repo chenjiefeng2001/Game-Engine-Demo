@@ -78,7 +78,15 @@ namespace Engine {
         // ── 当前工具 ──
         void SetTool(ViewportTool tool) { m_CurrentTool = tool; }
         ViewportTool GetTool() const { return m_CurrentTool; }
-        void CycleGizmoTool();  // W→E→R 循环
+        void CycleGizmoTool();
+
+        // ── 选择模式 ──
+        void SetSelectionMode(SelectionMode mode) { m_SelectionMode = mode; }
+        SelectionMode GetSelectionMode() const { return m_SelectionMode; }
+
+        // ── 吸附 ──
+        void SetSnapMode(SnapMode mode);
+        SnapMode GetSnapMode() const;
 
         // ── 样式访问 ──
         ViewportStyle& GetStyle() { return m_Style; }
@@ -182,6 +190,9 @@ namespace Engine {
         SceneDeleteCallback  m_SceneDeleteCallback;
         DropAssetCallback    m_DropAssetCallback;
         LayerDrawCallback    m_LayerDrawCallback;
+
+        // ── 选择模式（Object/Vertex/Edge/Face） ──
+        SelectionMode m_SelectionMode = SelectionMode::Object;
 
         // ── Gizmo 状态 ──
         bool  m_GizmoLocal  = false;
