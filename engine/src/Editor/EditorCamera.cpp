@@ -186,26 +186,53 @@ namespace Engine {
         IInput* input = Input::Get();
         if (!input) return;
 
-        // 构建前/右方向（忽略俯仰的前方向）
+        // 1. 根据当前偏航角 (Yaw) 和 俯仰角 (Pitch) 计算方向向量
         float32 yawRad = glm::radians(m_Yaw);
-        glm::vec3 forward(std::cos(yawRad), 0.0f, std::sin(yawRad));
-        glm::vec3 right(std::cos(yawRad + glm::half_pi<float32>()), 0.0f,
-                        std::sin(yawRad + glm::half_pi<float32>()));
+        float32 pitchRad = glm::radians(m_Pitch);
+
+        // 计算世界空间的前方向 (Forward) — 考虑俯仰
+        glm::vec3 forward;
+        forward.x = std::cos(pitchRad) * std::cos(yawRad);
+        forward.y = std::sin(pitchRad);
+        forward.z = std::cos(pitchRad) * std::sin(yawRad);
+        forward = glm::normalize(forward);
+
+        // 计算右方向 (Right) - 与世界 Y 轴叉乘（水平方向不受俯仰影响）
+        glm::vec3 right = glm::normalize(glm::cross(forward, glm::vec3(0.0f, 1.0f, 0.0f)));
+        // 当前帧的"真正向上"方向（用于 E/Q 垂直升降，保持世界空间）
         glm::vec3 up(0.0f, 1.0f, 0.0f);
 
+        // 2. 根据键盘输入计算位移
         glm::vec3 move(0.0f);
+        float speed = m_FlySpeed * dt;
+
+        // 如果按住 Shift 键，加速 3 倍
+        if (input->IsKeyDown(KeyCode::LeftShift)) speed *= 3.0f;
+
         if (input->IsKeyDown(KeyCode::W)) move += forward;
         if (input->IsKeyDown(KeyCode::S)) move -= forward;
         if (input->IsKeyDown(KeyCode::A)) move -= right;
         if (input->IsKeyDown(KeyCode::D)) move += right;
-        if (input->IsKeyDown(KeyCode::Q)) move -= up;
-        if (input->IsKeyDown(KeyCode::E)) move += up;
+        if (input->IsKeyDown(KeyCode::E)) move += up;    // 向上升
+        if (input->IsKeyDown(KeyCode::Q)) move -= up;    // 向下降
 
+        // 3. 更新位置
         float32 len = glm::length(move);
         if (len > 0.0f) {
             move /= len;
-            glm::vec3 newPos = ToGlm(m_SmoothPosition) + move * m_FlySpeed * dt;
-            m_SmoothPosition = ToEngine(newPos);
+
+            // 使用 m_Position 而非 m_SmoothPosition，确保在飞行模式下立即响应
+            glm::vec3 currentPos = ToGlm(m_Position);
+            glm::vec3 newPos = currentPos + move * speed;
+            m_Position = ToEngine(newPos);
+
+            // 同步焦点，防止切换回轨道模式时相机乱跳
+            glm::vec3 newFocus = newPos + forward * m_Distance;
+            m_FocusPoint = ToEngine(newFocus);
+
+            // 同步平滑位置，避免模式切换时的阻尼卡顿
+            m_SmoothPosition = m_Position;
+
             m_Dirty = true;
         }
     }

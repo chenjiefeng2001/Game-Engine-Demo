@@ -1,5 +1,8 @@
 #version 460 core
-out vec4 FragColor;
+// 颜色附件输出
+layout(location = 0) out vec4 FragColor;
+// 拾取附件输出（Entity ID）
+layout(location = 1) out int EntityID;
 
 in vec3 v_FragPos;
 in vec3 v_Normal;
@@ -8,6 +11,7 @@ uniform vec4 u_BaseColor;
 uniform vec3 u_LightDir;
 uniform vec3 u_LightColor;
 uniform int  u_IsSelected = 0;
+uniform int  u_EntityID    = 0;
 
 void main() {
     // 环境光
@@ -27,4 +31,7 @@ void main() {
     }
 
     FragColor = vec4(result, u_BaseColor.a);
+
+    // 写入实体 ID 到拾取纹理
+    EntityID = u_EntityID;
 }

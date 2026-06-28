@@ -2,15 +2,12 @@
 
 /**
  * @file ViewportPanel.h
- * @brief 工业级视口面板 — 悬浮 Overlay、ImGuizmo、鼠标拾取、Scene 桥接
+ * @brief 工业级视口面板 — 交互状态机 + MRT 双附件渲染 + 像素级拾取
  *
- * 架构：
- *   - ViewportConfig 纯数据结构管理所有开关和参数
- *   - EditorCamera 负责相机输入和矩阵计算
- *   - EditorOverlay 负责网格/轴等覆盖层绘制
- *   - Scene 传入当前编辑场景，Render3DScene 将场景渲染到 FBO
- *   - RHI 抽象：所有 GPU 资源通过 IGraphicsFactory 创建
- *   - 支持 ImGuizmo 物体变换、鼠标射线拾取、悬浮工具栏
+ * 架构对标 Unity/Blender：
+ *   - ViewportTool 枚举驱动的交互状态机
+ *   - MRT 单次 Pass 渲染（颜色 + ID）
+ *   - 手型/选择/变换工具分离，互不干扰
  */
 
 #include "Engine/Types.h"
@@ -20,7 +17,6 @@
 #include "Engine/Core/ViewMode.h"
 #include "Engine/Core/IGraphicsFactory.h"
 #include "Engine/Core/IRenderContext.h"
-#include "Engine/OpenGL/OpenGLFramebuffer.h"
 #include <memory>
 #include <string>
 #include <functional>
@@ -30,8 +26,27 @@ struct GladGLContext;
 
 namespace Engine {
 
-    // 前置声明
-    class Scene;
+    class GameObject;
+
+    // ── 交互工具模式（对标 Unity 工具架） ──
+    enum class ViewportTool {
+        Select,     // 选择/拾取 (Q)
+        Hand,       // 手型平移 (H)
+        Translate,  // 位移 (W)
+        Rotate,     // 旋转 (E)
+        Scale       // 缩放 (R)
+    };
+
+    // ── 视口可视化配置（消除硬编码） ──
+    struct ViewportStyle {
+        ImVec4  ToolbarBgColor       = ImVec4(0.12f, 0.12f, 0.12f, 0.85f);
+        float   ToolbarHeight        = 32.0f;
+        float   GizmoSnapTranslate   = 0.5f;
+        float   GizmoSnapRotate      = 45.0f;
+        float   GizmoSnapScale       = 0.1f;
+        ImU32   SelectionBorderColor = IM_COL32(255, 200, 50, 180);
+        ImU32   HoveredBorderColor   = IM_COL32(100, 150, 255, 100);
+    };
 
     class ViewportPanel {
     public:
@@ -49,12 +64,7 @@ namespace Engine {
         // ── 外部依赖注入 ──
         void SetRenderContext(IRenderContext* ctx) { m_RenderContext = ctx; }
         void SetGLContext(GladGLContext* gl) { m_GL = gl; }
-        void SetScene(std::shared_ptr<Scene> scene) { m_Scene = scene; }
-
-        // ── 选中对象（用于 Gizmo 变换） ──
-        template<typename T>
-        void SetSelectedObject(std::shared_ptr<T> obj) { m_SelectedObject = std::static_pointer_cast<void>(obj); }
-        std::shared_ptr<void> GetSelectedObject() const { return m_SelectedObject.lock(); }
+        void SetSelectedObject(std::shared_ptr<GameObject> obj) { m_SelectedObject = obj; }
 
         // ── 配置访问 ──
         ViewportConfig&       GetConfig()       { return m_Config; }
@@ -64,6 +74,15 @@ namespace Engine {
         ViewMode GetViewMode() const { return m_Config.CurrentMode; }
         void SetShowGrid(bool show) { m_Config.ShowGrid = show; }
         bool IsShowGrid() const { return m_Config.ShowGrid; }
+
+        // ── 当前工具 ──
+        void SetTool(ViewportTool tool) { m_CurrentTool = tool; }
+        ViewportTool GetTool() const { return m_CurrentTool; }
+        void CycleGizmoTool();  // W→E→R 循环
+
+        // ── 样式访问 ──
+        ViewportStyle& GetStyle() { return m_Style; }
+        const ViewportStyle& GetStyle() const { return m_Style; }
 
         // ── 帧生命周期 ──
         void OnUpdate(float32 dt, bool isFocusedViewport = false);
@@ -81,44 +100,13 @@ namespace Engine {
         bool    IsHovered() const { return m_Hovered; }
         bool    IsFocused() const { return m_Focused; }
 
-        /// 获取鼠标在视口内的 NDC 坐标 [-1, 1]（用于射线拾取）
-        void GetMouseViewportSpace(float& outNDCX, float& outNDCY) const;
-
-        /// 获取视口屏幕边界（绝对屏幕坐标）
-        void GetViewportBounds(float& outMinX, float& outMinY, float& outMaxX, float& outMaxY) const;
-
-        using ResizeCallback = std::function<void(int32 width, int32 height)>;
-        void SetResizeCallback(ResizeCallback cb) { m_ResizeCallback = std::move(cb); }
-
-        // ── 场景渲染回调（外部传入相机参数进行场景绘制） ──
-        // 使用 const void* 避免在头文件中暴露 glm 细节
-        // 第三个参数 isPicking: true = 拾取 Pass（写入物体 ID），false = 正常颜色 Pass
-        using SceneRenderCallback = std::function<void(const float* viewProj16, const float* camPos3, bool isPicking)>;
+        // ── 场景渲染回调（MRT 单次 Pass，同时写入颜色 + ID） ──
+        using SceneRenderCallback = std::function<void(const float* viewProj16, const float* camPos3)>;
         void SetSceneRenderCallback(SceneRenderCallback cb) { m_SceneRenderCallback = std::move(cb); }
 
         // ── ID 缓冲区拾取回调 ──
-        /**
-         * @brief 拾取回调（由 HandleMousePicking 在鼠标点击时触发）
-         * @param ndcX    鼠标在视口的 NDC X [-1, 1]
-         * @param ndcY    鼠标在视口的 NDC Y [-1, 1]
-         * @param entityId 从拾取纹理读取的 GameObject ID（0=无物体）
-         */
-        using PickCallback = std::function<void(float ndcX, float ndcY, uint32 entityId)>;
+        using PickCallback = std::function<void(float ndcX, float ndcY, int32 entityId)>;
         void SetPickCallback(PickCallback cb) { m_PickCallback = std::move(cb); }
-
-        /// 执行 ID 缓冲区拾取：读取鼠标位置像素的 GameObject ID
-        uint32 PickAtMouse(float mouseScreenX, float mouseScreenY) const;
-
-        /**
-         * @brief 拾取渲染回调 — 在 Render3DScene 的拾取 Pass 中被调用
-         * @param viewProj16 View-Projection 矩阵
-         * @param pickTextureID 拾取纹理的 OpenGL ID（用于绑定 frame buffer）
-         *
-         * 实现此回调时，应将每个 GameObject 的 ID 写入 layout(location=1) 输出。
-         * 使用 FBO::BindForPickRendering() 切换到拾取模式。
-         */
-        using PickRenderCallback = std::function<void(const float* viewProj16)>;
-        void SetPickRenderCallback(PickRenderCallback cb) { m_PickRenderCallback = std::move(cb); }
 
         // ── 场景编辑回调 ──
         using SceneCreateCallback = std::function<void(const std::string& type)>;
@@ -128,70 +116,77 @@ namespace Engine {
         void SetSceneDeleteCallback(SceneDeleteCallback cb) { m_SceneDeleteCallback = std::move(cb); }
         void SetDropAssetCallback(DropAssetCallback cb) { m_DropAssetCallback = std::move(cb); }
 
-        // ── 视口叠加层回调（3D 场景可视化，如包围盒/标签） ──
-        /// @brief 在 3D 画面之上、Gizmo 之下绘制自定义叠加层
+        // ── 视口尺寸变化回调 ──
+        using ResizeCallback = std::function<void(int32 width, int32 height)>;
+        void SetResizeCallback(ResizeCallback cb) { m_ResizeCallback = std::move(cb); }
+
+        // ── 视口叠加层回调 ──
         using LayerDrawCallback = std::function<void(EditorCamera* camera, float32 dt)>;
         void SetLayerDrawCallback(LayerDrawCallback cb) { m_LayerDrawCallback = std::move(cb); }
 
     private:
-        void InitFBO();
+        void InitMRTFramebuffer();
         void Render3DScene();
-        void UpdateFBOIfNeeded();
+        void DestroyFBO();
 
-        // ── ImGui 渲染管线阶段（SRP 拆分） ──
-        void UpdateBoundsAndFocus();  // 1. 计算视口边界、焦点与尺寸
-        void Draw3DImage();           // 2. 绘制 3D FBO 画面（底层）
-        void DrawOverlay();           // 3. 绘制悬浮工具栏（顶层，使用屏幕绝对坐标）
-        void DrawGizmos();            // 4. 绘制 ImGuizmo 变换控件（中层）
-        void HandleDragAndDrop();     // 5. 处理资源拖拽
-        void HandleMousePicking();    // 6. 处理鼠标射线拾取
-        void HandleViewportInteraction(); // 7. 视口交互闭环（右键菜单 + 快捷键）
-        void FocusOnSelected();           // 8. 聚焦选中物体（F 键 + 菜单触发）
+        // ── ImGui 管线阶段 ──
+        void UpdateBoundsAndFocus();       // 1. 边界与尺寸
+        void Draw3DImage();                // 2. FBO 纹理显示
+        void DrawOverlay();                // 3. 工具栏仪表盘
+        void DrawGizmos();                 // 4. ImGuizmo（依工具模式）
+        void HandleCameraNavigation();     // 5. 手型/中键平移
+        void HandleDragAndDrop();          // 6. 资源拖拽
+        void HandleMousePicking();         // 7. 像素级拾取
+        void HandleViewportInteraction();  // 8. 右键菜单 + 快捷键
+        void FocusOnSelected();            // 9. F 键聚焦
 
         // ── 配置 ──
         ViewportConfig m_Config;
+        ViewportStyle  m_Style;
+
+        // ── 工具状态 ──
+        ViewportTool m_CurrentTool = ViewportTool::Select;
 
         // ── 窗口状态 ──
         float32 m_Width  = 0.0f;
         float32 m_Height = 0.0f;
         bool    m_Hovered = false;
         bool    m_Focused = false;
-
-        // ── 视口边界（绝对屏幕坐标） ──
-        ImVec2 m_ViewportBounds[2];
+        ImVec2  m_ViewportBounds[2];
 
         // ── 外部依赖 ──
         IRenderContext*      m_RenderContext = nullptr;
         IGraphicsFactory*    m_Factory = nullptr;
         GladGLContext*       m_GL = nullptr;
-        std::shared_ptr<Scene> m_Scene;
-        std::unique_ptr<OpenGLFramebuffer> m_FBO;
+
+        // ── MRT FBO ──
+        uint32 m_FBO          = 0;
+        uint32 m_ColorTexture = 0;
+        uint32 m_IdTexture    = 0;
+        uint32 m_DepthBuffer  = 0;
+        bool   m_NeedsFBOUpdate = false;
 
         // ── 编辑器系统 ──
         std::unique_ptr<EditorCamera> m_Camera;
         EditorOverlay                m_Overlay;
+        std::weak_ptr<GameObject>    m_SelectedObject;
 
-        // ── 选中对象 ──
-        std::weak_ptr<void> m_SelectedObject;
-
-        // ── 延迟 FBO 更新标记 ──
-        bool m_NeedsFBOUpdate = false;
+        // ── 拾取 hover 预读 ──
+        int32 m_HoveredEntityId = -1;
 
         // ── 回调 ──
         ResizeCallback       m_ResizeCallback;
-        PickCallback         m_PickCallback;
         SceneRenderCallback  m_SceneRenderCallback;
-        PickRenderCallback   m_PickRenderCallback;
+        PickCallback         m_PickCallback;
         SceneCreateCallback  m_SceneCreateCallback;
         SceneDeleteCallback  m_SceneDeleteCallback;
         DropAssetCallback    m_DropAssetCallback;
         LayerDrawCallback    m_LayerDrawCallback;
 
         // ── Gizmo 状态 ──
-        int  m_GizmoType = 0;   // -1=None, 0=Translate, 1=Rotate, 2=Scale
-        bool m_GizmoLocal = false;
-        bool m_SnapEnabled = false;
-        float m_SnapValue = 0.5f;
+        bool  m_GizmoLocal  = false;
+        bool  m_SnapEnabled = false;
+        float m_SnapValue   = 0.5f;
     };
 
 } // namespace Engine

@@ -406,8 +406,12 @@ namespace Engine {
     }
 
     std::string EditorAssetDatabase::ToPhysicalPath(const std::string& virtualPath) const {
+        // 【核心修复】：准确处理根目录映射，防止路径拼接出错
+        if (virtualPath == "Assets" || virtualPath.empty()) {
+            return m_AssetRoot;
+        }
         if (virtualPath.starts_with("Assets/")) {
-            std::string relative = virtualPath.substr(7);
+            std::string relative = virtualPath.substr(7); // "Assets/".length() == 7
             std::filesystem::path result = std::filesystem::path(m_AssetRoot) / relative;
             return result.string();
         }
