@@ -92,7 +92,8 @@ namespace Engine {
 
         // ── 场景渲染回调（外部传入相机参数进行场景绘制） ──
         // 使用 const void* 避免在头文件中暴露 glm 细节
-        using SceneRenderCallback = std::function<void(const float* viewProj16, const float* camPos3)>;
+        // 第三个参数 isPicking: true = 拾取 Pass（写入物体 ID），false = 正常颜色 Pass
+        using SceneRenderCallback = std::function<void(const float* viewProj16, const float* camPos3, bool isPicking)>;
         void SetSceneRenderCallback(SceneRenderCallback cb) { m_SceneRenderCallback = std::move(cb); }
 
         // ── ID 缓冲区拾取回调 ──
@@ -122,10 +123,15 @@ namespace Engine {
         // ── 场景编辑回调 ──
         using SceneCreateCallback = std::function<void(const std::string& type)>;
         using SceneDeleteCallback = std::function<void()>;
-        using DropAssetCallback = std::function<void(const char* assetPath)>;
+        using DropAssetCallback = std::function<void(const std::string& assetPath, const float* dropPos3)>;
         void SetSceneCreateCallback(SceneCreateCallback cb) { m_SceneCreateCallback = std::move(cb); }
         void SetSceneDeleteCallback(SceneDeleteCallback cb) { m_SceneDeleteCallback = std::move(cb); }
         void SetDropAssetCallback(DropAssetCallback cb) { m_DropAssetCallback = std::move(cb); }
+
+        // ── 视口叠加层回调（3D 场景可视化，如包围盒/标签） ──
+        /// @brief 在 3D 画面之上、Gizmo 之下绘制自定义叠加层
+        using LayerDrawCallback = std::function<void(EditorCamera* camera, float32 dt)>;
+        void SetLayerDrawCallback(LayerDrawCallback cb) { m_LayerDrawCallback = std::move(cb); }
 
     private:
         void InitFBO();
@@ -179,6 +185,7 @@ namespace Engine {
         SceneCreateCallback  m_SceneCreateCallback;
         SceneDeleteCallback  m_SceneDeleteCallback;
         DropAssetCallback    m_DropAssetCallback;
+        LayerDrawCallback    m_LayerDrawCallback;
 
         // ── Gizmo 状态 ──
         int  m_GizmoType = 0;   // -1=None, 0=Translate, 1=Rotate, 2=Scale

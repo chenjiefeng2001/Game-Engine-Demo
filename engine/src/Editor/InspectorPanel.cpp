@@ -4,6 +4,7 @@
 #include "Engine/Core/GameObject/Component.h"
 #include "Engine/Core/GameObject/SpriteComponent.h"
 #include "Engine/Core/GameObject/TransformComponent.h"
+#include "Engine/Core/GameObject/MeshRendererComponent.h"
 #include "Engine/Core/Physics/PhysicsComponent.h"
 #include "Engine/Core/Log.h"
 #include "Engine/Editor/Reflect.h"
@@ -144,6 +145,50 @@ namespace Engine {
                         static_cast<double>(body->GetLinearVelocity().x),
                         static_cast<double>(body->GetLinearVelocity().y));
                 }
+            }
+
+            ImGui::Unindent();
+        }
+
+        // ── MeshRendererComponent 检视器 ──
+        void DrawMeshRendererWidget(GameObject* obj, const DrawContext& ctx) {
+            using namespace Inspector;
+            auto* mr = obj->GetComponent<MeshRendererComponent>();
+            if (!mr) return;
+
+            bool enabled = true;
+            if (!Inspector::DrawComponentHeader("Mesh Renderer", &enabled, nullptr)) return;
+
+            ImGui::Indent();
+
+            // ── 1. 网格资产引用插槽 ──
+            std::string meshName = mr->TargetMesh ? "Cube (Mesh)" : "None (Mesh)";
+            PropertyMeta meshMeta;
+            meshMeta.flags = PropertyFlag::AssetReference;
+            Inspector::DrawAssetRefField("Mesh", &meshName, nullptr,
+                [&mr](const char* payloadData) {
+                    std::string assetPath = payloadData;
+                    Engine::Log::Info("Mesh assigned: {}", assetPath);
+                }, nullptr, meshMeta);
+
+            // ── 2. 材质资产引用插槽 ──
+            std::string matName = mr->TargetMaterial ? "DefaultMaterial" : "None (Material)";
+            if (Inspector::DrawAssetRefField("Material", &matName, nullptr,
+                [&mr](const char* payloadData) {
+                    std::string assetPath = payloadData;
+                    Engine::Log::Info("Material assigned: {}", assetPath);
+                }, nullptr, meshMeta))
+            {
+            }
+
+            // 如果有材质，展开显示材质的具体参数（如颜色）
+            if (mr->TargetMaterial) {
+                ImGui::Indent();
+                float* bc = mr->TargetMaterial->BaseColor; // float[4]
+                if (ImGui::ColorEdit4("Base Color", bc)) {
+                    // 已就地修改
+                }
+                ImGui::Unindent();
             }
 
             ImGui::Unindent();
@@ -637,6 +682,18 @@ namespace Engine {
         };
         RegisterDrawerByType(typeid(PhysicsComponent).hash_code(),
                               std::move(physicsDrawer));
+
+        // ── MeshRendererComponent 检视器注册 ──
+        ComponentDrawer meshDrawer;
+        meshDrawer.displayName = "Mesh Renderer";
+        meshDrawer.category = "Rendering";
+        meshDrawer.orderInInspector = 15;
+        meshDrawer.builtin = true;
+        meshDrawer.drawFn = [](GameObject* obj, const DrawContext& ctx) {
+            DrawMeshRendererWidget(obj, ctx);
+        };
+        RegisterDrawerByType(typeid(MeshRendererComponent).hash_code(),
+                              std::move(meshDrawer));
     }
 
 } // namespace Engine
