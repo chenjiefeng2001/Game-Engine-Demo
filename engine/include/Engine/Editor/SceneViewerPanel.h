@@ -125,6 +125,15 @@ namespace Engine {
         // ── 面板主渲染 ──
         void OnImGui();
 
+        /**
+         * @brief 注入当前编辑场景（当不使用 Level/SceneManager 系统时）
+         * @param scene 编辑中的场景指针，为 nullptr 时清除缓存
+         *
+         * 用于 EditorDemo 等直接通过 SetEditorScene() 管理场景但不注册到
+         * Level 系统的场景。注入后 OnOverlay() 可以正常绘制场景包围盒和标签。
+         */
+        void SetEditorScene(Scene* scene);
+
         // ── 3D 视口叠加层（在 ViewportPanel 渲染后调用） ──
         /**
          * @brief 在场景视口中绘制场景包围盒和标签

@@ -44,6 +44,48 @@ namespace Engine {
     }
 
     // ═══════════════════════════════════════════════════════════════
+    // 注入编辑场景（替代 Level 系统路径）
+    // ═══════════════════════════════════════════════════════════════
+
+    void SceneViewerPanel::SetEditorScene(Scene* scene) {
+        // 清空旧缓存
+        m_SceneEntries.clear();
+        m_OverlayCache.clear();
+        m_NextColorIndex = 0;
+
+        if (!scene) return;
+
+        // 为该场景构建一个显示条目（作为 Gameplay 类别）
+        SceneViewerEntry entry;
+        entry.displayName = scene->GetName();
+        entry.visible     = true;
+        entry.objectCount = (uint32)scene->GetTotalObjectCount();
+
+        // 计算场景包围盒
+        AABB sceneBounds;
+        const auto& objects = scene->GetObjects();
+        for (const auto& obj : objects) {
+            if (!obj || !obj->IsActive()) continue;
+            const auto& transform = obj->GetTransform();
+            Vec3 pos = transform.GetPosition();
+            sceneBounds.Expand(pos);
+            sceneBounds.Expand(pos + Vec3(0.5f, 0.5f, 0.5f));
+            sceneBounds.Expand(pos - Vec3(0.5f, 0.5f, 0.5f));
+        }
+        entry.bounds = sceneBounds;
+        entry.center = sceneBounds.Center();
+
+        // 归入 Gameplay 类别
+        const auto category = SceneCategoryGroup::Gameplay;
+        m_SceneEntries[category].push_back(entry);
+
+        // 缓存叠加数据
+        uint8 colorIdx = static_cast<uint8>(category);
+        if (colorIdx >= 8) colorIdx = 7;
+        m_OverlayCache.push_back({ entry.center, entry.bounds, k_SceneColors[colorIdx], entry.displayName, 0.0f });
+    }
+
+    // ═══════════════════════════════════════════════════════════════
     // 主动刷新场景数据
     // ═══════════════════════════════════════════════════════════════
 

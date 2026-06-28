@@ -38,35 +38,65 @@ namespace Engine {
         ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, 3.0f);
         ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(4, 2));
 
-        // 垂直居中
-        float contentH = ImGui::GetContentRegionAvail().y;
-        ImGui::SetCursorPosY(ImGui::GetCursorPosY() + (contentH - 24.0f) * 0.5f);
+        const float availW = ImGui::GetContentRegionAvail().x;
+        const float estimatedFullWidth = 700.0f;  // 所有组 + 分隔线 + Reset 预估总宽
+        const bool twoRow = (availW < estimatedFullWidth);
+
         ImGui::Indent(4.0f);
 
-        // ─── 1. 播放控制 ───
-        DrawPlayGroup();
-        VerticalSeparator();
+        if (twoRow) {
+            // ═══════════════════════════════════════════
+            // 双行布局：窄窗口适配
+            // ═══════════════════════════════════════════
+            // 第一行：播放控制 + 变换工具 + 吸附设置
+            const float rowH = 24.0f;
+            float rowY = ImGui::GetCursorPosY();
+            ImGui::SetCursorPosY(rowY + 1.0f);
 
-        // ─── 2. 变换工具 ───
-        DrawTransformGroup();
-        VerticalSeparator();
+            DrawPlayGroup();
+            VerticalSeparator();
+            DrawTransformGroup();
+            VerticalSeparator();
+            DrawSnappingGroup();
 
-        // ─── 3. 吸附设置 ───
-        DrawSnappingGroup();
-        VerticalSeparator();
+            // 第二行：视口设置 + 右对齐 Reset 按钮
+            ImGui::SetCursorPosY(rowY + rowH + 2.0f);
+            DrawViewSettingsGroup();
 
-        // ─── 4. 视口设置 ───
-        DrawViewSettingsGroup();
-
-        // ─── 5. 右对齐：布局重置 ───
-        // 使用 ImGui::GetContentRegionMax().x 动态计算右对齐位置
-        float remainingWidth = ImGui::GetContentRegionMax().x - ImGui::GetCursorPosX() - 10.0f;
-        if (remainingWidth > 80.0f) {
-            ImGui::SameLine(ImGui::GetContentRegionMax().x - 80.0f);
-            if (ImGui::Button(ICON_FA_REDO, ImVec2(24, 22))) {
-                if (m_ResetLayoutCallback) m_ResetLayoutCallback();
+            // 右对齐 Reset 按钮
+            float remaining = ImGui::GetContentRegionMax().x - ImGui::GetCursorPosX() - 10.0f;
+            if (remaining > 80.0f) {
+                ImGui::SameLine(ImGui::GetContentRegionMax().x - 80.0f);
+                if (ImGui::Button(ICON_FA_REDO, ImVec2(24, 22))) {
+                    if (m_ResetLayoutCallback) m_ResetLayoutCallback();
+                }
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("Reset Layout");
             }
-            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Reset Layout");
+        } else {
+            // ═══════════════════════════════════════════
+            // 单行布局：宽窗口
+            // ═══════════════════════════════════════════
+            // 使用固定偏移而非 GetContentRegionAvail().y 居中，
+            // 避免 AutoResizeY 子窗口中可用高度无穷大导致按钮下沉。
+            // 竖向间距由上层 BeginChild 的 WindowPadding 提供。
+            ImGui::SetCursorPosY(ImGui::GetCursorPosY() + 4.0f);
+
+            DrawPlayGroup();
+            VerticalSeparator();
+            DrawTransformGroup();
+            VerticalSeparator();
+            DrawSnappingGroup();
+            VerticalSeparator();
+            DrawViewSettingsGroup();
+
+            float remainingWidth = ImGui::GetContentRegionMax().x - ImGui::GetCursorPosX() - 10.0f;
+            if (remainingWidth > 80.0f) {
+                ImGui::SameLine(ImGui::GetContentRegionMax().x - 80.0f);
+                if (ImGui::Button(ICON_FA_REDO, ImVec2(24, 22))) {
+                    if (m_ResetLayoutCallback) m_ResetLayoutCallback();
+                }
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("Reset Layout");
+            }
         }
 
         ImGui::PopStyleVar(2);

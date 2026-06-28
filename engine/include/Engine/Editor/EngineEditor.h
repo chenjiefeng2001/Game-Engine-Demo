@@ -56,6 +56,7 @@ namespace Engine {
         ContentBrowserPanel&  GetContentBrowser()   { return m_ContentBrowser; }
         AssetBrowserPanel&      GetAssetBrowser()     { return m_AssetBrowser; }
         DependencyGraphPanel& GetDependencyGraph()  { return m_DepGraph; }
+        SceneViewerPanel&     GetSceneViewerPanel()   { return m_SceneViewerPanel; }
 
         EditorState GetEditorState() const { return m_SceneManager.GetState(); }
         bool IsPlaying() const { return m_SceneManager.IsPlaying(); }
@@ -74,7 +75,7 @@ namespace Engine {
         void OnSelectionChanged(GameObject* obj);
 
         // ── 场景渲染注入器（由 Application 子类设置，将场景绘制到视口 FBO） ──
-        using SceneRenderInjector = std::function<void(const float* viewProj16, const float* camPos3)>;
+        using SceneRenderInjector = std::function<void(const float* viewProj16, const float* camPos3, bool isPicking)>;
         void SetSceneRenderInjector(SceneRenderInjector injector) { m_SceneRenderInjector = std::move(injector); }
 
     private:

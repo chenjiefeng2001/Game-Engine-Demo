@@ -110,6 +110,12 @@ namespace Engine {
 
         Draw3DImage();           // 底层：绘制 3D 画面（FBO）
 
+        // ── 中层：自定义叠加层（3D 场景可视化，如包围盒/标签） ──
+        if (m_LayerDrawCallback && m_Camera) {
+            float32 dt = ImGui::GetIO().DeltaTime;
+            m_LayerDrawCallback(m_Camera.get(), dt);
+        }
+
         DrawGizmos();            // 中层：绘制 ImGuizmo 变换控件
 
         DrawOverlay();           // 顶层：绘制悬浮工具栏（使用绝对坐标，不再被遮挡）
@@ -141,9 +147,10 @@ namespace Engine {
         m_Hovered = ImGui::IsWindowHovered();
         m_Focused = ImGui::IsWindowFocused();
 
-        // 只有悬浮且没有其他 ImGui 控件（如按钮、拖拽条）被激活时，相机才可操控
-        // 注意：ImGuizmo::IsUsing() 的检查在 OnUpdate 中完成
-        bool canControlCamera = m_Hovered && !ImGui::IsAnyItemActive();
+        // 【修复相机锁定】使用 ImGuizmo::IsOver() 判断 Gizmo 交互
+        // 去掉 !ImGui::IsAnyItemActive()，因为点击视口本身会设置 Active 状态
+        bool usingGizmo = ImGuizmo::IsUsing() || ImGuizmo::IsOver();
+        bool canControlCamera = m_Hovered && !usingGizmo;
         if (m_Camera) m_Camera->SetActive(canControlCamera);
 
         // 检查并处理窗口尺寸变化
@@ -303,15 +310,39 @@ namespace Engine {
     void ViewportPanel::HandleDragAndDrop() {
         if (ImGui::BeginDragDropTarget()) {
             if (const ImGuiPayload* payload = ImGui::AcceptDragDropPayload("CONTENT_BROWSER_ITEM")) {
-                // 从 AssetBrowser 拖拽资源到视口
-                const char* assetPath = (const char*)payload->Data;
+                const char* path = (const char*)payload->Data;
+                if (!path) { ImGui::EndDragDropTarget(); return; }
+                std::string assetPath(path);
 
-                // 通知外部创建实例（通过回调）
-                if (m_DropAssetCallback) {
-                    m_DropAssetCallback(assetPath);
+                // 检查文件扩展名（.obj / .fbx / .gltf 等模型文件）
+                bool isMesh = (assetPath.ends_with(".obj") ||
+                               assetPath.ends_with(".fbx") ||
+                               assetPath.ends_with(".gltf"));
+
+                // 计算落点：相机前方 5m
+                float dropPos[3] = { 0.0f, 0.0f, 5.0f };
+                if (m_Camera) {
+                    Vec3 pos = m_Camera->GetPosition();
+                    Vec3 focus = m_Camera->GetFocusPoint();
+                    Vec3 forward = focus - pos;
+                    float len = std::sqrt(forward.x*forward.x + forward.y*forward.y + forward.z*forward.z);
+                    if (len > 0.001f) {
+                        forward.x /= len; forward.y /= len; forward.z /= len;
+                    }
+                    dropPos[0] = pos.x + forward.x * 5.0f;
+                    dropPos[1] = pos.y + forward.y * 5.0f;
+                    dropPos[2] = pos.z + forward.z * 5.0f;
                 }
 
-                ENGINE_LOG_INFO("Viewport", "Dropped asset: {}", assetPath ? assetPath : "null");
+                if (isMesh) {
+                    if (m_DropAssetCallback) {
+                        m_DropAssetCallback(assetPath, dropPos);
+                    }
+                    ENGINE_LOG_INFO("Viewport", "Dropped mesh: {} at ({:.1f}, {:.1f}, {:.1f})",
+                                   assetPath, dropPos[0], dropPos[1], dropPos[2]);
+                } else {
+                    ENGINE_LOG_INFO("Viewport", "Dropped (skipped): {}", assetPath);
+                }
             }
             ImGui::EndDragDropTarget();
         }
@@ -435,26 +466,20 @@ namespace Engine {
     // 3D 场景渲染（每帧调用）
     // ═══════════════════════════════════════════════════════════════
     void ViewportPanel::Render3DScene() {
-        if (!m_GL) return;
-        if (!m_FBO || !m_FBO->IsValid()) {
-            InitFBO();
-            if (!m_FBO || !m_FBO->IsValid()) return;
-        }
-        if (m_Width < 1.0f || m_Height < 1.0f) return;
-
         UpdateFBOIfNeeded();
+        if (!m_FBO || !m_FBO->IsValid()) return;
 
         m_FBO->Bind();
 
-        m_GL->Viewport(0, 0, static_cast<int32>(m_Width), static_cast<int32>(m_Height));
-        m_GL->ClearColor(0.15f, 0.15f, 0.15f, 1.0f);
-        m_GL->Clear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
-        m_GL->Enable(GL_DEPTH_TEST);
+        if (m_GL) {
+            m_GL->Viewport(0, 0, static_cast<int32>(m_Width), static_cast<int32>(m_Height));
+            m_GL->ClearColor(0.15f, 0.15f, 0.15f, 1.0f);
+            m_GL->Clear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+            m_GL->Enable(GL_DEPTH_TEST);
 
-        if (m_Config.CurrentMode == ViewMode::Wireframe) {
-            m_GL->PolygonMode(GL_FRONT_AND_BACK, GL_LINE);
-        } else {
-            m_GL->PolygonMode(GL_FRONT_AND_BACK, GL_FILL);
+            // 【修复网格】：开启混合，否则网格的半透明线条画不出来
+            m_GL->Enable(GL_BLEND);
+            m_GL->BlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
         }
 
         if (m_Camera) {
@@ -473,25 +498,21 @@ namespace Engine {
 
             glm::mat4 viewProj = proj * view;
 
+            // 渲染真实场景（isPicking=false：正常颜色 Pass）
             if (m_SceneRenderCallback) {
                 Vec3 camPos = m_Camera->GetPosition();
-                m_SceneRenderCallback(glm::value_ptr(viewProj), &camPos.x);
+                m_SceneRenderCallback(glm::value_ptr(viewProj), &camPos.x, false);
             }
 
-            if (m_Overlay.IsInitialized()) {
+            // 渲染辅助网格（开启混合后正常显示半透明线条）
+            if (m_Overlay.IsInitialized() && m_Config.ShowGrid) {
                 Vec3 camPos = m_Camera->GetPosition();
                 float camPosF[3] = { camPos.x, camPos.y, camPos.z };
                 m_Overlay.DrawGrid(m_GL, glm::value_ptr(viewProj), camPosF, m_Config);
             }
         }
 
-        if (m_Config.CurrentMode == ViewMode::Wireframe && m_GL) {
-            m_GL->PolygonMode(GL_FRONT_AND_BACK, GL_FILL);
-        }
-        if (m_RenderContext) {
-            m_RenderContext->ResetPipelineState();
-        }
-
+        if (m_GL) m_GL->Disable(GL_BLEND);
         m_FBO->Unbind();
     }
 

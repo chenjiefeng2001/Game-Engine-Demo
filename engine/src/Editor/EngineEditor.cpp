@@ -118,10 +118,15 @@ namespace Engine {
         });
 
         // 设置场景渲染回调：由 Application 子类注入具体绘制逻辑
-        m_Viewport.SetSceneRenderCallback([this, app](const float* viewProj16, const float* camPos3) {
+        m_Viewport.SetSceneRenderCallback([this, app](const float* viewProj16, const float* camPos3, bool isPicking) {
             if (m_SceneRenderInjector) {
-                m_SceneRenderInjector(viewProj16, camPos3);
+                m_SceneRenderInjector(viewProj16, camPos3, isPicking);
             }
+        });
+
+        // ── 3D 场景可视化叠加层（SceneViewerPanel → ViewportPanel 包围盒/标签） ──
+        m_Viewport.SetLayerDrawCallback([this](EditorCamera* camera, float32 dt) {
+            m_SceneViewerPanel.OnOverlay(dt, camera);
         });
 
         // ── 通过 EventBus 订阅拾取结果（解耦：Viewport → EngineEditor） ──
@@ -410,13 +415,15 @@ namespace Engine {
             ImGui::EndMenuBar();
         }
 
-        // ── 2. 工具栏（固定高度子窗口，不参与停靠） ──
+        // ── 2. 工具栏（自动高度子窗口，内容自适应单行/双行，不参与停靠） ──
         {
-            const float tbH = 34.0f;
-            ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(0, 2));
-            ImGui::BeginChild("##ToolbarStrip", ImVec2(0, tbH),
-                              ImGuiChildFlags_Borders,
-                              ImGuiWindowFlags_NoScrollbar);
+            // AutoResizeY 让子窗口高度严格等于 Toolbar 渲染的实际内容高度，
+            // Toolbar 内部已改用固定 Y 偏移（而非 GetContentRegionAvail() 居中），
+            // 因此不会出现按钮下沉或空位过多的问题。
+            ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(8, 4));
+            ImGui::BeginChild("##ToolbarStrip", ImVec2(0, 0),
+                              ImGuiChildFlags_Borders | ImGuiChildFlags_AutoResizeY,
+                              ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse);
             m_Toolbar.OnImGui();
             ImGui::EndChild();
             ImGui::PopStyleVar();
