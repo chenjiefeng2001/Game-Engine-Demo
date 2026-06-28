@@ -108,9 +108,8 @@ protected:
                 m_Editor.GetViewport().GetCamera().SetDistance(5.0f);
             });
 
-        // ── 8. 渲染注入器（支持 isPicking 参数） ──
-        m_Editor.SetSceneRenderInjector([this](const float* viewProj16, const float* camPos3, bool isPicking) {
-            (void)isPicking;
+        // ── 8. 渲染注入器（MRT 单次 Pass） ──
+        m_Editor.SetSceneRenderInjector([this](const float* viewProj16, const float* camPos3) {
             RenderActiveScene(viewProj16, camPos3);
         });
 
@@ -296,6 +295,9 @@ protected:
         auto selectedPtr = m_Editor.GetSelectedObject();
         bool isSelected = (selectedPtr && selectedPtr.get() == obj);
         shader.SetInt("u_IsSelected", isSelected ? 1 : 0);
+
+        // 设置实体 ID（用于拾取 Pass 和正常 Pass 中的 ID 写入）
+        shader.SetInt("u_EntityID", static_cast<int>(obj->GetID()));
 
         mr->TargetMesh->VAO->Bind();
         auto* oglCtx = static_cast<OpenGLContext*>(GetRenderContext());

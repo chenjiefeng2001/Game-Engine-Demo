@@ -16,6 +16,7 @@
 #include "Engine/Editor/ScenePanel.h"
 #include "Engine/Editor/SceneManagerPanel.h"
 #include "Engine/Editor/SceneViewerPanel.h"
+#include "Engine/Editor/StatusBar.h"
 #include "Engine/Editor/ViewModePanel.h"
 #include "Engine/Editor/EditorTools.h"
 #include "Engine/Editor/EditorDefs.h"
@@ -75,7 +76,8 @@ namespace Engine {
         void OnSelectionChanged(GameObject* obj);
 
         // ── 场景渲染注入器（由 Application 子类设置，将场景绘制到视口 FBO） ──
-        using SceneRenderInjector = std::function<void(const float* viewProj16, const float* camPos3, bool isPicking)>;
+        // MRT 单次 Pass：Fragment Shader 同时输出颜色(location=0)和ID(location=1)
+        using SceneRenderInjector = std::function<void(const float* viewProj16, const float* camPos3)>;
         void SetSceneRenderInjector(SceneRenderInjector injector) { m_SceneRenderInjector = std::move(injector); }
 
     private:
@@ -99,6 +101,7 @@ namespace Engine {
         // ── 拥有的面板 ──
         MainMenuBar           m_MenuBar;
         Toolbar               m_Toolbar;
+        StatusBar             m_StatusBar;
         ViewportPanel         m_Viewport{"Viewport"};
         EditorSceneManager    m_SceneManager;
         ContentBrowserPanel   m_ContentBrowser;

@@ -18,6 +18,7 @@
 #include "Engine/UIManager.h"
 #include "Engine/Editor/EditorCamera.h"
 #include "Engine/Editor/ViewportPanel.h"
+#include "Engine/OpenGL/OpenGLFramebuffer.h"
 #include <memory>
 #include <vector>
 #include <unordered_map>

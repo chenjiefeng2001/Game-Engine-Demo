@@ -1,91 +1,135 @@
 #include "Engine/Editor/ViewportPanel.h"
 #include "Engine/Core/IRenderContext.h"
-#include "Engine/Core/Scene/Scene.h"
 #include "Engine/Core/IGraphicsFactory.h"
 #include "Engine/Core/GameObject/GameObject.h"
 #include "Engine/Core/GameObject/TransformComponent.h"
 #include "Engine/Editor/IconsFontAwesome6.h"
-#include "Engine/OpenGL/OpenGLFramebuffer.h"
-#include "Engine/OpenGL/OpenGLContext.h"
 #include "Engine/Core/Input.h"
 #include "Engine/Core/Log.h"
 
+#include <glad/gl.h>
 #include <imgui.h>
 #include <ImGuizmo.h>
 
-// glm 实验性扩展声明（必须在包含 glm 相关头文件之前）
 #define GLM_ENABLE_EXPERIMENTAL
-
 #include <glm/glm.hpp>
 #include <glm/gtc/matrix_transform.hpp>
 #include <glm/gtc/type_ptr.hpp>
 #include <glm/gtx/matrix_decompose.hpp>
+#include <glm/gtx/quaternion.hpp>
+
+#include <algorithm>
 
 namespace Engine {
 
     ViewportPanel::ViewportPanel(const std::string& name) {
         m_Config.Name = name;
         m_Camera = std::make_unique<EditorCamera>();
-        m_GizmoType = 0; // 默认平移
     }
 
     ViewportPanel::~ViewportPanel() { Cleanup(); }
+
+    void ViewportPanel::CycleGizmoTool() {
+        switch (m_CurrentTool) {
+            case ViewportTool::Select:    m_CurrentTool = ViewportTool::Translate; break;
+            case ViewportTool::Hand:      m_CurrentTool = ViewportTool::Translate; break;
+            case ViewportTool::Translate: m_CurrentTool = ViewportTool::Rotate;    break;
+            case ViewportTool::Rotate:    m_CurrentTool = ViewportTool::Scale;     break;
+            case ViewportTool::Scale:     m_CurrentTool = ViewportTool::Translate; break;
+        }
+    }
 
     void ViewportPanel::InitResources(IGraphicsFactory* factory,
                                        const std::string& vertPath,
                                        const std::string& fragPath) {
         m_Factory = factory;
         if (!factory) return;
-
-        if (m_GL) {
-            m_Overlay.Init(factory, m_GL);
-        }
-
-        ENGINE_LOG_INFO("Viewport", "{}: 3D resources initialized", m_Config.Name);
-    }
-
-    void ViewportPanel::InitFBO() {
-        if (!m_GL) return;
-        m_FBO = std::make_unique<OpenGLFramebuffer>(*m_GL);
-        m_FBO->Resize(static_cast<uint32>((m_Width > 0) ? m_Width : 1280),
-                      static_cast<uint32>((m_Height > 0) ? m_Height : 720));
+        if (m_GL) m_Overlay.Init(factory, m_GL);
+        ENGINE_LOG_INFO("Viewport", "{}: resources initialized", m_Config.Name);
     }
 
     void ViewportPanel::Cleanup() {
-        m_FBO.reset();
-        m_Scene.reset();
+        DestroyFBO();
         m_Overlay.Shutdown();
         m_GL = nullptr;
-        ENGINE_LOG_INFO("Viewport", "{}: OpenGL resources cleaned up", m_Config.Name);
+        ENGINE_LOG_INFO("Viewport", "{}: cleaned up", m_Config.Name);
     }
 
-    void ViewportPanel::GetMouseViewportSpace(float& outNDCX, float& outNDCY) const {
-        ImVec2 mousePos = ImGui::GetMousePos();
-        float vpW = m_ViewportBounds[1].x - m_ViewportBounds[0].x;
-        float vpH = m_ViewportBounds[1].y - m_ViewportBounds[0].y;
-        if (vpW < 1.0f || vpH < 1.0f) { outNDCX = 0.0f; outNDCY = 0.0f; return; }
-
-        float localX = mousePos.x - m_ViewportBounds[0].x;
-        float localY = mousePos.y - m_ViewportBounds[0].y;
-        outNDCX = (localX / vpW) * 2.0f - 1.0f;
-        outNDCY = 1.0f - (localY / vpH) * 2.0f;
+    // ═══════════════════════════════════════════════════════════════
+    // MRT Framebuffer
+    // ═══════════════════════════════════════════════════════════════
+    void ViewportPanel::DestroyFBO() {
+        if (!m_GL) return;
+        if (m_FBO) { m_GL->DeleteFramebuffers(1, &m_FBO); m_FBO = 0; }
+        if (m_ColorTexture) { m_GL->DeleteTextures(1, &m_ColorTexture); m_ColorTexture = 0; }
+        if (m_IdTexture) { m_GL->DeleteTextures(1, &m_IdTexture); m_IdTexture = 0; }
+        if (m_DepthBuffer) { m_GL->DeleteRenderbuffers(1, &m_DepthBuffer); m_DepthBuffer = 0; }
     }
 
-    void ViewportPanel::GetViewportBounds(float& outMinX, float& outMinY, float& outMaxX, float& outMaxY) const {
-        outMinX = m_ViewportBounds[0].x;
-        outMinY = m_ViewportBounds[0].y;
-        outMaxX = m_ViewportBounds[1].x;
-        outMaxY = m_ViewportBounds[1].y;
+    void ViewportPanel::InitMRTFramebuffer() {
+        if (!m_GL || m_Width <= 0.0f || m_Height <= 0.0f) return;
+        DestroyFBO();
+
+        GLsizei w = (std::max)(static_cast<GLsizei>(m_Width), 1);
+        GLsizei h = (std::max)(static_cast<GLsizei>(m_Height), 1);
+
+        m_GL->GenFramebuffers(1, &m_FBO);
+        m_GL->BindFramebuffer(GL_FRAMEBUFFER, m_FBO);
+
+        m_GL->GenTextures(1, &m_ColorTexture);
+        m_GL->BindTexture(GL_TEXTURE_2D, m_ColorTexture);
+        m_GL->TexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, w, h, 0, GL_RGBA, GL_UNSIGNED_BYTE, nullptr);
+        m_GL->TexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+        m_GL->TexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+        m_GL->FramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, m_ColorTexture, 0);
+
+        m_GL->GenTextures(1, &m_IdTexture);
+        m_GL->BindTexture(GL_TEXTURE_2D, m_IdTexture);
+        m_GL->TexImage2D(GL_TEXTURE_2D, 0, GL_R32I, w, h, 0, GL_RED_INTEGER, GL_INT, nullptr);
+        m_GL->TexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+        m_GL->TexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+        m_GL->FramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT1, GL_TEXTURE_2D, m_IdTexture, 0);
+
+        m_GL->GenRenderbuffers(1, &m_DepthBuffer);
+        m_GL->BindRenderbuffer(GL_RENDERBUFFER, m_DepthBuffer);
+        m_GL->RenderbufferStorage(GL_RENDERBUFFER, GL_DEPTH24_STENCIL8, w, h);
+        m_GL->FramebufferRenderbuffer(GL_FRAMEBUFFER, GL_DEPTH_STENCIL_ATTACHMENT, GL_RENDERBUFFER, m_DepthBuffer);
+
+        GLenum drawBufs[2] = { GL_COLOR_ATTACHMENT0, GL_COLOR_ATTACHMENT1 };
+        m_GL->DrawBuffers(2, drawBufs);
+
+        if (m_GL->CheckFramebufferStatus(GL_FRAMEBUFFER) != GL_FRAMEBUFFER_COMPLETE) {
+            ENGINE_LOG_ERROR("Viewport", "MRT FBO incomplete!");
+            DestroyFBO();
+        }
+        m_GL->BindFramebuffer(GL_FRAMEBUFFER, 0);
     }
 
+    // ═══════════════════════════════════════════════════════════════
+    // OnUpdate — 简化状态管理
+    // ═══════════════════════════════════════════════════════════════
     void ViewportPanel::OnUpdate(float32 dt, bool isFocusedViewport) {
         if (!m_Camera) return;
 
-        bool usingGizmo = ImGuizmo::IsUsing();
-        bool canProcessInput = (m_Hovered || m_Focused) && isFocusedViewport && !usingGizmo;
+        bool isRightDown = ImGui::IsMouseDown(ImGuiMouseButton_Right);
+        bool isMiddleDown = ImGui::IsMouseDown(ImGuiMouseButton_Middle);
+        bool isGizmoUsing = ImGuizmo::IsUsing();
 
-        m_Camera->SetActive(canProcessInput);
-        if (canProcessInput) {
+        // 飞行模式（右键）优先
+        if (isRightDown && m_Hovered) {
+            m_Camera->SetActive(true);
+        }
+        // 手型/中键 -> 关闭相机
+        else if ((m_CurrentTool == ViewportTool::Hand && ImGui::IsMouseDown(ImGuiMouseButton_Left) && m_Hovered) || isMiddleDown) {
+            m_Camera->SetActive(false);
+        }
+        else {
+            // Hover 且不在 Gizmo 使用时激活相机
+            m_Camera->SetActive(m_Hovered && !isGizmoUsing);
+        }
+
+        // ProcessInput 只在相机激活且非 Gizmo 使用时调用
+        if (m_Camera->IsActive() && !isGizmoUsing) {
             m_Camera->ProcessInput(dt);
         }
         m_Camera->OnUpdate(dt);
@@ -94,36 +138,26 @@ namespace Engine {
     }
 
     // ═══════════════════════════════════════════════════════════════
-    // OnImGui — 工业级管线化渲染入口
+    // OnImGui
     // ═══════════════════════════════════════════════════════════════
     void ViewportPanel::OnImGui() {
-        // 去除边距，使 3D 画面完全铺满窗口
         ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(0, 0));
-
         bool visible = true;
         ImGui::Begin(m_Config.Name.c_str(), &visible,
-                     ImGuiWindowFlags_NoScrollbar |
-                     ImGuiWindowFlags_NoScrollWithMouse);
+                     ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse);
 
-        // 严格按照层级和依赖顺序执行管线
-        UpdateBoundsAndFocus();  // 必须最先执行，获取准确的屏幕坐标
+        UpdateBoundsAndFocus();
+        Draw3DImage();
 
-        Draw3DImage();           // 底层：绘制 3D 画面（FBO）
-
-        // ── 中层：自定义叠加层（3D 场景可视化，如包围盒/标签） ──
         if (m_LayerDrawCallback && m_Camera) {
-            float32 dt = ImGui::GetIO().DeltaTime;
-            m_LayerDrawCallback(m_Camera.get(), dt);
+            m_LayerDrawCallback(m_Camera.get(), ImGui::GetIO().DeltaTime);
         }
 
-        DrawGizmos();            // 中层：绘制 ImGuizmo 变换控件
-
-        DrawOverlay();           // 顶层：绘制悬浮工具栏（使用绝对坐标，不再被遮挡）
-
-        HandleDragAndDrop();     // 交互：处理资源拖拽
-        HandleMousePicking();    // 交互：处理鼠标点击拾取
-
-        // ── 视口交互闭环（右键菜单 + 快捷键） ──
+        HandleCameraNavigation();
+        DrawGizmos();
+        DrawOverlay();
+        HandleDragAndDrop();
+        HandleMousePicking();
         HandleViewportInteraction();
 
         ImGui::End();
@@ -131,111 +165,199 @@ namespace Engine {
     }
 
     // ═══════════════════════════════════════════════════════════════
-    // 1. 计算视口边界、焦点与动态缩放
+    // 1. 边界与尺寸
     // ═══════════════════════════════════════════════════════════════
     void ViewportPanel::UpdateBoundsAndFocus() {
-        ImVec2 viewportSize = ImGui::GetContentRegionAvail();
-
-        // 【核心】：准确计算渲染区域在显示器屏幕上的绝对物理坐标
+        ImVec2 sz = ImGui::GetContentRegionAvail();
         ImVec2 vMin = ImGui::GetWindowContentRegionMin();
         ImVec2 vMax = ImGui::GetWindowContentRegionMax();
-        ImVec2 vOffset = ImGui::GetWindowPos();
-
-        m_ViewportBounds[0] = { vMin.x + vOffset.x, vMin.y + vOffset.y };
-        m_ViewportBounds[1] = { vMax.x + vOffset.x, vMax.y + vOffset.y };
-
+        ImVec2 off = ImGui::GetWindowPos();
+        m_ViewportBounds[0] = { vMin.x + off.x, vMin.y + off.y };
+        m_ViewportBounds[1] = { vMax.x + off.x, vMax.y + off.y };
         m_Hovered = ImGui::IsWindowHovered();
         m_Focused = ImGui::IsWindowFocused();
 
-        // 【修复相机锁定】使用 ImGuizmo::IsOver() 判断 Gizmo 交互
-        // 去掉 !ImGui::IsAnyItemActive()，因为点击视口本身会设置 Active 状态
-        bool usingGizmo = ImGuizmo::IsUsing() || ImGuizmo::IsOver();
-        bool canControlCamera = m_Hovered && !usingGizmo;
-        if (m_Camera) m_Camera->SetActive(canControlCamera);
-
-        // 检查并处理窗口尺寸变化
-        if ((m_Width != viewportSize.x || m_Height != viewportSize.y) &&
-            viewportSize.x > 0.0f && viewportSize.y > 0.0f) {
-            m_Width  = viewportSize.x;
-            m_Height = viewportSize.y;
-            m_NeedsFBOUpdate = true; // 标记需要重建 FBO
+        if ((m_Width != sz.x || m_Height != sz.y) && sz.x > 0 && sz.y > 0) {
+            m_Width = sz.x; m_Height = sz.y;
+            m_NeedsFBOUpdate = true;
             if (m_Camera) m_Camera->SetViewportSize(m_Width, m_Height);
-            if (m_ResizeCallback) m_ResizeCallback(static_cast<int32>(m_Width), static_cast<int32>(m_Height));
         }
     }
 
     // ═══════════════════════════════════════════════════════════════
-    // 2. 绘制 3D FBO 画面
+    // 2. FBO 显示
     // ═══════════════════════════════════════════════════════════════
     void ViewportPanel::Draw3DImage() {
-        if (m_FBO && m_FBO->IsValid() && m_Width > 0 && m_Height > 0) {
-            uint32 texID = m_FBO->GetColorTextureID();
-            // V 轴翻转，修正 OpenGL 纹理方向
-            ImGui::Image((ImTextureID)(uint64)texID, ImVec2(m_Width, m_Height),
-                         ImVec2(0, 1), ImVec2(1, 0));
-
-            // 视口被悬浮时绘制一层微弱的发光边框，提升交互反馈
+        if (m_ColorTexture && m_Width > 0 && m_Height > 0) {
+            ImGui::Image((ImTextureID)(uint64)m_ColorTexture,
+                         ImVec2(m_Width, m_Height), ImVec2(0, 1), ImVec2(1, 0));
             if (m_Hovered) {
                 ImDrawList* dl = ImGui::GetWindowDrawList();
                 dl->AddRect(m_ViewportBounds[0], m_ViewportBounds[1],
-                            IM_COL32(255, 200, 50, 180), 0.0f, 0, 1.5f);
+                            m_Style.SelectionBorderColor, 0.0f, 0, 1.5f);
             }
         } else {
-            // Fallback 黑屏状态
             ImDrawList* dl = ImGui::GetWindowDrawList();
-            dl->AddRectFilled(m_ViewportBounds[0], m_ViewportBounds[1],
-                              IM_COL32(30, 30, 35, 255));
-            if (m_Width > 0 && m_Height > 0) {
-                dl->AddText(m_ViewportBounds[0], IM_COL32(100, 100, 110, 255),
-                            ("Viewport: " + m_Config.Name).c_str());
-            }
+            dl->AddRectFilled(m_ViewportBounds[0], m_ViewportBounds[1], IM_COL32(30, 30, 35, 255));
+            if (m_Width > 0 && m_Height > 0)
+                dl->AddText(m_ViewportBounds[0], IM_COL32(100,100,110,255), ("Viewport: " + m_Config.Name).c_str());
         }
     }
 
     // ═══════════════════════════════════════════════════════════════
-    // 3. 绘制悬浮工具栏 (Overlay) — 使用屏幕绝对坐标解决遮挡
+    // 3. 手型/中键平移
+    // ═══════════════════════════════════════════════════════════════
+    void ViewportPanel::HandleCameraNavigation() {
+        if (!m_Camera || !m_Hovered) return;
+
+        ImGuiIO& io = ImGui::GetIO();
+        bool handActive = (m_CurrentTool == ViewportTool::Hand && io.MouseDown[0] && m_Hovered) ||
+                           ImGui::IsMouseDown(ImGuiMouseButton_Middle);
+
+        if (handActive && (io.MouseDelta.x != 0.0f || io.MouseDelta.y != 0.0f)) {
+            float sensitivity = m_Camera->GetDistance() * 0.001f;
+            Vec3 pos = m_Camera->GetPosition();
+            Vec3 focus = m_Camera->GetFocusPoint();
+            float yawRad = glm::radians(m_Camera->GetYaw());
+            float pitchRad = glm::radians(m_Camera->GetPitch());
+            glm::vec3 forward(std::cos(pitchRad)*std::cos(yawRad), std::sin(pitchRad), std::cos(pitchRad)*std::sin(yawRad));
+            glm::vec3 right = glm::normalize(glm::cross(forward, glm::vec3(0,1,0)));
+            glm::vec3 up = glm::normalize(glm::cross(right, forward));
+            float dx = -io.MouseDelta.x * sensitivity;
+            float dy = io.MouseDelta.y * sensitivity;
+            pos.x += right.x*dx + up.x*dy; pos.y += right.y*dx + up.y*dy; pos.z += right.z*dx + up.z*dy;
+            focus.x += right.x*dx + up.x*dy; focus.y += right.y*dx + up.y*dy; focus.z += right.z*dx + up.z*dy;
+            m_Camera->SetPosition(pos);
+            m_Camera->SetFocusPoint(focus);
+        }
+    }
+
+    // ═══════════════════════════════════════════════════════════════
+    // 4. ImGuizmo（修复旋转/缩放回写）
+    // ═══════════════════════════════════════════════════════════════
+    void ViewportPanel::DrawGizmos() {
+        auto selected = m_SelectedObject.lock();
+        if (!selected || !m_Camera) return;
+
+        ImGuizmo::OPERATION op;
+        switch (m_CurrentTool) {
+            case ViewportTool::Translate: op = ImGuizmo::TRANSLATE; break;
+            case ViewportTool::Rotate:    op = ImGuizmo::ROTATE;    break;
+            case ViewportTool::Scale:     op = ImGuizmo::SCALE;     break;
+            default: return;
+        }
+
+        ImGuizmo::SetOrthographic(m_Camera->GetProjectionType() == CameraProjectionType::Orthographic);
+        ImGuizmo::SetDrawlist();
+        ImGuizmo::SetRect(m_ViewportBounds[0].x, m_ViewportBounds[0].y,
+                          m_ViewportBounds[1].x - m_ViewportBounds[0].x,
+                          m_ViewportBounds[1].y - m_ViewportBounds[0].y);
+
+        // ★ 关键修复：始终使用相机矩阵（确保轨道/飞行模式下都能工作）
+        glm::mat4 view = glm::make_mat4(m_Camera->GetViewMatrixPtr());
+        glm::mat4 proj = glm::make_mat4(m_Camera->GetProjectionMatrixPtr());
+        glm::mat4 model = glm::make_mat4(selected->GetTransform().GetWorldMatrix().Data());
+
+        float snapVals[3] = { m_SnapValue, m_SnapValue, m_SnapValue };
+        if (m_CurrentTool == ViewportTool::Rotate) {
+            snapVals[0] = snapVals[1] = snapVals[2] = m_Style.GizmoSnapRotate;
+        }
+        bool snap = (m_SnapEnabled || (Input::Get() && Input::IsKeyDown(KeyCode::LeftCtrl)));
+
+        ImGuizmo::Manipulate(glm::value_ptr(view), glm::value_ptr(proj),
+                             op, m_GizmoLocal ? ImGuizmo::LOCAL : ImGuizmo::WORLD,
+                             glm::value_ptr(model), nullptr,
+                             snap ? snapVals : nullptr);
+
+        if (ImGuizmo::IsUsing()) {
+            glm::vec3 translation, scale, skew;
+            glm::quat rotation;
+            glm::vec4 perspective;
+            glm::decompose(model, scale, rotation, translation, skew, perspective);
+
+            auto& xform = selected->GetTransform();
+            xform.SetPosition(Vec3(translation.x, translation.y, translation.z));
+
+            // ★ 修复旋转：glm::eulerAngles 返回弧度，转为角度
+            glm::vec3 euler = glm::degrees(glm::eulerAngles(rotation));
+            xform.SetRotation(Vec3(euler.x, euler.y, euler.z));
+
+            // ★ 修复缩放
+            xform.SetScale(Vec3(scale.x, scale.y, scale.z));
+        }
+    }
+
+    // ═══════════════════════════════════════════════════════════════
+    // 5. 工具栏
     // ═══════════════════════════════════════════════════════════════
     void ViewportPanel::DrawOverlay() {
-        ImVec2 overlayPos = ImVec2(m_ViewportBounds[0].x + 10.0f,
-                                    m_ViewportBounds[0].y + 10.0f);
-        ImGui::SetCursorScreenPos(overlayPos);
+        ImVec2 pos = ImVec2(m_ViewportBounds[0].x + 10, m_ViewportBounds[0].y + 10);
+        ImGui::SetCursorScreenPos(pos);
 
-        ImGui::PushStyleColor(ImGuiCol_ChildBg, ImVec4(0.12f, 0.12f, 0.12f, 0.85f));
+        ImGui::PushStyleColor(ImGuiCol_ChildBg, m_Style.ToolbarBgColor);
         ImGui::PushStyleVar(ImGuiStyleVar_ChildRounding, 4.0f);
-        ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(8.0f, 4.0f));
+        ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(8, 4));
 
-        if (ImGui::BeginChild("ViewportToolbar", ImVec2(280.0f, 32.0f), false,
+        if (ImGui::BeginChild("ViewportToolbar", ImVec2(700, m_Style.ToolbarHeight), false,
                               ImGuiWindowFlags_NoScrollbar)) {
-            ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0, 0, 0, 0));
-            ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(4.0f, 0.0f));
-            ImGui::SetCursorPosY(ImGui::GetCursorPosY() + 3.0f);
+            ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0,0,0,0));
+            ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(4,0));
 
-            if (ImGui::Button(ICON_FA_ARROWS)) m_GizmoType = 0;
-            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Translate (W)");
+            auto ToolBtn = [&](const char* icon, ViewportTool tool, const char* tip) {
+                bool active = (m_CurrentTool == tool);
+                if (active) ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.3f,0.5f,0.8f,1.0f));
+                if (ImGui::Button(icon)) m_CurrentTool = tool;
+                if (active) ImGui::PopStyleColor();
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", tip);
+                ImGui::SameLine();
+            };
+
+            ToolBtn(ICON_FA_MOUSE_POINTER, ViewportTool::Select,     "Select (Q)");
+            ToolBtn(ICON_FA_HAND_POINTER,  ViewportTool::Hand,       "Pan (H)");
+            ToolBtn(ICON_FA_ARROWS,        ViewportTool::Translate,  "Move (W)");
+            ToolBtn(ICON_FA_ROTATE_LEFT,   ViewportTool::Rotate,     "Rotate (E)");
+            ToolBtn(ICON_FA_EXPAND,        ViewportTool::Scale,      "Scale (R)");
+
+            ImGui::Separator(); ImGui::SameLine();
+            if (ImGui::Button(m_GizmoLocal ? ICON_FA_CUBE : ICON_FA_DOT_CIRCLE)) m_GizmoLocal = !m_GizmoLocal;
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip(m_GizmoLocal ? "Local" : "World");
+
+            ImGui::SameLine(); ImGui::Separator(); ImGui::SameLine();
+
+            if (ImGui::Button(ICON_FA_MAGNET)) m_SnapEnabled = !m_SnapEnabled;
+            if (m_SnapEnabled) { ImGui::SameLine(); ImGui::SetNextItemWidth(50); ImGui::DragFloat("##snap",&m_SnapValue,0.01f,0.01f,100.0f,"%.2f"); }
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Snap (Ctrl)");
+
+            ImGui::SameLine(); ImGui::Separator(); ImGui::SameLine();
+            bool sg = m_Config.ShowGrid;
+            if (ImGui::Button(ICON_FA_GRID)) m_Config.ShowGrid = !m_Config.ShowGrid;
+            if (sg) { ImGui::SameLine(); ImGui::TextDisabled(ICON_FA_CHECK); }
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Grid (G)");
             ImGui::SameLine();
 
-            if (ImGui::Button(ICON_FA_ROTATE_LEFT)) m_GizmoType = 1;
-            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Rotate (E)");
-            ImGui::SameLine();
+            ImGui::Separator(); ImGui::SameLine();
 
-            if (ImGui::Button(ICON_FA_EXPAND)) m_GizmoType = 2;
-            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Scale (R)");
-            ImGui::SameLine();
+            if (m_Camera) {
+                Vec3 cp = m_Camera->GetPosition();
+                ImGui::TextDisabled("Cam: %.1f,%.1f,%.1f", cp.x, cp.y, cp.z);
+                ImGui::SameLine();
+                // ★ 修复：Reset 后设置 Select 工具确保可操作
+                if (ImGui::SmallButton(ICON_FA_CROSSHAIRS)) {
+                    m_Camera->SetPosition({0,5,10});
+                    m_Camera->SetFocusPoint({0,0,0});
+                    m_Camera->SetActive(true);
+                    m_CurrentTool = ViewportTool::Select;
+                    ENGINE_LOG_INFO("Viewport", "Camera reset to (0,5,10), tool=Select");
+                }
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("Reset Camera");
+                ImGui::SameLine();
+            }
 
-            ImGui::TextDisabled("|"); ImGui::SameLine();
-
-            if (ImGui::Button(m_GizmoLocal ? ICON_FA_CUBE : ICON_FA_DOT_CIRCLE))
-                m_GizmoLocal = !m_GizmoLocal;
-            if (ImGui::IsItemHovered()) ImGui::SetTooltip(m_GizmoLocal ? "Local Space" : "World Space");
-            ImGui::SameLine();
-
-            ImGui::TextDisabled("|"); ImGui::SameLine();
-
+            ImGui::Separator(); ImGui::SameLine();
             ImGui::TextDisabled(ICON_FA_CAMERA); ImGui::SameLine();
-            ImGui::SetNextItemWidth(60.0f);
+            ImGui::SetNextItemWidth(60);
             float speed = m_Camera ? m_Camera->GetFlySpeed() : 10.0f;
-            if (ImGui::SliderFloat("##camspeed", &speed, 1.0f, 50.0f, "%.1f",
-                                    ImGuiSliderFlags_Logarithmic)) {
+            if (ImGui::SliderFloat("##speed",&speed,1,50,"%.1f",ImGuiSliderFlags_Logarithmic)) {
                 if (m_Camera) m_Camera->SetFlySpeed(speed);
             }
 
@@ -248,272 +370,180 @@ namespace Engine {
     }
 
     // ═══════════════════════════════════════════════════════════════
-    // 4. 绘制 ImGuizmo 变换控件
-    // ═══════════════════════════════════════════════════════════════
-    void ViewportPanel::DrawGizmos() {
-        auto selected = m_SelectedObject.lock();
-        if (!selected || m_GizmoType < 0) return;
-
-        ImGuizmo::SetOrthographic(m_Camera && m_Camera->GetProjectionType() == CameraProjectionType::Orthographic);
-        ImGuizmo::SetDrawlist();
-
-        ImGuizmo::SetRect(m_ViewportBounds[0].x, m_ViewportBounds[0].y,
-                          m_ViewportBounds[1].x - m_ViewportBounds[0].x,
-                          m_ViewportBounds[1].y - m_ViewportBounds[0].y);
-
-        glm::mat4 cameraView = glm::make_mat4(m_Camera->GetViewMatrixPtr());
-        glm::mat4 cameraProj = glm::make_mat4(m_Camera->GetProjectionMatrixPtr());
-
-        glm::mat4 transformMatrix(1.0f);
-        {
-            auto gameObj = std::static_pointer_cast<GameObject>(m_SelectedObject.lock());
-            if (gameObj) {
-                const Mat4& worldMat = gameObj->GetTransform().GetWorldMatrix();
-                transformMatrix = glm::make_mat4(worldMat.Data());
-            }
-        }
-
-        bool snap = Input::Get() && Input::IsKeyDown(KeyCode::LeftCtrl);
-        if (!snap) snap = m_SnapEnabled;
-        float snapValue = (m_GizmoType == 1) ? 45.0f : m_SnapValue;
-        float snapValues[3] = { snapValue, snapValue, snapValue };
-
-        ImGuizmo::Manipulate(glm::value_ptr(cameraView), glm::value_ptr(cameraProj),
-            (ImGuizmo::OPERATION)m_GizmoType,
-            m_GizmoLocal ? ImGuizmo::LOCAL : ImGuizmo::WORLD,
-            glm::value_ptr(transformMatrix),
-            nullptr,
-            snap ? snapValues : nullptr);
-
-        if (ImGuizmo::IsUsing()) {
-            auto gameObj = std::static_pointer_cast<GameObject>(m_SelectedObject.lock());
-            if (gameObj) {
-                glm::vec3 newPos, newScale, newSkew;
-                glm::quat newRot;
-                glm::vec4 newPerspective;
-                glm::decompose(transformMatrix, newScale, newRot, newPos, newSkew, newPerspective);
-                glm::vec3 euler = glm::eulerAngles(newRot);
-
-                auto& transform = gameObj->GetTransform();
-                transform.SetPosition(Vec3(newPos.x, newPos.y, newPos.z));
-                transform.SetRotation(Vec3(glm::degrees(euler.x),
-                                            glm::degrees(euler.y),
-                                            glm::degrees(euler.z)));
-                transform.SetScale(Vec3(newScale.x, newScale.y, newScale.z));
-            }
-        }
-    }
-
-    // ═══════════════════════════════════════════════════════════════
-    // 5. 处理资源拖拽到场景（DND 实例化）
+    // 6. 拖拽
     // ═══════════════════════════════════════════════════════════════
     void ViewportPanel::HandleDragAndDrop() {
-        if (ImGui::BeginDragDropTarget()) {
-            if (const ImGuiPayload* payload = ImGui::AcceptDragDropPayload("CONTENT_BROWSER_ITEM")) {
-                const char* path = (const char*)payload->Data;
-                if (!path) { ImGui::EndDragDropTarget(); return; }
-                std::string assetPath(path);
-
-                // 检查文件扩展名（.obj / .fbx / .gltf 等模型文件）
-                bool isMesh = (assetPath.ends_with(".obj") ||
-                               assetPath.ends_with(".fbx") ||
-                               assetPath.ends_with(".gltf"));
-
-                // 计算落点：相机前方 5m
-                float dropPos[3] = { 0.0f, 0.0f, 5.0f };
-                if (m_Camera) {
-                    Vec3 pos = m_Camera->GetPosition();
-                    Vec3 focus = m_Camera->GetFocusPoint();
-                    Vec3 forward = focus - pos;
-                    float len = std::sqrt(forward.x*forward.x + forward.y*forward.y + forward.z*forward.z);
-                    if (len > 0.001f) {
-                        forward.x /= len; forward.y /= len; forward.z /= len;
-                    }
-                    dropPos[0] = pos.x + forward.x * 5.0f;
-                    dropPos[1] = pos.y + forward.y * 5.0f;
-                    dropPos[2] = pos.z + forward.z * 5.0f;
-                }
-
-                if (isMesh) {
-                    if (m_DropAssetCallback) {
-                        m_DropAssetCallback(assetPath, dropPos);
-                    }
-                    ENGINE_LOG_INFO("Viewport", "Dropped mesh: {} at ({:.1f}, {:.1f}, {:.1f})",
-                                   assetPath, dropPos[0], dropPos[1], dropPos[2]);
-                } else {
-                    ENGINE_LOG_INFO("Viewport", "Dropped (skipped): {}", assetPath);
-                }
+        if (!ImGui::BeginDragDropTarget()) return;
+        if (const ImGuiPayload* p = ImGui::AcceptDragDropPayload("CONTENT_BROWSER_ITEM")) {
+            const char* path = (const char*)p->Data;
+            if (!path) { ImGui::EndDragDropTarget(); return; }
+            std::string assetPath(path);
+            bool isMesh = assetPath.ends_with(".obj") || assetPath.ends_with(".fbx") || assetPath.ends_with(".gltf");
+            float dp[3] = {0,0,5};
+            if (m_Camera) {
+                Vec3 pv = m_Camera->GetPosition(), fv = m_Camera->GetFocusPoint();
+                Vec3 fwd = {fv.x-pv.x, fv.y-pv.y, fv.z-pv.z};
+                float len = std::sqrt(fwd.x*fwd.x+fwd.y*fwd.y+fwd.z*fwd.z);
+                if (len>.001f) { fwd.x/=len; fwd.y/=len; fwd.z/=len; }
+                dp[0]=pv.x+fwd.x*5; dp[1]=pv.y+fwd.y*5; dp[2]=pv.z+fwd.z*5;
             }
-            ImGui::EndDragDropTarget();
+            if (isMesh && m_DropAssetCallback) m_DropAssetCallback(assetPath, dp);
         }
+        ImGui::EndDragDropTarget();
     }
 
     // ═══════════════════════════════════════════════════════════════
-    // 6. ID 缓冲区像素级拾取
+    // 7. 拾取
     // ═══════════════════════════════════════════════════════════════
-    uint32 ViewportPanel::PickAtMouse(float mouseScreenX, float mouseScreenY) const {
-        if (!m_FBO) return 0;
-        return m_FBO->ReadPixelID(mouseScreenX, mouseScreenY,
-                                   m_ViewportBounds[0].x,
-                                   m_ViewportBounds[0].y);
-    }
-
     void ViewportPanel::HandleMousePicking() {
-        if (m_Hovered && !ImGuizmo::IsOver() && !ImGui::IsAnyItemHovered()) {
-            if (ImGui::IsMouseClicked(ImGuiMouseButton_Left)) {
-                if (m_PickCallback) {
-                    float ndcX, ndcY;
-                    GetMouseViewportSpace(ndcX, ndcY);
-
-                    ImVec2 mousePos = ImGui::GetMousePos();
-                    uint32 entityId = PickAtMouse(mousePos.x, mousePos.y);
-
-                    m_PickCallback(ndcX, ndcY, entityId);
-                }
-            }
-        }
+        static uint64 s_lastPickFrame = 0;
+        uint64 thisFrame = ImGui::GetFrameCount();
+        if (thisFrame == s_lastPickFrame) return;
+        if (!m_Hovered || !ImGui::IsMouseClicked(ImGuiMouseButton_Left) || ImGuizmo::IsOver() || ImGui::GetIO().KeyAlt) return;
+        if (m_CurrentTool == ViewportTool::Hand) return;
+        s_lastPickFrame = thisFrame;
+        ImVec2 mouse = ImGui::GetMousePos();
+        float lx = mouse.x - m_ViewportBounds[0].x, ly = mouse.y - m_ViewportBounds[0].y;
+        int px = (int)lx, py = (int)(m_Height - ly);
+        if (px<0||px>=(int)m_Width||py<0||py>=(int)m_Height||!m_FBO||!m_GL) return;
+        m_GL->BindFramebuffer(GL_FRAMEBUFFER, m_FBO);
+        m_GL->ReadBuffer(GL_COLOR_ATTACHMENT1);
+        int32 entityId = -1;
+        m_GL->ReadPixels(px,py,1,1,GL_RED_INTEGER,GL_INT,&entityId);
+        m_GL->ReadBuffer(GL_COLOR_ATTACHMENT0);
+        m_GL->BindFramebuffer(GL_FRAMEBUFFER,0);
+        if (entityId > 65535) entityId = -1;
+        if (m_PickCallback) { float ndcX = (lx/m_Width)*2-1, ndcY = 1-(ly/m_Height)*2; m_PickCallback(ndcX,ndcY,entityId); }
     }
 
     // ═══════════════════════════════════════════════════════════════
-    // 7. 视口交互闭环 — 右键菜单 + 快捷键
+    // 8. 快捷键 + 右键菜单
     // ═══════════════════════════════════════════════════════════════
     void ViewportPanel::HandleViewportInteraction() {
-        // ── 右键创建菜单 ──
-        if (m_Hovered && ImGui::IsMouseClicked(ImGuiMouseButton_Right) && !ImGuizmo::IsOver()) {
+        // 右键菜单
+        if (m_Hovered && ImGui::IsMouseClicked(ImGuiMouseButton_Right) && !ImGuizmo::IsOver())
             ImGui::OpenPopup("ViewportContextMenu");
-        }
-
         if (ImGui::BeginPopup("ViewportContextMenu")) {
+            auto AddMI = [&](const char* l, const char* t) { if (ImGui::MenuItem(l)) { if (m_SceneCreateCallback) m_SceneCreateCallback(t); } };
             if (ImGui::BeginMenu(ICON_FA_PLUS " Add Entity")) {
-                if (ImGui::MenuItem(ICON_FA_CUBE " Cube")) {
-                    if (m_SceneCreateCallback) m_SceneCreateCallback("Cube");
-                }
-                if (ImGui::MenuItem(ICON_FA_CIRCLE " Sphere")) {
-                    if (m_SceneCreateCallback) m_SceneCreateCallback("Sphere");
-                }
-                if (ImGui::MenuItem(ICON_FA_GRID " Plane")) {
-                    if (m_SceneCreateCallback) m_SceneCreateCallback("Plane");
-                }
+                AddMI(ICON_FA_CUBE " Cube","Cube"); AddMI(ICON_FA_CIRCLE " Sphere","Sphere"); AddMI(ICON_FA_GRID " Plane","Plane");
                 ImGui::EndMenu();
             }
-            if (ImGui::BeginMenu(ICON_FA_SUN " Add Light")) {
-                if (ImGui::MenuItem("Point Light")) {
-                    if (m_SceneCreateCallback) m_SceneCreateCallback("PointLight");
-                }
-                if (ImGui::MenuItem("Directional Light")) {
-                    if (m_SceneCreateCallback) m_SceneCreateCallback("DirectionalLight");
-                }
-                ImGui::EndMenu();
-            }
+            if (ImGui::BeginMenu(ICON_FA_SUN " Add Light")) { AddMI("Point Light","PointLight"); AddMI("Directional Light","DirectionalLight"); ImGui::EndMenu(); }
             ImGui::Separator();
-            if (ImGui::MenuItem(ICON_FA_TRASH " Delete", "Del", false, !m_SelectedObject.expired())) {
-                if (m_SceneDeleteCallback) m_SceneDeleteCallback();
-            }
+            if (ImGui::MenuItem(ICON_FA_TRASH " Delete","Del",false,!m_SelectedObject.expired())) { if (m_SceneDeleteCallback) m_SceneDeleteCallback(); }
             ImGui::EndPopup();
         }
+        if (!m_Focused) return;
 
-        // ── 快捷键 ──
-        if (m_Focused) {
-            // F 键聚焦
-            if (ImGui::IsKeyPressed(ImGuiKey_F)) {
-                FocusOnSelected();
+        if (ImGui::IsKeyPressed(ImGuiKey_F)) FocusOnSelected();
+        if (ImGui::IsKeyPressed(ImGuiKey_Delete) && m_SceneDeleteCallback && !m_SelectedObject.expired()) m_SceneDeleteCallback();
+
+        // ★ 工具切换（Use the keyboard top row — these do NOT conflict with WASD camera movement）
+        if (ImGui::IsKeyPressed(ImGuiKey_Q)) m_CurrentTool = ViewportTool::Select;
+        if (ImGui::IsKeyPressed(ImGuiKey_H)) m_CurrentTool = ViewportTool::Hand;
+        if (ImGui::IsKeyPressed(ImGuiKey_W)) m_CurrentTool = ViewportTool::Translate;
+        if (ImGui::IsKeyPressed(ImGuiKey_E)) m_CurrentTool = ViewportTool::Rotate;
+        if (ImGui::IsKeyPressed(ImGuiKey_R)) m_CurrentTool = ViewportTool::Scale;
+        if (ImGui::IsKeyPressed(ImGuiKey_G)) m_Config.ShowGrid = !m_Config.ShowGrid;
+        if (ImGui::IsKeyPressed(ImGuiKey_Tab)) CycleGizmoTool();
+
+        // ★ 方向键 → 相机平移（独立于 WASD 不冲突）
+        ImGuiIO& io = ImGui::GetIO();
+        if (m_Camera && m_Hovered) {
+            float moveSpeed = m_Camera->GetFlySpeed() * io.DeltaTime;
+            if (ImGui::IsKeyDown(ImGuiKey_UpArrow)) {
+                Vec3 p = m_Camera->GetPosition(), f = m_Camera->GetFocusPoint();
+                p.y += moveSpeed; f.y += moveSpeed;
+                m_Camera->SetPosition(p); m_Camera->SetFocusPoint(f);
             }
-            // Delete 键删除
-            if (ImGui::IsKeyPressed(ImGuiKey_Delete)) {
-                if (m_SceneDeleteCallback && !m_SelectedObject.expired()) {
-                    m_SceneDeleteCallback();
-                }
+            if (ImGui::IsKeyDown(ImGuiKey_DownArrow)) {
+                Vec3 p = m_Camera->GetPosition(), f = m_Camera->GetFocusPoint();
+                p.y -= moveSpeed; f.y -= moveSpeed;
+                m_Camera->SetPosition(p); m_Camera->SetFocusPoint(f);
             }
-            // W/E/R 切换 Gizmo 模式
-            if (ImGui::IsKeyPressed(ImGuiKey_W)) m_GizmoType = 0;
-            if (ImGui::IsKeyPressed(ImGuiKey_E)) m_GizmoType = 1;
-            if (ImGui::IsKeyPressed(ImGuiKey_R)) m_GizmoType = 2;
+            if (ImGui::IsKeyDown(ImGuiKey_LeftArrow)) {
+                float yawRad = glm::radians(m_Camera->GetYaw());
+                float pitchRad = glm::radians(m_Camera->GetPitch());
+                glm::vec3 fwd(std::cos(pitchRad)*std::cos(yawRad),std::sin(pitchRad),std::cos(pitchRad)*std::sin(yawRad));
+                glm::vec3 right = glm::normalize(glm::cross(fwd, glm::vec3(0,1,0)));
+                Vec3 p = m_Camera->GetPosition(), fp = m_Camera->GetFocusPoint();
+                p.x -= right.x*moveSpeed; p.z -= right.z*moveSpeed;
+                fp.x -= right.x*moveSpeed; fp.z -= right.z*moveSpeed;
+                m_Camera->SetPosition(p); m_Camera->SetFocusPoint(fp);
+            }
+            if (ImGui::IsKeyDown(ImGuiKey_RightArrow)) {
+                float yawRad = glm::radians(m_Camera->GetYaw());
+                float pitchRad = glm::radians(m_Camera->GetPitch());
+                glm::vec3 fwd(std::cos(pitchRad)*std::cos(yawRad),std::sin(pitchRad),std::cos(pitchRad)*std::sin(yawRad));
+                glm::vec3 right = glm::normalize(glm::cross(fwd, glm::vec3(0,1,0)));
+                Vec3 p = m_Camera->GetPosition(), fp = m_Camera->GetFocusPoint();
+                p.x += right.x*moveSpeed; p.z += right.z*moveSpeed;
+                fp.x += right.x*moveSpeed; fp.z += right.z*moveSpeed;
+                m_Camera->SetPosition(p); m_Camera->SetFocusPoint(fp);
+            }
         }
     }
 
-    // ═══════════════════════════════════════════════════════════════
-    // 聚焦选中物体 — F 键 / 菜单触发
-    // ═══════════════════════════════════════════════════════════════
     void ViewportPanel::FocusOnSelected() {
         auto sel = m_SelectedObject.lock();
         if (!sel || !m_Camera) return;
-
-        auto* obj = static_cast<GameObject*>(sel.get());
-        Vec3 pos = obj->GetTransform().GetPosition();
-
-        // 平滑聚焦：设置焦点到物体位置，调整距离为 5 米
+        Vec3 pos = sel->GetTransform().GetPosition();
         m_Camera->SetFocusPoint(pos);
         m_Camera->SetDistance(5.0f);
-
-        ENGINE_LOG_INFO("Viewport", "Focused on: {}", obj->GetName());
+        ENGINE_LOG_INFO("Viewport", "Focused: {}", sel->GetName());
     }
 
     // ═══════════════════════════════════════════════════════════════
-    // 辅助：FBO 尺寸更新
-    // ═══════════════════════════════════════════════════════════════
-    void ViewportPanel::UpdateFBOIfNeeded() {
-        if (!m_NeedsFBOUpdate) return;
-        m_NeedsFBOUpdate = false;
-        if (!m_GL) return;
-        if (!m_FBO) {
-            InitFBO();
-            return;
-        }
-        m_FBO->Resize(static_cast<uint32>(m_Width), static_cast<uint32>(m_Height));
-    }
-
-    // ═══════════════════════════════════════════════════════════════
-    // 3D 场景渲染（每帧调用）
+    // 3D 场景 MRT 渲染
     // ═══════════════════════════════════════════════════════════════
     void ViewportPanel::Render3DScene() {
-        UpdateFBOIfNeeded();
-        if (!m_FBO || !m_FBO->IsValid()) return;
+        if (m_NeedsFBOUpdate) { InitMRTFramebuffer(); m_NeedsFBOUpdate = false; }
+        if (!m_FBO || !m_GL) return;
 
-        m_FBO->Bind();
+        m_GL->BindFramebuffer(GL_FRAMEBUFFER, m_FBO);
+        m_GL->Viewport(0,0,(GLsizei)m_Width,(GLsizei)m_Height);
+        m_GL->ClearColor(0.12f,0.12f,0.15f,1.0f);
 
-        if (m_GL) {
-            m_GL->Viewport(0, 0, static_cast<int32>(m_Width), static_cast<int32>(m_Height));
-            m_GL->ClearColor(0.15f, 0.15f, 0.15f, 1.0f);
-            m_GL->Clear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
-            m_GL->Enable(GL_DEPTH_TEST);
+        int clearId = -1;
+        m_GL->ClearBufferiv(GL_COLOR,1,&clearId);
+        m_GL->Clear(GL_COLOR_BUFFER_BIT|GL_DEPTH_BUFFER_BIT);
+        m_GL->Enable(GL_DEPTH_TEST);
+        m_GL->Enable(GL_BLEND);
+        m_GL->BlendFunc(GL_SRC_ALPHA,GL_ONE_MINUS_SRC_ALPHA);
 
-            // 【修复网格】：开启混合，否则网格的半透明线条画不出来
-            m_GL->Enable(GL_BLEND);
-            m_GL->BlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
-        }
+        if (m_Config.CurrentMode == ViewMode::Wireframe)
+            m_GL->PolygonMode(GL_FRONT_AND_BACK,GL_LINE);
+        else
+            m_GL->PolygonMode(GL_FRONT_AND_BACK,GL_FILL);
 
         if (m_Camera) {
-            float aspect = (m_Height > 0.0f) ? m_Width / m_Height : 1.778f;
-            glm::mat4 proj;
-            if (m_Camera->GetProjectionType() == CameraProjectionType::Orthographic) {
-                float zoom = m_Camera->GetDistance() * 0.5f;
-                proj = glm::ortho(-zoom * aspect, zoom * aspect, -zoom, zoom, 0.1f, 1000.0f);
-            } else {
-                proj = glm::perspective(glm::radians(45.0f), aspect, 0.1f, 1000.0f);
-            }
+            float aspect = (m_Height>0) ? m_Width/m_Height : 1.778f;
+            glm::mat4 proj = (m_Camera->GetProjectionType() == CameraProjectionType::Orthographic)
+                ? glm::ortho(-m_Camera->GetDistance()*0.5f*aspect, m_Camera->GetDistance()*0.5f*aspect,
+                             -m_Camera->GetDistance()*0.5f, m_Camera->GetDistance()*0.5f, 0.1f, 1000.0f)
+                : glm::perspective(glm::radians(45.0f), aspect, 0.1f, 1000.0f);
             glm::mat4 view = glm::lookAt(
-                glm::vec3(m_Camera->GetPosition().x, m_Camera->GetPosition().y, m_Camera->GetPosition().z),
-                glm::vec3(m_Camera->GetFocusPoint().x, m_Camera->GetFocusPoint().y, m_Camera->GetFocusPoint().z),
-                glm::vec3(0.0f, 1.0f, 0.0f));
+                glm::vec3(m_Camera->GetPosition().x,m_Camera->GetPosition().y,m_Camera->GetPosition().z),
+                glm::vec3(m_Camera->GetFocusPoint().x,m_Camera->GetFocusPoint().y,m_Camera->GetFocusPoint().z),
+                glm::vec3(0,1,0));
+            glm::mat4 vp = proj * view;
 
-            glm::mat4 viewProj = proj * view;
-
-            // 渲染真实场景（isPicking=false：正常颜色 Pass）
             if (m_SceneRenderCallback) {
-                Vec3 camPos = m_Camera->GetPosition();
-                m_SceneRenderCallback(glm::value_ptr(viewProj), &camPos.x, false);
+                Vec3 cp = m_Camera->GetPosition();
+                m_SceneRenderCallback(glm::value_ptr(vp),&cp.x);
             }
-
-            // 渲染辅助网格（开启混合后正常显示半透明线条）
             if (m_Overlay.IsInitialized() && m_Config.ShowGrid) {
-                Vec3 camPos = m_Camera->GetPosition();
-                float camPosF[3] = { camPos.x, camPos.y, camPos.z };
-                m_Overlay.DrawGrid(m_GL, glm::value_ptr(viewProj), camPosF, m_Config);
+                Vec3 cp = m_Camera->GetPosition();
+                float cf[3] = {cp.x,cp.y,cp.z};
+                m_Overlay.DrawGrid(m_GL,glm::value_ptr(vp),cf,m_Config);
             }
         }
 
-        if (m_GL) m_GL->Disable(GL_BLEND);
-        m_FBO->Unbind();
+        m_GL->Disable(GL_BLEND);
+        if (m_Config.CurrentMode == ViewMode::Wireframe)
+            m_GL->PolygonMode(GL_FRONT_AND_BACK,GL_FILL);
+        m_GL->BindFramebuffer(GL_FRAMEBUFFER,0);
     }
 
 } // namespace Engine

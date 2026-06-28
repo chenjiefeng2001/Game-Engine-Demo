@@ -118,9 +118,10 @@ namespace Engine {
         });
 
         // 设置场景渲染回调：由 Application 子类注入具体绘制逻辑
-        m_Viewport.SetSceneRenderCallback([this, app](const float* viewProj16, const float* camPos3, bool isPicking) {
+        // MRT 单次 Pass：Fragment Shader 同时输出颜色(location=0) 和 ID(location=1)
+        m_Viewport.SetSceneRenderCallback([this, app](const float* viewProj16, const float* camPos3) {
             if (m_SceneRenderInjector) {
-                m_SceneRenderInjector(viewProj16, camPos3, isPicking);
+                m_SceneRenderInjector(viewProj16, camPos3);
             }
         });
 
@@ -129,11 +130,35 @@ namespace Engine {
             m_SceneViewerPanel.OnOverlay(dt, camera);
         });
 
+        // ── 连接 Viewport 拾取回调（鼠标点击 → 查找 Entity ID → 发布选中事件） ──
+        m_Viewport.SetPickCallback([this](float ndcX, float ndcY, int32 entityId) {
+            (void)ndcX;
+            (void)ndcY;
+            Scene* scene = m_SceneManager.GetScene();
+            if (!scene) return;
+
+            if (entityId > 0) {
+                // 在场景中通过 ID 查找对应对象
+                GameObject* obj = scene->FindByID(static_cast<uint32>(entityId));
+                if (obj) {
+                    ENGINE_LOG_INFO("Viewport", "Selected Entity ID: {} - {}", entityId, obj->GetName());
+                    EventBus::Publish(EntitySelectedEvent(obj));
+                } else {
+                    ENGINE_LOG_WARN("Viewport", "Entity ID {} not found in scene", entityId);
+                }
+            } else {
+                // 点击背景（entityId = -1），清除选择
+                EventBus::Publish(EntitySelectedEvent(nullptr));
+            }
+        });
+
         // ── 通过 EventBus 订阅拾取结果（解耦：Viewport → EngineEditor） ──
         m_PickSubscription = EventBus::Subscribe<EntitySelectedEvent>(
             [this](const EntitySelectedEvent& e) {
                 if (e.Entity) {
                     OnSelectionChanged(e.Entity);
+                } else {
+                    OnSelectionChanged(nullptr);
                 }
             }
         );
@@ -492,16 +517,17 @@ namespace Engine {
         // ── 编辑器设置面板（变换/吸附/书签等） ──
         // 由 DrawEditorSettingsWindow 管理可见性
 
-        // ── 性能统计悬浮窗（使用 EditorTools 中的自由函数） ──
-        // 需要渲染上下文数据填充
-        if (auto* ctx = m_App ? m_App->GetRenderContext() : nullptr) {
-            float fps = (ImGui::GetIO().DeltaTime > 0.0f) ? 1.0f / ImGui::GetIO().DeltaTime : 0.0f;
-            float frameTime = ImGui::GetIO().DeltaTime * 1000.0f;
-            uint32 dc = ctx->GetAndResetDrawCallCount();
-            uint32 verts = ctx->GetAndResetVertexCount();
-            uint32 tris = ctx->GetAndResetTriangleCount();
-            uint64 vram = ctx->GetTextureVRAMBytes() + ctx->GetBufferVRAMBytes();
-            DrawStatsOverlay(m_StatsCfg, fps, frameTime, dc, verts, tris, vram);
+        // ── 底部状态栏（实时渲染统计） ──
+        {
+            if (auto* ctx = m_App ? m_App->GetRenderContext() : nullptr) {
+                m_StatusBar.SetFPS(ImGui::GetIO().Framerate);
+                m_StatusBar.SetFrameTime(ImGui::GetIO().DeltaTime * 1000.0f);
+                m_StatusBar.SetDrawCalls(ctx->GetAndResetDrawCallCount());
+                m_StatusBar.SetTriangleCount(ctx->GetAndResetTriangleCount());
+                uint64 vram = ctx->GetTextureVRAMBytes() + ctx->GetBufferVRAMBytes();
+                m_StatusBar.SetMemoryUsage(static_cast<uint64>(vram / (1024 * 1024)), 1024);
+            }
+            m_StatusBar.OnImGui();
         }
 
         // ── 书签快捷键 ──
