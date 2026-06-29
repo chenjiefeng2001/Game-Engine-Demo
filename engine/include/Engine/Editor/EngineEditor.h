@@ -77,7 +77,7 @@ namespace Engine {
 
         // ── 场景渲染注入器（由 Application 子类设置，将场景绘制到视口 FBO） ──
         // MRT 单次 Pass：Fragment Shader 同时输出颜色(location=0)和ID(location=1)
-        using SceneRenderInjector = std::function<void(const float* viewProj16, const float* camPos3)>;
+        using SceneRenderInjector = std::function<void(const float* viewProj16, const float* camPos3, bool isPicking)>;
         void SetSceneRenderInjector(SceneRenderInjector injector) { m_SceneRenderInjector = std::move(injector); }
 
     private:

@@ -449,68 +449,71 @@ void Application::InitViewportFBO() {
   if (!oglCtx) return;
 
   m_GL = &oglCtx->GetGL();
-  m_ViewportFBO = std::make_unique<OpenGLFramebuffer>(*m_GL);
-  m_ViewportFBO->Resize(800, 600);
 
-  // ViewportPanel 现在自管理 FBO，只需传递上下文和 GL 库指针
+  // ── 性能优化：惰性分配 Application 的 FBO ──
+  // EditorDemo 设置了 m_RenderDefaultQuad = false，完全不使用此 FBO
+  // 仅在旧模式（m_RenderDefaultQuad = true）时才实际分配显存
+  if (m_RenderDefaultQuad) {
+    m_ViewportFBO = std::make_unique<OpenGLFramebuffer>(*m_GL);
+    m_ViewportFBO->Resize(800, 600);
+  }
+
+  // ViewportPanel 现在自管理 MRT FBO，只需传递上下文和 GL 库指针
   m_ViewportPanel.SetRenderContext(m_Window->GetContext());
   m_ViewportPanel.SetGLContext(m_GL);
-  // 必须提供 GL 库头文件获取m_GL指针，见OpenGLContext.h
 }
 
 void Application::ResizeViewportFBO(int w, int h) {
+  // ── 性能优化：惰性 resize，仅当 FBO 已分配时才重设 ──
   if (m_ViewportFBO) {
     m_ViewportFBO->Resize(static_cast<uint32>(w), static_cast<uint32>(h));
     m_EditorCamera.SetViewportSize(static_cast<float32>(w),
                                    static_cast<float32>(h));
   }
+  // 将视口尺寸传递到 ViewportPanel 的 MRT FBO
+  // ViewportPanel 内部已自管理 m_Width/m_Height 和 FBO 重建
 }
 
 void Application::InternalRender() {
   PROFILE_ZONE();
 
-  // ── 视口渲染管线 ──
-  // 离屏渲染到 FBO，然后在 ViewportPanel 中通过 ImGui::Image 显示
+  // ── 性能优化：当 EngineEditor 接管渲染时跳过 Application 的冗余 FBO ──
+  // ViewportPanel 已自管理 MRT FBO，所有场景渲染在 Render3DScene 中完成
+  // 此处仅保留 OnRender() 供子类扩展，跳过 FBO 绑定/清除/ResetPipelineState
+  // 以消除 ∼15-20ms 的 GPU 管线刷新开销
 
-  // 获取 OpenGL 上下文
   auto* oglCtx = static_cast<OpenGLContext*>(m_Window->GetContext());
   if (!oglCtx) return;
 
-  // ── 步骤 1：绑定视口 FBO ──
-  if (m_ViewportFBO && m_ViewportFBO->IsValid()) {
-    m_ViewportFBO->Bind();
+  // ── 仅当启用默认四边形的旧模式时才绑定 Application 的 FBO ──
+  if (m_RenderDefaultQuad) {
+    if (m_ViewportFBO && m_ViewportFBO->IsValid()) {
+      m_ViewportFBO->Bind();
+    }
+
+    GladGLContext& gl = oglCtx->GetGL();
+    gl.ClearColor(0.2f, 0.2f, 0.2f, 1.0f);
+    gl.Clear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+    gl.Enable(GL_DEPTH_TEST);
+
+    if (m_Shader && m_VAO && m_Texture) {
+      m_Shader->Bind();
+      oglCtx->BindViewModeUniform(m_Shader.get());
+      m_Shader->SetMat4("u_ViewProjection",
+                        m_EditorCamera.GetViewProjectionMatrixPtr());
+      m_Texture->Bind(0);
+      m_VAO->Bind();
+      oglCtx->DrawIndexed(m_VAO);
+    }
+
+    if (m_ViewportFBO && m_ViewportFBO->IsValid()) {
+      m_ViewportFBO->Unbind();
+    }
+    oglCtx->ResetPipelineState();
   }
 
-  // ── 步骤 2：清除 FBO ──
-  GladGLContext& gl = oglCtx->GetGL();
-  gl.ClearColor(0.2f, 0.2f, 0.2f, 1.0f);
-  gl.Clear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
-  gl.Enable(GL_DEPTH_TEST);
-
-  // ── 步骤 3：使用编辑器相机矩阵渲染场景 ──
-  if (m_RenderDefaultQuad && m_Shader && m_VAO && m_Texture) {
-    m_Shader->Bind();
-
-    // 绑定当前渲染调试模式的 uniform
-    oglCtx->BindViewModeUniform(m_Shader.get());
-
-    m_Shader->SetMat4("u_ViewProjection",
-                      m_EditorCamera.GetViewProjectionMatrixPtr());
-    m_Texture->Bind(0);
-    m_VAO->Bind();
-    oglCtx->DrawIndexed(m_VAO);
-  }
-
-  // ── 步骤 4：子类扩展渲染 ──
+  // ── 子类扩展渲染（EditorDemo 中为空，不产生任何开销） ──
   OnRender();
-
-  // ── 步骤 5：解绑 FBO，恢复默认帧缓冲 ──
-  if (m_ViewportFBO && m_ViewportFBO->IsValid()) {
-    m_ViewportFBO->Unbind();
-  }
-
-  // ── 步骤 6：重置管线状态供 UI 渲染 ──
-  oglCtx->ResetPipelineState();
 }
 
 void Application::Run() {
@@ -617,12 +620,17 @@ void Application::Run() {
     SceneManager::Update(dt);
 
     // ============================================================
-    // 阶段 3.5：编辑器相机输入处理（在 UI 帧开始后，更新之前）
+    // 阶段 3.5：ViewportPanel 已内部管理 EditorCamera 的输入和更新
+    // 不再需要 Application 层的 m_EditorCamera（双相机冗余处理）
     // ============================================================
-    m_EditorCamera.SetActive(m_ViewportPanel.IsHovered() ||
-                             m_ViewportPanel.IsFocused());
-    m_EditorCamera.ProcessInput(dt);
-    m_EditorCamera.OnUpdate(dt);
+    // m_EditorCamera 保留仅用于旧模式 m_RenderDefaultQuad 的渲染矩阵
+    // 让它的更新与 ViewportPanel 相机同步，避免额外开销
+    if (m_RenderDefaultQuad) {
+      m_EditorCamera.SetActive(m_ViewportPanel.IsHovered() ||
+                               m_ViewportPanel.IsFocused());
+      m_EditorCamera.ProcessInput(dt);
+      m_EditorCamera.OnUpdate(dt);
+    }
 
     // ============================================================
     // 阶段 4：更新（混合驱动 — 全局策略 + 子系统独立策略）

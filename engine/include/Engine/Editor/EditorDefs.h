@@ -93,14 +93,23 @@ namespace Engine {
     }
 
     // ═══════════════════════════════════════════════════════════════
-    // 2. 吸附模式
+    // 2. 选择模式 & 吸附模式
     // ═══════════════════════════════════════════════════════════════
 
+    enum class SelectionMode : uint8 {
+        Object  = 0,  ///< 选择 GameObject
+        Vertex  = 1,  ///< 选择网格顶点
+        Edge    = 2,  ///< 选择网格边缘
+        Face    = 3   ///< 选择网格面片
+    };
+
+
     enum class SnapMode : uint8 {
-        Grid    = 0,   ///< 网格吸附
-        Vertex  = 1,   ///< 顶点吸附（需按住 V 键）
-        Surface = 2,   ///< 表面贴合
-        COUNT
+        None    = 0,   ///< 无吸附（新增）
+        Grid    = 1,   ///< 网格吸附
+        Vertex  = 2,   ///< 顶点吸附（需按住 V 键）
+        Surface = 3,   ///< 表面贴合
+        COUNT   = 4
     };
 
     inline const char* SnapModeName(SnapMode m) {
