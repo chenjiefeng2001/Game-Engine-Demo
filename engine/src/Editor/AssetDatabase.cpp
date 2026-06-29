@@ -76,7 +76,7 @@ namespace Engine {
 
                 auto newTime = std::chrono::duration_cast<std::chrono::seconds>(
                     std::chrono::time_point_cast<std::chrono::seconds>(
-                        std::chrono::file_clock::to_utc(ftime)).time_since_epoch()).count();
+                        std::chrono::file_clock::to_sys(ftime)).time_since_epoch()).count();
 
                 if (newTime != meta.sourceFileTime) {
                     Log::Info("[AssetDB] File modified: {}", meta.originalPath);
@@ -126,7 +126,7 @@ namespace Engine {
             meta.originalPath = pathStr;
             meta.lastModifiedTime = std::chrono::duration_cast<std::chrono::seconds>(
                 std::chrono::time_point_cast<std::chrono::seconds>(
-                    std::chrono::file_clock::to_utc(
+                    std::chrono::file_clock::to_sys(
                         std::filesystem::last_write_time(filePath)))
                     .time_since_epoch()).count();
             meta.fileSize = std::filesystem::file_size(filePath);
