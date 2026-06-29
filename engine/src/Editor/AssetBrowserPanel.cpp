@@ -323,7 +323,13 @@ namespace Engine {
         return n.find(s) != std::string::npos;
     }
 
-    void AssetBrowserPanel::OpenAssetExternally(const std::string& p) { if (!p.empty() && std::filesystem::exists(p)) { ShellExecuteA(NULL, "open", p.c_str(), NULL, NULL, SW_SHOW); } }
+    void AssetBrowserPanel::OpenAssetExternally(const std::string& p) { 
+#ifdef _WIN32
+        if (!p.empty() && std::filesystem::exists(p)) { ShellExecuteA(NULL, "open", p.c_str(), NULL, NULL, SW_SHOW); }
+#else
+        (void)p;
+#endif
+    }
     void AssetBrowserPanel::RenameAsset(const AssetBrowserEntry& entry, const std::string& newName) {
         if (newName.empty() || newName == entry.displayName) return;
         auto oldPath = std::filesystem::path(entry.physicalPath);
