@@ -1,6 +1,7 @@
 #pragma once
 
 #include "Engine/Core/RHI/MathTypes.h"
+#include "Engine/Editor/EditorDefs.h"
 
 namespace Engine {
 
@@ -9,21 +10,6 @@ namespace Engine {
         Orthographic
     };
 
-    // ── 吸附模式 ──
-    enum class SnapMode : uint8 {
-        None,
-        Grid,
-        Vertex,
-        Surface
-    };
-
-    // ── 选择模式 ──
-    enum class SelectionMode : uint8 {
-        Object,     // 选择 GameObject
-        Vertex,     // 选择网格顶点
-        Edge,       // 选择网格边缘
-        Face        // 选择网格面片
-    };
 
     class EditorCamera {
     public:
@@ -93,6 +79,7 @@ namespace Engine {
     private:
         void RecalculateMatrices();
         void ProcessFlyInput(float32 dt);
+        void ProcessPanDirect(float32 deltaX, float32 deltaY);
         void ProcessOrbitInput(float32 dt);
         void ProcessPanInput(float32 dt);
         void ProcessScrollInput(float32 dt);

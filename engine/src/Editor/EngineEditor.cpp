@@ -119,9 +119,38 @@ namespace Engine {
 
         // 设置场景渲染回调：由 Application 子类注入具体绘制逻辑
         // MRT 单次 Pass：Fragment Shader 同时输出颜色(location=0) 和 ID(location=1)
-        m_Viewport.SetSceneRenderCallback([this, app](const float* viewProj16, const float* camPos3) {
+        m_Viewport.SetSceneRenderCallback([this, app](const float* viewProj16, const float* camPos3, bool isPicking) {
             if (m_SceneRenderInjector) {
-                m_SceneRenderInjector(viewProj16, camPos3);
+                m_SceneRenderInjector(viewProj16, camPos3, isPicking);
+            }
+        });
+
+        // ── 【核心修复】：闭环处理实体的右键创建与删除 ──
+        m_Viewport.SetSceneCreateCallback([this](const std::string& type) {
+            Scene* scene = m_SceneManager.GetScene();
+            if (!scene) return;
+
+            auto obj = std::make_shared<GameObject>("New " + type);
+
+            // 计算在摄像机前方 5 米处的生成位置
+            Vec3 pos = m_Viewport.GetCamera().GetPosition();
+            Vec3 fwd = m_Viewport.GetCamera().GetForwardVector();
+            obj->GetTransform().SetPosition(Vec3(pos.x + fwd.x * 5.0f,
+                                                 pos.y + fwd.y * 5.0f,
+                                                 pos.z + fwd.z * 5.0f));
+
+            scene->AddObject(obj);
+            OnSelectionChanged(obj.get()); // 自动选中新建的物体
+        });
+
+        m_Viewport.SetSceneDeleteCallback([this]() {
+            auto selected = m_SelectedObject.lock();
+            if (selected) {
+                Scene* scene = m_SceneManager.GetScene();
+                if (scene) {
+                    scene->RemoveObject(selected.get());
+                    OnSelectionChanged(nullptr); // 清空选中状态
+                }
             }
         });
 

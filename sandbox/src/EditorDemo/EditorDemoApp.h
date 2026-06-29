@@ -108,14 +108,21 @@ protected:
                 m_Editor.GetViewport().GetCamera().SetDistance(5.0f);
             });
 
-        // ── 8. 渲染注入器（MRT 单次 Pass） ──
-        m_Editor.SetSceneRenderInjector([this](const float* viewProj16, const float* camPos3) {
+        // ── 8. 渲染注入器（MRT 单次 Pass + Billboard） ──
+        m_Editor.SetSceneRenderInjector([this](const float* viewProj16, const float* camPos3, bool isPicking) {
             RenderActiveScene(viewProj16, camPos3);
+            // 渲染完网格后再渲染 Billboard（使图标浮在网格之上但写入 ID Buffer）
+            RenderBillboards(viewProj16, camPos3);
+            // 如果是拾取 Pass，可以跳过光照计算优化性能
+            (void)isPicking;
         });
+
+        // ── 9. Billboard 渲染资源 ──
+        InitBillboardResources();
 
         m_Test.Init();
 
-        // ── 9. 相机 ──
+        // ── 10. 相机 ──
         m_Editor.GetViewport().GetCamera().SetPosition(Vec3(0.0f, 3.0f, 8.0f));
         m_Editor.GetViewport().GetCamera().SetFocusPoint(Vec3(0.0f, 0.0f, 0.0f));
 
@@ -296,6 +303,9 @@ protected:
         bool isSelected = (selectedPtr && selectedPtr.get() == obj);
         shader.SetInt("u_IsSelected", isSelected ? 1 : 0);
 
+        // ★ 注入视图调试模式
+        shader.SetInt("u_ViewMode", static_cast<int>(m_Editor.GetViewport().GetConfig().CurrentMode));
+
         // 设置实体 ID（用于拾取 Pass 和正常 Pass 中的 ID 写入）
         shader.SetInt("u_EntityID", static_cast<int>(obj->GetID()));
 
@@ -378,6 +388,88 @@ protected:
         std::cout << "  Built scene with " << m_Scene->GetObjectCount() << " objects" << std::endl;
     }
 
+    // ═══════════════════════════════════════════════════════════════
+    // Billboard 渲染
+    // ═══════════════════════════════════════════════════════════════
+
+    void InitBillboardResources() {
+        m_BillboardShader = m_Factory.CreateShader("assets/shaders/billboard.vert", "assets/shaders/billboard.frag");
+        if (!m_BillboardShader) {
+            std::cout << "[ERROR] Failed to load billboard shader" << std::endl;
+            return;
+        }
+
+        // 标准四边形（单位正方形），顶点格式：{x, y, z, u, v}
+        float quadVerts[] = {
+            -0.5f, -0.5f, 0.0f,  0.0f, 0.0f,
+             0.5f, -0.5f, 0.0f,  1.0f, 0.0f,
+             0.5f,  0.5f, 0.0f,  1.0f, 1.0f,
+            -0.5f,  0.5f, 0.0f,  0.0f, 1.0f
+        };
+        uint32_t quadIdx[] = { 0, 1, 2, 2, 3, 0 };
+
+        auto vb = m_Factory.CreateVertexBuffer(quadVerts, sizeof(quadVerts));
+        auto ib = m_Factory.CreateIndexBuffer(quadIdx, 6);
+
+        VertexAttribute attrs[2] = {
+            {0, 3, 5 * sizeof(float), 0},                // aPos(loc=0, 3 floats, stride=20, offset=0)
+            {1, 2, 5 * sizeof(float), 3 * sizeof(float)} // aTexCoord(loc=1, 2 floats, stride=20, offset=12)
+        };
+        auto vao = m_Factory.CreateVertexArray();
+        vao->AddVertexBuffer(vb, attrs, 2);
+        vao->SetIndexBuffer(ib);
+        m_BillboardMesh = std::make_shared<Mesh>(vao, 6);
+        std::cout << "  Billboard quad: 4 verts (pos+uv), 6 idx, shader=billboard" << std::endl;
+    }
+
+    void RenderBillboards(const float* viewProj16, const float* camPos3) {
+        if (!m_Scene || !m_BillboardShader || !m_BillboardMesh) return;
+        auto* oglCtx = static_cast<OpenGLContext*>(GetRenderContext());
+        if (!oglCtx) return;
+
+        glm::mat4 vp = glm::make_mat4(viewProj16);
+        glm::vec3 camPos = glm::make_vec3(camPos3);
+
+        // ★ CPU 计算世界空间 Right 和 Up 向量
+        // 使用 EditorCamera 的 GetForwardVector/GetRightVector/GetUpVector
+        auto& cam = m_Editor.GetViewport().GetCamera();
+        Vec3 fwd = cam.GetForwardVector();
+        Vec3 right = cam.GetRightVector();
+        Vec3 up = cam.GetUpVector();
+
+        m_BillboardShader->Bind();
+        m_BillboardShader->SetMat4("u_ViewProj", glm::value_ptr(vp));
+        float r[3] = {right.x, right.y, right.z};
+        float u[3] = {up.x, up.y, up.z};
+        float s[2] = {0.5f, 0.5f};
+        m_BillboardShader->SetVec3("u_CamRight", r);
+        m_BillboardShader->SetVec3("u_CamUp", u);
+        m_BillboardShader->SetVec2("u_Scale", s);
+
+        auto& gladGL = oglCtx->GetGL();
+
+        for (auto& obj : m_Scene->GetObjects()) {
+            if (!obj || !obj->IsActive()) continue;
+
+            bool hasMesh = obj->HasComponent<MeshRendererComponent>();
+            bool hasLight = obj->HasComponent<LightComponent>();
+            bool hasSprite = obj->HasComponent<SpriteComponent>();
+
+            if (hasMesh) continue; // 网格物体已有视觉表示
+
+            bool isBillboardTarget = hasLight || hasSprite;
+            if (!isBillboardTarget) continue;
+
+            Vec3 pos = obj->GetTransform().GetPosition();
+            float wp[3] = {pos.x, pos.y, pos.z};
+            m_BillboardShader->SetVec3("u_WorldPos", wp);
+            m_BillboardShader->SetInt("u_EntityID", (int)obj->GetID());
+
+            m_BillboardMesh->VAO->Bind();
+            gladGL.DrawElements(GL_TRIANGLES, 6, GL_UNSIGNED_INT, nullptr);
+        }
+    }
+
     void OnUpdate(float32 dt) override { m_Editor.OnUpdate(dt); m_Test.OnUpdate(dt); }
     void OnRender() override {}
     void OnImGui() override { m_Editor.OnImGui(); m_Test.OnImGui(); }
@@ -387,6 +479,8 @@ private:
     std::shared_ptr<Scene> m_Scene;
 
     std::shared_ptr<Shader> m_SimpleShader;
+    std::shared_ptr<Shader> m_BillboardShader;  // Billboard 着色器
+    std::shared_ptr<Mesh> m_BillboardMesh;       // Billboard 四边形网格
     std::shared_ptr<Mesh> m_CubeMesh;
     std::shared_ptr<Material> m_DefaultMaterial;
 
