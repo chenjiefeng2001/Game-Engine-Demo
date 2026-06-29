@@ -23,10 +23,10 @@ namespace Engine {
     // 面板内部编辑状态（使用 char[] 数组避免 std::string ImGui 依赖）
     // ============================================================
     struct SceneGroupEditState {
-        char    groupName[256]   = {};
-        char    masterScene[256] = {};
-        char    description[512] = {};
-        bool    isStreaming = false;
+        std::string groupName;
+        std::string masterScene;
+        std::string description;
+        bool        isStreaming = false;
         std::vector<SceneGroupEntry> entries;
     };
 

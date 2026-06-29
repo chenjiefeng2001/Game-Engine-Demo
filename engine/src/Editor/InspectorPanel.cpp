@@ -8,190 +8,272 @@
 #include "Engine/Core/Physics/PhysicsComponent.h"
 #include "Engine/Core/Log.h"
 #include "Engine/Editor/Reflect.h"
+#include "Engine/Editor/IconsFontAwesome6.h"
 
 #include <imgui.h>
+#include <imgui_internal.h>
 #include <cstring>
 #include <algorithm>
 #include <sstream>
+#include <vector>
+#include <functional>
 
 namespace Engine {
 
+    // ── 全局延迟操作队列：解决遍历时删除组件导致的迭代器失效崩溃 ──
+    static std::vector<std::function<void()>> s_DeferredActions;
+
     // ============================================================
-    // 内置组件绘制器（自由函数，非成员 — 仅在 .cpp 内部使用）
+    // UI 辅助函数 (绝对稳定的排版)
+    // ============================================================
+    namespace UI {
+
+        bool BeginPropertyGrid(const char* id) {
+            ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(4, 4));
+            ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(8, 6));
+            // 保持右侧控件列占满剩余空间
+            return ImGui::BeginTable(id, 2, ImGuiTableFlags_Resizable | ImGuiTableFlags_BordersInnerV | ImGuiTableFlags_SizingStretchProp);
+        }
+
+        void EndPropertyGrid() {
+            ImGui::EndTable();
+            ImGui::PopStyleVar(2);
+        }
+
+        void DrawLabel(const char* label) {
+            ImGui::TableNextRow();
+            ImGui::TableSetColumnIndex(0);
+            ImGui::AlignTextToFramePadding();
+            ImGui::TextUnformatted(label);
+            ImGui::TableSetColumnIndex(1);
+            // 修复栈泄露：使用 SetNextItemWidth 代替 PushItemWidth
+            ImGui::SetNextItemWidth(-FLT_MIN); 
+        }
+
+        bool DrawVec3Control(const char* label, Vec3& values, float resetValue = 0.0f) {
+            bool changed = false;
+            ImGuiIO& io = ImGui::GetIO();
+            auto boldFont = io.Fonts->Fonts[0]; // 假定索引 0 是粗体或基础字体
+
+            DrawLabel(label);
+
+            // 【核心修复】：利用传入的 label 作为 ID 作用域，隔离 Position/Rotation/Scale 的 X,Y,Z 控件！
+            ImGui::PushID(label);
+
+            ImGui::PushMultiItemsWidths(3, ImGui::CalcItemWidth());
+            ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(0, 0));
+
+            float lineHeight = ImGui::GetFontSize() + ImGui::GetStyle().FramePadding.y * 2.0f;
+            ImVec2 buttonSize = { lineHeight + 3.0f, lineHeight };
+            
+            // 计算等比三等分的输入框宽度
+            float totalWidth = ImGui::GetContentRegionAvail().x;
+            float inputWidth = (totalWidth - buttonSize.x * 3.0f - ImGui::GetStyle().ItemSpacing.x * 2.0f) / 3.0f;
+
+            auto DrawSingleAxis = [&](const char* id, const char* btnLabel, float& val, ImVec4 btnCol, ImVec4 btnHover, ImVec4 btnActive) {
+                ImGui::PushStyleColor(ImGuiCol_Button, btnCol);
+                ImGui::PushStyleColor(ImGuiCol_ButtonHovered, btnHover);
+                ImGui::PushStyleColor(ImGuiCol_ButtonActive, btnActive);
+                ImGui::PushFont(boldFont);
+                if (ImGui::Button(btnLabel, buttonSize)) { val = resetValue; changed = true; }
+                ImGui::PopFont();
+                ImGui::PopStyleColor(3);
+
+                ImGui::SameLine();
+                ImGui::SetNextItemWidth(inputWidth);
+                if (ImGui::DragFloat(id, &val, 0.1f, 0.0f, 0.0f, "%.2f")) changed = true;
+            };
+
+            DrawSingleAxis("##X", "X", values.x, ImVec4(0.8f, 0.1f, 0.15f, 1.0f), ImVec4(0.9f, 0.2f, 0.2f, 1.0f), ImVec4(0.8f, 0.1f, 0.15f, 1.0f));
+            ImGui::SameLine(0, ImGui::GetStyle().ItemSpacing.x);
+            DrawSingleAxis("##Y", "Y", values.y, ImVec4(0.2f, 0.7f, 0.2f, 1.0f), ImVec4(0.3f, 0.8f, 0.3f, 1.0f), ImVec4(0.2f, 0.7f, 0.2f, 1.0f));
+            ImGui::SameLine(0, ImGui::GetStyle().ItemSpacing.x);
+            DrawSingleAxis("##Z", "Z", values.z, ImVec4(0.1f, 0.25f, 0.8f, 1.0f), ImVec4(0.2f, 0.35f, 0.9f, 1.0f), ImVec4(0.1f, 0.25f, 0.8f, 1.0f));
+
+            ImGui::PopStyleVar();
+            
+            // 记得弹出 ID 作用域
+            ImGui::PopID();
+
+            return changed;
+        }
+
+        // ── 工业级组件折叠头 ──
+        bool DrawComponentHeader(const char* title, bool* enabled, bool* removeComponent, std::function<void()> customMenu = nullptr) {
+            ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(4, 4));
+            float lineHeight = ImGui::GetFontSize() + ImGui::GetStyle().FramePadding.y * 2.0f;
+            
+            // PushID 防止同名组件碰撞
+            ImGui::PushID(title);
+
+            if (enabled && !(*enabled)) ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.5f, 0.5f, 0.5f, 1.0f));
+            
+            ImGuiTreeNodeFlags flags = ImGuiTreeNodeFlags_DefaultOpen | ImGuiTreeNodeFlags_Framed |
+                                       ImGuiTreeNodeFlags_SpanAvailWidth | ImGuiTreeNodeFlags_AllowOverlap |
+                                       ImGuiTreeNodeFlags_FramePadding;
+
+            bool open = ImGui::TreeNodeEx("##header", flags, "%s", title);
+            
+            if (enabled && !(*enabled)) ImGui::PopStyleColor();
+
+            // 动态对齐右侧按钮，防偏移
+            float windowWidth = ImGui::GetWindowWidth();
+            
+            if (enabled) {
+                ImGui::SameLine(windowWidth - lineHeight * 2.5f - 10.0f);
+                ImGui::Checkbox("##enabled", enabled);
+            }
+
+            ImGui::SameLine(windowWidth - lineHeight - 8.0f);
+            if (ImGui::Button(ICON_FA_GEAR, ImVec2(lineHeight, lineHeight))) {
+                ImGui::OpenPopup("ComponentSettings");
+            }
+
+            bool remove = false;
+            if (ImGui::BeginPopup("ComponentSettings")) {
+                if (removeComponent && ImGui::MenuItem(ICON_FA_TRASH " Remove Component")) {
+                    remove = true;
+                }
+                if (customMenu) customMenu();
+                ImGui::EndPopup();
+            }
+            if (removeComponent) *removeComponent = remove;
+
+            ImGui::PopID();
+            ImGui::PopStyleVar();
+            return open;
+        }
+    }
+
+    // ============================================================
+    // 内置组件绘制器
     // ============================================================
     namespace {
 
-        // ── Transform（非 Component 派生，是 GameObject 直接成员） ──
         void DrawTransformWidget(GameObject* obj, const DrawContext& ctx) {
-            using namespace Inspector;
-
-            if (!Inspector::DrawComponentHeader("Transform", nullptr, nullptr))
-                return;
+            if (!UI::DrawComponentHeader(ICON_FA_ARROWS " Transform", nullptr, nullptr)) return;
 
             auto& transform = obj->GetTransform();
             Vec3 pos   = transform.GetPosition();
             Vec3 rot   = transform.GetRotation();
             Vec3 scale = transform.GetScale();
 
-            if (Inspector::DrawVec3Field("Position", &pos.x, 0.1f))
-                transform.SetPosition(pos);
-            if (Inspector::DrawVec3Field("Rotation", &rot.x, 1.0f, -360.0f, 360.0f))
-                transform.SetRotation(rot);
-            if (Inspector::DrawVec3Field("Scale", &scale.x, 0.1f, 0.01f, 100.0f))
-                transform.SetScale(scale);
-
-            ImGui::Unindent();
+            if (UI::BeginPropertyGrid("TransformGrid")) {
+                if (UI::DrawVec3Control("Position", pos)) {
+                    transform.SetPosition(pos);
+                    ctx.recordUndo();
+                }
+                if (UI::DrawVec3Control("Rotation", rot)) {
+                    transform.SetRotation(rot);
+                    ctx.recordUndo();
+                }
+                if (UI::DrawVec3Control("Scale", scale, 1.0f)) {
+                    transform.SetScale(scale);
+                    ctx.recordUndo();
+                }
+                UI::EndPropertyGrid();
+            }
+            ImGui::TreePop(); // TreeNodeEx 展开时必须 Pop
         }
 
-        // ── SpriteComponent 自定义绘制器 ──
-        class SpriteComponentDrawer : public ComponentDrawer {
-        public:
-            SpriteComponentDrawer() {
-                displayName = "Sprite";
-                category = "Rendering";
-                orderInInspector = 10;
-                builtin = true;
-
-                drawFn = [](GameObject* obj, const DrawContext& ctx) {
-                    auto* sprite = obj->GetComponent<SpriteComponent>();
-                    if (!sprite) return;
-
-                    using namespace Inspector;
-
-                    std::string texName = sprite->HasTexture() ? "Texture (loaded)" : "None (none)";
-                    PropertyMeta texMeta;
-                    texMeta.flags = PropertyFlag::AssetReference;
-                    DrawAssetRefField("Texture", &texName, nullptr, nullptr, nullptr, texMeta);
-
-                    Vec4 color = sprite->GetColor();
-                    PropertyMeta colorMeta;
-                    if (DrawColorField("Color", &color, true, colorMeta))
-                        sprite->SetColor(color);
-
-                    float uv[4] = { sprite->GetUVX(), sprite->GetUVY(),
-                                    sprite->GetUVW(), sprite->GetUVH() };
-                    PropertyMeta uvMeta;
-                    if (DrawVec4Field("UV", uv, 0.01f, uvMeta))
-                        sprite->SetUV(uv[0], uv[1], uv[2], uv[3]);
-
-                    Vec2 tiling = sprite->GetTiling();
-                    Vec2 offset = sprite->GetOffset();
-                    if (DrawVec2Field("Tiling", &tiling.x, 0.1f, uvMeta))
-                        sprite->SetTiling(tiling);
-                    if (DrawVec2Field("Offset", &offset.x, 0.1f, uvMeta))
-                        sprite->SetOffset(offset);
-
-                    int layer = sprite->GetSortingLayer();
-                    int order = sprite->GetOrderInLayer();
-                    if (DrawDragInt("Sorting Layer", &layer))
-                        sprite->SetSortingLayer(layer);
-                    if (DrawDragInt("Order In Layer", &order))
-                        sprite->SetOrderInLayer(order);
-
-                    bool visible = sprite->IsVisible();
-                    if (DrawBoolField("Visible", &visible))
-                        sprite->SetVisible(visible);
-                };
-            }
-        };
-
-        void DrawPhysicsWidget(GameObject* obj, const DrawContext& ctx) {
-            using namespace Inspector;
-            auto* physics = obj->GetComponent<PhysicsComponent>();
-            if (!physics) return;
-
-            auto* body = physics->GetBody();
-
-            bool enabled = physics->IsEnabled();
-            if (!DrawComponentHeader("Physics", &enabled, [&]() {
-                if (ImGui::MenuItem("Reset Body")) {
-                    if (body) body->SetLinearVelocity({0, 0});
-                }
-            })) return;
-
-            if (enabled != physics->IsEnabled())
-                physics->SetEnabled(enabled);
-
-            ImGui::Text("Body: %s", body ? "Created" : "None");
-
-            if (body) {
-                int type = static_cast<int>(body->GetType());
-                const int typeValues[] = { 0, 1, 2 };
-                const char* typeNames[] = { "Static", "Kinematic", "Dynamic" };
-                DrawEnumField("Type", &type, typeValues, typeNames, 3);
-
-                float linearDamping  = body->GetLinearDamping();
-                float angularDamping = body->GetAngularDamping();
-                PropertyMeta dampMeta;
-                dampMeta.flags = PropertyFlag::Range;
-                dampMeta.range = { 0.0f, 10.0f, 0.01f };
-                if (DrawFloatField("Linear Damping", &linearDamping, dampMeta))
-                    body->SetLinearDamping(linearDamping);
-                if (DrawFloatField("Angular Damping", &angularDamping, dampMeta))
-                    body->SetAngularDamping(angularDamping);
-
-                ImGui::Separator();
-                ImGui::TextDisabled("Mass: %.2f  Inertia: %.2f",
-                    static_cast<double>(body->GetMass()),
-                    static_cast<double>(body->GetInertia()));
-
-                if (ctx.debugMode) {
-                    ImGui::Separator();
-                    ImGui::TextColored(ImVec4(0.6f, 0.8f, 1.0f, 1.0f), "[Debug]");
-                    ImGui::Text("Position: %.2f, %.2f",
-                        static_cast<double>(body->GetPosition().x),
-                        static_cast<double>(body->GetPosition().y));
-                    ImGui::Text("Velocity: %.2f, %.2f",
-                        static_cast<double>(body->GetLinearVelocity().x),
-                        static_cast<double>(body->GetLinearVelocity().y));
-                }
-            }
-
-            ImGui::Unindent();
-        }
-
-        // ── MeshRendererComponent 检视器 ──
         void DrawMeshRendererWidget(GameObject* obj, const DrawContext& ctx) {
-            using namespace Inspector;
             auto* mr = obj->GetComponent<MeshRendererComponent>();
             if (!mr) return;
 
-            bool enabled = true;
-            if (!Inspector::DrawComponentHeader("Mesh Renderer", &enabled, nullptr)) return;
-
-            ImGui::Indent();
-
-            // ── 1. 网格资产引用插槽 ──
-            std::string meshName = mr->TargetMesh ? "Cube (Mesh)" : "None (Mesh)";
-            PropertyMeta meshMeta;
-            meshMeta.flags = PropertyFlag::AssetReference;
-            Inspector::DrawAssetRefField("Mesh", &meshName, nullptr,
-                [&mr](const char* payloadData) {
-                    std::string assetPath = payloadData;
-                    Engine::Log::Info("Mesh assigned: {}", assetPath);
-                }, nullptr, meshMeta);
-
-            // ── 2. 材质资产引用插槽 ──
-            std::string matName = mr->TargetMaterial ? "DefaultMaterial" : "None (Material)";
-            if (Inspector::DrawAssetRefField("Material", &matName, nullptr,
-                [&mr](const char* payloadData) {
-                    std::string assetPath = payloadData;
-                    Engine::Log::Info("Material assigned: {}", assetPath);
-                }, nullptr, meshMeta))
-            {
+            bool enabled = mr->IsEnabled();
+            bool remove = false;
+            
+            bool open = UI::DrawComponentHeader(ICON_FA_CUBES " Mesh Renderer", &enabled, &remove);
+            
+            // 无论组件头是否展开，均需处理启用/禁用和删除逻辑
+            if (enabled != mr->IsEnabled()) mr->SetEnabled(enabled);
+            if (remove) {
+                s_DeferredActions.push_back([obj]() { obj->RemoveComponent<MeshRendererComponent>(); });
             }
 
-            // 如果有材质，展开显示材质的具体参数（如颜色）
-            if (mr->TargetMaterial) {
-                ImGui::Indent();
-                float* bc = mr->TargetMaterial->BaseColor; // float[4]
-                if (ImGui::ColorEdit4("Base Color", bc)) {
-                    // 已就地修改
+            if (open) {
+                if (UI::BeginPropertyGrid("MeshRendererGrid")) {
+                    UI::DrawLabel("Mesh");
+                    std::string meshName = mr->TargetMesh ? "Mesh Selected" : "None";
+                    ImGui::Button(meshName.c_str(), ImVec2(-1, 0));
+                    if (ImGui::BeginDragDropTarget()) {
+                        if (const ImGuiPayload* payload = ImGui::AcceptDragDropPayload("CONTENT_BROWSER_ITEM")) {
+                            ctx.recordUndo(); // 处理拖入逻辑
+                        }
+                        ImGui::EndDragDropTarget();
+                    }
+
+                    UI::DrawLabel("Material");
+                    std::string matName = mr->TargetMaterial ? "Material Selected" : "None";
+                    ImGui::Button(matName.c_str(), ImVec2(-1, 0));
+
+                    if (mr->TargetMaterial) {
+                        UI::DrawLabel("Base Color");
+                        // 修复指针转换警告，直接取地址
+                        float* bc = &mr->TargetMaterial->BaseColor[0];
+                        if (ImGui::ColorEdit4("##BaseColor", bc, ImGuiColorEditFlags_NoInputs | ImGuiColorEditFlags_AlphaBar)) {
+                            ctx.recordUndo();
+                        }
+                    }
+
+                    UI::EndPropertyGrid();
                 }
-                ImGui::Unindent();
+                ImGui::TreePop();
+            }
+        }
+
+        void DrawPhysicsWidget(GameObject* obj, const DrawContext& ctx) {
+            auto* physics = obj->GetComponent<PhysicsComponent>();
+            if (!physics) return;
+
+            bool enabled = physics->IsEnabled();
+            bool remove = false;
+            
+            bool open = UI::DrawComponentHeader(ICON_FA_BOWLING_BALL " Physics 2D", &enabled, &remove, [&]() {
+                if (ImGui::MenuItem("Reset Body Velocity")) {
+                    if (physics->GetBody()) physics->GetBody()->SetLinearVelocity({0, 0});
+                }
+            });
+
+            if (enabled != physics->IsEnabled()) physics->SetEnabled(enabled);
+            if (remove) {
+                s_DeferredActions.push_back([obj]() { obj->RemoveComponent<PhysicsComponent>(); });
             }
 
-            ImGui::Unindent();
+            if (open) {
+                if (UI::BeginPropertyGrid("PhysicsGrid")) {
+                    auto* body = physics->GetBody();
+                    
+                    UI::DrawLabel("Body State");
+                    ImGui::TextDisabled(body ? "Active" : "Uninitialized");
+
+                    if (body) {
+                        UI::DrawLabel("Body Type");
+                        int type = static_cast<int>(body->GetType());
+                        const char* typeNames[] = { "Static", "Kinematic", "Dynamic" };
+                        if (ImGui::Combo("##BodyType", &type, typeNames, 3)) {
+                            // 设置刚体类型
+                            ctx.recordUndo();
+                        }
+
+                        UI::DrawLabel("Linear Damping");
+                        float linDamp = body->GetLinearDamping();
+                        if (ImGui::DragFloat("##LinDamp", &linDamp, 0.01f, 0.0f, 10.0f)) {
+                            body->SetLinearDamping(linDamp);
+                            ctx.recordUndo();
+                        }
+
+                        UI::DrawLabel("Angular Damping");
+                        float angDamp = body->GetAngularDamping();
+                        if (ImGui::DragFloat("##AngDamp", &angDamp, 0.01f, 0.0f, 10.0f)) {
+                            body->SetAngularDamping(angDamp);
+                            ctx.recordUndo();
+                        }
+                    }
+                    UI::EndPropertyGrid();
+                }
+                ImGui::TreePop();
+            }
         }
 
     } // anonymous namespace
@@ -239,30 +321,6 @@ namespace Engine {
         return ctx;
     }
 
-    bool InspectorPanel::PassesFilter(const std::string& name) const {
-        if (m_Filter.searchText.empty()) return true;
-
-        std::string search = m_Filter.searchText;
-        std::string target = name;
-
-        if (!m_Filter.matchCase) {
-            std::transform(search.begin(), search.end(), search.begin(), ::tolower);
-            std::transform(target.begin(), target.end(), target.begin(), ::tolower);
-        }
-
-        return target.find(search) != std::string::npos;
-    }
-
-    void InspectorPanel::OnPropertyModified(GameObject* obj, const char* propertyName) {
-        if (m_ModifyCallback && obj) {
-            m_ModifyCallback(obj, propertyName ? propertyName : "");
-        }
-    }
-
-    void InspectorPanel::DrawTransformComponent(GameObject* obj, const DrawContext& ctx) {
-        DrawTransformWidget(obj, ctx);
-    }
-
     void InspectorPanel::OnImGui() {
         if (!m_Visible) return;
 
@@ -271,43 +329,16 @@ namespace Engine {
             m_BuiltinsRegistered = true;
         }
 
-        ImGui::SetNextWindowSize(ImVec2(360, 480), ImGuiCond_FirstUseEver);
-        ImGui::Begin("Inspector", &m_Visible);
+        ImGui::SetNextWindowSize(ImVec2(400, 600), ImGuiCond_FirstUseEver);
+        ImGui::Begin(ICON_FA_INFO_CIRCLE " Inspector", &m_Visible);
 
         DrawToolbar();
 
-        if (!m_Filter.searchText.empty() || ImGui::IsWindowFocused()) {
-            char searchBuf[256];
-            std::strncpy(searchBuf, m_Filter.searchText.c_str(), sizeof(searchBuf) - 1);
-            searchBuf[sizeof(searchBuf) - 1] = '\0';
-
-            ImGui::PushItemWidth(-1);
-            if (ImGui::InputTextWithHint("##search", "Search properties...",
-                                         searchBuf, sizeof(searchBuf))) {
-                m_Filter.searchText = searchBuf;
-            }
-            ImGui::PopItemWidth();
-        }
-
         if (!m_Target && m_MultiTargets.empty()) {
-            ImGui::Separator();
             ImGui::Spacing();
-            ImGui::TextColored(ImVec4(0.6f, 0.6f, 0.6f, 1.0f), "No object selected");
-            ImGui::Spacing();
-            if (m_Locked) {
-                ImGui::TextColored(ImVec4(0.8f, 0.6f, 0.0f, 1.0f),
-                                   "(Inspector is locked)");
-            }
+            ImGui::TextDisabled("No entity selected.");
             ImGui::End();
             return;
-        }
-
-        if (IsMultiSelection()) {
-            ImGui::Separator();
-            ImGui::TextColored(ImVec4(0.8f, 0.8f, 0.2f, 1.0f),
-                               "Multiple objects selected (%zu)",
-                               m_MultiTargets.size());
-            ImGui::Separator();
         }
 
         GameObject* obj = m_Target;
@@ -316,329 +347,159 @@ namespace Engine {
             return;
         }
 
-        ImGui::Spacing();
+        // ── 绘制实体头部 (Entity Header) ──
         DrawHeader(obj);
-
         ImGui::Separator();
         ImGui::Spacing();
 
         DrawContext ctx = MakeDrawContext(obj);
-        DrawTransformComponent(obj, ctx);
 
-        ImGui::Separator();
+        // ── 绘制 Transform (永远在最上面) ──
+        DrawTransformComponent(obj, ctx);
         ImGui::Spacing();
 
+        // ── 绘制其余所有组件 ──
         obj->ForEachComponent([this, obj, &ctx](Component& comp) {
             const size_t typeId = typeid(comp).hash_code();
             auto it = m_DrawerRegistry.find(typeId);
 
+            ImGui::PushID((void*)typeId); // 防止组件之间的 ID 冲突
             if (it != m_DrawerRegistry.end()) {
                 const auto& drawer = it->second;
-                if (!PassesFilter(drawer.displayName)) return;
-
-                ImGui::Spacing();
                 if (drawer.drawFn) {
                     drawer.drawFn(obj, ctx);
                 }
             } else {
-                if (!PassesFilter(comp.GetTypeDisplayName())) return;
-
-                ImGui::Spacing();
+                // 如果没有注册特定的 Drawer，使用默认警告块
                 bool enabled = comp.IsEnabled();
-                if (Inspector::DrawComponentHeader(comp.GetTypeDisplayName(),
-                                                    &enabled, nullptr)) {
+                bool remove = false;
+                if (UI::DrawComponentHeader(comp.GetTypeDisplayName(), &enabled, &remove)) {
                     ImGui::Indent();
-                    ImGui::TextColored(ImVec4(0.6f, 0.6f, 0.6f, 1.0f),
-                                       "No editor for this component");
-                    if (m_DebugMode) {
-                        ImGui::Separator();
-                        ImGui::TextColored(ImVec4(0.6f, 0.8f, 1.0f, 1.0f), "[Debug Mode]");
-                        ImGui::Text("TypeID: 0x%zx", typeId);
-                        ImGui::Text("Enabled: %s", enabled ? "true" : "false");
-                    }
+                    ImGui::TextDisabled("No custom editor available.");
                     ImGui::Unindent();
+                    ImGui::TreePop(); // 必须 Pop
                 }
-                if (enabled != comp.IsEnabled())
-                    comp.SetEnabled(enabled);
+                if (enabled != comp.IsEnabled()) comp.SetEnabled(enabled);
+                
+                if (remove) {
+                    Engine::Log::Warn("Cannot safely remove unregistered component via Editor.");
+                }
             }
+            ImGui::PopID();
+            ImGui::Spacing();
         });
 
-        if (obj->HasSprite() && !obj->GetComponent<SpriteComponent>()) {
-            ImGui::Spacing();
-            SpriteComponentDrawer spriteDrawer;
-            if (spriteDrawer.drawFn) {
-                spriteDrawer.drawFn(obj, ctx);
-            }
-        }
-        if (obj->HasPhysics() && !obj->GetComponent<PhysicsComponent>()) {
-            ImGui::Spacing();
-            DrawPhysicsWidget(obj, ctx);
-        }
-
+        // ── 添加组件按钮 ──
         ImGui::Spacing();
         ImGui::Separator();
         ImGui::Spacing();
-        if (ImGui::Button("+ Add Component", ImVec2(-1, 0))) {
-            m_ShowAddComponentMenu = !m_ShowAddComponentMenu;
-        }
-        if (m_ShowAddComponentMenu) {
-            DrawAddComponentMenu();
+        
+        // 居中绘制按钮
+        float buttonWidth = 150.0f;
+        ImGui::SetCursorPosX((ImGui::GetContentRegionAvail().x - buttonWidth) * 0.5f);
+        if (ImGui::Button("Add Component", ImVec2(buttonWidth, 30))) {
+            ImGui::OpenPopup("AddComponentPopup");
         }
 
-        if (m_DebugMode) {
-            DrawDebugInfo(obj);
+        if (ImGui::BeginPopup("AddComponentPopup")) {
+            DrawAddComponentMenu();
+            ImGui::EndPopup();
         }
+
+        if (m_DebugMode) DrawDebugInfo(obj);
 
         ImGui::End();
+
+        // ── 统一在帧末尾执行延迟清理，绝对防止迭代器失效！ ──
+        for (auto& action : s_DeferredActions) {
+            action();
+        }
+        s_DeferredActions.clear();
     }
 
     void InspectorPanel::DrawToolbar() {
-        ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(2, 2));
+        ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(4, 2));
 
-        if (m_Locked) {
-            ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.6f, 0.4f, 0.0f, 1.0f));
-            if (ImGui::Button("Locked", ImVec2(60, 0)))
-                ToggleLocked();
-            ImGui::PopStyleColor();
-        } else {
-            if (ImGui::Button("Lock", ImVec2(60, 0)))
-                ToggleLocked();
-        }
+        if (m_Locked) ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.8f, 0.4f, 0.0f, 1.0f));
+        if (ImGui::Button(m_Locked ? ICON_FA_LOCK " Locked" : ICON_FA_UNLOCK " Lock")) ToggleLocked();
+        if (m_Locked) ImGui::PopStyleColor();
 
         ImGui::SameLine();
 
-        if (m_DebugMode) {
-            ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.3f, 0.5f, 0.8f, 1.0f));
-            if (ImGui::Button("Debug", ImVec2(55, 0)))
-                ToggleDebugMode();
-            ImGui::PopStyleColor();
-        } else {
-            if (ImGui::Button("Debug", ImVec2(55, 0)))
-                ToggleDebugMode();
-        }
-
-        ImGui::SameLine();
-
-        if (IsMultiSelection()) {
-            ImGui::TextDisabled("x%zu", m_MultiTargets.size());
-        }
+        if (m_DebugMode) ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.3f, 0.5f, 0.8f, 1.0f));
+        if (ImGui::Button(ICON_FA_BUG " Debug")) ToggleDebugMode();
+        if (m_DebugMode) ImGui::PopStyleColor();
 
         ImGui::PopStyleVar();
+        ImGui::Separator();
     }
 
     void InspectorPanel::DrawHeader(GameObject* obj) {
-        if (!obj) return;
-
+        ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(4, 8));
+        
+        // Active Checkbox
+        bool active = obj->IsActive();
+        if (ImGui::Checkbox("##Active", &active)) {
+            obj->SetActive(active);
+        }
+        
+        ImGui::SameLine();
+        
+        // Name Input
         char nameBuf[256];
         std::strncpy(nameBuf, obj->GetName().c_str(), sizeof(nameBuf) - 1);
         nameBuf[sizeof(nameBuf) - 1] = '\0';
 
         ImGui::PushItemWidth(-1);
-        if (ImGui::InputText("##Name", nameBuf, sizeof(nameBuf)))
+        ImGui::PushFont(ImGui::GetIO().Fonts->Fonts[0]); // 假设有大号字体
+        if (ImGui::InputText("##Name", nameBuf, sizeof(nameBuf))) {
             obj->SetName(nameBuf);
+        }
+        ImGui::PopFont();
         ImGui::PopItemWidth();
 
-        bool active = obj->IsActive();
-        ImGui::SameLine();
-        if (ImGui::Checkbox("Active", &active))
-            obj->SetActive(active);
+        ImGui::PopStyleVar();
+    }
 
-        if (m_DebugMode) {
-            ImGui::SameLine();
-            ImGui::TextDisabled("ID: %u", obj->GetID());
-        }
-
-        ImGui::TextColored(ImVec4(0.5f, 0.5f, 0.5f, 1.0f),
-                           "Children: %zu", obj->GetChildren().size());
-
-        uint32 layer = obj->GetLayer();
-        if (ImGui::InputScalar("Layer", ImGuiDataType_U32, &layer))
-            obj->SetLayer(layer);
+    void InspectorPanel::DrawTransformComponent(GameObject* obj, const DrawContext& ctx) {
+        DrawTransformWidget(obj, ctx);
     }
 
     void InspectorPanel::DrawAddComponentMenu() {
-        if (ImGui::Begin("Add Component", &m_ShowAddComponentMenu,
-                         ImGuiWindowFlags_AlwaysAutoResize)) {
-            ImGui::InputTextWithHint("##search", "Search component...",
-                                     m_AddComponentSearch, sizeof(m_AddComponentSearch));
-            ImGui::Separator();
+        ImGui::InputTextWithHint("##search", ICON_FA_MAGNIFYING_GLASS " Search...", m_AddComponentSearch, sizeof(m_AddComponentSearch));
+        ImGui::Separator();
 
-            std::string search(m_AddComponentSearch);
-            if (!search.empty()) {
-                std::transform(search.begin(), search.end(), search.begin(), ::tolower);
-            }
+        std::string search(m_AddComponentSearch);
+        std::transform(search.begin(), search.end(), search.begin(), ::tolower);
 
-            for (auto& [typeId, drawer] : m_DrawerRegistry) {
-                (void)typeId;
-                if (drawer.builtin) continue;
+        for (auto& [typeId, drawer] : m_DrawerRegistry) {
+            if (drawer.builtin && drawer.displayName != "Mesh Renderer" && drawer.displayName != "Physics") continue;
 
-                std::string name = drawer.displayName;
-                if (!search.empty()) {
-                    std::string lowerName = name;
-                    std::transform(lowerName.begin(), lowerName.end(),
-                                   lowerName.begin(), ::tolower);
-                    if (lowerName.find(search) == std::string::npos)
-                        continue;
-                }
+            std::string name = drawer.displayName;
+            std::string lowerName = name;
+            std::transform(lowerName.begin(), lowerName.end(), lowerName.begin(), ::tolower);
+            
+            if (!search.empty() && lowerName.find(search) == std::string::npos) continue;
 
-                if (ImGui::Selectable(name.c_str())) {
-                    m_ShowAddComponentMenu = false;
-                }
-            }
-            ImGui::End();
-        }
-    }
-
-    // ═══════════════════════════════════════════════════════════════
-    // 反射自动绘制 — 无需手动 ImGui 代码
-    // ═══════════════════════════════════════════════════════════════
-    bool InspectorPanel::AutoDrawComponent(Component& comp) {
-        using namespace Inspector;
-
-        const auto* meta = Reflect::GetClass(std::type_index(typeid(comp)));
-        if (!meta) {
-            return false;  // 未注册反射，让 fallback 显示
-        }
-
-        if (!PassesFilter(meta->GetName())) return false;
-
-        bool enabled = comp.IsEnabled();
-        if (!DrawComponentHeader(meta->GetName().c_str(), &enabled, nullptr)) {
-            return true;
-        }
-        if (enabled != comp.IsEnabled()) comp.SetEnabled(enabled);
-
-        ImGui::Indent();
-
-        for (const auto& field : meta->GetFields()) {
-            if (!PassesFilter(field.name)) continue;
-
-            // 通过偏移量获取字段地址
-            void* fieldAddr = reinterpret_cast<uint8*>(&comp) + field.offset;
-
-            bool modified = false;
-
-            switch (field.type) {
-                case Reflect::FieldType::Float: {
-                    float* val = static_cast<float*>(fieldAddr);
-                    if (field.range.max > field.range.min) {
-                        modified = ImGui::SliderFloat(field.name.c_str(), val,
-                                                       field.range.min, field.range.max);
-                    } else {
-                        modified = ImGui::DragFloat(field.name.c_str(), val,
-                                                     field.range.step);
-                    }
-                    break;
-                }
-                case Reflect::FieldType::Int: {
-                    int* val = static_cast<int*>(fieldAddr);
-                    if (field.range.max > field.range.min) {
-                        modified = ImGui::SliderInt(field.name.c_str(), val,
-                                                     static_cast<int>(field.range.min),
-                                                     static_cast<int>(field.range.max));
-                    } else {
-                        modified = ImGui::DragInt(field.name.c_str(), val,
-                                                   static_cast<int>(field.range.step));
-                    }
-                    break;
-                }
-                case Reflect::FieldType::UInt32: {
-                    uint32* val = static_cast<uint32*>(fieldAddr);
-                    modified = ImGui::InputScalar(field.name.c_str(),
-                                                   ImGuiDataType_U32, val);
-                    break;
-                }
-                case Reflect::FieldType::Bool: {
-                    bool* val = static_cast<bool*>(fieldAddr);
-                    modified = ImGui::Checkbox(field.name.c_str(), val);
-                    break;
-                }
-                case Reflect::FieldType::Vec2: {
-                    float* val = static_cast<float*>(fieldAddr);
-                    modified = ImGui::DragFloat2(field.name.c_str(), val,
-                                                  field.range.step);
-                    break;
-                }
-                case Reflect::FieldType::Vec3:
-                case Reflect::FieldType::ColorRGB: {
-                    float* val = static_cast<float*>(fieldAddr);
-                    if (field.isColor) {
-                        modified = ImGui::ColorEdit3(field.name.c_str(), val);
-                    } else {
-                        modified = ImGui::DragFloat3(field.name.c_str(), val,
-                                                      field.range.step);
-                    }
-                    break;
-                }
-                case Reflect::FieldType::Vec4:
-                case Reflect::FieldType::Color: {
-                    float* val = static_cast<float*>(fieldAddr);
-                    if (field.isColor) {
-                        modified = ImGui::ColorEdit4(field.name.c_str(), val,
-                                                      field.colorAlpha ? ImGuiColorEditFlags_AlphaPreviewHalf
-                                                                       : ImGuiColorEditFlags_None);
-                    } else {
-                        modified = ImGui::DragFloat4(field.name.c_str(), val,
-                                                      field.range.step);
-                    }
-                    break;
-                }
-                default:
-                    break;
-            }
-
-            if (modified && m_ModifyCallback) {
-                m_ModifyCallback(m_Target, field.name.c_str());
+            if (ImGui::Selectable(name.c_str())) {
+                // 这里需要调用底层引擎实际为 GameObject 挂载对应组件的代码
+                // obj->AddComponentByID(typeId);
+                ImGui::CloseCurrentPopup();
             }
         }
-
-        // 如果开启了 Debug 模式，显示原始字段信息
-        if (m_DebugMode) {
-            ImGui::Separator();
-            ImGui::TextDisabled("Fields: %zu | TypeID: 0x%zx",
-                                meta->GetFields().size(),
-                                typeid(comp).hash_code());
-        }
-
-        ImGui::Unindent();
-        return true;
     }
 
     void InspectorPanel::DrawDebugInfo(GameObject* obj) {
         ImGui::Separator();
         ImGui::Spacing();
-        ImGui::TextColored(ImVec4(0.6f, 0.8f, 1.0f, 1.0f), "--- Debug Info ---");
+        ImGui::TextColored(ImVec4(1.0f, 0.5f, 0.0f, 1.0f), ICON_FA_WRENCH " Developer Debug Info");
 
-        if (ImGui::CollapsingHeader("Object State", ImGuiTreeNodeFlags_DefaultOpen)) {
-            ImGui::Indent();
-            ImGui::Text("ID: %u", obj->GetID());
-            ImGui::Text("Active: %s", obj->IsActive() ? "true" : "false");
-            ImGui::Text("Layer: %u", obj->GetLayer());
-            ImGui::Text("LayerMask: 0x%08X", obj->GetLayerMask());
-            ImGui::Text("Parent: %s", obj->GetParent() ?
-                        obj->GetParent()->GetName().c_str() : "(none)");
-            ImGui::Text("Children: %zu", obj->GetChildren().size());
-
-            auto& t = obj->GetTransform();
-            Vec3 worldPos = t.GetPosition();
-            ImGui::Text("World Pos: %.2f, %.2f, %.2f",
-                        worldPos.x, worldPos.y, worldPos.z);
-            ImGui::Unindent();
+        if (ImGui::TreeNode("Object State")) {
+            ImGui::Text("Entity ID: %u", obj->GetID());
+            ImGui::Text("Global Active: %s", obj->IsActiveInHierarchy() ? "True" : "False");
+            ImGui::Text("Children Count: %zu", obj->GetChildren().size());
+            ImGui::TreePop();
         }
-
-        if (ImGui::CollapsingHeader("Components")) {
-            ImGui::Indent();
-            int compIdx = 0;
-            obj->ForEachComponent([&](Component& comp) {
-                ImGui::Text("[%d] %s (0x%zx) enabled=%s",
-                            compIdx++,
-                            comp.GetTypeDisplayName(),
-                            typeid(comp).hash_code(),
-                            comp.IsEnabled() ? "yes" : "no");
-            });
-            ImGui::Unindent();
-        }
-        ImGui::Separator();
     }
 
     // ============================================================
@@ -647,53 +508,30 @@ namespace Engine {
 
     void InspectorPanel::RegisterDrawerByType(size_t typeId, ComponentDrawer drawer) {
         m_DrawerRegistry[typeId] = std::move(drawer);
-
-        m_SortedDrawers.clear();
-        for (auto& [id, d] : m_DrawerRegistry) {
-            (void)id;
-            m_SortedDrawers.push_back(&d);
-        }
-        std::sort(m_SortedDrawers.begin(), m_SortedDrawers.end(),
-                  [](const ComponentDrawer* a, const ComponentDrawer* b) {
-                      return a->orderInInspector < b->orderInInspector;
-                  });
     }
 
     void InspectorPanel::UnregisterDrawerByType(size_t typeId) {
         m_DrawerRegistry.erase(typeId);
-        m_SortedDrawers.clear();
-        for (auto& [id, d] : m_DrawerRegistry) {
-            (void)id;
-            m_SortedDrawers.push_back(&d);
-        }
     }
 
     void InspectorPanel::RegisterBuiltins() {
-        static SpriteComponentDrawer s_SpriteDrawer;
-        RegisterDrawerByType(typeid(SpriteComponent).hash_code(), s_SpriteDrawer);
-
+        // Physics
         ComponentDrawer physicsDrawer;
         physicsDrawer.displayName = "Physics";
         physicsDrawer.category = "Physics";
         physicsDrawer.orderInInspector = 20;
         physicsDrawer.builtin = true;
-        physicsDrawer.drawFn = [](GameObject* obj, const DrawContext& ctx) {
-            DrawPhysicsWidget(obj, ctx);
-        };
-        RegisterDrawerByType(typeid(PhysicsComponent).hash_code(),
-                              std::move(physicsDrawer));
+        physicsDrawer.drawFn = [](GameObject* obj, const DrawContext& ctx) { DrawPhysicsWidget(obj, ctx); };
+        RegisterDrawerByType(typeid(PhysicsComponent).hash_code(), std::move(physicsDrawer));
 
-        // ── MeshRendererComponent 检视器注册 ──
+        // MeshRenderer
         ComponentDrawer meshDrawer;
         meshDrawer.displayName = "Mesh Renderer";
         meshDrawer.category = "Rendering";
         meshDrawer.orderInInspector = 15;
         meshDrawer.builtin = true;
-        meshDrawer.drawFn = [](GameObject* obj, const DrawContext& ctx) {
-            DrawMeshRendererWidget(obj, ctx);
-        };
-        RegisterDrawerByType(typeid(MeshRendererComponent).hash_code(),
-                              std::move(meshDrawer));
+        meshDrawer.drawFn = [](GameObject* obj, const DrawContext& ctx) { DrawMeshRendererWidget(obj, ctx); };
+        RegisterDrawerByType(typeid(MeshRendererComponent).hash_code(), std::move(meshDrawer));
     }
 
 } // namespace Engine

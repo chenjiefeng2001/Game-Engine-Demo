@@ -89,6 +89,10 @@ namespace Engine {
         void SetActive(bool active) noexcept { m_Active = active; }
         bool IsActive() const noexcept { return m_Active; }
 
+        // ── 可见性（用于编辑器场景查看器的 Solo/隐藏功能） ──
+        void SetVisible(bool visible) noexcept { m_Visible = visible; }
+        bool IsVisible() const noexcept { return m_Visible; }
+
         // ── 对象管理 ──
         /** 添加对象到场景 */
         void AddObject(std::shared_ptr<GameObject> obj);
@@ -153,6 +157,7 @@ namespace Engine {
         std::string          m_Name;
         SceneProperties      m_Properties;
         bool                 m_Active = true;
+        bool                 m_Visible = true;
         std::vector<std::shared_ptr<GameObject>> m_Objects;
     };
 

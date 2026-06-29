@@ -60,7 +60,7 @@ namespace Engine {
     // 场景查看器条目（包装 Level 和实时数据）
     // ============================================================
     struct SceneViewerEntry {
-        const Level* level = nullptr;
+        Level* level = nullptr;
         std::string  displayName;
 
         // 实时监控数据
@@ -171,7 +171,7 @@ namespace Engine {
         void DrawHierarchyTree();
         void DrawCategoryGroup(SceneCategoryGroup category,
                                const std::vector<SceneViewerEntry>& entries);
-        void DrawSceneEntry(const SceneViewerEntry& entry);
+        void DrawSceneEntry(SceneViewerEntry& entry);
 
         // ── 运行时热力图 ──
         void DrawHeatmapPanel();
