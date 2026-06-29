@@ -1146,6 +1146,40 @@ namespace Engine {
         return s_Impl && s_Impl->LoadGroupConfigFromString(jsonContent);
     }
 
+    bool SceneManager::SaveGroupConfig(const std::string& filePath) {
+        if (!s_Impl) return false;
+        const auto& groups = s_Impl->GetSceneGroups();
+        try {
+            nlohmann::json j;
+            j["groups"] = nlohmann::json::array();
+            for (const auto& group : groups) {
+                nlohmann::json g;
+                g["groupName"] = group.groupName;
+                g["masterScene"] = group.masterScene;
+                g["subScenes"] = nlohmann::json::array();
+                for (const auto& sub : group.subScenes) {
+                    nlohmann::json s;
+                    s["sceneName"] = sub.sceneName;
+                    s["loadPriority"] = sub.loadPriority;
+                    s["required"] = sub.required;
+                    g["subScenes"].push_back(std::move(s));
+                }
+                j["groups"].push_back(std::move(g));
+            }
+            std::ofstream file(filePath);
+            if (!file.is_open()) {
+                ENGINE_LOG_ERROR("SceneManager", "Failed to open file for writing: {}", filePath);
+                return false;
+            }
+            file << j.dump(4);
+            ENGINE_LOG_INFO("SceneManager", "Saved group config to '{}' ({} groups)", filePath, groups.size());
+            return true;
+        } catch (const std::exception& e) {
+            ENGINE_LOG_ERROR("SceneManager", "Failed to save group config: {}", e.what());
+            return false;
+        }
+    }
+
     const std::vector<SceneGroup>& SceneManager::GetSceneGroups() noexcept {
         static const std::vector<SceneGroup> empty;
         return s_Impl ? s_Impl->GetSceneGroups() : empty;

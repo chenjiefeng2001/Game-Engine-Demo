@@ -16,6 +16,11 @@ set(IMGUI_SOURCES
     ${IMGUI_SOURCE_DIR}/imgui_widgets.cpp
 )
 
+# std::string 支持
+set(IMGUI_STDLIB_SOURCE
+    ${IMGUI_SOURCE_DIR}/misc/cpp/imgui_stdlib.cpp
+)
+
 # GLFW + OpenGL3 后端
 set(IMGUI_BACKEND_SOURCES
     ${IMGUI_SOURCE_DIR}/backends/imgui_impl_glfw.cpp
@@ -24,6 +29,7 @@ set(IMGUI_BACKEND_SOURCES
 
 add_library(imgui STATIC
     ${IMGUI_SOURCES}
+    ${IMGUI_STDLIB_SOURCE}
     ${IMGUI_BACKEND_SOURCES}
 )
 

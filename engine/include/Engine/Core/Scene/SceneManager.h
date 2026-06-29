@@ -198,6 +198,9 @@ namespace Engine {
         /** 获取所有场景组 */
         static const std::vector<SceneGroup>& GetSceneGroups() noexcept;
 
+        /** 保存场景组配置到 JSON 文件 */
+        static bool SaveGroupConfig(const std::string& filePath);
+
         // ═══════════════════════════════════════════════════════════
         // 核心 API — 场景加载/切换/卸载
         // ═══════════════════════════════════════════════════════════

@@ -74,9 +74,11 @@ namespace Engine {
                 auto ftime = std::filesystem::last_write_time(meta.originalPath, ec);
                 if (ec) continue;
 
-                auto newTime = std::chrono::duration_cast<std::chrono::seconds>(
-                    std::chrono::time_point_cast<std::chrono::seconds>(
-                        std::chrono::file_clock::to_sys(ftime)).time_since_epoch()).count();
+                auto ftimeDur = ftime.time_since_epoch();
+                auto nowFileDur = std::filesystem::file_time_type::clock::now().time_since_epoch();
+                auto nowSysDur = std::chrono::system_clock::now().time_since_epoch();
+                auto sysFileDur = nowSysDur - (nowFileDur - ftimeDur);
+                auto newTime = std::chrono::duration_cast<std::chrono::seconds>(sysFileDur).count();
 
                 if (newTime != meta.sourceFileTime) {
                     Log::Info("[AssetDB] File modified: {}", meta.originalPath);
@@ -124,11 +126,12 @@ namespace Engine {
             meta.guid = GUID::Generate();
             meta.type = AssetTypeFromExtension(ext);
             meta.originalPath = pathStr;
-            meta.lastModifiedTime = std::chrono::duration_cast<std::chrono::seconds>(
-                std::chrono::time_point_cast<std::chrono::seconds>(
-                    std::chrono::file_clock::to_sys(
-                        std::filesystem::last_write_time(filePath)))
-                    .time_since_epoch()).count();
+            auto lwt = std::filesystem::last_write_time(filePath);
+            auto lwtDur = lwt.time_since_epoch();
+            auto nowFileDur = std::filesystem::file_time_type::clock::now().time_since_epoch();
+            auto nowSysDur = std::chrono::system_clock::now().time_since_epoch();
+            auto sysLwtDur = nowSysDur - (nowFileDur - lwtDur);
+            meta.lastModifiedTime = std::chrono::duration_cast<std::chrono::seconds>(sysLwtDur).count();
             meta.fileSize = std::filesystem::file_size(filePath);
             meta.isDirectory = false;
             WriteMetaFile(metaPath, meta);
