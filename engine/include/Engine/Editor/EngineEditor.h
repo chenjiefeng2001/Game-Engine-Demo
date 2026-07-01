@@ -24,6 +24,7 @@
 #include "Engine/Editor/VFXGraph/VFXGraphPanel.h"
     #include "Engine/Editor/VFXGraph/VFXGraphCore.h"
 #include "Engine/Editor/VFXGraph/VFXNodeFactory.h"
+#include "Engine/Editor/Animation/AnimationEditorPanel.h"
 #include "Engine/Core/EventBus.h"
     #include <glm/glm.hpp>
     #include <glm/gtc/type_ptr.hpp>
@@ -119,6 +120,9 @@ namespace Engine {
         // ── VFX 编辑器 ──
         VFX::VFXGraphPanel m_VFXGraphPanel;
         VFX::VFXGraph      m_VFXGraph;
+
+        // ── 动画编辑器 ──
+        Animation::AnimationEditorPanel m_AnimationEditorPanel;
 
         // ── 编辑器工具状态 ──
         GizmoOperation  m_GizmoOp     = GizmoOperation::Translate;

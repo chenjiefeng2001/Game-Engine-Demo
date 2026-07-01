@@ -580,10 +580,10 @@ namespace Engine {
         if (m_Visibility.vfxEditor) {
             m_VFXGraphPanel.OnImGui();
         }
+        // 动画编辑器 — 菜单切换开/关
         if (m_Visibility.animationEditor) {
-            ImGui::Begin("Animation Editor", &m_Visibility.animationEditor);
-            ImGui::Text("Animation Editor - Coming Soon");
-            ImGui::End();
+            m_AnimationEditorPanel.SetVisible(true);  // 重置可见性（克服关闭按钮的清零）
+            m_AnimationEditorPanel.OnImGui();
         }
 
         if (m_ShowDockingDemo) ImGui::ShowDemoWindow(&m_ShowDockingDemo);
