@@ -16,6 +16,7 @@ file(GLOB ENGINE_SOURCES CONFIGURE_DEPENDS
     src/Core/Scene/*.cpp
     src/Debug/*.cpp
     src/Editor/*.cpp
+    src/Editor/Animation/*.cpp
     src/Editor/ShaderGraph/*.cpp
     src/Editor/VFXGraph/*.cpp
     src/OpenAL/*.cpp

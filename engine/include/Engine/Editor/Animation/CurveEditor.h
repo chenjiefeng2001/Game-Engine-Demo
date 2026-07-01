@@ -117,7 +117,9 @@ namespace Animation {
         float m_Playhead = 0.0f;
         float m_Duration = 5.0f;
         float m_ScrollX = 0.0f;
+        float m_ScrollY = 0.0f;
         float m_ScaleX = 100.0f;     // 像素/秒
+        float m_ScaleY = 50.0f;      // 像素/单位
         float m_SelectedTrack = -1;
         int m_SelectedKeyframe = -1;
         bool m_DraggingPlayhead = false;
@@ -128,10 +130,10 @@ namespace Animation {
         std::vector<AnimEvent> m_Events;
 
         // 内部工具
-        float TimeToScreen(float time) const;
-        float ScreenToTime(float screenX) const;
-        float ValueToScreen(float value, float minV, float maxV) const;
-        float ScreenToValue(float screenY, float minV, float maxV) const;
+        float TimeToScreen(float time, float startX) const;
+        float ScreenToTime(float screenX, float startX) const;
+        float ValueToScreen(float value, float centerY) const;
+        float ScreenToValue(float screenY, float centerY) const;
         void DrawBezierCurve(ImDrawList* drawList, const Keyframe& kf1, const Keyframe& kf2,
                              float minV, float maxV, float yBase, float height);
     };
