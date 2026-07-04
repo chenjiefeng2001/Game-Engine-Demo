@@ -1,4 +1,4 @@
-#include "Engine/Core/RHI/GBuffer.h"
+#include "OpenGLGBuffer.h"
 #include "Engine/Core/RenderResources/Shader.h"
 #include "Engine/Core/IRenderContext.h"
 #include "Engine/OpenGL/OpenGLContext.h"
@@ -10,40 +10,10 @@
 namespace Engine {
 Logger sLog("GBuffer");
 
-class OpenGLGBuffer : public GBuffer {
-public:
-    OpenGLGBuffer(IRenderContext& context)
-        : m_GLContext(&static_cast<OpenGLContext&>(context).GetGL()) {}
-    ~OpenGLGBuffer() override { Shutdown(); }
+OpenGLGBuffer::OpenGLGBuffer(IRenderContext& context)
+    : m_GLContext(&static_cast<OpenGLContext&>(context).GetGL()) {}
 
-    bool Initialize(const GBufferConfig& cfg) override;
-    void Shutdown() override;
-    bool IsValid() const override { return m_FBO != 0; }
-
-    void BindForGeometryPass() override;
-    void Unbind() override;
-    void BindTexturesForLighting() const override;
-    void Clear() override;
-
-    uint32 GetFBO() const override { return m_FBO; }
-    uint32 GetPositionTex() const override { return m_PositionTex; }
-    uint32 GetNormalTex()   const override { return m_NormalTex; }
-    uint32 GetAlbedoTex()   const override { return m_AlbedoTex; }
-    uint32 GetPBRTex()      const override { return m_PBRTex; }
-    uint32 GetDepthTex()    const override { return m_DepthTex; }
-    uint32 GetWidth()  const override { return m_Config.width; }
-    uint32 GetHeight() const override { return m_Config.height; }
-
-private:
-    void* m_GLContext = nullptr;
-    GBufferConfig m_Config;
-    uint32 m_FBO       = 0;
-    uint32 m_PositionTex = 0;
-    uint32 m_NormalTex   = 0;
-    uint32 m_AlbedoTex   = 0;
-    uint32 m_PBRTex      = 0;
-    uint32 m_DepthTex    = 0;
-};
+OpenGLGBuffer::~OpenGLGBuffer() { Shutdown(); }
 
 bool OpenGLGBuffer::Initialize(const GBufferConfig& cfg) {
     Shutdown();

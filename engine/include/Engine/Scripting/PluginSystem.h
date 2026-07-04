@@ -213,5 +213,4 @@ namespace Engine { namespace Plugin {
 #define ENGINE_MENU_ITEM(path, action) \
     RegisterMenuItem(path, action)
 
-#define ENGINE_PROPERTY_DRAWER(type, drawFn) \
-    RegisterPropertyDrawer(#type, drawFn)
+#define ENGINE_PROPERTY_DRAWER(type, drawFn) RegisterPropertyDrawer(#type, drawFn)
