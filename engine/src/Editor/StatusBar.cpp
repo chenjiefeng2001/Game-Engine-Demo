@@ -38,7 +38,7 @@ namespace Engine {
 
                 // ── 内存 ──
                 float memPercent = m_TotalMemMB > 0 ? (float)m_UsedMemMB / m_TotalMemMB * 100.0f : 0.0f;
-                ImGui::Text("Mem: %llu/%llu MB (%.0f%%)", m_UsedMemMB, m_TotalMemMB, memPercent);
+                ImGui::Text("Mem: %llu/%llu MB (%.0f%%)", (unsigned long long)m_UsedMemMB, (unsigned long long)m_TotalMemMB, memPercent);
                 ImGui::SameLine();
                 ImGui::SeparatorEx(ImGuiSeparatorFlags_Vertical);
                 ImGui::SameLine();

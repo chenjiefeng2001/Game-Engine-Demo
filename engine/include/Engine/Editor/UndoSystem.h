@@ -339,5 +339,4 @@ namespace Engine {
 #define RECORD_UNDO_GROUP(label) \
     Engine::UndoManager::OpenGroup(label)
 
-#define RECORD_UNDO_GROUP_END() \
-    Engine::UndoManager::CloseGroup()
+#define RECORD_UNDO_GROUP_END() Engine::UndoManager::CloseGroup()
