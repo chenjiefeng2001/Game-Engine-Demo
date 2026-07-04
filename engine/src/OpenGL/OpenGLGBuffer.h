@@ -39,4 +39,7 @@ namespace Engine {
         uint32 m_DepthTex    = 0;
     };
 
+// 工厂函数：在 OpenGLGBuffer.cpp 中实现
+std::unique_ptr<GBuffer> CreateGBuffer(IRenderContext& context);
+
 } // namespace Engine
