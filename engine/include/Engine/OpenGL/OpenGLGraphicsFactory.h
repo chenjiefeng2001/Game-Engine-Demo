@@ -84,7 +84,8 @@ namespace Engine {
 		int32 m_SampleCount = 4;  // 默认启用 4x MSAA
 		/** 存储窗口指针，用于后续 AA 配置传递 */
 		mutable IRenderContext* m_RenderContext = nullptr;
-		friend class OpenGLGraphicsFactory;  // CreateWindow 设置 m_RenderContext
+		// CreateWindow 设置 m_RenderContext — OpenGLRenderContext 是嵌套类，内部可访问父类私有成员
+		// 移除了 self-friend 声明以避免 GCC 警告
 	};
 
 } // namespace Engine
