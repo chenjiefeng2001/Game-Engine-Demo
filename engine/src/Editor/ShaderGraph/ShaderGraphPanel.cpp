@@ -906,8 +906,9 @@ namespace ShaderGraph {
         if (!node) return;
 
         // 节点重命名
-        char nameBuf[64];
-        strncpy_s(nameBuf, node->GetName().c_str(), sizeof(nameBuf) - 1);
+        char nameBuf[64]{};
+        std::strncpy(nameBuf, node->GetName().c_str(), sizeof(nameBuf) - 1);
+        nameBuf[sizeof(nameBuf) - 1] = '\0';
         if (ImGui::InputText(" Name", nameBuf, sizeof(nameBuf))) {
             node->SetName(nameBuf);
         }
@@ -915,8 +916,9 @@ namespace ShaderGraph {
         // 识别是否是引用的属性节点，允许修改其绑定的变量名
         auto propNode = dynamic_cast<ShaderPropertyNode*>(node);
         if (propNode) {
-            char propBuf[64];
-            strcpy_s(propBuf, propNode->m_PropName.c_str());
+            char propBuf[64]{};
+            std::strncpy(propBuf, propNode->m_PropName.c_str(), sizeof(propBuf) - 1);
+            propBuf[sizeof(propBuf) - 1] = '\0';
             if (ImGui::InputText("Source Property", propBuf, 64)) {
                 propNode->m_PropName = propBuf;
                 propNode->SetName("Get " + propNode->m_PropName);
@@ -982,7 +984,8 @@ namespace ShaderGraph {
         ImGui::Separator();
         ImGui::PushFont(ImGui::GetIO().Fonts->Fonts[0]);
         static char codePreviewBuf[65536] = {};
-        strncpy_s(codePreviewBuf, m_State.generatedCode.c_str(), sizeof(codePreviewBuf) - 1);
+        std::strncpy(codePreviewBuf, m_State.generatedCode.c_str(), sizeof(codePreviewBuf) - 1);
+        codePreviewBuf[sizeof(codePreviewBuf) - 1] = '\0';
         ImGui::InputTextMultiline("##code", codePreviewBuf, sizeof(codePreviewBuf),
                                    ImVec2(-1, -1),
                                    ImGuiInputTextFlags_ReadOnly);
