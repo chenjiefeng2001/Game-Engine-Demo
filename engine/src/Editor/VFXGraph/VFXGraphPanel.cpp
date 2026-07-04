@@ -1103,7 +1103,7 @@ namespace VFX {
         if (!block) return;
 
         char nameBuf[64];
-        strncpy_s(nameBuf, block->GetName().c_str(), sizeof(nameBuf) - 1);
+        strncpy(nameBuf, block->GetName().c_str(), sizeof(nameBuf) - 1);
         if (ImGui::InputText(" Name", nameBuf, sizeof(nameBuf))) block->SetName(nameBuf);
         ImGui::TextDisabled("Category: %s", BlockCategoryName(block->GetCategory()));
         ImGui::Spacing();
@@ -1169,7 +1169,7 @@ namespace VFX {
             ImGui::Text("Instruction Est:  %u", m_State.instructionCount);
             ImGui::Spacing(); ImGui::Separator(); ImGui::Text("Memory Estimates");
             uint64 particleMem = (uint64)capacity * 48; // Estimate
-            if (particleMem < 1024) ImGui::Text("Particle Buffer:  %llu B", particleMem);
+            if (particleMem < 1024) ImGui::Text("Particle Buffer:  %llu B", (unsigned long long)particleMem);
             else if (particleMem < 1024 * 1024) ImGui::Text("Particle Buffer:  %.1f KB", particleMem / 1024.0);
             else ImGui::Text("Particle Buffer:  %.1f MB", particleMem / (1024.0 * 1024.0));
         }
