@@ -25,3 +25,9 @@
 [submodule "third_party/fontawesome"]
 	path = third_party/fontawesome
 	url = https://github.com/FortAwesome/Font-Awesome.git
+[submodule "third_party/shaderc"]
+	path = third_party/shaderc
+	url = https://github.com/google/shaderc.git
+[submodule "third_party/spirv-cross"]
+	path = third_party/spirv-cross
+	url = https://github.com/KhronosGroup/SPIRV-Cross.git

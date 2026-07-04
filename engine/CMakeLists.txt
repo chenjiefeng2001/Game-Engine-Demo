@@ -89,43 +89,55 @@ target_precompile_headers(EngineCore PRIVATE include/Engine/PCH.h)
 # 确保第三方 include 路径可用（仅添加实际需要的子目录）
 target_include_directories(EngineCore PUBLIC
     "${PROJECT_SOURCE_DIR}/third_party/box2d/include"
+    "${PROJECT_SOURCE_DIR}/third_party/spirv-cross"
+    "${PROJECT_SOURCE_DIR}/third_party/shaderc/libshaderc/include"
     "${PROJECT_SOURCE_DIR}/third_party"
 )
+
+# ════════════════════════════════════════════════════════
+# SPIRV-Cross 库 — 着色器反射（SPIR-V → UBO/Sampler 提取）
+# ════════════════════════════════════════════════════════
+if(EXISTS "${PROJECT_SOURCE_DIR}/third_party/spirv-cross/spirv_cross.cpp")
+    add_library(spirvcross STATIC
+        "${PROJECT_SOURCE_DIR}/third_party/spirv-cross/spirv_cross.cpp"
+        "${PROJECT_SOURCE_DIR}/third_party/spirv-cross/spirv_glsl.cpp"
+        "${PROJECT_SOURCE_DIR}/third_party/spirv-cross/spirv_hlsl.cpp"
+        "${PROJECT_SOURCE_DIR}/third_party/spirv-cross/spirv_msl.cpp"
+        "${PROJECT_SOURCE_DIR}/third_party/spirv-cross/spirv_reflect.cpp"
+        "${PROJECT_SOURCE_DIR}/third_party/spirv-cross/spirv_parser.cpp"
+        "${PROJECT_SOURCE_DIR}/third_party/spirv-cross/spirv_cfg.cpp"
+        "${PROJECT_SOURCE_DIR}/third_party/spirv-cross/spirv_cross_util.cpp"
+        "${PROJECT_SOURCE_DIR}/third_party/spirv-cross/spirv_cross_c.cpp"
+    )
+    target_include_directories(spirvcross PUBLIC "${PROJECT_SOURCE_DIR}/third_party/spirv-cross")
+    target_link_libraries(EngineCore PUBLIC spirvcross)
+    target_compile_definitions(EngineCore PUBLIC ENGINE_HAS_SPIRV_CROSS)
+    message(STATUS "SPIRV-Cross: integrated")
+endif()
+
+# ════════════════════════════════════════════════════════
+# Shaderc 库 — GLSL/HLSL → SPIR-V 编译（可选）
+# ════════════════════════════════════════════════════════
+# 注意：Shaderc 依赖 glslang 和 spirv-tools，完整构建需要较多步骤。
+# 此处先添加 libshaderc 接口头文件和 stub 库骨架。
+# 完整构建需在 third_party/shaderc 中执行：
+#   python3 utils/git-sync-deps
+#   cmake -B build -DSHADERC_SKIP_TESTS=ON
+#   cmake --build build
+#
+# 以下代码在 shaderc 库构建就绪后激活：
+# if(EXISTS "${PROJECT_SOURCE_DIR}/third_party/shaderc/libshaderc/include/shaderc/shaderc.hpp")
+#     add_subdirectory(${PROJECT_SOURCE_DIR}/third_party/shaderc third_party/shaderc/build)
+#     target_link_libraries(EngineCore PUBLIC shaderc_combined)
+#     target_compile_definitions(EngineCore PUBLIC ENGINE_HAS_SHADERC)
+#     message(STATUS "Shaderc: integrated")
+# endif()
 
 # ── Lua 脚本支持（可选） ──
 # 如需启用 Lua 脚本功能，请将 Lua 源码放入 third_party/lua/
 # 并取消下方注释
 # if(EXISTS "${PROJECT_SOURCE_DIR}/third_party/lua/src/lua.h")
-#     add_library(lua STATIC
-#         third_party/lua/src/lapi.c
-#         third_party/lua/src/lcode.c
-#         third_party/lua/src/lctype.c
-#         third_party/lua/src/ldebug.c
-#         third_party/lua/src/ldo.c
-#         third_party/lua/src/ldump.c
-#         third_party/lua/src/lfunc.c
-#         third_party/lua/src/lgc.c
-#         third_party/lua/src/llex.c
-#         third_party/lua/src/lmem.c
-#         third_party/lua/src/lobject.c
-#         third_party/lua/src/lopcodes.c
-#         third_party/lua/src/lparser.c
-#         third_party/lua/src/lstate.c
-#         third_party/lua/src/lstring.c
-#         third_party/lua/src/ltable.c
-#         third_party/lua/src/ltm.c
-#         third_party/lua/src/lundump.c
-#         third_party/lua/src/lvm.c
-#         third_party/lua/src/lzio.c
-#         third_party/lua/src/lauxlib.c
-#         third_party/lua/src/lbaselib.c
-#         third_party/lua/src/ldblib.c
-#         third_party/lua/src/liolib.c
-#         third_party/lua/src/lmathlib.c
-#         third_party/lua/src/loslib.c
-#         third_party/lua/src/lstrlib.c
-#         third_party/lua/src/ltablib.c
-#     )
+#     add_library(lua STATIC ...)
 #     target_include_directories(lua PUBLIC third_party/lua/src)
 #     target_link_libraries(EngineCore PUBLIC lua)
 #     target_compile_definitions(EngineCore PRIVATE ENGINE_ENABLE_LUA)
