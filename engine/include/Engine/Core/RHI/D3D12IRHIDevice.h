@@ -13,6 +13,7 @@
  */
 
 #include "Engine/Core/RHI/IRHIDevice.h"
+#include "Engine/Core/RHI/IRHICommandList.h"
 #include <memory>
 
 namespace Engine {
@@ -82,32 +83,52 @@ namespace RHI {
 
     class D3D12Buffer final : public IRHIBuffer {
     public:
+        D3D12Buffer();
+        ~D3D12Buffer() override;
         uint64_t GetSize() const noexcept override;
         const GPUAllocation& GetAllocation() const noexcept override;
+    private:
+        struct Impl;
+        std::unique_ptr<Impl> m_Impl;
     };
 
     class D3D12Texture final : public IRHITexture {
     public:
+        D3D12Texture();
+        ~D3D12Texture() override;
         uint32_t GetWidth()  const noexcept override;
         uint32_t GetHeight() const noexcept override;
         Format   GetFormat() const noexcept override;
+    private:
+        struct Impl;
+        std::unique_ptr<Impl> m_Impl;
     };
 
     class D3D12PipelineState final : public IRHIPipelineState {};
     class D3D12SwapChain final : public IRHISwapChain {
     public:
+        D3D12SwapChain();
+        ~D3D12SwapChain() override;
         void Present() override;
         void Resize(uint32_t w, uint32_t h) override;
         IRHITexture* GetBackBuffer(uint32_t idx) const override;
         uint32_t GetCurrentBackBufferIndex() const override;
         uint32_t GetBufferCount() const override;
+    private:
+        struct Impl;
+        std::unique_ptr<Impl> m_Impl;
     };
 
     class D3D12Queue final : public IRHICommandQueue {
     public:
+        D3D12Queue();
+        ~D3D12Queue() override;
         void ExecuteCommandLists(uint32 count, IRHICommandList** lists) override;
         void WaitIdle() override;
         QueueType GetType() const noexcept override;
+    private:
+        struct Impl;
+        std::unique_ptr<Impl> m_Impl;
     };
 
 } // namespace RHI

@@ -34,3 +34,6 @@
 [submodule "third_party/vma"]
 	path = third_party/vma
 	url = https://github.com/GPUOpen-LibrariesAndSDKs/VulkanMemoryAllocator.git
+[submodule "third_party/d3d12ma"]
+	path = third_party/d3d12ma
+	url = https://github.com/GPUOpen-LibrariesAndSDKs/D3D12MemoryAllocator.git

@@ -26,6 +26,7 @@ file(GLOB ENGINE_SOURCES CONFIGURE_DEPENDS
     src/Platform/glfw/*.cpp
     src/Rendering/*.cpp
     src/Scripting/*.cpp
+    src/D3D12/*.cpp
 )
 file(GLOB ENGINE_HEADERS CONFIGURE_DEPENDS
     include/*.h
@@ -68,7 +69,7 @@ target_include_directories(EngineCore
     PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/src"
 
 )
-target_link_libraries(EngineCore PUBLIC glad2 glfw stb box2d OpenAL::OpenAL imgui spdlog::spdlog freetype imguizmo)
+target_link_libraries(EngineCore PUBLIC glad2 glfw stb box2d OpenAL::OpenAL imgui spdlog::spdlog freetype imguizmo d3d12ma)
 
 # ── Tracy Profiler（Debug 默认启用，Release 关闭） ──
 if(TARGET tracy)
