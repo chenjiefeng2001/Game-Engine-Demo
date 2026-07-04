@@ -27,6 +27,16 @@ namespace Engine {
         uint32 GetDepthTex()    const override;
         uint32 GetWidth()  const override;
         uint32 GetHeight() const override;
+
+    private:
+        void* m_GLContext = nullptr;
+        GBufferConfig m_Config;
+        uint32 m_FBO       = 0;
+        uint32 m_PositionTex = 0;
+        uint32 m_NormalTex   = 0;
+        uint32 m_AlbedoTex   = 0;
+        uint32 m_PBRTex      = 0;
+        uint32 m_DepthTex    = 0;
     };
 
 } // namespace Engine
