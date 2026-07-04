@@ -32,14 +32,6 @@
 #include "Engine/Types.h"
 #include "Engine/UIManager.h"
 
-// 新渲染系统头文件
-#include "Engine/Rendering/LightTypes.h"
-#include "Engine/Rendering/PostProcessPipeline.h"
-#include "Engine/Rendering/DeferredLightingPass.h"
-#include "Engine/Rendering/CompactGBuffer.h"
-#include "Engine/Rendering/RenderGraph.h"
-#include "Engine/Rendering/TransientHeap.h"
-
 #include <imgui.h>
 #include <memory>
 #include <vector>
@@ -63,10 +55,6 @@ namespace Engine {
         void DrawGrid(float size, int steps);
         void DrawOriginAxis();
         void DrawDebugImGui();
-        void DrawRenderPipelineDebugPanel();
-        void DrawPBRDebugPanel();
-        void DrawPostProcessDebugPanel();
-        void DrawCSMDebugPanel();
         void OnWindowResize(int width, int height);
 
         // 调试数据填充
@@ -77,10 +65,6 @@ namespace Engine {
 
         // 同步 DebugLightState -> MeshRenderer
         void SyncDebugLights();
-
-        // 新渲染管线初始化
-        bool InitDeferredRendering();
-        void RenderDeferredTest();
 
         IGraphicsFactory& m_Factory;
         std::unique_ptr<IWindow> m_Window;
@@ -129,88 +113,6 @@ namespace Engine {
             bool  dirty = true;
         };
         std::vector<DebugLightState> m_DebugLights;
-
-        // ════════════════════════════════════════════════════════
-        // 新渲染管线 — 调试控制状态
-        // ════════════════════════════════════════════════════════
-
-        // 渲染模式选择
-        enum class RenderMode : int {
-            ForwardLit    = 0,    // 当前的前向渲染
-            DeferredLit   = 1,    // 延迟渲染 (PBR + CSM)
-            GBufferAlbedo = 2,    // 仅显示 GBuffer Albedo
-            GBufferNormal = 3,    // 仅显示 GBuffer 法线
-            GBufferRoughness = 4, // 仅显示 GBuffer 粗糙度
-            DepthOnly     = 5,    // 仅显示深度
-        };
-        RenderMode m_RenderMode = RenderMode::ForwardLit;
-
-        // 新渲染系统组件
-        Rendering::PostProcessPipeline m_PostProcess;
-        Rendering::DeferredLightingPass m_DeferredLighting;
-        Rendering::RenderGraph m_RenderGraph;
-        Rendering::TransientHeap m_TransientHeap;
-
-        // 相机 UBO 数据（用于延迟渲染 Pass）
-        struct CameraUBO {
-            Mat4 view;
-            Mat4 proj;
-            Mat4 invProj;
-            Vec3 viewPos;
-            float _pad0;
-        } m_CameraUBO;
-
-        // CSM ShadowMapper 实例
-        class CSMShadowMapper* m_CSMShadowMapper = nullptr;
-
-        // ── 延迟渲染 GPU 资源 ──
-        std::unique_ptr<GBuffer> m_DeferredGBuffer;
-        std::shared_ptr<Shader> m_DeferredGeomShader;   // deferred_geom (GBuffer Pass)
-        std::shared_ptr<Shader> m_DeferredLightShader;  // deferred_light (Lighting Pass)
-        std::shared_ptr<Shader> m_FullscreenQuadShader; // fullscreen_quad (全屏四边形)
-        bool m_DeferredInitialized = false;
-        bool m_GBufferCreated = false;
-
-        // GBuffer 调试可视化参数
-        int m_GBufferDebugTarget = 0;  // 0=Albedo, 1=Normal, 2=Roughness, 3=Depth
-
-        // PBR 调试参数
-        struct PBRDebugParams {
-            float roughness  = 0.5f;
-            float metallic   = 0.0f;
-            float ao         = 1.0f;
-            float normalStrength = 1.0f;
-            float exposure   = 1.0f;
-            float gamma      = 2.2f;
-            bool  showBRDF   = false;
-        } m_PBRDebug;
-
-        // 后处理调试控制
-        struct PostProcessDebug {
-            bool  enabled       = true;
-            bool  bloomEnabled  = true;
-            float bloomIntensity = 1.2f;
-            float bloomThreshold = 1.0f;
-            bool  taaEnabled    = false;
-            float taaBlendFactor = 0.95f;
-            bool  fxaaEnabled   = true;
-            int   toneMapMode   = 2;  // 0=None 1=Reinhard 2=ACES 3=Unreal 4=Filmic
-            float exposure      = 1.0f;
-            float gamma         = 2.2f;
-            bool  showDebugOverlay = false;
-        } m_PostDebug;
-
-        // CSM 调试控制
-        struct CSMDebug {
-            bool  enabled      = false;
-            bool  showCascades = false;
-            int   cascadeCount = 4;
-            float splitLambda  = 0.95f;
-            float shadowBias   = 0.005f;
-            int   shadowMapSize = 2048;
-        } m_CSMDebug;
-
-        bool m_UseRenderGraph = false;  // 使用 RenderGraph 执行管线
     };
 
 } // namespace Engine
