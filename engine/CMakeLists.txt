@@ -53,6 +53,7 @@ file(GLOB ENGINE_HEADERS CONFIGURE_DEPENDS
     include/Engine/Platform/*.h
     include/Engine/Rendering/*.h
     include/Engine/Scripting/*.h
+    include/Engine/Vulkan/*.h
 )
 
 add_library(EngineCore STATIC
@@ -81,6 +82,24 @@ endif()
 
 if(WIN32)
     target_link_libraries(EngineCore PRIVATE dbghelp.lib)
+endif()
+
+# ════════════════════════════════════════════════════════
+# Vulkan SDK 检测 + 链接 + 源代码
+# ════════════════════════════════════════════════════════
+find_package(Vulkan QUIET)
+if(Vulkan_FOUND)
+    # 添加 Vulkan 源文件
+    file(GLOB VULKAN_SOURCES CONFIGURE_DEPENDS src/Vulkan/*.cpp)
+    target_sources(EngineCore PRIVATE ${VULKAN_SOURCES})
+
+    target_link_libraries(EngineCore PUBLIC Vulkan::Vulkan volk vma)
+    target_include_directories(EngineCore PRIVATE "${Vulkan_INCLUDE_DIRS}")
+    target_compile_definitions(EngineCore PUBLIC ENGINE_HAS_VULKAN)
+    message(STATUS "Vulkan SDK: found at ${Vulkan_INCLUDE_DIRS}")
+    message(STATUS "Vulkan sources: ${VULKAN_SOURCES}")
+else()
+    message(WARNING "Vulkan SDK not found — Vulkan backend disabled")
 endif()
 
 # ── 预编译头文件加速 ──
