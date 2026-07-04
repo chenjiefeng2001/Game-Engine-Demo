@@ -1,6 +1,10 @@
 add_library(imguizmo STATIC
     src/ImGuizmo.cpp
-    src/ImGuizmo.h
+    src/GraphEditor.cpp
+    src/ImCurveEdit.cpp
+    src/ImGradient.cpp
+    src/ImSequencer.cpp
+    src/ImVectorEditor.cpp
 )
 
 target_include_directories(imguizmo

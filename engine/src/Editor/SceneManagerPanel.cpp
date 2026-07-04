@@ -6,7 +6,7 @@
 
 #include <imgui.h>
 #include <imgui_internal.h>
-#include <imgui_stdlib.h> // 【关键】：引入 string 支持，告别 char[]
+#include "misc/cpp/imgui_stdlib.h" // 【关键】：引入 string 支持，告别 char[]
 
 namespace Engine {
 
