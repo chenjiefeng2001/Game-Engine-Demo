@@ -122,6 +122,16 @@ void OpenGLGBuffer::Clear() {
     GL().Clear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
 }
 
+bool OpenGLGBuffer::IsValid() const { return m_FBO != 0; }
+uint32 OpenGLGBuffer::GetFBO() const { return m_FBO; }
+uint32 OpenGLGBuffer::GetPositionTex() const { return m_PositionTex; }
+uint32 OpenGLGBuffer::GetNormalTex() const { return m_NormalTex; }
+uint32 OpenGLGBuffer::GetAlbedoTex() const { return m_AlbedoTex; }
+uint32 OpenGLGBuffer::GetPBRTex() const { return m_PBRTex; }
+uint32 OpenGLGBuffer::GetDepthTex() const { return m_DepthTex; }
+uint32 OpenGLGBuffer::GetWidth() const { return m_Config.width; }
+uint32 OpenGLGBuffer::GetHeight() const { return m_Config.height; }
+
 // ── Factory method ──
 std::unique_ptr<GBuffer> CreateGBuffer(IRenderContext& context) {
     return std::make_unique<OpenGLGBuffer>(context);
