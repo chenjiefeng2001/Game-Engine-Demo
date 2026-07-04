@@ -93,6 +93,32 @@ if(EXISTS "${TRACY_SRC_DIR}/public/TracyClient.cpp")
 endif()
 
 # =============================================================================
+# VMA — Vulkan Memory Allocator（header-only）
+# =============================================================================
+set(VMA_DIR "${CMAKE_CURRENT_SOURCE_DIR}/vma")
+if(EXISTS "${VMA_DIR}/include/vk_mem_alloc.h")
+    add_library(vma INTERFACE)
+    target_include_directories(vma INTERFACE "${VMA_DIR}/include")
+    target_compile_definitions(vma INTERFACE VMA_STATIC_VULKAN_FUNCTIONS=0 VMA_DYNAMIC_VULKAN_FUNCTIONS=1)
+    message(STATUS "VMA: integrated")
+else()
+    message(WARNING "VMA not found at ${VMA_DIR}/include/vk_mem_alloc.h")
+endif()
+
+# =============================================================================
+# Volk — Vulkan 元加载器（单文件模式）
+# =============================================================================
+set(VOLK_DIR "${CMAKE_CURRENT_SOURCE_DIR}/volk")
+if(EXISTS "${VOLK_DIR}/volk.h")
+    add_library(volk STATIC "${VOLK_DIR}/volk.c")
+    target_include_directories(volk PUBLIC "${VOLK_DIR}")
+    target_compile_definitions(volk PUBLIC VK_NO_PROTOTYPES)
+    message(STATUS "Volk: integrated")
+else()
+    message(WARNING "Volk not found at ${VOLK_DIR}/volk.h")
+endif()
+
+# =============================================================================
 # FreeType — 字体渲染引擎（用于中文 / 文字排版）
 # =============================================================================
 set(FT_DISABLE_ZLIB      ON CACHE BOOL "" FORCE)

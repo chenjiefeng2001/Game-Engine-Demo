@@ -31,3 +31,6 @@
 [submodule "third_party/spirv-cross"]
 	path = third_party/spirv-cross
 	url = https://github.com/KhronosGroup/SPIRV-Cross.git
+[submodule "third_party/vma"]
+	path = third_party/vma
+	url = https://github.com/GPUOpen-LibrariesAndSDKs/VulkanMemoryAllocator.git

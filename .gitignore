@@ -44,6 +44,8 @@ build/
 Build/
 build-*/
 build_vs/
+build_vulkan/
+build_vulkan*/
 
 # CMake generated files
 CMakeFiles/
