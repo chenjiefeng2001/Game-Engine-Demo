@@ -2,18 +2,19 @@
 
 /**
  * @file JobSystem.h
- * @brief 通用 Job 系统 — 线程池 + 任务级并行调度
+ * @brief 通用 Job 系统 — 线程池 + 任务级并行调度 + Per-Worker Deque + 仿射
  *
  * 设计目标：
  *   1. 提供简单高效的线程池，将可并行的任务分散到多核执行
- *   2. 支持单 Job 和 ParallelFor 两种调度模式
+ *   2. 支持单 Job、ParallelFor 两种调度模式
  *   3. 主线程 Wait() 时执行工作窃取（work stealing），避免死锁
- *   4. 为未来的渲染线程分离、Fiber 调度预留接口
+ *   4. Per-worker 本地队列：减少锁争用，提升高并发吞吐量
+ *   5. 线程核心绑定（仿射）：Windows/Linux/macOS 多平台
  *
  * 使用方式：
  * @code
  *   // 初始化（Application 启动时调用一次）
- *   JobSystem::Init();
+ *   JobSystem::Init(0);  // 0 = 自动检测核心数
  *
  *   // ParallelFor — 并行遍历 [0, count)
  *   JobHandle handle = JobSystem::Get()->ParallelFor(0, particleCount,
@@ -29,15 +30,10 @@
  *   // 销毁
  *   JobSystem::Shutdown();
  * @endcode
- *
- * 未来扩展预留：
- *   - JobPriority::High / Normal / Low     → 优先级调度
- *   - OnMainThread(JobHandle)              → 在主线程执行完成回调
- *   - GetRenderSyncHandle()                → 渲染线程帧同步
- *   - Fiber 纤程集成                       → 更轻量的协程式 Job
  */
 
 #include "Engine/Types.h"
+#include "Engine/Core/ThreadAffinity.h"
 #include <functional>
 #include <atomic>
 #include <thread>
@@ -51,10 +47,23 @@
 namespace Engine {
 
 // ============================================================
-// 前向声明
+// 线程池配置（必须在 JobSystem 类之前定义，供默认参数使用）
 // ============================================================
 
-struct JobInternal;
+struct ThreadPoolConfig {
+    uint32  mainThreadCore   = 0;   ///< 主线程绑定的逻辑核（0-based）
+    uint32  renderThreadCore = 1;   ///< 渲染线程核心
+    uint32  workerBaseCore   = 2;   ///< 工作线程起始核心
+    uint32  ioThreadCore     = 0;   ///< IO 线程核心（0 = 不绑定）
+
+    ThreadPoolConfig() {
+        // 从 ThreadAffinity 获取推荐配置
+        mainThreadCore   = Threading::GetRecommendedCore(Threading::ThreadCategory::Main, 0);
+        renderThreadCore = Threading::GetRecommendedCore(Threading::ThreadCategory::Render, 0);
+        workerBaseCore   = Threading::GetRecommendedCore(Threading::ThreadCategory::Worker, 0);
+        ioThreadCore     = Threading::GetRecommendedCore(Threading::ThreadCategory::IO, 0);
+    }
+};
 
 // ============================================================
 // Job 句柄 — 不透明 ID，用于等待/查询
@@ -71,14 +80,11 @@ struct JobHandle {
 };
 
 // ============================================================
-// Job 优先级（为未来预留）
+// Job 优先级
 // ============================================================
 
 enum class JobPriority : uint8 {
-    // ── 当前实现级别（所有 Job 同优先级，FIFO） ──
     Normal = 0,
-
-    // ── 预留扩展（暂未实现，使用 Normal 回退） ──
     High   = 1,   // 预留：渲染/输入等高优先级
     Low    = 2,   // 预留：后台加载等低优先级
 };
@@ -100,13 +106,17 @@ public:
 
     /**
      * @brief 初始化 Job 系统
-     * @param threadCount 工作线程数（0 = std::thread::hardware_concurrency()）
-     * @param reservedForRender 为渲染线程预留的核心数（默认 0）
+     * @param threadCount 工作线程数（0 = 自动检测）
+     * @param config 线程池配置（默认值使用推荐的核心分配策略）
      *
-     * reservedForRender 用于未来渲染线程分离时，预留 CPU 核心给渲染线程。
-     * 当前忽略此参数（渲染尚未分离），但 API 已预留。
+     * 自动检测策略：
+     *   - 总核心 ≥ 4: workerCount = 总核心 - 2（留 2 核给 Main + Render）
+     *   - 总核心 ≤ 2: workerCount = 1
+     *   - 3 核心:   workerCount = 1
      */
-    static void Init(uint32 threadCount = 0, uint32 reservedForRender = 0);
+    static void Init(uint32 threadCount = 0,
+                     const ThreadPoolConfig& config = {});
+
     static void Shutdown();
     static JobSystem* Get() { return s_Instance; }
     static bool IsInitialized() { return s_Instance != nullptr; }
@@ -116,11 +126,9 @@ public:
     /**
      * @brief 调度一个单 Job
      * @param func       Job 函数 void(uint32 threadIndex)
-     * @param dependency 前置依赖（当前 Job 完成后才执行此 Job）
-     * @param priority   优先级（暂未实现优先级队列，所有 Normal）
+     * @param dependency 前置依赖
+     * @param priority   优先级
      * @return JobHandle 可用于 Wait()
-     *
-     * 若有 dependency，此 Job 会等到 dependency 完成后才被派发到工作线程。
      */
     JobHandle Schedule(JobFunc&& func,
                        JobHandle dependency = {},
@@ -136,7 +144,7 @@ public:
      * @return JobHandle 可用于 Wait()
      *
      * 自动将 [begin, end) 划分为多个批次，每个批次作为一个 Job 派发。
-     * 批次大小 = max(1, (end - begin + threadCount - 1) / threadCount)。
+     * 批次大小根据线程数和 LLC 缓存大小自适应调整。
      */
     JobHandle ParallelFor(int32 begin, int32 end,
                           ParallelForFunc&& func,
@@ -147,31 +155,19 @@ public:
 
     /**
      * @brief 等待一个 Job 完成
-     * @param handle 要等待的 Job 句柄
      *
      * 如果从主线程调用，会通过 work stealing 执行其他待处理的 Job，
      * 避免死锁并提高吞吐量。如果从工作线程调用，则直接阻塞等待。
      */
     void Wait(JobHandle handle);
 
-    /**
-     * @brief 非阻塞检查 Job 是否完成
-     */
+    /** @brief 非阻塞检查 Job 是否完成 */
     bool IsCompleted(JobHandle handle);
 
-    /**
-     * @brief 等待所有待处理的 Job 完成
-     */
+    /** @brief 等待所有待处理的 Job 完成 */
     void WaitAll();
 
-    // ── 主线程辅助（每帧调用） ──
-
-    /**
-     * @brief 在主线程执行已完成的 Job 回调
-     *
-     * 预留接口。当前没有需要主线程执行的回调，但未来可能需要
-     * （如资源加载完成后在主线程调用回调）。
-     */
+    /** @brief 每帧调用，处理完成的回调等 */
     void PollCompleted();
 
     // ── 统计信息 ──
@@ -180,28 +176,18 @@ public:
     uint32 GetPendingJobCount() const;
     uint32 GetCompletedJobCount() const { return m_TotalCompleted; }
 
-    // ── 为下一步渲染线程分离预留的接口 ──
+    /** 每帧末尾调用：推进 FrameTransient 等 */
+    void EndFrame();
 
-    /**
-     * @brief 获取渲染线程的帧同步 JobHandle
-     *
-     * 渲染线程可用此 handle 等待游戏线程完成帧更新后，再开始提交渲染命令。
-     * 当前返回 Invalid（渲染线程尚未分离），API 已预留。
-     */
+    // ── 渲染线程同步 ──
+
     JobHandle GetRenderSyncHandle() const { return m_RenderSyncHandle; }
-
-    /**
-     * @brief 设置渲染线程帧同步（每次帧开始前调用）
-     *
-     * 排入一个空的同步 Job，其完成标志着游戏线程帧更新结束。
-     * 渲染线程等待此 Job 即可安全读取游戏状态/命令缓冲。
-     */
     void SignalRenderSync();
 
 private:
     static JobSystem* s_Instance;
 
-    JobSystem(uint32 threadCount, uint32 reservedForRender);
+    JobSystem(uint32 threadCount, const ThreadPoolConfig& config);
     ~JobSystem();
     JobSystem(const JobSystem&) = delete;
     JobSystem& operator=(const JobSystem&) = delete;
@@ -210,35 +196,67 @@ private:
     struct Job {
         uint64              id = 0;
         JobFunc             func;
-        std::atomic<int32>  unfinishedPrereqs{ 0 };  // 前置依赖计数
-        std::vector<uint64> dependents;              // 依赖此 Job 的子 Job
+        std::atomic<int32>  unfinishedPrereqs{ 0 };
+        std::vector<uint64> dependents;
         JobPriority         priority = JobPriority::Normal;
     };
 
-    // ── 工作线程函数 ──
-    /** @brief 启动所有工作线程（在构造函数末尾调用，确保所有成员已构造） */
+    // ── Per-Worker 本地队列 ──
+    struct PerWorkerQueue {
+        std::mutex          mutex;
+        std::deque<uint64>  jobs;           // 本地双端队列
+        std::atomic<uint32> approximateSize{ 0 };  // 近似数量（减少锁内 size() 调用）
+    };
+
+    // ── 线程池 ──
+
+    /** @brief 启动所有工作线程（在构造函数末尾调用） */
     void StartWorkers();
 
-    /** @brief 停止所有工作线程并等待它们退出（在析构函数中调用） */
+    /** @brief 停止所有工作线程并等待退出 */
     void StopWorkers();
 
     void WorkerLoop(uint32 threadIndex);
 
     // ── 内部调度 ──
+
     uint64 AllocateJob(JobFunc&& func, JobHandle dependency, JobPriority priority);
     void   EnqueueJob(uint64 jobId);
+
+    /** 入队到指定 worker 的本地队列 */
+    void   EnqueueToWorker(uint32 workerIndex, uint64 jobId);
+
+    /** 提交到全局队列 */
+    void   EnqueueGlobal(uint64 jobId);
+
     void   ExecuteJob(uint64 jobId, uint32 threadIndex);
     void   OnJobCompleted(uint64 jobId);
-    bool   TryStealJob(uint64& outJobId);  // 工作窃取
 
-    // ── 线程池 ──
+    // ── Per-Worker 操作 ──
+
+    /** 从自己的本地队列出队 */
+    bool   TryPopLocal(uint32 workerIndex, uint64& outJobId);
+
+    /** 从其他 worker 的队列顶部窃取 */
+    bool   TrySteal(uint32 thiefIndex, uint64& outJobId);
+
+    // ── 工作线程 ──
+
     uint32                      m_ThreadCount;
     std::vector<std::thread>    m_Workers;
     std::atomic<bool>           m_Running{ false };
 
-    // ── Job 队列 ──
-    std::mutex                  m_QueueMutex;
-    std::queue<uint64>          m_JobQueue;
+    // ── Per-Worker 队列 ──
+    // 使用 deque 替代 vector，因为 PerWorkerQueue 含 std::mutex（不可移动/拷贝）
+    // deque 以块为单元分配，元素本身不会被 reallocate 时移动
+    std::deque<PerWorkerQueue> m_WorkerQueues;
+
+    // 窃取循环起始 victim（轮询 + 随机化减少争用）
+    std::atomic<uint32>         m_NextVictim{ 0 };
+
+    // ── 全局队列（Fallback：主线程提交时未知 target worker） ──
+    std::mutex                  m_GlobalQueueMutex;
+    std::queue<uint64>          m_GlobalQueue;
     std::condition_variable     m_WakeCondition;
 
     // ── Job 存储 ──
@@ -250,9 +268,14 @@ private:
     std::atomic<uint32>         m_PendingCount{ 0 };
     std::atomic<uint32>         m_TotalCompleted{ 0 };
 
-    // ── 为下一步渲染线程分离预留 ──
-    uint32                      m_ReservedForRender = 0;   // 预留核心数
-    JobHandle                   m_RenderSyncHandle;         // 渲染同步 handle
+    // ── 线程池配置 ──
+    uint32                      m_WorkerBaseCore = 2;   // Worker 池起始核心
+    uint32                      m_IoBaseCore     = 0;   // IO 池起始核心
+
+    // ── 渲染同步 ──
+    JobHandle                   m_RenderSyncHandle;
 };
+
+// ============================================================
 
 } // namespace Engine
