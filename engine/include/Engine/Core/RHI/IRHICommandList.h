@@ -132,6 +132,28 @@ namespace RHI {
         virtual void ResourceBarrier(uint32 count,
                                      const ResourceBarrierDesc* barriers) = 0;
 
+        // ── 描述符绑定 ──
+
+        /**
+         * @brief 绑定常量/Uniform Buffer（动态偏移）
+         *
+         * @param set      Descriptor set index
+         * @param binding  Binding 槽位
+         * @param buffer   GPU buffer
+         * @param offset   动态偏移（用于 Dynamic UBO 切换材质参数）
+         * @param size     数据大小（字节）
+         */
+        virtual void SetConstantBuffer(uint32 set, uint32 binding,
+                                       IRHIBuffer* buffer,
+                                       uint64_t offset = 0,
+                                       uint64_t size = 0) = 0;
+
+        /**
+         * @brief 绑定纹理（Sampled Image）
+         */
+        virtual void SetShaderResource(uint32 set, uint32 binding,
+                                       IRHITexture* texture) = 0;
+
         // ── 查询 ──
 
         /** 获取命令列表类型（Direct / Bundle / Compute / Transfer） */

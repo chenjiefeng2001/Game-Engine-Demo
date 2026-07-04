@@ -234,6 +234,32 @@ void VulkanCommandList::ResourceBarrier(uint32 count,
 }
 
 // ════════════════════════════════════════════════════════════
+// 描述符绑定（占位实现）
+// ════════════════════════════════════════════════════════════
+
+void VulkanCommandList::SetConstantBuffer(uint32 set, uint32 binding,
+                                            IRHIBuffer* buffer,
+                                            uint64_t offset, uint64_t size)
+{
+    // TODO: Vulkan 后端实现
+    // 调用 vkCmdBindDescriptorSets 或 vkCmdPushDescriptorSetKHR
+    (void)set;
+    (void)binding;
+    (void)buffer;
+    (void)offset;
+    (void)size;
+}
+
+void VulkanCommandList::SetShaderResource(uint32 set, uint32 binding,
+                                            IRHITexture* texture)
+{
+    // TODO: Vulkan 后端实现
+    (void)set;
+    (void)binding;
+    (void)texture;
+}
+
+// ════════════════════════════════════════════════════════════
 // 查询
 // ════════════════════════════════════════════════════════════
 
