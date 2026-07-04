@@ -39,6 +39,8 @@ void GL46CommandList::DrawIndexedIndirect(IRHIBuffer*, uint32) {}
 void GL46CommandList::SetViewport(const Viewport&) {}
 void GL46CommandList::SetScissorRect(const Rect&) {}
 void GL46CommandList::ResourceBarrier(uint32, const ResourceBarrierDesc*) {}
+void GL46CommandList::SetConstantBuffer(uint32, uint32, IRHIBuffer*, uint64_t, uint64_t) {}
+void GL46CommandList::SetShaderResource(uint32, uint32, IRHITexture*) {}
 CommandListType GL46CommandList::GetType() const noexcept { return CommandListType::Direct; }
 
 void GL46CommandList::ExecuteOnMainThread() {
