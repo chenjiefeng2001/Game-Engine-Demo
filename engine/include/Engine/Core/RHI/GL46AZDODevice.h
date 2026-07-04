@@ -18,6 +18,7 @@
  */
 
 #include "Engine/Core/RHI/IRHIDevice.h"
+#include "Engine/Core/RHI/IRHICommandList.h"
 #include <memory>
 
 namespace Engine {
@@ -26,6 +27,15 @@ namespace RHI {
     // ══════════════════════════════════════════════════════
     // GL46 AZDO Device
     // ══════════════════════════════════════════════════════
+    /// AZDO 间接绘制命令（与 Vulkan VkDrawIndexedIndirectCommand 兼容）
+    struct DrawElementsIndirectCommand {
+        uint32_t vertexCount;
+        uint32_t instanceCount;
+        uint32_t firstIndex;
+        int32_t  baseVertex;
+        uint32_t firstInstance;
+    };
+
     class GL46Device final : public IRHIDevice {
     public:
         GL46Device();
@@ -46,6 +56,7 @@ namespace RHI {
     private:
         struct Impl;
         std::unique_ptr<Impl> m_Impl;
+        void Shutdown();
     };
 
     // ══════════════════════════════════════════════════════
