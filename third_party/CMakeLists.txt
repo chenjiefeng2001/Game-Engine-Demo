@@ -124,6 +124,19 @@ else()
 endif()
 
 # =============================================================================
+# D3D12MA — Direct3D 12 Memory Allocator（header-only）
+# =============================================================================
+set(D3D12MA_DIR "${CMAKE_CURRENT_SOURCE_DIR}/d3d12ma")
+if(EXISTS "${D3D12MA_DIR}/include/D3D12MemAlloc.h")
+    add_library(d3d12ma INTERFACE)
+    target_include_directories(d3d12ma INTERFACE "${D3D12MA_DIR}/include")
+    target_compile_definitions(d3d12ma INTERFACE D3D12MA_USE_STL_VECTORS=1)
+    message(STATUS "D3D12MA: integrated")
+else()
+    message(WARNING "D3D12MA not found at ${D3D12MA_DIR}/include/D3D12MemAlloc.h")
+endif()
+
+# =============================================================================
 # FreeType — 字体渲染引擎（用于中文 / 文字排版）
 # =============================================================================
 set(FT_DISABLE_ZLIB      ON CACHE BOOL "" FORCE)
