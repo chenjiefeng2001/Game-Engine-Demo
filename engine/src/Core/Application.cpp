@@ -551,7 +551,7 @@ void Application::Run() {
 
   // ── 初始化 Job 系统（线程池） ──
   // 传入 hardware_concurrency 个线程，预留 1 核给未来渲染线程
-  JobSystem::Init(0, 1);
+	JobSystem::Init(0);
 
   // ── 初始化场景管理器（工业级异步加载/切换/预加载） ──
   SceneManager::Init();
