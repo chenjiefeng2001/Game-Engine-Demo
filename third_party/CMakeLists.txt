@@ -106,16 +106,21 @@ else()
 endif()
 
 # =============================================================================
-# Volk — Vulkan 元加载器（单文件模式）
+# Volk — Vulkan 元加载器（单文件模式，仅在 Vulkan SDK 存在时构建）
 # =============================================================================
+find_package(Vulkan QUIET)
 set(VOLK_DIR "${CMAKE_CURRENT_SOURCE_DIR}/volk")
-if(EXISTS "${VOLK_DIR}/volk.h")
+if(Vulkan_FOUND AND EXISTS "${VOLK_DIR}/volk.h")
     add_library(volk STATIC "${VOLK_DIR}/volk.c")
     target_include_directories(volk PUBLIC "${VOLK_DIR}")
     target_compile_definitions(volk PUBLIC VK_NO_PROTOTYPES)
-    message(STATUS "Volk: integrated")
+    message(STATUS "Volk: integrated (Vulkan SDK: ${Vulkan_INCLUDE_DIRS})")
 else()
-    message(WARNING "Volk not found at ${VOLK_DIR}/volk.h")
+    if(NOT Vulkan_FOUND)
+        message(STATUS "Volk: skipped (Vulkan SDK not found)")
+    else()
+        message(WARNING "Volk not found at ${VOLK_DIR}/volk.h")
+    endif()
 endif()
 
 # =============================================================================
