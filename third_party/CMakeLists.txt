@@ -98,30 +98,14 @@ endif()
 set(VMA_DIR "${CMAKE_CURRENT_SOURCE_DIR}/vma")
 if(EXISTS "${VMA_DIR}/include/vk_mem_alloc.h")
     add_library(vma INTERFACE)
-    target_include_directories(vma INTERFACE "${VMA_DIR}/include")
+    target_include_directories(vma INTERFACE "${VMA_DIR}/include" "${Vulkan_INCLUDE_DIRS}")
+    # VMA: use dynamic Vulkan functions (via volk, since VK_NO_PROTOTYPES is required by SDK)
     target_compile_definitions(vma INTERFACE VMA_STATIC_VULKAN_FUNCTIONS=0 VMA_DYNAMIC_VULKAN_FUNCTIONS=1)
     message(STATUS "VMA: integrated")
 else()
     message(WARNING "VMA not found at ${VMA_DIR}/include/vk_mem_alloc.h")
 endif()
 
-# =============================================================================
-# Volk — Vulkan 元加载器（单文件模式，仅在 Vulkan SDK 存在时构建）
-# =============================================================================
-find_package(Vulkan QUIET)
-set(VOLK_DIR "${CMAKE_CURRENT_SOURCE_DIR}/volk")
-if(Vulkan_FOUND AND EXISTS "${VOLK_DIR}/volk.h")
-    add_library(volk STATIC "${VOLK_DIR}/volk.c")
-    target_include_directories(volk PUBLIC "${VOLK_DIR}")
-    target_compile_definitions(volk PUBLIC VK_NO_PROTOTYPES)
-    message(STATUS "Volk: integrated (Vulkan SDK: ${Vulkan_INCLUDE_DIRS})")
-else()
-    if(NOT Vulkan_FOUND)
-        message(STATUS "Volk: skipped (Vulkan SDK not found)")
-    else()
-        message(WARNING "Volk not found at ${VOLK_DIR}/volk.h")
-    endif()
-endif()
 
 # =============================================================================
 # D3D12MA — Direct3D 12 Memory Allocator（header-only）

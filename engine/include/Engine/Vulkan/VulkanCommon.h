@@ -16,9 +16,19 @@
 #include "Engine/Core/RHI/IRHICommandList.h"
 #include "Engine/Core/RHI/IRHIDevice.h"
 
-// VMA 头文件（需要 VK_NO_PROTOTYPES 以防与 Volk 冲突）
-#define VK_NO_PROTOTYPES
+// Windows 平台宏（必须早于任何 Vulkan 头文件）
+#ifndef WIN32_LEAN_AND_MEAN
+#define WIN32_LEAN_AND_MEAN
+#endif
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#define VK_USE_PLATFORM_WIN32_KHR
+
+// Vulkan SDK 直接提供函数原型和类型定义
 #include <vulkan/vulkan.h>
+
+// VMA 使用静态 Vulkan 函数
 #include <vk_mem_alloc.h>
 
 #include <cstdint>

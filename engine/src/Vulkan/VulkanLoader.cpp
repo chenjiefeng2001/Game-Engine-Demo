@@ -1,12 +1,12 @@
 /**
  * @file VulkanLoader.cpp
- * @brief Volk 元加载器封装实现
+ * @brief Vulkan 函数加载器封装
  */
 
 #include "Engine/Vulkan/VulkanLoader.h"
 
-// Volk 头文件（需要在所有 Vulkan 头文件前包含）
-#include <volk/volk.h>
+// 使用 Vulkan SDK 的直接链接，无需 Volk
+// vulkan-1.lib 由 CMake 的 Vulkan::Vulkan 目标提供
 
 namespace Engine {
 namespace RHI {
@@ -14,29 +14,18 @@ namespace RHI {
 bool VulkanLoader::s_Initialized = false;
 
 bool VulkanLoader::Initialize() noexcept {
-    if (s_Initialized) return true;
-
-    VkResult result = volkInitialize();
-    if (result != VK_SUCCESS) {
-        std::fprintf(stderr, "[VulkanLoader] volkInitialize failed: %d\n",
-                     static_cast<int>(result));
-        return false;
-    }
-
+    // 使用 Vulkan SDK 的原生加载：函数原型由 vulkan.h 提供
+    // vulkan-1.lib 中的 vkGetInstanceProcAddr 在运行时动态解析
     s_Initialized = true;
     return true;
 }
 
-bool VulkanLoader::LoadInstance(VkInstance instance) noexcept {
-    if (!s_Initialized || instance == VK_NULL_HANDLE) return false;
-    volkLoadInstance(instance);
-    return true;
+bool VulkanLoader::LoadInstance(VkInstance) noexcept {
+    return s_Initialized;
 }
 
-bool VulkanLoader::LoadDevice(VkDevice device) noexcept {
-    if (!s_Initialized || device == VK_NULL_HANDLE) return false;
-    volkLoadDevice(device);
-    return true;
+bool VulkanLoader::LoadDevice(VkDevice) noexcept {
+    return s_Initialized;
 }
 
 void VulkanLoader::Shutdown() noexcept {

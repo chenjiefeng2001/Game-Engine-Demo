@@ -16,6 +16,9 @@
 namespace Engine {
 namespace RHI {
 
+// 前向声明
+class VulkanDevice;
+
 /**
  * @brief Pipeline Layout 缓存
  *

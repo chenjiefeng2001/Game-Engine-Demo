@@ -97,7 +97,7 @@ if(Vulkan_FOUND)
     file(GLOB VULKAN_SOURCES CONFIGURE_DEPENDS src/Vulkan/*.cpp)
     target_sources(EngineCore PRIVATE ${VULKAN_SOURCES})
 
-    target_link_libraries(EngineCore PUBLIC Vulkan::Vulkan volk vma)
+    target_link_libraries(EngineCore PUBLIC Vulkan::Vulkan vma)
     target_include_directories(EngineCore PRIVATE "${Vulkan_INCLUDE_DIRS}")
     target_compile_definitions(EngineCore PUBLIC ENGINE_HAS_VULKAN)
     message(STATUS "Vulkan SDK: found at ${Vulkan_INCLUDE_DIRS}")

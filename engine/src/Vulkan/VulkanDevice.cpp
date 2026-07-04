@@ -20,8 +20,6 @@
 #include "Engine/Core/RHI/PSOCache.h"
 #include "Engine/Core/RHI/GPUAllocation.h"
 
-#include <volk/volk.h>
-
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -29,7 +27,8 @@
 #include <algorithm>
 #include <set>
 #include <mutex>
-#include <vulkan/vulkan.h>
+
+#include <windows.h>
 
 namespace Engine {
 namespace RHI {
@@ -151,8 +150,6 @@ DebugMessengerCallback(VkDebugUtilsMessageSeverityFlagBitsEXT severity,
         severityStr = "ERROR";
     } else if (severity & VK_DEBUG_UTILS_MESSAGE_SEVERITY_WARNING_BIT_EXT) {
         severityStr = "WARNING";
-    } else if (severity & VK_DEBUG_UTILS_MESSAGE_SEVERITY_PERFORMANCE_WARNING_BIT_EXT) {
-        severityStr = "PERF";
     }
 
     std::fprintf(stderr, "[Vulkan %s] %s\n", severityStr,

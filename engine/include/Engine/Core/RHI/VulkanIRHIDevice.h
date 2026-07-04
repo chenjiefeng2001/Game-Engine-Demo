@@ -17,14 +17,8 @@
 
 #include "Engine/Core/RHI/IRHIDevice.h"
 #include "Engine/Core/RHI/BindlessDescriptor.h"
+#include "Engine/Vulkan/VulkanCommon.h"
 #include <memory>
-
-// 前向声明 Vulkan 类型
-struct VkDevice_T;
-struct VmaAllocator_T;
-union VkQueue_T;
-union VkInstance_T;
-union VkPhysicalDevice_T;
 
 namespace Engine {
 namespace RHI {
@@ -55,16 +49,16 @@ namespace RHI {
         bool Initialize(void* windowHandle, uint32_t width, uint32_t height);
 
         // ── Vulkan 内部查询 ──
-        VkDevice_T*     GetVkDevice() const noexcept;
-        VmaAllocator_T* GetVmaAllocator() const noexcept;
-        VkPhysicalDevice_T* GetVkPhysicalDevice() const noexcept;
-        VkInstance_T*   GetVkInstance() const noexcept;
-        VkQueue_T*      GetGraphicsQueue() const noexcept;
+        VkDevice        GetVkDevice() const noexcept;
+        VmaAllocator    GetVmaAllocator() const noexcept;
+        VkPhysicalDevice GetVkPhysicalDevice() const noexcept;
+        VkInstance      GetVkInstance() const noexcept;
+        VkQueue         GetGraphicsQueue() const noexcept;
         uint32_t        GetGraphicsQueueIndex() const noexcept;
         VulkanFrameContext& GetFrameContext() noexcept;
 
         // ── 线程命令池 ──
-        VkCommandPool_T* GetOrCreateThreadCommandPool();
+        VkCommandPool GetOrCreateThreadCommandPool();
         void            ResetAllThreadCommandPools();
 
     private:
@@ -110,7 +104,7 @@ namespace RHI {
         CommandListType GetType() const noexcept override;
 
         // ── Vulkan 专有 ──
-        VkCommandBuffer_T* GetVkCommandBuffer() const noexcept;
+        VkCommandBuffer GetVkCommandBuffer() const noexcept;
 
     private:
         struct Impl;
@@ -129,9 +123,9 @@ namespace RHI {
         const GPUAllocation& GetAllocation() const noexcept override;
 
         // ── Vulkan 专有 ──
-        VkBuffer_T* GetVkBuffer() const noexcept;
+        VkBuffer GetVkBuffer() const noexcept;
         void SetAllocation(const GPUAllocation& alloc);
-        void SetVkBuffer(VkBuffer_T* buffer);
+        void SetVkBuffer(VkBuffer buffer);
         void SetSize(uint64_t size);
 
     private:
@@ -149,8 +143,8 @@ namespace RHI {
         Format   GetFormat() const noexcept override;
 
         // ── Vulkan 专有 ──
-        VkImage_T* GetVkImage() const noexcept;
-        void SetVkImage(VkImage_T* image);
+        VkImage GetVkImage() const noexcept;
+        void SetVkImage(VkImage image);
         void SetWidth(uint32_t w);
         void SetHeight(uint32_t h);
         void SetFormat(Format fmt);
@@ -202,7 +196,7 @@ namespace RHI {
         QueueType GetType() const noexcept override;
 
         // ── Vulkan 专有 ──
-        void SetVkQueue(VkQueue_T* queue) noexcept;
+        void SetVkQueue(VkQueue queue) noexcept;
         void SetDevice(VulkanDevice* device) noexcept;
         void SetType(QueueType type) noexcept;
 
