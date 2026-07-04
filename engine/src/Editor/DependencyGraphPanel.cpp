@@ -369,7 +369,7 @@ namespace Engine {
         if (ImGui::BeginPopupModal("IntegrityOK", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
             ImGui::Text("All references are valid.");
             ImGui::Separator();
-            ImGui::Text("Total: %zu, Valid: %zu", 
+            ImGui::Text("Total: %u, Valid: %u", 
                 m_Database->ValidateIntegrity().totalReferences,
                 m_Database->ValidateIntegrity().validReferences);
             if (ImGui::Button("OK", ImVec2(120, 0))) ImGui::CloseCurrentPopup();
@@ -378,7 +378,7 @@ namespace Engine {
 
         if (ImGui::BeginPopupModal("IntegrityIssues", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
             auto result = m_Database->ValidateIntegrity();
-            ImGui::Text("Found %zu broken references:", result.brokenReferences);
+            ImGui::Text("Found %u broken references:", result.brokenReferences);
             ImGui::Separator();
             for (const auto& issue : result.issues) {
                 ImGui::BulletText("[%s] %s → %s",

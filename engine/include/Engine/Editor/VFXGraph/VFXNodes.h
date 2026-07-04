@@ -48,7 +48,7 @@ namespace VFX {
             ImGui::Text("Linked: %s", m_PropName.c_str());
             ImGui::PopStyleColor();
             char buf[64];
-            strncpy_s(buf, m_PropName.c_str(), sizeof(buf) - 1);
+            strncpy(buf, m_PropName.c_str(), sizeof(buf) - 1);
             buf[sizeof(buf) - 1] = '\0';
             if (ImGui::InputText("Source Property", buf, sizeof(buf))) {
                 m_PropName = buf;
