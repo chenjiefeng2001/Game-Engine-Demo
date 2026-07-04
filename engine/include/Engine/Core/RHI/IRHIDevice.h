@@ -24,6 +24,7 @@
 #include "Engine/Core/RHI/GPUAllocation.h"
 #include "Engine/Core/RHI/GPUMemoryBlock.h"
 #include "Engine/Core/RHI/IGPUMemoryAllocator.h"
+#include "Engine/Core/RHI/PSODesc.h"
 #include <memory>
 #include <string>
 #include <vector>
@@ -37,14 +38,12 @@ namespace RHI {
     class IRHICommandQueue;
     class IRHISwapChain;
 
-    // ============================================================
-    // Buffer 描述符
-    // ============================================================
-    struct BufferDesc {
+    // RHI Buffer 描述符（不使用 GPUAllocation.h 中的简单 BufferDesc）
+    struct RHIBufferDesc {
         uint64_t    size        = 0;
-        uint32_t    stride      = 0;           ///< 元素步长（0 = raw buffer）
+        uint32_t    stride      = 0;
         MemoryUsage memoryUsage = MemoryUsage::GPU_Only;
-        const void* initialData = nullptr;     ///< 初始数据
+        const void* initialData = nullptr;
     };
 
     // ============================================================
@@ -169,7 +168,7 @@ namespace RHI {
          *   2. 创建底层 API 资源对象（VkBuffer / ID3D12Resource）
          *   3. 若有 initialData，通过 staging buffer 上传初始数据
          */
-        virtual std::shared_ptr<IRHIBuffer> CreateBuffer(const BufferDesc& desc) = 0;
+        virtual std::shared_ptr<IRHIBuffer> CreateBuffer(const RHIBufferDesc& desc) = 0;
 
         /**
          * @brief 创建 GPU Texture
