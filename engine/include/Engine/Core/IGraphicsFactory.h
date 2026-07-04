@@ -6,6 +6,7 @@
 #include "Engine/Types.h"
 #include "Engine/Core/RHI/AntiAliasingTypes.h"
 #include "Engine/Core/RHI/GBuffer.h"
+#include "Engine/Core/RHI/IGPUMemoryAllocator.h"
 #include "Engine/Core/RHI/ShadowMapper.h"
 
 namespace Engine {
@@ -25,6 +26,7 @@ namespace Engine {
 	struct ShaderStage;
 	class GBuffer;
 	class ShadowMapper;
+	namespace RHI { class IGPUMemoryAllocator; }
 
 // ============================================================
 // RHI 抽象工厂 — 完全与具体图形 API 解耦
@@ -148,8 +150,41 @@ namespace Engine {
 		// ---- UI 管理器 ----
 		virtual std::unique_ptr<IUIManager> CreateUIManager() = 0;
 
+		// ---- GPU 显存分配器 ----
+
+		/**
+		 * @brief 设置 GPU 显存分配器
+		 *
+		 * 调用时机：图形设备创建后、首次资源创建前。
+		 * 工厂内部将使用此分配器为所有 Create*() 产生的 GPU 资源分配显存。
+		 *
+		 * 如果未设置（m_MemoryAllocator == nullptr），工厂应使用后端默认分配器
+		 * 或回退到自管理的简单分配（如原 OpenGL 实现那样）。
+		 *
+		 * @param allocator 已初始化的分配器（unique_ptr 所有权转移）
+		 */
+		void SetMemoryAllocator(RHI::GPUMemoryAllocatorPtr allocator) noexcept {
+			m_MemoryAllocator = std::move(allocator);
+		}
+
+		/**
+		 * @brief 获取当前的 GPU 显存分配器
+		 * @return 分配器指针（可能为 nullptr = 未设置/使用后端默认）
+		 */
+		RHI::IGPUMemoryAllocator* GetMemoryAllocator() const noexcept {
+			return m_MemoryAllocator.get();
+		}
+
+		/**
+		 * @brief 是否已设置显存分配器
+		 */
+		bool HasMemoryAllocator() const noexcept {
+			return m_MemoryAllocator != nullptr && m_MemoryAllocator->IsReady();
+		}
+
 	protected:
 		StackAllocator* m_Allocator = nullptr;
+		RHI::GPUMemoryAllocatorPtr m_MemoryAllocator;
 	};
 
 }
