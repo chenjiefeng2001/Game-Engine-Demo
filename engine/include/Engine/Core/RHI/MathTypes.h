@@ -102,6 +102,21 @@ struct Vec3 {
     Vec3& operator-=(const Vec3& o) { x -= o.x; y -= o.y; z -= o.z; return *this; }
     Vec3& operator*=(float32 s) { x *= s; y *= s; z *= s; return *this; }
     Vec3& operator/=(float32 s) { x /= s; y /= s; z /= s; return *this; }
+
+    // 静态工具方法
+    static float32 Dot(const Vec3& a, const Vec3& b) { return a.x * b.x + a.y * b.y + a.z * b.z; }
+    static Vec3 Cross(const Vec3& a, const Vec3& b) {
+        return Vec3(a.y * b.z - a.z * b.y,
+                    a.z * b.x - a.x * b.z,
+                    a.x * b.y - a.y * b.x);
+    }
+    static float32 Length(const Vec3& v) { return std::sqrt(v.x * v.x + v.y * v.y + v.z * v.z); }
+    static float32 LengthSq(const Vec3& v) { return v.x * v.x + v.y * v.y + v.z * v.z; }
+    static Vec3 Normalize(const Vec3& v) {
+        float32 len = Length(v);
+        if (len < 1e-8f) return Vec3(0, 0, 0);
+        return Vec3(v.x / len, v.y / len, v.z / len);
+    }
 };
 
 // ──────────────────────────────────────────
