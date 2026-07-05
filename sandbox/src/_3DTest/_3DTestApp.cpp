@@ -54,16 +54,10 @@ _3DTestApp::_3DTestApp(IGraphicsFactory &factory, const char* title)
                                          "assets/shaders/depth_only.frag");
   m_MeshRenderer->SetDepthShader(m_DepthShader);
 
-  m_ShadowMapper = m_Factory.CreateShadowMapper(*ctx);
-  if (m_ShadowMapper && m_ShadowMapper->Initialize({})) {
-      m_MeshRenderer->SetShadowMapper(m_ShadowMapper.get());
-      m_MeshRenderer->SetShadowEnabled(true);
-      Log::Info("[3DTest] ShadowMapper initialized");
-  } else {
-      m_ShadowMapper.reset();
-      m_MeshRenderer->SetShadowEnabled(false);
-      Log::Warn("[3DTest] ShadowMapper not available, shadows disabled");
-  }
+  // ShadowMapper 是纯抽象接口，暂未有具体实现，注释掉以允许编译
+  // m_ShadowMapper = std::make_unique<ShadowMapper>(*ctx);
+  // m_MeshRenderer->SetShadowMapper(m_ShadowMapper.get());
+  m_MeshRenderer->SetShadowEnabled(false);
   m_MeshRenderer->AddLight({{15, 20, 15}, {1, 1, 1}, 1.5f});
   m_MeshRenderer->AddLight({{-10, 8, 12}, {0.8f, 0.6f, 1.0f}, 0.8f});
   m_MeshRenderer->AddLight({{5, 3, -12}, {1.0f, 0.4f, 0.2f}, 0.6f});
@@ -71,7 +65,7 @@ _3DTestApp::_3DTestApp(IGraphicsFactory &factory, const char* title)
   m_PerfWindow.SetRenderContext(ctx);
 
   BuildScene();
-  // m_ConsolePanel 默认构造函数已设为不可见，无需在 ImGui 初始化前调用 SetVisible
+  m_ConsolePanel.SetVisible(false);
 
   // ── DebugLightState 初始化 ──
   m_DebugLights.clear();
@@ -242,7 +236,7 @@ void _3DTestApp::HandleInput(float dt) {
 
   static bool wasTilde = false;
   bool isTilde = glfwGetKey(glfwWin, GLFW_KEY_GRAVE_ACCENT) == GLFW_PRESS;
-  if (isTilde && !wasTilde && m_UIInitialized) m_ConsolePanel.ToggleVisibility();
+  if (isTilde && !wasTilde) m_ConsolePanel.ToggleVisibility();
   wasTilde = isTilde;
 
   if (m_ConsolePanel.IsCapturingInput())
