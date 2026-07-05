@@ -158,10 +158,22 @@ void VulkanCommandList::SetIndexBuffer(IRHIBuffer* buffer, uint32 offset) {
 }
 
 void VulkanCommandList::SetPrimitiveTopology(PrimitiveTopology topology) {
-    // Vulkan 拓扑在 PSO 创建时设置
-    // 这里如果需要动态改变，需要使用 VK_EXT_extended_dynamic_state
-    // 简化：忽略
-    (void)topology;
+    // 尝试使用 VK_EXT_extended_dynamic_state
+    // 若不支持，拓扑已固化在 PSO 中，此调用被忽略
+    // 检查是否为标准拓扑且需要动态设置
+    if (m_Impl->cmdBuffer == VK_NULL_HANDLE) return;
+    
+    VkPrimitiveTopology vkTopo = VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST;
+    switch (topology) {
+        case PrimitiveTopology::TriangleList:  vkTopo = VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST; break;
+        case PrimitiveTopology::TriangleStrip: vkTopo = VK_PRIMITIVE_TOPOLOGY_TRIANGLE_STRIP; break;
+        case PrimitiveTopology::LineList:      vkTopo = VK_PRIMITIVE_TOPOLOGY_LINE_LIST; break;
+        case PrimitiveTopology::PointList:     vkTopo = VK_PRIMITIVE_TOPOLOGY_POINT_LIST; break;
+        default: break;
+    }
+    // 动态状态仅在 PSO 中设置了 VK_DYNAMIC_STATE_PRIMITIVE_TOPOLOGY 时有效
+    // 此处预留 vkCmdSetPrimitiveTopologyEXT 调用路径
+    // 当前简化：直接忽略，拓扑在 PSO 中固化
 }
 
 // ════════════════════════════════════════════════════════════
