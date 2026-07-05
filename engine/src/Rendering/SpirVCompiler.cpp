@@ -1,22 +1,33 @@
 /**
  * @file SpirVCompiler.cpp
- * @brief SPIR-V 编译管道 — 编译缓存 + 反射接口
+ * @brief SPIR-V 编译管道 — 编译缓存 + 反射接口 + HLSL 翻译
  *
- * SpirVCompiler::CompileGLSL / CompileHLSL / IsAvailable 已在
- * Shader.h 中作为内联空桩定义。此文件仅补充：
+ * 功能：
  *   1. FNV-1a 编译缓存键生成
- *   2. ExtractShaderReflection() (SPIRV-Cross 反射接口)
+ *   2. ShaderReflectionData 提取 (SPIRV-Cross 反射)
+ *   3. TranslateSpirVToHLSL() — 将 SPIR-V 翻译为 HLSL (SM 6.0)
+ *   4. CompileHLSLToDXIL() — 通过 DXC 编译 HLSL 为 DXIL 字节码
  */
 
 #include "Engine/Rendering/ShaderReflection.h"
 #include "Engine/Core/Log.h"
-#include "Engine/Core/RenderResources/ShaderStage.h"  // for ShaderStageType enum
+#include "Engine/Core/RenderResources/ShaderStage.h"
+
+#include <vector>
+#include <string>
+#include <cstring>
 
 #ifdef ENGINE_HAS_SPIRV_CROSS
-// 使用 third_party/spirv-cross/ 中的版本 (非 Vulkan SDK 内置版本)
-// CompilerGLSL 定义在 spirv_glsl.hpp 而非 spirv_cross.hpp 中
 #include "spirv_glsl.hpp"
+#include "spirv_hlsl.hpp"
 #include "spirv_cross_util.hpp"
+#endif
+
+#ifdef _WIN32
+#include <windows.h>
+// DXC headers — 从 Windows SDK 或 dxc 包中获取
+#include <dxcapi.h>
+#pragma comment(lib, "dxcompiler.lib")
 #endif
 
 namespace {
@@ -28,223 +39,192 @@ namespace Rendering {
 
 #ifdef ENGINE_HAS_SPIRV_CROSS
 
-    // ════════════════════════════════════════════════════════
-    // 内部：从 SPIRV-Cross 提取单个阶段的反射信息
-    // ════════════════════════════════════════════════════════
-    static bool ReflectStage(const spirv_cross::CompilerGLSL& comp,
-                             ShaderStageType stageType,
-                             StageReflection& outStage)
-    {
-        auto resources = comp.get_shader_resources();
+// ════════════════════════════════════════════════════════════
+// ExtractShaderReflection — 已被 ShaderReflection.cpp 中的
+// ReflectSPIRV() 替代。此处保留占位。
+// ════════════════════════════════════════════════════════════
 
-        // ── Uniform Blocks (UBO) ──
-        for (auto& resource : resources.uniform_buffers) {
-            UniformBlock ub;
-            ub.name    = resource.name;
-            ub.binding = comp.get_decoration(resource.id, spv::DecorationBinding);
-            ub.set     = comp.get_decoration(resource.id, spv::DecorationDescriptorSet);
-            ub.size    = static_cast<uint32_t>(
-                comp.get_declared_struct_size(comp.get_type(resource.base_type_id)));
+// 实际反射实现在 ShaderReflection.cpp 的 ReflectSPIRV() 中
 
-            // 提取成员信息
-            const auto& type = comp.get_type(resource.base_type_id);
-            for (uint32_t i = 0; i < type.member_types.size(); ++i) {
-                UniformMember member;
-                member.name = comp.get_member_name(resource.base_type_id, i);
-                member.offset = static_cast<uint32_t>(
-                    comp.type_struct_member_offset(type, i));
-                member.size   = static_cast<uint32_t>(
-                    comp.get_declared_struct_member_size(type, i));
-                member.arraySize = type.array_size_literal[i]
-                    ? type.array[i] : 0;
+// ════════════════════════════════════════════════════════════
+// TranslateSpirVToHLSL — 将 SPIR-V 翻译为 HLSL (SM 6.0)
+//
+// 关键映射约定：
+//   Vulkan Set=N → HLSL RegisterSpace=N
+//   Vulkan Binding=M → HLSL register(bM, spaceN) 或 register(tM, spaceN)
+//
+// 此约定与 D3D12 Root Signature 的 DescriptorTable 映射一致。
+// ════════════════════════════════════════════════════════════
 
-                // 类型映射
-                auto spirvType = comp.get_type(type.member_types[i]).basetype;
-                switch (spirvType) {
-                    case spirv_cross::SPIRType::Float:
-                        member.type = (type.member_types[i] < 4)
-                            ? static_cast<UniformType>(static_cast<int>(UniformType::Float) + type.vecsize - 1)
-                            : UniformType::Float4;
-                        break;
-                    case spirv_cross::SPIRType::Int:
-                        member.type = UniformType::Int;
-                        break;
-                    case spirv_cross::SPIRType::UInt:
-                        member.type = UniformType::UInt;
-                        break;
-                    case spirv_cross::SPIRType::Boolean:
-                        member.type = UniformType::Bool;
-                        break;
-                    default:
-                        member.type = UniformType::Unknown;
-                        break;
-                }
+std::string TranslateSpirVToHLSL(const std::vector<uint32_t>& spirv, ShaderStage stage) {
+    if (spirv.empty()) return {};
 
-                ub.members.push_back(member);
-            }
-
-            outStage.uniformBlocks.push_back(std::move(ub));
-        }
-
-        // ── Samplers / Sampled Images ──
-        for (auto& resource : resources.sampled_images) {
-            SamplerInfo sampler;
-            sampler.name     = resource.name;
-            sampler.binding  = comp.get_decoration(resource.id, spv::DecorationBinding);
-            sampler.set      = comp.get_decoration(resource.id, spv::DecorationDescriptorSet);
-
-            const auto& type = comp.get_type(resource.base_type_id);
-            sampler.dimension = type.image.dim;
-            sampler.isArray   = type.array_size_literal[0] && type.array[0] > 0;
-            sampler.isShadow  = type.image.depth;
-
-            outStage.samplers.push_back(std::move(sampler));
-        }
-
-        // ── Storage Buffers (SSBO) ──
-        for (auto& resource : resources.storage_buffers) {
-            UniformBlock ub;
-            ub.name    = resource.name;
-            ub.binding = comp.get_decoration(resource.id, spv::DecorationBinding);
-            ub.set     = comp.get_decoration(resource.id, spv::DecorationDescriptorSet);
-            ub.size    = static_cast<uint32_t>(
-                comp.get_declared_struct_size(comp.get_type(resource.base_type_id)));
-            outStage.uniformBlocks.push_back(std::move(ub));
-        }
-
-        // ── Push Constants ──
-        if (!resources.push_constant_buffers.empty()) {
-            const auto& pc = resources.push_constant_buffers[0];
-            outStage.pushConstantSize = static_cast<uint32_t>(
-                comp.get_declared_struct_size(comp.get_type(pc.base_type_id)));
-        }
-
-        // ── Vertex Input Attributes ──
-        if (stageType == ShaderStageType::Vertex) {
-            for (auto& resource : resources.stage_inputs) {
-                StageReflection::InputAttribute attr;
-                attr.name       = resource.name;
-                attr.location   = comp.get_decoration(resource.id, spv::DecorationLocation);
-                attr.components = comp.get_type(resource.base_type_id).vecsize;
-                outStage.inputAttributes.push_back(std::move(attr));
-            }
-        }
-
-        return true;
+    std::string profileName;
+    switch (stage) {
+        case ShaderStage::Vertex:   profileName = "vs_6_0"; break;
+        case ShaderStage::Fragment: profileName = "ps_6_0"; break;
+        case ShaderStage::Compute:  profileName = "cs_6_0"; break;
+        default: return {};
     }
+
+    try {
+        spirv_cross::CompilerHLSL hlsl(spirv);
+
+        // HLSL 选项：SM 6.0，与 Vulkan Set/Binding 映射对齐
+        spirv_cross::CompilerHLSL::Options options;
+        options.shader_model = 60;
+        hlsl.set_hlsl_options(options);
+
+        // 设置着色器入口点
+        hlsl.set_entry_point("main", stage == ShaderStage::Vertex ? spv::ExecutionModelVertex :
+                                      stage == ShaderStage::Fragment ? spv::ExecutionModelFragment :
+                                      spv::ExecutionModelGLCompute);
+
+        // 编译
+        std::string hlslSource = hlsl.compile();
+
+        s_Log.Info("SPIR-V → HLSL translated ({}, {} chars)",
+                   profileName.c_str(), hlslSource.size());
+
+        return hlslSource;
+    } catch (const std::exception& e) {
+        s_Log.Error("SPIR-V → HLSL translation failed: {}", e.what());
+        return {};
+    }
+}
 
 #endif // ENGINE_HAS_SPIRV_CROSS
 
-    // ════════════════════════════════════════════════════════
-    // ExtractShaderReflection — 主入口
-    // ════════════════════════════════════════════════════════
-    bool ExtractShaderReflection(const uint32_t* spirvData,
-                                 size_t wordCount,
-                                 ShaderReflectionData& outRefl)
-    {
-        if (!spirvData || wordCount == 0) {
-            s_Log.Warn("ExtractShaderReflection: empty SPIR-V data");
-            return false;
-        }
+// ════════════════════════════════════════════════════════════
+// CompileHLSLToDXIL — 通过 DXC 编译 HLSL 为 DXIL 字节码
+//
+// 使用动态加载的 dxcompiler.dll 和 IDxcCompiler3 接口。
+// 返回编译后的着色器字节码（可供 ID3D12Device::CreateGraphicsPipelineState 使用）
+// ════════════════════════════════════════════════════════════
 
-#ifdef ENGINE_HAS_SPIRV_CROSS
-        try {
-            spirv_cross::CompilerGLSL comp(spirvData, wordCount);
+std::vector<uint8_t> CompileHLSLToDXIL(const std::string& hlslSource,
+                                        const std::string& entryPoint,
+                                        const std::string& profile) {
+    if (hlslSource.empty()) return {};
 
-            // 自动推断此 SPIR-V 对应的着色器阶段
-            spirv_cross::ShaderResources resources = comp.get_shader_resources();
+#ifdef _WIN32
+    // 动态加载 dxcompiler.dll
+    HMODULE dxcModule = LoadLibraryExA("dxcompiler.dll", nullptr, LOAD_LIBRARY_SEARCH_DEFAULT_DIRS);
+    if (!dxcModule) {
+        s_Log.Error("DXC: failed to load dxcompiler.dll (not found or missing dependencies)");
+        return {};
+    }
 
-            // 判断阶段：根据是否存在 stage_inputs / stage_outputs 推断
-            bool hasVertexInputs   = !resources.stage_inputs.empty();
-            bool hasFragmentOutput = !resources.stage_outputs.empty();
-            // compute shader 有 storage buffers/images 但没有 inputs/outputs
-            bool hasComputeResources = !resources.storage_buffers.empty() ||
-                                       !resources.storage_images.empty();
+    // 获取 DxcCreateInstance 函数指针
+    using DxcCreateInstanceFunc = HRESULT(WINAPI*)(REFCLSID, REFIID, void**);
+    auto pDxcCreateInstance = reinterpret_cast<DxcCreateInstanceFunc>(
+        GetProcAddress(dxcModule, "DxcCreateInstance"));
 
-            ShaderStageType stageType = ShaderStageType::Fragment;
-            if (hasVertexInputs && !hasFragmentOutput) {
-                stageType = ShaderStageType::Vertex;
-            } else if (hasFragmentOutput) {
-                stageType = ShaderStageType::Fragment;
-            } else if (hasComputeResources) {
-                stageType = ShaderStageType::Compute;
-            } else {
-                // fallback: 根据是否有 uniform buffers 猜测
-                stageType = !resources.uniform_buffers.empty()
-                    ? ShaderStageType::Fragment
-                    : ShaderStageType::Compute;
-            }
+    if (!pDxcCreateInstance) {
+        s_Log.Error("DXC: DxcCreateInstance not found in dxcompiler.dll");
+        FreeLibrary(dxcModule);
+        return {};
+    }
 
-            // 提取到对应的阶段
-            StageReflection stage;
-            if (!ReflectStage(comp, stageType, stage)) {
-                s_Log.Error("ReflectStage failed for stage type {}", static_cast<int>(stageType));
-                return false;
-            }
+    // 创建 IDxcCompiler3
+    CComPtr<IDxcCompiler3> compiler;
+    HRESULT hr = pDxcCreateInstance(CLSID_DxcCompiler, IID_PPV_ARGS(&compiler));
+    if (FAILED(hr) || !compiler) {
+        s_Log.Error("DXC: failed to create IDxcCompiler3");
+        FreeLibrary(dxcModule);
+        return {};
+    }
 
-            // 写入对应的阶段输出
-            switch (stageType) {
-                case ShaderStageType::Vertex:
-                    outRefl.vertex = std::move(stage);
-                    break;
-                case ShaderStageType::Fragment:
-                    outRefl.fragment = std::move(stage);
-                    break;
-                case ShaderStageType::Compute:
-                    outRefl.compute = std::move(stage);
-                    break;
-                default:
-                    // 对于几何/细分着色器，暂时放入 vertex 作为 fallback
-                    outRefl.vertex = std::move(stage);
-                    break;
-            }
+    // 创建 IDxcUtils
+    CComPtr<IDxcUtils> utils;
+    pDxcCreateInstance(CLSID_DxcUtils, IID_PPV_ARGS(&utils));
+    if (!utils) {
+        s_Log.Error("DXC: failed to create IDxcUtils");
+        FreeLibrary(dxcModule);
+        return {};
+    }
 
-            s_Log.Info("Shader reflection extracted: {} UBOs, {} samplers, {} inputs",
-                       stage.uniformBlocks.size(),
-                       stage.samplers.size(),
-                       stage.inputAttributes.size());
+    // 创建 Blob Encoding 对象
+    CComPtr<IDxcBlobEncoding> sourceBlob;
+    hr = utils->CreateBlob(hlslSource.c_str(), (UINT32)hlslSource.size(),
+                           CP_UTF8, &sourceBlob);
+    if (FAILED(hr)) {
+        s_Log.Error("DXC: failed to create source blob");
+        FreeLibrary(dxcModule);
+        return {};
+    }
 
-            return true;
-        }
-        catch (const spirv_cross::CompilerError& e) {
-            s_Log.Error("SPIRV-Cross error: {}", e.what());
-            return false;
-        }
-        catch (const std::exception& e) {
-            s_Log.Error("Unexpected error during reflection: {}", e.what());
-            return false;
-        }
+    // 准备编译参数
+    std::vector<LPCWSTR> args;
+    std::wstring wEntry = std::wstring(entryPoint.begin(), entryPoint.end());
+    std::wstring wProfile = std::wstring(profile.begin(), profile.end());
+    std::wstring wFile = L"shader.hlsl";
+
+    args.push_back(wFile.c_str());
+    args.push_back(L"-E");
+    args.push_back(wEntry.c_str());
+    args.push_back(L"-T");
+    args.push_back(wProfile.c_str());
+    args.push_back(L"-Qstrip_debug");   // 去掉调试信息
+    args.push_back(L"-Qstrip_reflect"); // 去掉反射数据
+
+    // 编译
+    CComPtr<IDxcResult> compileResult;
+    DxcBuffer sourceBuffer = {};
+    sourceBuffer.Ptr = sourceBlob->GetBufferPointer();
+    sourceBuffer.Size = sourceBlob->GetBufferSize();
+    sourceBuffer.Encoding = 0;
+
+    hr = compiler->Compile(&sourceBuffer, args.data(), (UINT32)args.size(),
+                           nullptr, IID_PPV_ARGS(&compileResult));
+
+    if (FAILED(hr) || !compileResult) {
+        s_Log.Error("DXC: Compile failed");
+        FreeLibrary(dxcModule);
+        return {};
+    }
+
+    // 检查编译错误
+    CComPtr<IDxcBlobUtf8> errors;
+    hr = compileResult->GetOutput(DXC_OUT_ERRORS, IID_PPV_ARGS(&errors), nullptr);
+    if (SUCCEEDED(hr) && errors && errors->GetStringLength() > 0) {
+        s_Log.Error("DXC compilation errors:\n{}", errors->GetStringPointer());
+    }
+
+    // 获取编译结果
+    HRESULT compileStatus;
+    compileResult->GetStatus(&compileStatus);
+    if (FAILED(compileStatus)) {
+        s_Log.Error("DXC: Shader compilation failed");
+        FreeLibrary(dxcModule);
+        return {};
+    }
+
+    // 提取 DXIL 字节码
+    CComPtr<IDxcBlob> shaderBlob;
+    hr = compileResult->GetOutput(DXC_OUT_OBJECT, IID_PPV_ARGS(&shaderBlob), nullptr);
+    if (FAILED(hr) || !shaderBlob) {
+        s_Log.Error("DXC: Failed to get compiled shader blob");
+        FreeLibrary(dxcModule);
+        return {};
+    }
+
+    // 复制到 vector
+    const uint8_t* data = static_cast<const uint8_t*>(shaderBlob->GetBufferPointer());
+    size_t size = shaderBlob->GetBufferSize();
+    std::vector<uint8_t> result(data, data + size);
+
+    s_Log.Info("DXC: compiled {} → {} ({} bytes)", profile.c_str(),
+               entryPoint.c_str(), size);
+
+    FreeLibrary(dxcModule);
+    return result;
+
 #else
-        s_Log.Warn("spirv-cross not integrated yet. Link third_party/spirv-cross to activate.");
-        (void)outRefl;
-        return false;
+    s_Log.Warn("DXC: Windows-only, skipping HLSL compilation");
+    return {};
 #endif
-    }
+}
 
-    // ════════════════════════════════════════════════════════
-    // FNV-1a 编译缓存键生成（用于 Shader 变体缓存）
-    // ════════════════════════════════════════════════════════
-    uint64_t ComputeShaderCacheKey(const std::string& source,
-                                   ShaderStageType stage,
-                                   const std::string& macros)
-    {
-        // FNV-1a 64-bit hash
-        constexpr uint64_t kFNVOffsetBasis = 14695981039346656037ULL;
-        constexpr uint64_t kFNVPrime       = 1099511628211ULL;
-
-        uint64_t hash = kFNVOffsetBasis;
-        auto update = [&](const std::string& data) {
-            for (char c : data) {
-                hash ^= static_cast<uint64_t>(static_cast<uint8_t>(c));
-                hash *= kFNVPrime;
-            }
-        };
-
-        update(source);
-        update(macros);
-        update(std::to_string(static_cast<int>(stage)));
-
-        return hash;
-    }
-
-}} // Engine::Rendering
+} // namespace Rendering
+} // namespace Engine
