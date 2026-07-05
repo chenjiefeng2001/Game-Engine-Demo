@@ -54,10 +54,12 @@ _3DTestApp::_3DTestApp(IGraphicsFactory &factory, const char* title)
                                          "assets/shaders/depth_only.frag");
   m_MeshRenderer->SetDepthShader(m_DepthShader);
 
-  // ShadowMapper 是纯抽象接口，暂未有具体实现，注释掉以允许编译
-  // m_ShadowMapper = std::make_unique<ShadowMapper>(*ctx);
-  // m_MeshRenderer->SetShadowMapper(m_ShadowMapper.get());
-  m_MeshRenderer->SetShadowEnabled(false);
+  // ShadowMapper 已在引擎架构中重构为 Rendering::ShadowMapper
+  // 位于 RHI 之上、Scene 之下。待具体实现类就绪后可直接创建：
+  //   auto sm = std::make_unique<Rendering::DefaultShadowMapper>(...);
+  //   sm->Initialize(...);
+  //   m_MeshRenderer->SetShadowMapper(sm.get());
+  // 当前渲染管线未启用阴影，SetShadowEnabled(false) 保持默认
   m_MeshRenderer->AddLight({{15, 20, 15}, {1, 1, 1}, 1.5f});
   m_MeshRenderer->AddLight({{-10, 8, 12}, {0.8f, 0.6f, 1.0f}, 0.8f});
   m_MeshRenderer->AddLight({{5, 3, -12}, {1.0f, 0.4f, 0.2f}, 0.6f});
@@ -452,13 +454,10 @@ void _3DTestApp::Run() {
     // ═══ 3D 渲染管线 ═══
     // Shadow Pass（m_ShadowMapper 为 nullptr 时跳过阴影渲染）
     {
+      // ShadowPass 由 Rendering::ShadowMapper 通过 RegisterPasses() 管理
+      // 当前 m_ShadowMapper 为 nullptr（无具体实现），暂时跳过
       int32 q = ctx->BeginGPUPass("ShadowPass");
-      if (canRender3D && m_ShadowMapper) {
-        m_ShadowMapper->BindForShadowPass();
-        if (m_DepthShader) m_DepthShader->Bind();
-        m_MeshRenderer->RenderWithSceneGraph(m_SceneObjects);
-        m_ShadowMapper->EndShadowPass();
-      }
+      (void)q;
       ctx->EndGPUPass(q);
     }
 
@@ -628,10 +627,13 @@ void _3DTestApp::PopulateLightingDebugData() {
   ld->cascades.cascadeSplits[2] = 0.4f;
   ld->cascades.cascadeSplits[3] = 1.0f;
 
-  if (m_ShadowMapper) {
-    ld->shadowTextureHandle = m_ShadowMapper->GetShadowTexture();
-    ld->shadowTexWidth = m_ShadowMapper->GetShadowMapSize();
-    ld->shadowTexHeight = m_ShadowMapper->GetShadowMapSize();
+  if (m_ShadowMapper && m_ShadowMapper->IsValid()) {
+    ld->shadowMapSize = m_ShadowMapper->GetConfig().shadowMapSize;
+    // GetShadowTexture() 返回 RHI::IRHITexture*，旧 LightingDebugFrameData 期待 uint32
+    // 目前阴影未启用，shadowTextureHandle 保持 0
+    ld->shadowTextureHandle = 0;
+    ld->shadowTexWidth = ld->shadowMapSize;
+    ld->shadowTexHeight = ld->shadowMapSize;
   }
 }
 
