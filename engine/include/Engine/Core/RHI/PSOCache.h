@@ -60,6 +60,25 @@ namespace RHI {
          */
         IRHIPipelineState* GetOrCreate(IRHIDevice& device, const ComputePSODesc& desc);
 
+        /** 按哈希查找 PSO（不创建） */
+        template<typename DescT>
+        IRHIPipelineState* Find(uint64_t hash) const {
+            std::lock_guard<std::mutex> lock(m_Mutex);
+            const auto& cache = std::is_same_v<DescT, GraphicsPSODesc> ? m_GraphicsCache : m_ComputeCache;
+            auto it = cache.find(hash);
+            if (it != cache.end()) { m_Hits++; return it->second; }
+            return nullptr;
+        }
+
+        /** 存储 PSO 到缓存 */
+        template<typename DescT>
+        void Store(uint64_t hash, IRHIPipelineState* pso) {
+            std::lock_guard<std::mutex> lock(m_Mutex);
+            auto& cache = std::is_same_v<DescT, GraphicsPSODesc> ? m_GraphicsCache : m_ComputeCache;
+            cache[hash] = pso;
+            m_Misses++;
+        }
+
         /** 清空所有缓存条目（通常在设备销毁时调用） */
         void Clear();
 
@@ -72,7 +91,7 @@ namespace RHI {
     private:
         PSOCache() = default;
 
-        std::mutex m_Mutex;
+        mutable std::mutex m_Mutex;
 
         // Graphics PSO 缓存：hash → PSO
         std::unordered_map<uint64_t, IRHIPipelineState*> m_GraphicsCache;

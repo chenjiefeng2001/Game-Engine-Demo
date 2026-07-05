@@ -119,8 +119,16 @@ void VulkanCommandList::Reset() {
 // ════════════════════════════════════════════════════════════
 
 void VulkanCommandList::SetPipelineState(IRHIPipelineState* pso) {
-    // 简化：TODO 实现 VkPipeline 创建和缓存
-    (void)pso;
+    auto* vkPso = static_cast<VulkanPipelineState*>(pso);
+    VkPipeline pipeline = vkPso->GetVkPipeline();
+    VkPipelineLayout layout = vkPso->GetVkPipelineLayout();
+    
+    if (pipeline != VK_NULL_HANDLE && m_Impl->cmdBuffer != VK_NULL_HANDLE) {
+        vkCmdBindPipeline(m_Impl->cmdBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline);
+    }
+    
+    m_Impl->currentPipeline = pipeline;
+    m_Impl->currentPipelineLayout = layout;
 }
 
 // ════════════════════════════════════════════════════════════
@@ -265,6 +273,19 @@ void VulkanCommandList::SetShaderResource(uint32 set, uint32 binding,
 
 CommandListType VulkanCommandList::GetType() const noexcept {
     return m_Impl->type;
+}
+
+void VulkanCommandList::SetVkCommandBuffer(VkCommandBuffer cmdBuf) noexcept {
+    m_Impl->cmdBuffer = cmdBuf;
+}
+
+void VulkanCommandList::SetVkPipelineState(VkPipeline pipeline, VkPipelineLayout layout) noexcept {
+    m_Impl->currentPipeline = pipeline;
+    m_Impl->currentPipelineLayout = layout;
+}
+
+void VulkanCommandList::SetDevice(VulkanDevice* device) noexcept {
+    m_Impl->device = device;
 }
 
 VkCommandBuffer VulkanCommandList::GetVkCommandBuffer() const noexcept {

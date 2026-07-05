@@ -14,6 +14,8 @@ file(GLOB ENGINE_SOURCES CONFIGURE_DEPENDS
     src/Core/Renderer/*.cpp
     src/Core/RHI/*.cpp
     src/Core/Scene/*.cpp
+    src/Core/ECS/*.cpp
+    src/Jolt/*.cpp
     src/Debug/*.cpp
     src/Editor/*.cpp
     src/Editor/Animation/*.cpp
@@ -37,6 +39,7 @@ file(GLOB ENGINE_HEADERS CONFIGURE_DEPENDS
     include/Engine/Core/Memory/*.h
     include/Engine/Core/Containers/*.h
     include/Engine/Core/GameObject/*.h
+    include/Engine/Core/ECS/*.h
     include/Engine/Core/Physics/*.h
     include/Engine/Core/RenderResources/*.h
     include/Engine/Core/Resources/*.h
@@ -55,6 +58,7 @@ file(GLOB ENGINE_HEADERS CONFIGURE_DEPENDS
     include/Engine/Rendering/*.h
     include/Engine/Scripting/*.h
     include/Engine/Vulkan/*.h
+    include/Engine/Jolt/*.h
 )
 
 add_library(EngineCore STATIC
@@ -69,7 +73,7 @@ target_include_directories(EngineCore
     PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/src"
 
 )
-target_link_libraries(EngineCore PUBLIC glad2 glfw stb box2d OpenAL::OpenAL imgui spdlog::spdlog freetype imguizmo)
+target_link_libraries(EngineCore PUBLIC glad2 glfw stb box2d OpenAL::OpenAL imgui spdlog::spdlog freetype imguizmo Jolt)
 if(TARGET d3d12ma)
     target_link_libraries(EngineCore PUBLIC d3d12ma)
 endif()
