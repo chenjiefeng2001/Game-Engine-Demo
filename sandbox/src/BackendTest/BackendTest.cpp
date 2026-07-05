@@ -166,8 +166,9 @@ bool BackendTest::TestPSOCache() {
     RHI::GL46Device device;
 
     RHI::GraphicsPSODesc desc;
-    desc.colorFormats.push_back(RHI::Format::BGRA8_UNorm);
-    desc.depthFormat = RHI::Format::D32_Float;
+    desc.rtvFormats[0] = RHI::Format::BGRA8_UNorm;
+    desc.rtvCount = 1;
+    desc.dsvFormat = RHI::Format::D32_Float;
 
     // 第一个 PSO（cache miss）
     auto pso1 = device.CreateGraphicsPSO(desc);
