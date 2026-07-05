@@ -1,30 +1,14 @@
 #pragma once
 
-/**
- * @file VulkanIRHIDevice.h
- * @brief Vulkan 1.3+ 设备实现 — IRHIDevice 接口 + VMA 集成
- *
- * 设计要点：
- *   - 使用 Volk 元加载器 (volkInitialize/volkLoadDevice)
- *   - VMA 管理所有显存分配
- *   - 支持 Bindless Descriptor Indexing (VK_EXT_descriptor_indexing)
- *   - 支持 Timeline Semaphores (VK_KHR_timeline_semaphore)
- *   - 支持 Dynamic Rendering (VK_KHR_dynamic_rendering)
- *
- * 该文件定义了 Vulkan 后端的 IRHIDevice 实现类的接口。
- * 实际实现位于 engine/src/Vulkan/VulkanDevice.cpp
- */
-
 #include "Engine/Core/RHI/IRHIDevice.h"
 #include "Engine/Core/RHI/BindlessDescriptor.h"
 #include "Engine/Vulkan/VulkanCommon.h"
+#include "Engine/Vulkan/VulkanFrameResource.h"
+#include "vk_mem_alloc.h"
 #include <memory>
 
 namespace Engine {
 namespace RHI {
-
-    // 前向声明 Vulkan 帧资源
-    struct VulkanFrameContext;
 
     class VulkanDevice final : public IRHIDevice {
     public:
@@ -57,23 +41,22 @@ namespace RHI {
     private:
         struct Impl;
         std::unique_ptr<Impl> m_Impl;
-        void CreateFrameResource(struct VulkanFrameResource& frame);
-        void DestroyFrameResource(struct VulkanFrameResource& frame);
+        void CreateFrameResource(VulkanFrameResource& frame);
+        void DestroyFrameResource(VulkanFrameResource& frame);
         void Shutdown();
+
+        friend class VulkanQueue;
+        friend class VulkanSwapChain;
     };
 
     bool HasVulkanSupport() noexcept;
     std::string GetVulkanDeviceInfo() noexcept;
     std::unique_ptr<IRHIDevice> CreateVulkanDevice();
 
-    // ══════════════════════════════════════════════════════
-    // Vulkan Command List
-    // ══════════════════════════════════════════════════════
     class VulkanCommandList final : public IRHICommandList {
     public:
         VulkanCommandList();
         ~VulkanCommandList() override;
-
         void Begin() override;
         void End() override;
         void Reset() override;
@@ -89,11 +72,8 @@ namespace RHI {
         void ResourceBarrier(uint32 count, const ResourceBarrierDesc* barriers) override;
         void SetConstantBuffer(uint32 set, uint32 binding, IRHIBuffer* buffer, uint64_t offset, uint64_t size) override;
         void SetShaderResource(uint32 set, uint32 binding, IRHITexture* texture) override;
-        
-        // Compute
         void Dispatch(uint32_t groupX, uint32_t groupY, uint32_t groupZ) override;
         void SetUnorderedAccess(uint32 slot, IRHIBuffer* buffer) override;
-
         CommandListType GetType() const noexcept override;
 
         VkCommandBuffer GetVkCommandBuffer() const noexcept;
@@ -104,11 +84,9 @@ namespace RHI {
     private:
         struct Impl;
         std::unique_ptr<Impl> m_Impl;
+        friend class VulkanDevice;
     };
 
-    // ══════════════════════════════════════════════════════
-    // Vulkan Buffer / Texture / PipelineState
-    // ══════════════════════════════════════════════════════
     class VulkanBuffer final : public IRHIBuffer {
     public:
         VulkanBuffer();
@@ -122,6 +100,7 @@ namespace RHI {
     private:
         struct Impl;
         std::unique_ptr<Impl> m_Impl;
+        friend class VulkanDevice;
     };
 
     class VulkanTexture final : public IRHITexture {
@@ -139,6 +118,7 @@ namespace RHI {
     private:
         struct Impl;
         std::unique_ptr<Impl> m_Impl;
+        friend class VulkanDevice;
     };
 
     class VulkanPipelineState final : public IRHIPipelineState {
@@ -154,9 +134,6 @@ namespace RHI {
         std::unique_ptr<Impl> m_Impl;
     };
 
-    // ══════════════════════════════════════════════════════
-    // Vulkan SwapChain
-    // ══════════════════════════════════════════════════════
     class VulkanSwapChain final : public IRHISwapChain {
     public:
         VulkanSwapChain();
@@ -166,14 +143,18 @@ namespace RHI {
         IRHITexture* GetBackBuffer(uint32_t idx) const override;
         uint32_t GetCurrentBackBufferIndex() const override;
         uint32_t GetBufferCount() const override;
+        void SetDevice(VulkanDevice* dev) { m_Device = dev; }
+        void SetSwapChain(VkSwapchainKHR sc) { m_SwapChain = sc; }
+        void AddBackBuffer(std::shared_ptr<VulkanTexture> tex) { m_BackBuffers.push_back(tex); }
+        VulkanDevice* GetDevice() const { return m_Device; }
+        VkSwapchainKHR GetSwapChain() const { return m_SwapChain; }
     private:
-        struct Impl;
-        std::unique_ptr<Impl> m_Impl;
+        VulkanDevice* m_Device = nullptr;
+        VkSwapchainKHR m_SwapChain = VK_NULL_HANDLE;
+        std::vector<std::shared_ptr<VulkanTexture>> m_BackBuffers;
+        friend class VulkanDevice;
     };
 
-    // ══════════════════════════════════════════════════════
-    // Vulkan Queue
-    // ══════════════════════════════════════════════════════
     class VulkanQueue final : public IRHICommandQueue {
     public:
         VulkanQueue();
@@ -187,6 +168,7 @@ namespace RHI {
     private:
         struct Impl;
         std::unique_ptr<Impl> m_Impl;
+        friend class VulkanDevice;
     };
 
 } // namespace RHI

@@ -10,30 +10,33 @@
 
 #include "Engine/Types.h"
 #include <vulkan/vulkan.h>
+#include "vk_mem_alloc.h"
 
 namespace Engine {
+namespace RHI {
 
 struct VulkanFrameResource {
     // ── 同步原语 ──
-    VkFence         fence{VK_NULL_HANDLE};             // GPU → CPU 同步
-    VkSemaphore     imageAvailable{VK_NULL_HANDLE};    // 交换链图像就绪
-    VkSemaphore     renderFinished{VK_NULL_HANDLE};    // 渲染完成
+    VkFence         fence{VK_NULL_HANDLE};
+    VkSemaphore     imageAvailable{VK_NULL_HANDLE};
+    VkSemaphore     renderFinished{VK_NULL_HANDLE};
 
     // ── 命令 ──
-    VkCommandPool   commandPool{VK_NULL_HANDLE};        // 主线程命令池
-    VkCommandBuffer commandBuffer{VK_NULL_HANDLE};      // 主线程命令缓冲
+    VkCommandPool   commandPool{VK_NULL_HANDLE};
+    VkCommandBuffer commandBuffer{VK_NULL_HANDLE};
 
     // ── 动态 UBO ──
-    VkBuffer        dynamicUBO{VK_NULL_HANDLE};         // 动态 UBO 缓冲
+    VkBuffer        dynamicUBO{VK_NULL_HANDLE};
     VmaAllocation   dynamicUBOAlloc{VK_NULL_HANDLE};
-    void*           dynamicUBOMapped{nullptr};          // 永久映射指针
-    uint32_t        dynamicUBOOffset{0};                // 当前帧写入偏移
+    void*           dynamicUBOMapped{nullptr};
+    uint32_t        dynamicUBOOffset{0};
 };
 
 struct VulkanFrameContext {
     static constexpr uint32_t kMaxFramesInFlight = 3;
     VulkanFrameResource frames[kMaxFramesInFlight];
-    uint32_t currentFrame{0};   // 当前帧索引
+    uint32_t currentFrame{0};
 };
 
+} // namespace RHI
 } // namespace Engine

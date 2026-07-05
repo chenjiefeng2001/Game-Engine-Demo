@@ -1,11 +1,11 @@
 /**
  * @file SpirVCompiler.cpp
- * @brief SPIR-V 编译管道 — HLSL 翻译 + DXC 编译 (SM 6.6 ready)
+ * @brief SPIR-V 缂栬瘧绠￠亾 鈥?HLSL 缈昏瘧 + DXC 缂栬瘧 (SM 6.6 ready)
  *
- * SM 6.6 特性：
- *   - ResourceDescriptorHeap / SamplerDescriptorHeap — 全局资源堆直接索引
- *   - shader_model = 66 — 启用 SM 6.6 着色器模型
- *   - #define 宏注入 — 将 register(bN) 映射到堆访问
+ * SM 6.6 鐗规€э細
+ *   - ResourceDescriptorHeap / SamplerDescriptorHeap 鈥?鍏ㄥ眬璧勬簮鍫嗙洿鎺ョ储寮?
+ *   - shader_model = 66 鈥?鍚敤 SM 6.6 鐫€鑹插櫒妯″瀷
+ *   - #define 瀹忔敞鍏?鈥?灏?register(bN) 鏄犲皠鍒板爢璁块棶
  */
 
 #include "Engine/Rendering/ShaderReflection.h"
@@ -25,6 +25,7 @@
 #ifdef _WIN32
 #include <windows.h>
 #include <dxcapi.h>
+#include <atlbase.h>
 #pragma comment(lib, "dxcompiler.lib")
 #endif
 
@@ -41,36 +42,36 @@ std::string TranslateSpirVToHLSL(const std::vector<uint32_t>& spirv, ShaderStage
     if (spirv.empty()) return {};
 
     std::string profileName;
-    switch (stage) {
-        case ShaderStage::Vertex:   profileName = "vs_6_6"; break;
-        case ShaderStage::Fragment: profileName = "ps_6_6"; break;
-        case ShaderStage::Compute:  profileName = "cs_6_6"; break;
+    switch (stage.type) {
+        case ShaderStageType::Vertex:   profileName = "vs_6_6"; break;
+        case ShaderStageType::Fragment: profileName = "ps_6_6"; break;
+        case ShaderStageType::Compute:  profileName = "cs_6_6"; break;
         default: return {};
     }
 
     try {
         spirv_cross::CompilerHLSL hlsl(spirv);
 
-        // SM 6.6 选项：启用 Bindless 资源堆索引
+        // SM 6.6 閫夐」锛氬惎鐢?Bindless 璧勬簮鍫嗙储寮?
         spirv_cross::CompilerHLSL::Options options;
         options.shader_model = 66;
-        // 不启用自动 use_resource_descriptor_heap，改用注入宏实现精确控制
+        // 涓嶅惎鐢ㄨ嚜鍔?use_resource_descriptor_heap锛屾敼鐢ㄦ敞鍏ュ畯瀹炵幇绮剧‘鎺у埗
         hlsl.set_hlsl_options(options);
 
-        // 设置着色器入口点
+        // 璁剧疆鐫€鑹插櫒鍏ュ彛鐐?
         hlsl.set_entry_point("main",
-            stage == ShaderStage::Vertex ? spv::ExecutionModelVertex :
-            stage == ShaderStage::Fragment ? spv::ExecutionModelFragment :
+            stage.type == ShaderStageType::Vertex ? spv::ExecutionModelVertex :
+            stage.type == ShaderStageType::Fragment ? spv::ExecutionModelFragment :
             spv::ExecutionModelGLCompute);
 
-        // 编译 HLSL
+        // 缂栬瘧 HLSL
         std::string hlslSource = hlsl.compile();
 
-        // — 关键步骤：注入 SM 6.6 Bindless 宏 —
-        // 将 register(bN/spaceN) 映射到 ResourceDescriptorHeap/SamplerDescriptorHeap
-        // 使 SPIRV-Cross 生成的 HLSL 代码通过 PushConstants 索引访问全局堆
+        // 鈥?鍏抽敭姝ラ锛氭敞鍏?SM 6.6 Bindless 瀹?鈥?
+        // 灏?register(bN/spaceN) 鏄犲皠鍒?ResourceDescriptorHeap/SamplerDescriptorHeap
+        // 浣?SPIRV-Cross 鐢熸垚鐨?HLSL 浠ｇ爜閫氳繃 PushConstants 绱㈠紩璁块棶鍏ㄥ眬鍫?
         std::ostringstream inject;
-        inject << "// SM 6.6 Bindless — 自动注入\n";
+        inject << "// SM 6.6 Bindless 鈥?鑷姩娉ㄥ叆\n";
         inject << "#define BINDLESS_TEXTURE(idx)  ResourceDescriptorHeap[idx]\n";
         inject << "#define BINDLESS_SAMPLER(idx)  SamplerDescriptorHeap[idx]\n";
         inject << "#define BINDLESS_UBO(idx)      ResourceDescriptorHeap[idx]\n";
@@ -78,21 +79,21 @@ std::string TranslateSpirVToHLSL(const std::vector<uint32_t>& spirv, ShaderStage
         
         hlslSource = inject.str() + hlslSource;
 
-        s_Log.Info("SPIR-V → HLSL SM 6.6 translated ({}, {} chars)",
+        s_Log.Info("SPIR-V 鈫?HLSL SM 6.6 translated ({}, {} chars)",
                    profileName.c_str(), hlslSource.size());
         return hlslSource;
 
     } catch (const std::exception& e) {
-        s_Log.Error("SPIR-V → HLSL translation failed: {}", e.what());
+        s_Log.Error("SPIR-V 鈫?HLSL translation failed: {}", e.what());
         return {};
     }
 }
 
 #endif // ENGINE_HAS_SPIRV_CROSS
 
-// ════════════════════════════════════════════════════════════
-// CompileHLSLToDXIL — 通过 DXC 编译 HLSL 为 DXIL (SM 6.6)
-// ════════════════════════════════════════════════════════════
+// 鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲
+// CompileHLSLToDXIL 鈥?閫氳繃 DXC 缂栬瘧 HLSL 涓?DXIL (SM 6.6)
+// 鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲
 
 std::vector<uint8_t> CompileHLSLToDXIL(const std::string& hlslSource,
                                         const std::string& entryPoint,
@@ -131,7 +132,7 @@ std::vector<uint8_t> CompileHLSLToDXIL(const std::string& hlslSource,
     args.push_back(L"-T"); args.push_back(wProfile.c_str());
     args.push_back(L"-Qstrip_debug");
     args.push_back(L"-Qstrip_reflect");
-    // SM 6.6 特有的优化选项
+    // SM 6.6 鐗规湁鐨勪紭鍖栭€夐」
     args.push_back(L"-enable-unbounded-descriptor-tables");
 
     CComPtr<IDxcResult> result;
@@ -156,7 +157,7 @@ std::vector<uint8_t> CompileHLSLToDXIL(const std::string& hlslSource,
     size_t size = shaderBlob->GetBufferSize();
     std::vector<uint8_t> resultData(data, data + size);
 
-    s_Log.Info("DXC SM 6.6: {} → {} ({} bytes)", profile.c_str(), entryPoint.c_str(), size);
+    s_Log.Info("DXC SM 6.6: {} 鈫?{} ({} bytes)", profile.c_str(), entryPoint.c_str(), size);
     FreeLibrary(dxcModule);
     return resultData;
 #else

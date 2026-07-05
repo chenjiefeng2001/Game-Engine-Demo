@@ -7,7 +7,10 @@
 
 #include "Engine/Core/RHI/RHITypes.h"
 #include "Engine/Core/RHI/RenderCommand.h"
+#include "Engine/Core/RHI/IRHICommandList.h"
+#include "Engine/Core/RenderResources/ShaderStage.h"
 #include <vulkan/vulkan.h>
+#include "vk_mem_alloc.h"
 #include <vector>
 #include <string>
 
@@ -45,12 +48,17 @@ std::vector<const char*> GetRequiredInstanceExtensions(bool enableValidation);
 std::vector<const char*> GetRequiredDeviceExtensions();
 
 // ── 着色器阶段转换 ──
-VkShaderStageFlagBits ShaderStageToVk(RHI::ShaderStage stage);
+VkShaderStageFlagBits ShaderStageToVk(ShaderStage stage);
 
 // ── 拓扑转换 ──
 VkPrimitiveTopology TopologyToVk(RHI::PrimitiveTopology topology);
 
 // ── 格式大小 ──
 uint32_t GetFormatSize(RHI::Format format);
+
+// ── 资源状态转换（Vulkan 专用，在 VulkanCommon.cpp 中实现） ──
+VkImageLayout ResourceStateToLayout(RHI::ResourceState state) noexcept;
+VkPipelineStageFlags ResourceStateToStage(RHI::ResourceState state) noexcept;
+VkAccessFlags ResourceStateToAccess(RHI::ResourceState state) noexcept;
 
 } // namespace Engine
