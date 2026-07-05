@@ -75,7 +75,12 @@ namespace RHI {
         void SetViewport(const Viewport& vp) override;
         void SetScissorRect(const Rect& rect) override;
         void ResourceBarrier(uint32 count, const ResourceBarrierDesc* barriers) override;
+        void SetConstantBuffer(uint32 set, uint32 binding, IRHIBuffer* buffer, uint64_t offset, uint64_t size) override;
+        void SetShaderResource(uint32 set, uint32 binding, IRHITexture* texture) override;
+        void Dispatch(uint32_t groupX, uint32_t groupY, uint32_t groupZ) override;
+        void SetUnorderedAccess(uint32 slot, IRHIBuffer* buffer) override;
         CommandListType GetType() const noexcept override;
+        ID3D12GraphicsCommandList6* GetNativeCommandList();
 
     private:
         struct Impl;
@@ -103,9 +108,11 @@ namespace RHI {
         uint32_t GetWidth()  const noexcept override;
         uint32_t GetHeight() const noexcept override;
         Format   GetFormat() const noexcept override;
+        void* GetNativeResource() const;
     private:
         struct Impl;
         std::unique_ptr<Impl> m_Impl;
+        friend class D3D12Device;
     };
 
     class D3D12PipelineState final : public IRHIPipelineState {};
