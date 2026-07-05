@@ -21,8 +21,10 @@ namespace Engine {
 
 class FixedTimestepAccumulator {
 public:
-    explicit FixedTimestepAccumulator(float32 fixedDt = 1.0f / 60.0f)
+    explicit FixedTimestepAccumulator(float32 fixedDt = 1.0f / 60.0f,
+                                       uint32 maxSubSteps = 4)
         : m_FixedDt(fixedDt)
+        , m_MaxSubSteps(maxSubSteps)
     {}
 
     /**
@@ -32,13 +34,15 @@ public:
      *
      * 累计超过固定步长时，每满一个步长返回 1。
      * 为防止螺旋式死亡（spiral of death），当累计器超过上限时截断。
+     * 上限由 m_MaxSubSteps 控制（默认 4 步，对应约 66ms 帧时间）。
      */
     int32 Advance(float32 realDt) {
         m_Accumulator += realDt;
 
-        // 防止螺旋式死亡：如果累计器超过 8 步，截断
-        if (m_Accumulator > m_FixedDt * 8.0f) {
-            m_Accumulator = m_FixedDt * 8.0f;
+        // 防止螺旋式死亡：上限 = maxSubSteps * fixedDt
+        float32 maxAccum = m_FixedDt * static_cast<float32>(m_MaxSubSteps);
+        if (m_Accumulator > maxAccum) {
+            m_Accumulator = maxAccum;
         }
 
         int32 steps = 0;
@@ -58,6 +62,9 @@ public:
     /** 获取固定步长 */
     float32 GetFixedDt() const { return m_FixedDt; }
 
+    /** 获取最大子步数 */
+    uint32 GetMaxSubSteps() const { return m_MaxSubSteps; }
+
     /** 重置累加器 */
     void Reset() {
         m_Accumulator = 0.0f;
@@ -65,9 +72,10 @@ public:
     }
 
 private:
-    float32 m_FixedDt     = 1.0f / 60.0f;   // 固定物理步长
-    float32 m_Accumulator = 0.0f;             // 累积时间
-    float32 m_Alpha       = 0.0f;             // 渲染插值因子
+    float32 m_FixedDt      = 1.0f / 60.0f;   // 固定物理步长
+    uint32  m_MaxSubSteps  = 4;               // 最大子步数上限
+    float32 m_Accumulator  = 0.0f;             // 累积时间
+    float32 m_Alpha        = 0.0f;             // 渲染插值因子
 };
 
 } // namespace Engine

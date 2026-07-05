@@ -176,6 +176,11 @@ namespace Engine {
         int32   maxPairs         = 65536;
         bool    enableSleep      = true;
         bool    enableCCD        = false;   // 连续碰撞检测
+
+        // 约束求解参数
+        int32   warmStartIterations   = 1;  // Warm Start 迭代（堆叠稳定性，推荐 1-4）
+        int32   velocitySteps         = 10; // 速度迭代（精度，推荐 8-15）
+        int32   positionSteps         = 2;  // 位置迭代（穿透修复，推荐 2-8）
     };
 
 } // namespace Engine

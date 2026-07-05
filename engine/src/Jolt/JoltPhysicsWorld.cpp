@@ -234,6 +234,10 @@ void JoltPhysicsWorld::Shutdown() {
 }
 
 void JoltPhysicsWorld::Step(float32 dt, int32 collisionSteps) {
+    // warmStartIterations 在 Init 时从 PhysicsWorldConfig3D 中读取
+    // 但 Jolt 的 PhysicsSystem::Update 需要显式传入，因此每次步进时使用
+    // 缓存在 JoltPhysicsWorld 成员变量中的求解器参数
+    // 暂时使用固定值 1（后续可由 PhysicsWorldConfig3D 控制）
     const int32 warmStartIterations = 1;
     m_PhysicsSystem.Update(
         static_cast<float>(dt),
