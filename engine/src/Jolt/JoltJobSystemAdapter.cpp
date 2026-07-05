@@ -1,11 +1,12 @@
 /**
  * @file JoltJobSystemAdapter.cpp
- * @brief Jolt ↔ Engine JobSystem 适配器实现
+ * @brief Jolt ↔ Engine JobSystem 适配器实现（v5.0 — 对象池）
  *
- * 关键设计（v4.0）：
- *   - 使用 JPH::Job::AddRef/Release 管理生命周期，避免环形缓冲区 ABA 问题
- *   - Barrier 使用 Engine::JobSystem::Wait() 同步
- *   - 支持 Jolt 的多线程约束求解
+ * 核心机制：
+ *   - 使用 JPH::FixedSizeFreeList 预分配 JobSlot，避免堆碎片
+ *   - CreateJob 从对象池取出空闲槽，FreeJob 归还
+ *   - QueueJob 使用 job->AddRef() + Lambda Capture 确保生命周期
+ *   - Barrier 通过 Engine::JobSystem::Wait() 同步所有子任务
  */
 
 #include "Engine/Jolt/JoltJobSystemAdapter.h"
@@ -14,44 +15,69 @@
 namespace Engine {
 
 JoltJobSystemAdapter::JoltJobSystemAdapter(uint32 maxJobs)
-    : m_MaxJobs(maxJobs)
+    : m_JobPool()
 {
+    // 初始化固定大小空闲链表：预分配 maxJobs 个 JobSlot
+    m_JobPool.Init(maxJobs, maxJobs);
 }
 
 JoltJobSystemAdapter::~JoltJobSystemAdapter() = default;
 
-// ── 创建 Job ──
+// ── 创建 Job：从对象池分配 ──
 JPH::JobSystem::JobHandle* JoltJobSystemAdapter::CreateJob(
     const char*, JPH::ColorArg,
     const JobFunction& jobFunction,
     uint32 numDependencies)
 {
-    // 由 Jolt 内部管理生命周期，我们不直接分配 JobSlot
-    // 返回 nullptr 让 Jolt 使用自己的 Job 分配机制
-    // Jolt 会在内部创建 Job 对象并通过回调通知我们
-    (void)jobFunction;
-    (void)numDependencies;
-    return nullptr;
+    // 从空闲链表取一个 JobSlot
+    JobSlot* slot = m_JobPool.Get();
+    if (!slot) {
+        // 对象池满 — 生产级：阻塞等待或扩展池大小
+        // 当前实现：返回 nullptr（Jolt 会自行处理此情况）
+        return nullptr;
+    }
+
+    slot->function = jobFunction;
+    slot->numDependencies = numDependencies;
+    slot->unfinishedDependencies.store(numDependencies, std::memory_order_relaxed);
+    slot->engineJobHandle = Engine::JobHandle{};
+
+    return reinterpret_cast<JobHandle*>(slot);
 }
 
+// ── 释放 Job：归还到对象池 ──
 void JoltJobSystemAdapter::FreeJob(JobHandle* job) {
-    // Jolt 会在 Job 执行完毕后内部处理释放
-    // 如果使用了自定义分配，此处可释放外部资源
-    (void)job;
+    if (!job) return;
+    JobSlot* slot = reinterpret_cast<JobSlot*>(job);
+    m_JobPool.Free(slot);
 }
 
+// ── 入队 Job：派发到 Engine::JobSystem ──
 void JoltJobSystemAdapter::QueueJob(JobHandle* job) {
-    // 使用 AddRef 防止 Jolt 在 Job 执行前释放对象
+    if (!job) return;
+    JobSlot* slot = reinterpret_cast<JobSlot*>(job);
+
+    // 检查是否还有未完成的依赖
+    if (slot->unfinishedDependencies.load(std::memory_order_acquire) > 0) {
+        return;  // 依赖未满足，等待 Barrier 通知
+    }
+
+    // 通过 AddRef 防止 Jolt 在 Job 执行前释放整个 Job 系统
     job->AddRef();
 
     // 派发到 Engine::JobSystem 执行
-    Engine::JobHandle engineHandle = Engine::JobSystem::Get()->Schedule([job](uint32_t) {
-        job->Execute();
-        // 执行完毕后 Release（Jolt 内部会做最终的销毁）
+    auto handle = Engine::JobSystem::Get()->Schedule([job, slot](uint32_t) {
+        // 执行 Jolt 的 Job 函数
+        slot->function();
+
+        // 执行完毕后 Release（归还引用计数）
         job->Release();
     });
+
+    slot->engineJobHandle = handle;
 }
 
+// ── 批量入队 ──
 void JoltJobSystemAdapter::QueueJobs(JobHandle** jobs, uint32 numJobs) {
     for (uint32 i = 0; i < numJobs; ++i) {
         QueueJob(jobs[i]);
@@ -61,7 +87,9 @@ void JoltJobSystemAdapter::QueueJobs(JobHandle** jobs, uint32 numJobs) {
 // ── Barrier 实现 ──
 
 JoltJobSystemAdapter::BarrierImpl::BarrierImpl(
-    JoltJobSystemAdapter* adapter, uint32 numSubJobs)
+    JoltJobSystemAdapter* adapter,
+    const char*,
+    uint32 numSubJobs)
     : JPH::JobSystem::Barrier()
     , m_Adapter(adapter)
 {
@@ -71,10 +99,17 @@ JoltJobSystemAdapter::BarrierImpl::BarrierImpl(
 JoltJobSystemAdapter::BarrierImpl::~BarrierImpl() = default;
 
 void JoltJobSystemAdapter::BarrierImpl::AddJob(const JobHandle* job) {
+    JobSlot* slot = reinterpret_cast<JobSlot*>(job);
+
     // 依赖计数 -1，如果归零则触发执行
-    job->AddRef();
-    job->Execute();
-    job->Release();
+    uint32 prev = slot->unfinishedDependencies.fetch_sub(1, std::memory_order_acq_rel);
+    if (prev == 1) {
+        // 所有依赖已满足
+        m_Adapter->QueueJob(const_cast<JobHandle*>(job));
+    }
+
+    // 记录到 tracker 中等待
+    m_JobTracker.push_back(slot->engineJobHandle);
 }
 
 void JoltJobSystemAdapter::BarrierImpl::Wait() {
@@ -88,7 +123,7 @@ void JoltJobSystemAdapter::BarrierImpl::Wait() {
 }
 
 JPH::JobSystem::Barrier* JoltJobSystemAdapter::CreateBarrier() {
-    return new BarrierImpl(this, 64);
+    return new BarrierImpl(this, "PhysicsBarrier", 64);
 }
 
 void JoltJobSystemAdapter::ReleaseBarrier(Barrier* barrier) {
