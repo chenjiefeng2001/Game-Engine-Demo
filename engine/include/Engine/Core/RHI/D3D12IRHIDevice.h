@@ -14,6 +14,7 @@
 
 #include "Engine/Core/RHI/IRHIDevice.h"
 #include "Engine/Core/RHI/IRHICommandList.h"
+#include "Engine/Core/RHI/ShaderReflection.h"
 #include <memory>
 
 namespace Engine {
@@ -87,9 +88,12 @@ namespace RHI {
         ~D3D12Buffer() override;
         uint64_t GetSize() const noexcept override;
         const GPUAllocation& GetAllocation() const noexcept override;
+        void* GetNativeResource() const;
+        uint64_t GetGPUAddress() const;
     private:
         struct Impl;
         std::unique_ptr<Impl> m_Impl;
+        friend class D3D12Device;
     };
 
     class D3D12Texture final : public IRHITexture {
