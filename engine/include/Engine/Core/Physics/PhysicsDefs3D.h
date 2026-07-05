@@ -113,6 +113,10 @@ namespace Engine {
         float32 linearDamping  = 0.01f;
         float32 angularDamping = 0.01f;
 
+        // 初始速度（创建时直接赋予，避免额外调用 SetLinearVelocity）
+        Vec3   initialLinearVelocity  = {0, 0, 0};
+        Vec3   initialAngularVelocity = {0, 0, 0};
+
         // 运动限制
         bool   allowSleep      = true;
         bool   isBullet        = false;   // CCD（连续碰撞检测）
