@@ -30,6 +30,7 @@
 
 #include "Engine/Core/StringID.h"
 #include "Engine/Core/RHI/PSODesc.h"
+#include "Engine/Core/RHI/ShaderReflection.h"
 #include <string>
 #include <vector>
 #include <unordered_map>
@@ -140,6 +141,28 @@ namespace Engine {
                 std::mutex m_Mutex;
             };
 
+            // ── 着色器反射 ──
+
+            /**
+             * @brief 设置着色器反射数据
+             * @param reflection 从 SPIR-V 提取的反射数据
+             */
+            void SetReflection(const RHI::ShaderReflectionData& reflection) {
+                m_Reflection = reflection;
+            }
+
+            /**
+             * @brief 获取着色器反射数据
+             * @return 指向反射数据的指针，若未设置返回 nullptr
+             *
+             * MaterialInstance::BuildParameterLayout() 使用此方法
+             * 获取 UBO/Sampler 布局信息，自动构建参数映射表。
+             */
+            const RHI::ShaderReflectionData* GetReflection() const {
+                if (m_Reflection.resources.empty()) return nullptr;
+                return &m_Reflection;
+            }
+
             // ── 访问器 ──
             StringID GetID() const noexcept { return m_ID; }
             const std::string& GetName() const noexcept { return m_Name; }
@@ -151,6 +174,9 @@ namespace Engine {
             std::string m_Domain;       ///< "Surface" / "Decal" / "PostProcess"
             std::string m_VertexSrc;    ///< 顶点着色器源码模板
             std::string m_FragmentSrc;  ///< 片段着色器源码模板
+
+            // ── 着色器反射数据（供 MaterialInstance 使用） ──
+            RHI::ShaderReflectionData m_Reflection;
 
             // ── 变体缓存 ──
             std::mutex m_VariantMutex;
