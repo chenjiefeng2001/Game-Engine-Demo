@@ -651,31 +651,25 @@ IRHIPipelineState* VulkanDevice::CreateComputePSO(const ComputePSODesc& desc) {
 std::unique_ptr<IRHICommandList> VulkanDevice::CreateCommandList(CommandListType type) {
     auto cmdList = std::make_unique<VulkanCommandList>();
     
-    // 从设备引用获取当前帧的命令缓冲
+    // 从当前帧资源分配命令缓冲
     auto& frame = m_Impl->frameContext;
     VulkanFrameResource& fr = frame.frames[frame.currentFrame];
     
-    // Manually set the command buffer and device reference
-    // This requires VulkanCommandList to expose internal setup
-    // For now, use the frame's command buffer
+    cmdList->SetDevice(this);
     if (fr.commandBuffer != VK_NULL_HANDLE) {
-        // Direct memory setup: in production, use a proper setter
-        struct CommandListRaw {
-            struct ImplRaw {
-                VkCommandBuffer cmdBuffer;
-                void* device;
-                CommandListType type;
-                // ... other fields initialized to zero
-            };
-            std::unique_ptr<ImplRaw> m_Impl;
-        };
-        // Cast to access internal - this is safe since layout is identical
-        auto* raw = reinterpret_cast<CommandListRaw::ImplRaw*>(cmdList.get());
-        // This approach needs a proper setter. For now, cmdList uses thread pool.
+        cmdList->SetVkCommandBuffer(fr.commandBuffer);
+    } else {
+        // 备用：从线程池分配
+        VkCommandPool pool = GetOrCreateThreadCommandPool();
+        VkCommandBufferAllocateInfo allocInfo{VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO};
+        allocInfo.commandPool = pool;
+        allocInfo.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
+        allocInfo.commandBufferCount = 1;
+        VkCommandBuffer altCmdBuf = VK_NULL_HANDLE;
+        vkAllocateCommandBuffers(m_Impl->device, &allocInfo, &altCmdBuf);
+        cmdList->SetVkCommandBuffer(altCmdBuf);
     }
     
-    (void)type;
-    (void)fr;
     return cmdList;
 }
 
