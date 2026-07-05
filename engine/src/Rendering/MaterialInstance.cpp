@@ -91,7 +91,7 @@ namespace Rendering {
         m_Textures.clear();
 
         // 尝试从 Master Material 获取着色器反射数据
-        const ShaderReflectionData* reflection = nullptr;
+        const RHI::ShaderReflectionData* reflection = nullptr;
         if (m_Master) {
             reflection = m_Master->GetReflection();
         }
@@ -101,7 +101,7 @@ namespace Rendering {
             // 计算总 UBO 大小（所有 UniformBuffer 的 size 之和）
             uint32_t totalUBOSize = 0;
             for (const auto& res : reflection->resources) {
-                if (res.type == ShaderResourceType::UniformBuffer) {
+                if (res.type == RHI::ShaderResourceType::UniformBuffer) {
                     totalUBOSize += res.size;
                 }
             }
@@ -112,7 +112,7 @@ namespace Rendering {
             // 填充 UniformBuffer 参数
             uint32_t uboOffset = 0;
             for (const auto& res : reflection->resources) {
-                if (res.type == ShaderResourceType::UniformBuffer) {
+                if (res.type == RHI::ShaderResourceType::UniformBuffer) {
                     MaterialParamMeta meta;
                     meta.name   = StringID::Runtime(res.name.c_str());
                     meta.type   = MaterialParamType::Float4; // 通用类型
@@ -125,7 +125,7 @@ namespace Rendering {
 
             // 填充 SampledImage 纹理槽
             for (const auto& res : reflection->resources) {
-                if (res.type == ShaderResourceType::SampledImage) {
+                if (res.type == RHI::ShaderResourceType::SampledImage) {
                     MaterialParamMeta meta;
                     meta.name    = StringID::Runtime(res.name.c_str());
                     meta.type    = MaterialParamType::Texture;
@@ -135,8 +135,8 @@ namespace Rendering {
                 }
             }
 
-            s_Log.Info("Built parameter layout from shader reflection ({} resources)",
-                       reflection->resources.size());
+            s_Log.Info("Built parameter layout from shader reflection ({})",
+                       static_cast<uint64_t>(reflection->resources.size()));
         } else {
             // ── 回退路径：硬编码 PBR 参数布局 ──
             m_ParameterData.resize(k_PBRTotalSize, 0);
