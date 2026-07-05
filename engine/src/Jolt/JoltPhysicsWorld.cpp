@@ -388,22 +388,43 @@ std::vector<RayCastResult3D> JoltPhysicsWorld::RayCast(const Vec3& from, const V
 
 std::vector<IPhysicsBody3D*> JoltPhysicsWorld::QueryAABB(const Vec3& center, const Vec3& halfSize) {
     std::vector<IPhysicsBody3D*> results;
+    
     JPH::AABox box(
         JPH::Vec3(center.x - halfSize.x, center.y - halfSize.y, center.z - halfSize.z),
         JPH::Vec3(center.x + halfSize.x, center.y + halfSize.y, center.z + halfSize.z));
-    JPH::AllHitCollisionCollector<JPH::TransformedShapeCollector> collector;
-    m_PhysicsSystem.GetNarrowPhaseQuery().CollectTransformedShapes(box, collector);
-    // 简化：限于时间，只返回 nullptr
-    (void)box;
-    (void)collector;
+    
+    // 使用 BroadPhaseQuery 进行 AABB 碰撞检测
+    JPH::AllHitCollisionCollector<JPH::CollideShapeBodyCollector> collector;
+    m_PhysicsSystem.GetBroadPhaseQuery().CollideAABox(box, {}, {}, collector);
+    
+    for (const JPH::BroadPhaseCastResult& hit : collector.mHits) {
+        uint64 bodyID = BodyIDToU64(hit.mBodyID);
+        IPhysicsBody3D* body = GetBodyByID(bodyID);
+        if (body) {
+            results.push_back(body);
+        }
+    }
     return results;
 }
 
 std::vector<IPhysicsBody3D*> JoltPhysicsWorld::QuerySphere(const Vec3& center, float32 radius) {
     std::vector<IPhysicsBody3D*> results;
-    // 简化
-    (void)center;
-    (void)radius;
+    
+    JPH::SphereShape sphere(radius);
+    JPH::Mat44 centerTransform = JPH::Mat44::sTranslation(JPH::Vec3(center.x, center.y, center.z));
+    
+    JPH::AllHitCollisionCollector<JPH::CollideShapeBodyCollector> collector;
+    m_PhysicsSystem.GetNarrowPhaseQuery().CollideShape(
+        &sphere, JPH::Vec3::sReplicate(1.0f), centerTransform,
+        {}, {}, collector);
+    
+    for (const JPH::BroadPhaseCastResult& hit : collector.mHits) {
+        uint64 bodyID = BodyIDToU64(hit.mBodyID);
+        IPhysicsBody3D* body = GetBodyByID(bodyID);
+        if (body) {
+            results.push_back(body);
+        }
+    }
     return results;
 }
 

@@ -19,6 +19,7 @@
 #include "Engine/Core/Physics/IPhysicsWorld3D.h"
 #include "Engine/Core/Physics/PhysicsDefs.h"
 #include "Engine/Core/Physics/PhysicsDefs3D.h"
+#include "Engine/Core/Physics/FixedTimestepAccumulator.h"
 #include <memory>
 
 namespace Engine {
@@ -99,9 +100,14 @@ namespace Engine {
         const char* GetEngineName2D() const;
         const char* GetEngineName3D() const;
 
+        /** 获取渲染插值因子（0~1，供 Renderer 使用） */
+        float32 GetRenderAlpha() const { return m_RenderAlpha; }
+
     private:
         std::shared_ptr<IPhysicsWorld>   m_World2D;
         std::shared_ptr<IPhysicsWorld3D> m_World3D;
+        FixedTimestepAccumulator         m_FixedAccumulator{1.0f / 60.0f};
+        float32                          m_RenderAlpha{0.0f};
     };
 
 } // namespace Engine
