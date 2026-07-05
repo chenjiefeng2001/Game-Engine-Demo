@@ -25,7 +25,7 @@
 #include "Engine/Core/Renderer/PerspectiveCamera.h"
 #include "Engine/Core/RHI/IPrimitiveBatch.h"
 #include "Engine/Core/RHI/MeshRenderer.h"
-#include "Engine/Core/RHI/ShadowMapper.h"
+#include "Engine/Rendering/ShadowMapper.h"
 #include "Engine/Core/Scene/Scene.h"
 #include "Engine/MemoryPanel.h"
 #include "Engine/PerformanceWindow.h"
@@ -72,7 +72,7 @@ namespace Engine {
         TextureManager m_TextureManager;
 
         std::unique_ptr<MeshRenderer> m_MeshRenderer;
-        std::unique_ptr<ShadowMapper> m_ShadowMapper;
+        std::unique_ptr<Rendering::ShadowMapper> m_ShadowMapper;
         std::shared_ptr<Shader> m_3DShader;
         std::shared_ptr<Shader> m_DepthShader;
 
