@@ -94,7 +94,7 @@ void Chunk::DestructRow(uint32 row) {
 void* Chunk::GetComponentArrayPtr(ComponentTypeID typeID) const {
     for (uint32 i = 0; i < m_ComponentCount; ++i) {
         if (m_Metas[i].typeID == typeID) {
-            return m_Data + m_OffsetTable[i];
+            return const_cast<uint8*>(m_Data) + m_OffsetTable[i];
         }
     }
     return nullptr;

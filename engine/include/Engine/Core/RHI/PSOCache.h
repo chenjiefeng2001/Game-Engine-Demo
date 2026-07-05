@@ -99,7 +99,7 @@ namespace RHI {
         // Compute PSO 缓存：hash → PSO
         std::unordered_map<uint64_t, IRHIPipelineState*> m_ComputeCache;
 
-        uint64_t m_Hits   = 0;
+        mutable uint64_t m_Hits   = 0;
         uint64_t m_Misses = 0;
     };
 

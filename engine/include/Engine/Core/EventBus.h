@@ -36,6 +36,7 @@
  */
 
 #include "Engine/Types.h"
+#include "Engine/Core/ECS/ECS.fwd.h"
 #include <functional>
 #include <unordered_map>
 #include <memory>

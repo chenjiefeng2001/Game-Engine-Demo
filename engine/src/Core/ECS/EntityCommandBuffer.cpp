@@ -12,7 +12,7 @@ EntityHandle EntityCommandBuffer::CreateEntity() {
     cmd.entity = EntityHandle::kNull;
     cmd.componentTypeID = 0;
     cmd.dataSize = 0;
-    m_Commands.push_back(cmd);
+    m_Commands.push_back(std::move(cmd));
     return cmd.entity;  // Playback 后会用实际 ID 替换
 }
 
@@ -22,7 +22,7 @@ void EntityCommandBuffer::DestroyEntity(EntityHandle entity) {
     cmd.entity = entity;
     cmd.componentTypeID = 0;
     cmd.dataSize = 0;
-    m_Commands.push_back(cmd);
+    m_Commands.push_back(std::move(cmd));
 }
 
 // ── 批量执行 ──
