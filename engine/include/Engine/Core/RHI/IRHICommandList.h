@@ -132,6 +132,16 @@ namespace RHI {
         virtual void ResourceBarrier(uint32 count,
                                      const ResourceBarrierDesc* barriers) = 0;
 
+        /**
+         * @brief 派发 Compute Shader
+         */
+        virtual void Dispatch(uint32_t groupX = 1, uint32_t groupY = 1, uint32_t groupZ = 1) = 0;
+
+        /**
+         * @brief 绑定 UAV / SSBO 到 Compute Shader
+         */
+        virtual void SetUnorderedAccess(uint32 slot, IRHIBuffer* buffer) = 0;
+
         // ── 描述符绑定 ──
 
         /**
@@ -153,26 +163,6 @@ namespace RHI {
          */
         virtual void SetShaderResource(uint32 set, uint32 binding,
                                        IRHITexture* texture) = 0;
-
-        // ── Compute 管线 ──
-
-        /**
-         * @brief 派发 Compute Shader
-         * @param groupX 线程组 X 维度
-         * @param groupY 线程组 Y 维度
-         * @param groupZ 线程组 Z 维度
-         */
-        virtual void Dispatch(uint32_t groupX = 1,
-                              uint32_t groupY = 1,
-                              uint32_t groupZ = 1) = 0;
-
-        /**
-         * @brief 绑定 UAV / SSBO 到 Compute Shader
-         * @param slot    绑定位（对应 layout(binding = N)）
-         * @param buffer  GPU buffer（Vulkan: SSBO, D3D12: UAV, OpenGL: SSBO）
-         */
-        virtual void SetUnorderedAccess(uint32 slot,
-                                        IRHIBuffer* buffer) = 0;
 
         // ── 查询 ──
 
