@@ -27,6 +27,9 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 # Visual Studio / MSVC 兼容性设置
 # ============================================================================
 if(MSVC)
+    # 统一 MSVC 运行时库为 DLL 模式（/MDd /MD），避免第三方库（如 Jolt）默认为静态的冲突
+    set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreadedDLL")
+    
     # 使用 UTF-8 源码编码
     add_compile_options(/utf-8)
     # 多处理器编译
