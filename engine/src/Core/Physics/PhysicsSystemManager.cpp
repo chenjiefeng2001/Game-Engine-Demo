@@ -79,6 +79,14 @@ namespace Engine {
         void SetDebugDraw(IPhysicsDebugDraw3D*) override {}
         void DebugDraw() override {}
 
+        // ── 刚体生命周期 ──
+        IPhysicsBody3D* GetBodyByID(uint64) override {
+            Log::Warn("[NullPhysics3D] GetBodyByID called — no 3D physics engine loaded");
+            return nullptr;
+        }
+        void RemoveBody(uint64) override {}
+        bool IsBodyValid(uint64) override { return false; }
+
         Stats GetStats() const override { return {}; }
         void* GetNativeWorld() override { return nullptr; }
 

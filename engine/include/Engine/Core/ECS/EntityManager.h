@@ -19,6 +19,7 @@
 #include <vector>
 #include <unordered_map>
 #include <memory>
+#include <functional>
 
 namespace Engine {
 
@@ -77,6 +78,24 @@ public:
     class QueryBuilder Query();
 
     // ═══════════════════════════════════════════════════
+    // 组件生命周期回调（用于物理层清理 Jolt Body 等）
+    // ═══════════════════════════════════════════════════
+
+    /** 组件被移除时的回调函数类型 */
+    using ComponentRemovedCallback = std::function<void(EntityHandle, ComponentTypeID)>;
+
+    /**
+     * @brief 设置组件移除回调
+     * @param cb 回调函数，参数为 (EntityHandle, ComponentTypeID)
+     *
+     * 当实体的组件被移除时（通过 RemoveComponent/RemoveComponentRaw/DestroyEntity），
+     * 此回调会被触发。PhysicsSyncSystem 使用此回调清理 Jolt Body。
+     */
+    void SetComponentRemovedCallback(ComponentRemovedCallback cb) {
+        m_OnComponentRemoved = std::move(cb);
+    }
+
+    // ═══════════════════════════════════════════════════
     // 内部工具（供 EntityCommandBuffer 使用）
     // ═══════════════════════════════════════════════════
 
@@ -121,6 +140,9 @@ private:
 
     // 注册计数（用于 Query 缓存刷新）
     uint32 m_ArchetypeVersion = 0;
+
+    // 组件移除回调
+    ComponentRemovedCallback m_OnComponentRemoved;
 
     friend class QueryBuilder;
 };

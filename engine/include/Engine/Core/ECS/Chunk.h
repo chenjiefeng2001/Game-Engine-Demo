@@ -107,7 +107,8 @@ private:
     void DestructRow(uint32 row);
 
     // ── 数据 ──
-    alignas(16) uint8 m_Data[kChunkSize];   // 16 字节对齐，支持 SIMD
+    // 64 字节对齐（Cache Line + Jolt SIMD 要求）
+    alignas(64) uint8 m_Data[kChunkSize];
 
     uint32 m_EntityCount   = 0;
     uint32 m_Capacity      = 0;
