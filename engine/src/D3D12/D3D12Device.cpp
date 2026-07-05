@@ -15,8 +15,8 @@
 #include "Engine/Core/Log.h"
 
 #define D3D12MA_D3D12_HEADERS_ALONE 1
-#include <d3d12ma/D3D12MemAlloc.h>
 #include <d3d12.h>
+#include <D3D12MemAlloc.h>
 #include <dxgi1_4.h>
 #include <dxgiformat.h>
 #include <wrl.h>
@@ -89,9 +89,17 @@ struct D3D12Device::Impl {
 };
 
 // ── D3D12Queue ──
-struct D3D12Queue::Impl { ComPtr<ID3D12CommandQueue> queue; QueueType type{QueueType::Graphics}; };
+struct D3D12Queue::Impl {
+    ComPtr<ID3D12CommandQueue> queue;
+    ComPtr<ID3D12Fence> fence;
+    uint64_t fenceValue{0};
+    HANDLE fenceEvent{nullptr};
+    QueueType type{QueueType::Graphics};
+};
 D3D12Queue::D3D12Queue() : m_Impl(std::make_unique<Impl>()) {}
-D3D12Queue::~D3D12Queue() = default;
+D3D12Queue::~D3D12Queue() {
+    if (m_Impl->fenceEvent) CloseHandle(m_Impl->fenceEvent);
+}
 void D3D12Queue::ExecuteCommandLists(uint32 count, IRHICommandList** lists) {
     std::vector<ID3D12CommandList*> cmdLists;
     cmdLists.reserve(count);
@@ -99,12 +107,23 @@ void D3D12Queue::ExecuteCommandLists(uint32 count, IRHICommandList** lists) {
         cmdLists.push_back(static_cast<D3D12CommandList*>(lists[i])->GetNativeCommandList());
     m_Impl->queue->ExecuteCommandLists((UINT)cmdLists.size(), cmdLists.data());
 }
-void D3D12Queue::WaitIdle() { m_Impl->queue->Signal(m_Impl->queue.Get(), 0); }
+void D3D12Queue::WaitIdle() {
+    if (!m_Impl->fence) return;
+    if (!m_Impl->fenceEvent) {
+        m_Impl->fenceEvent = CreateEvent(nullptr, FALSE, FALSE, nullptr);
+    }
+    uint64_t val = ++m_Impl->fenceValue;
+    m_Impl->queue->Signal(m_Impl->fence.Get(), val);
+    if (m_Impl->fence->GetCompletedValue() < val) {
+        m_Impl->fence->SetEventOnCompletion(val, m_Impl->fenceEvent);
+        WaitForSingleObject(m_Impl->fenceEvent, INFINITE);
+    }
+}
 QueueType D3D12Queue::GetType() const noexcept { return m_Impl->type; }
 
 // ── D3D12CommandList ──
 struct D3D12CommandList::Impl {
-    ComPtr<ID3D12GraphicsCommandList6> cmdList;
+    ComPtr<ID3D12GraphicsCommandList> cmdList;
     ComPtr<ID3D12CommandAllocator> allocator;
     D3D12Device*     device{nullptr};
     ComPtr<ID3D12DescriptorHeap> visibleHeap;
@@ -162,7 +181,10 @@ void D3D12CommandList::SetPrimitiveTopology(PrimitiveTopology topo) {
 }
 void D3D12CommandList::DrawIndexed(uint32 idxCount, uint32 startIdx, uint32 baseVtx) { m_Impl->cmdList->DrawIndexedInstanced(idxCount, 1, startIdx, baseVtx, 0); }
 void D3D12CommandList::Draw(uint32 vtxCount, uint32 startVtx) { m_Impl->cmdList->DrawInstanced(vtxCount, 1, startVtx, 0); }
-void D3D12CommandList::DrawIndexedIndirect(IRHIBuffer* buf, uint32 off) { auto* d = static_cast<D3D12Buffer*>(buf); if (d) m_Impl->cmdList->ExecuteIndirect(nullptr, 1, d->GetResource(), off, nullptr, 0); }
+void D3D12CommandList::DrawIndexedIndirect(IRHIBuffer* buf, uint32 off) {
+    auto* d = static_cast<D3D12Buffer*>(buf);
+    if (d) m_Impl->cmdList->ExecuteIndirect(nullptr, 1, d->GetD3D12Resource(), off, nullptr, 0);
+}
 void D3D12CommandList::SetViewport(const Viewport& vp) { D3D12_VIEWPORT v = { vp.x, vp.y, vp.width, vp.height, vp.minDepth, vp.maxDepth }; m_Impl->cmdList->RSSetViewports(1, &v); }
 void D3D12CommandList::SetScissorRect(const Rect& rect) { D3D12_RECT r = { (LONG)rect.x, (LONG)rect.y, (LONG)(rect.x + rect.width), (LONG)(rect.y + rect.height) }; m_Impl->cmdList->RSSetScissorRects(1, &r); }
 
@@ -187,8 +209,8 @@ void D3D12CommandList::ResourceBarrier(uint32 count, const ResourceBarrierDesc* 
         barrier.Transition.StateBefore = ResourceStateToD3D12(b[i].stateBefore);
         barrier.Transition.StateAfter = ResourceStateToD3D12(b[i].stateAfter);
         barrier.Transition.Subresource = D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES;
-        if (b[i].texture) barrier.Transition.pResource = (ID3D12Resource*)((D3D12Texture*)b[i].texture)->GetNativeResource();
-        else if (b[i].buffer) barrier.Transition.pResource = (ID3D12Resource*)((D3D12Buffer*)b[i].buffer)->GetNativeResource();
+        if (b[i].texture) barrier.Transition.pResource = static_cast<ID3D12Resource*>(((D3D12Texture*)b[i].texture)->GetNativeResource());
+        else if (b[i].buffer) barrier.Transition.pResource = static_cast<ID3D12Resource*>(((D3D12Buffer*)b[i].buffer)->GetNativeResource());
         if (barrier.Transition.pResource) m_Impl->cmdList->ResourceBarrier(1, &barrier);
     }
 }
@@ -214,11 +236,6 @@ void D3D12CommandList::SetShaderResource(uint32 set, uint32 binding, IRHITexture
     srvDesc.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
     srvDesc.Texture2D.MipLevels = -1;   // 全部 mip
 
-    // 需要设备指针，通过 Impl::device 获取
-    // 注意：此处需确保 device 指针在 CreateCommandList 时已设置
-    // 当前简化：SRV 创建需要 device，通过可见堆所在设备进行
-    // 实际存储 SRV 到可见堆的 CPU 句柄
-
     // 通过 SetGraphicsRootDescriptorTable 绑定到 Space 1 (Root Param 1)
     D3D12_GPU_DESCRIPTOR_HANDLE gpuHandle = m_Impl->visibleHeap->GetGPUDescriptorHandleForHeapStart();
     gpuHandle.ptr += slot * m_Impl->descriptorSize;
@@ -228,10 +245,10 @@ void D3D12CommandList::SetShaderResource(uint32 set, uint32 binding, IRHITexture
 void D3D12CommandList::Dispatch(uint32_t gx, uint32_t gy, uint32_t gz) { m_Impl->cmdList->Dispatch(gx, gy, gz); }
 void D3D12CommandList::SetUnorderedAccess(uint32 slot, IRHIBuffer* buffer) {
     auto* d = static_cast<D3D12Buffer*>(buffer);
-    if (d && d->GetResource()) m_Impl->cmdList->SetComputeRootUnorderedAccessView(slot, d->GetGPUAddress());
+    if (d && d->GetD3D12Resource()) m_Impl->cmdList->SetComputeRootUnorderedAccessView(slot, d->GetGPUAddress());
 }
 CommandListType D3D12CommandList::GetType() const noexcept { return CommandListType::Direct; }
-ID3D12GraphicsCommandList6* D3D12CommandList::GetNativeCommandList() { return m_Impl->cmdList.Get(); }
+ID3D12GraphicsCommandList* D3D12CommandList::GetNativeCommandList() { return m_Impl->cmdList.Get(); }
 
 // ── D3D12Buffer ──
 struct D3D12Buffer::Impl {
@@ -244,6 +261,7 @@ D3D12Buffer::~D3D12Buffer() = default;
 uint64_t D3D12Buffer::GetSize() const noexcept { return m_Impl->size; }
 const GPUAllocation& D3D12Buffer::GetAllocation() const noexcept { return m_Impl->gpuAlloc; }
 void* D3D12Buffer::GetNativeResource() const { return m_Impl->resource.Get(); }
+ID3D12Resource* D3D12Buffer::GetD3D12Resource() const { return m_Impl->resource.Get(); }
 uint64_t D3D12Buffer::GetGPUAddress() const { return m_Impl->gpuAddress; }
 
 // ── D3D12Texture ──
@@ -259,6 +277,12 @@ uint32_t D3D12Texture::GetHeight() const noexcept { return m_Impl->height; }
 Format D3D12Texture::GetFormat() const noexcept { return m_Impl->format; }
 void* D3D12Texture::GetNativeResource() const { return m_Impl->resource.Get(); }
 
+// ── D3D12SwapChain ──
+struct D3D12SwapChain::Impl { D3D12Device* device{nullptr}; uint32_t idx{0}; uint32_t count{3};
+    std::vector<std::shared_ptr<D3D12Texture>> backBufferTextures; };
+D3D12SwapChain::D3D12SwapChain() : m_Impl(std::make_unique<Impl>()) {}
+D3D12SwapChain::~D3D12SwapChain() = default;
+
 // ═══════════════════════════════════════════════════════════════════
 // D3D12Device
 // ═══════════════════════════════════════════════════════════════════
@@ -267,12 +291,37 @@ D3D12Device::D3D12Device() : m_Impl(std::make_unique<Impl>()) {}
 D3D12Device::~D3D12Device() { Shutdown(); }
 
 bool D3D12Device::Impl::CreateGlobalRootSignature() {
-    CD3DX12_ROOT_PARAMETER params[3];
-    CD3DX12_DESCRIPTOR_RANGE srvRange(D3D12_DESCRIPTOR_RANGE_TYPE_SRV, 8, 0, 1);
-    params[0].InitAsConstantBufferView(0, 0);
-    params[1].InitAsDescriptorTable(1, &srvRange);
-    params[2].InitAsConstants(16, 1, 0);
-    CD3DX12_ROOT_SIGNATURE_DESC desc(3, params, 0, nullptr, D3D12_ROOT_SIGNATURE_FLAG_ALLOW_INPUT_ASSEMBLER_INPUT_LAYOUT);
+    // 手动构造根签名描述 — 避免依赖 d3dx12.h
+    D3D12_ROOT_PARAMETER params[3] = {};
+    D3D12_DESCRIPTOR_RANGE srvRange = {};
+    srvRange.RangeType = D3D12_DESCRIPTOR_RANGE_TYPE_SRV;
+    srvRange.NumDescriptors = 8;
+    srvRange.BaseShaderRegister = 0;
+    srvRange.RegisterSpace = 1;
+    
+    params[0].ParameterType = D3D12_ROOT_PARAMETER_TYPE_CBV;
+    params[0].Descriptor.ShaderRegister = 0;
+    params[0].Descriptor.RegisterSpace = 0;
+    params[0].ShaderVisibility = D3D12_SHADER_VISIBILITY_ALL;
+    
+    params[1].ParameterType = D3D12_ROOT_PARAMETER_TYPE_DESCRIPTOR_TABLE;
+    params[1].DescriptorTable.NumDescriptorRanges = 1;
+    params[1].DescriptorTable.pDescriptorRanges = &srvRange;
+    params[1].ShaderVisibility = D3D12_SHADER_VISIBILITY_ALL;
+    
+    params[2].ParameterType = D3D12_ROOT_PARAMETER_TYPE_32BIT_CONSTANTS;
+    params[2].Constants.ShaderRegister = 1;
+    params[2].Constants.RegisterSpace = 0;
+    params[2].Constants.Num32BitValues = 16;
+    params[2].ShaderVisibility = D3D12_SHADER_VISIBILITY_ALL;
+
+    D3D12_ROOT_SIGNATURE_DESC desc = {};
+    desc.NumParameters = 3;
+    desc.pParameters = params;
+    desc.NumStaticSamplers = 0;
+    desc.pStaticSamplers = nullptr;
+    desc.Flags = D3D12_ROOT_SIGNATURE_FLAG_ALLOW_INPUT_ASSEMBLER_INPUT_LAYOUT;
+    
     ComPtr<ID3DBlob> serialized, error;
     D3D12SerializeRootSignature(&desc, D3D_ROOT_SIGNATURE_VERSION_1, &serialized, &error);
     if (!serialized) return false;
@@ -335,6 +384,10 @@ bool D3D12Device::Initialize(void* windowHandle, uint32_t width, uint32_t height
     }
 
     m_Impl->graphicsQueueWrapper = new D3D12Queue();
+    // 将设备的队列和 fence 共享给 wrapper
+    m_Impl->graphicsQueueWrapper->m_Impl->queue = m_Impl->graphicsQueue;
+    // 为 wrapper 创建独立的 fence
+    m_Impl->device->CreateFence(0, D3D12_FENCE_FLAG_NONE, IID_PPV_ARGS(&m_Impl->graphicsQueueWrapper->m_Impl->fence));
     m_Impl->deviceName = "D3D12 (Hardware)";
     m_Impl->initialized = true;
     return true;
@@ -352,11 +405,18 @@ void D3D12Device::Impl::LoadPipelineCache() {
 }
 void D3D12Device::Impl::SavePipelineCache() {
     if (!pipelineLibrary) return;
-    ComPtr<ID3D12Blob> blob;
-    if (SUCCEEDED(pipelineLibrary->Serialize(&blob)) && blob) {
+    // ID3D12PipelineLibrary::Serialize(v1): (void* blob, SIZE_T blobSize)
+    // 使用试探法：先尝试 1MB buffer，若不够就按需增长
+    constexpr SIZE_T kInitialSize = 1024 * 1024; // 1MB
+    std::vector<uint8_t> buffer(kInitialSize);
+    HRESULT hr = pipelineLibrary->Serialize(buffer.data(), buffer.size());
+    if (SUCCEEDED(hr)) {
         std::ofstream file(pipelineCachePath, std::ios::binary);
-        file.write((const char*)blob->GetBufferPointer(), blob->GetBufferSize());
+        if (file.is_open()) {
+            file.write(reinterpret_cast<const char*>(buffer.data()), buffer.size());
+        }
     }
+    // 如果 Serialize 失败（buffer 太小），忽略缓存 — 下次启动重新构建
 }
 
 IRHIPipelineState* D3D12Device::CreateGraphicsPSO(const GraphicsPSODesc& desc) {
@@ -367,16 +427,56 @@ IRHIPipelineState* D3D12Device::CreateGraphicsPSO(const GraphicsPSODesc& desc) {
     pso->m_Impl->isCompute = false;
     D3D12_GRAPHICS_PIPELINE_STATE_DESC pd = {};
     pd.pRootSignature = m_Impl->globalRootSignature.Get();
-    pd.RasterizerState = CD3DX12_RASTERIZER_DESC(D3D12_FILL_MODE_SOLID, D3D12_CULL_MODE_BACK, FALSE, 0, 0, 0, TRUE);
-    pd.BlendState = CD3DX12_BLEND_DESC(D3D12_DEFAULT);
-    pd.DepthStencilState = CD3DX12_DEPTH_STENCIL_DESC(D3D12_DEFAULT);
+    
+    // 手动初始化 rasterizer state
+    pd.RasterizerState.FillMode = D3D12_FILL_MODE_SOLID;
+    pd.RasterizerState.CullMode = D3D12_CULL_MODE_BACK;
+    pd.RasterizerState.FrontCounterClockwise = FALSE;
+    pd.RasterizerState.DepthBias = 0;
+    pd.RasterizerState.DepthBiasClamp = 0.0f;
+    pd.RasterizerState.SlopeScaledDepthBias = 0.0f;
+    pd.RasterizerState.DepthClipEnable = TRUE;
+    pd.RasterizerState.MultisampleEnable = FALSE;
+    pd.RasterizerState.AntialiasedLineEnable = FALSE;
+    pd.RasterizerState.ForcedSampleCount = 0;
+    pd.RasterizerState.ConservativeRaster = D3D12_CONSERVATIVE_RASTERIZATION_MODE_OFF;
+    
+    // 手动初始化 blend state (D3D12_DEFAULT)
+    pd.BlendState.AlphaToCoverageEnable = FALSE;
+    pd.BlendState.IndependentBlendEnable = FALSE;
+    for (UINT i = 0; i < 8; ++i) {
+        pd.BlendState.RenderTarget[i].BlendEnable = FALSE;
+        pd.BlendState.RenderTarget[i].LogicOpEnable = FALSE;
+        pd.BlendState.RenderTarget[i].SrcBlend = D3D12_BLEND_ONE;
+        pd.BlendState.RenderTarget[i].DestBlend = D3D12_BLEND_ZERO;
+        pd.BlendState.RenderTarget[i].BlendOp = D3D12_BLEND_OP_ADD;
+        pd.BlendState.RenderTarget[i].SrcBlendAlpha = D3D12_BLEND_ONE;
+        pd.BlendState.RenderTarget[i].DestBlendAlpha = D3D12_BLEND_ZERO;
+        pd.BlendState.RenderTarget[i].BlendOpAlpha = D3D12_BLEND_OP_ADD;
+        pd.BlendState.RenderTarget[i].LogicOp = D3D12_LOGIC_OP_NOOP;
+        pd.BlendState.RenderTarget[i].RenderTargetWriteMask = D3D12_COLOR_WRITE_ENABLE_ALL;
+    }
+    
+    // 手动初始化 depth stencil state (D3D12_DEFAULT)
+    pd.DepthStencilState.DepthEnable = TRUE;
+    pd.DepthStencilState.DepthWriteMask = D3D12_DEPTH_WRITE_MASK_ALL;
+    pd.DepthStencilState.DepthFunc = D3D12_COMPARISON_FUNC_LESS;
+    pd.DepthStencilState.StencilEnable = FALSE;
+    pd.DepthStencilState.StencilReadMask = D3D12_DEFAULT_STENCIL_READ_MASK;
+    pd.DepthStencilState.StencilWriteMask = D3D12_DEFAULT_STENCIL_WRITE_MASK;
+    pd.DepthStencilState.FrontFace.StencilFunc = D3D12_COMPARISON_FUNC_ALWAYS;
+    pd.DepthStencilState.FrontFace.StencilPassOp = D3D12_STENCIL_OP_KEEP;
+    pd.DepthStencilState.FrontFace.StencilFailOp = D3D12_STENCIL_OP_KEEP;
+    pd.DepthStencilState.FrontFace.StencilDepthFailOp = D3D12_STENCIL_OP_KEEP;
+    pd.DepthStencilState.BackFace.StencilFunc = D3D12_COMPARISON_FUNC_ALWAYS;
+    pd.DepthStencilState.BackFace.StencilPassOp = D3D12_STENCIL_OP_KEEP;
+    pd.DepthStencilState.BackFace.StencilFailOp = D3D12_STENCIL_OP_KEEP;
+    pd.DepthStencilState.BackFace.StencilDepthFailOp = D3D12_STENCIL_OP_KEEP;
     pd.SampleMask = UINT_MAX;
     pd.PrimitiveTopologyType = D3D12_PRIMITIVE_TOPOLOGY_TYPE_TRIANGLE;
     pd.SampleDesc.Count = 1;
-    if (desc.vertexShader.size > 0) pd.VS = { desc.vertexShader.data, desc.vertexShader.size };
-    if (desc.fragmentShader.size > 0) pd.PS = { desc.fragmentShader.data, desc.fragmentShader.size };
-    pd.NumRenderTargets = (UINT)desc.colorFormats.size();
-    for (size_t i = 0; i < desc.colorFormats.size() && i < 8; ++i) pd.RTVFormats[i] = FormatToDXGI(desc.colorFormats[i]);
+    pd.NumRenderTargets = desc.rtvCount;
+    for (uint32 i = 0; i < desc.rtvCount && i < 8; ++i) pd.RTVFormats[i] = FormatToDXGI(desc.rtvFormats[i]);
     if (pd.NumRenderTargets == 0) { pd.NumRenderTargets = 1; pd.RTVFormats[0] = DXGI_FORMAT_R8G8B8A8_UNORM; }
     if (m_Impl->pipelineLibrary) {
         std::wstring n = L"pso_" + std::to_wstring(hash);
@@ -404,13 +504,16 @@ void D3D12Device::Shutdown() {
     if (!m_Impl->initialized) return;
     WaitIdle();
     m_Impl->SavePipelineCache();
-    delete m_Impl->graphicsQueueWrapper;
+    if (m_Impl->graphicsQueueWrapper) {
+        delete m_Impl->graphicsQueueWrapper;
+        m_Impl->graphicsQueueWrapper = nullptr;
+    }
     if (m_Impl->vmaAllocator) m_Impl->vmaAllocator->Release();
     if (m_Impl->fenceEvent) CloseHandle(m_Impl->fenceEvent);
     m_Impl->initialized = false;
 }
 void D3D12Device::WaitIdle() {
-    m_Impl->graphicsQueue->Signal(m_Impl->fence.Get(), m_Impl->fenceValues[m_Impl->frameIndex]);
+    m_Impl->graphicsQueue->Signal(m_Impl->fence.Get(), ++m_Impl->fenceValues[m_Impl->frameIndex]);
     m_Impl->fence->SetEventOnCompletion(m_Impl->fenceValues[m_Impl->frameIndex], m_Impl->fenceEvent);
     WaitForSingleObject(m_Impl->fenceEvent, INFINITE);
 }
@@ -472,14 +575,15 @@ std::unique_ptr<IRHISwapChain> D3D12Device::CreateSwapChain(const SwapChainDesc&
     D3D12_DESCRIPTOR_HEAP_DESC rtv = {}; rtv.NumDescriptors = desc.bufferCount; rtv.Type = D3D12_DESCRIPTOR_HEAP_TYPE_RTV;
     m_Impl->device->CreateDescriptorHeap(&rtv, IID_PPV_ARGS(&m_Impl->rtvHeap));
     m_Impl->rtvDescriptorSize = m_Impl->device->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_RTV);
-    D3D12_CPU_DESCRIPTOR_HANDLE h = m_Impl->rtvHeap->GetCPUDescriptorHandleForHeapStart();
+    D3D12_CPU_DESCRIPTOR_HANDLE hRtv = m_Impl->rtvHeap->GetCPUDescriptorHandleForHeapStart();
     for (uint32_t i = 0; i < desc.bufferCount; ++i) {
         m_Impl->swapChain->GetBuffer(i, IID_PPV_ARGS(&m_Impl->backBuffers[i]));
-        m_Impl->device->CreateRenderTargetView(m_Impl->backBuffers[i].Get(), nullptr, h);
-        h.ptr += m_Impl->rtvDescriptorSize;
+        m_Impl->device->CreateRenderTargetView(m_Impl->backBuffers[i].Get(), nullptr, hRtv);
+        hRtv.ptr += m_Impl->rtvDescriptorSize;
     }
     auto sw = std::make_unique<D3D12SwapChain>();
-    sw->m_Impl->device = this; sw->m_Impl->count = desc.bufferCount;
+    sw->m_Impl->device = this;
+    sw->m_Impl->count = desc.bufferCount;
     for (uint32_t i = 0; i < desc.bufferCount; ++i) {
         auto tex = std::make_shared<D3D12Texture>();
         tex->m_Impl->resource = m_Impl->backBuffers[i]; tex->m_Impl->width = desc.width;
@@ -490,14 +594,11 @@ std::unique_ptr<IRHISwapChain> D3D12Device::CreateSwapChain(const SwapChainDesc&
 }
 const char* D3D12Device::GetDeviceName() const { return m_Impl->deviceName.c_str(); }
 
-// ── D3D12SwapChain ──
-struct D3D12SwapChain::Impl { D3D12Device* device{nullptr}; uint32_t idx{0}; uint32_t count{3};
-    std::vector<std::shared_ptr<D3D12Texture>> backBufferTextures; };
-D3D12SwapChain::D3D12SwapChain() : m_Impl(std::make_unique<Impl>()) {}
-D3D12SwapChain::~D3D12SwapChain() = default;
+// ── D3D12SwapChain methods ──
 void D3D12SwapChain::Present() {
     if (!m_Impl->device) return;
-    auto& i = *m_Impl->device->m_Impl;
+    auto& d3dDevice = *m_Impl->device;
+    auto& i = *d3dDevice.m_Impl;
     i.swapChain->Present(1, 0); i.frameIndex = i.swapChain->GetCurrentBackBufferIndex();
     m_Impl->idx = i.frameIndex;
     uint64_t v = ++i.fenceValues[i.frameIndex]; i.graphicsQueue->Signal(i.fence.Get(), v);
@@ -507,14 +608,16 @@ void D3D12SwapChain::Present() {
 }
 void D3D12SwapChain::Resize(uint32_t w, uint32_t h) {
     if (!m_Impl->device) return;
-    auto& i = *m_Impl->device->m_Impl;
+    auto& d3dDevice = *m_Impl->device;
+    auto& i = *d3dDevice.m_Impl;
     for (uint32_t j = 0; j < i.kFrameCount; ++j) i.backBuffers[j].Reset();
     i.swapChain->ResizeBuffers(i.kFrameCount, w, h, i.swapChainFormat, DXGI_SWAP_CHAIN_FLAG_FRAME_LATENCY_WAITABLE_OBJECT);
     m_Impl->count = i.kFrameCount;
-    D3D12_CPU_DESCRIPTOR_HANDLE h = i.rtvHeap->GetCPUDescriptorHandleForHeapStart();
+    D3D12_CPU_DESCRIPTOR_HANDLE rtvHandle = i.rtvHeap->GetCPUDescriptorHandleForHeapStart();
     for (uint32_t j = 0; j < i.kFrameCount; ++j) {
         i.swapChain->GetBuffer(j, IID_PPV_ARGS(&i.backBuffers[j]));
-        i.device->CreateRenderTargetView(i.backBuffers[j].Get(), nullptr, h); h.ptr += i.rtvDescriptorSize;
+        i.device->CreateRenderTargetView(i.backBuffers[j].Get(), nullptr, rtvHandle);
+        rtvHandle.ptr += i.rtvDescriptorSize;
     }
 }
 IRHITexture* D3D12SwapChain::GetBackBuffer(uint32_t idx) const {

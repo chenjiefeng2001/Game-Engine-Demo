@@ -15,6 +15,7 @@
 #include "Engine/Core/RHI/IRHIDevice.h"
 #include "Engine/Core/RHI/IRHICommandList.h"
 #include "Engine/Core/RHI/ShaderReflection.h"
+#include <d3d12.h>
 #include <memory>
 
 namespace Engine {
@@ -45,6 +46,7 @@ namespace RHI {
         IRHICommandQueue* GetQueue(QueueType type) override;
         std::unique_ptr<IRHISwapChain> CreateSwapChain(const SwapChainDesc& desc) override;
         void WaitIdle() override;
+        void Shutdown();
         const char* GetDeviceName() const override;
 
         bool Initialize(void* windowHandle, uint32_t width, uint32_t height);
@@ -52,6 +54,7 @@ namespace RHI {
     private:
         struct Impl;
         std::unique_ptr<Impl> m_Impl;
+        friend class D3D12SwapChain;
     };
 
     // ══════════════════════════════════════════════════════
@@ -80,11 +83,12 @@ namespace RHI {
         void Dispatch(uint32_t groupX, uint32_t groupY, uint32_t groupZ) override;
         void SetUnorderedAccess(uint32 slot, IRHIBuffer* buffer) override;
         CommandListType GetType() const noexcept override;
-        ID3D12GraphicsCommandList6* GetNativeCommandList();
+        ID3D12GraphicsCommandList* GetNativeCommandList();
 
     private:
         struct Impl;
         std::unique_ptr<Impl> m_Impl;
+        friend class D3D12Device;
     };
 
     class D3D12Buffer final : public IRHIBuffer {
@@ -94,6 +98,7 @@ namespace RHI {
         uint64_t GetSize() const noexcept override;
         const GPUAllocation& GetAllocation() const noexcept override;
         void* GetNativeResource() const;
+        ID3D12Resource* GetD3D12Resource() const;
         uint64_t GetGPUAddress() const;
     private:
         struct Impl;
@@ -115,7 +120,16 @@ namespace RHI {
         friend class D3D12Device;
     };
 
-    class D3D12PipelineState final : public IRHIPipelineState {};
+    class D3D12PipelineState final : public IRHIPipelineState {
+    public:
+        D3D12PipelineState();
+        ~D3D12PipelineState() override;
+    private:
+        struct Impl;
+        std::unique_ptr<Impl> m_Impl;
+        friend class D3D12Device;
+        friend class D3D12CommandList;
+    };
     class D3D12SwapChain final : public IRHISwapChain {
     public:
         D3D12SwapChain();
@@ -128,6 +142,7 @@ namespace RHI {
     private:
         struct Impl;
         std::unique_ptr<Impl> m_Impl;
+        friend class D3D12Device;
     };
 
     class D3D12Queue final : public IRHICommandQueue {
@@ -140,6 +155,7 @@ namespace RHI {
     private:
         struct Impl;
         std::unique_ptr<Impl> m_Impl;
+        friend class D3D12Device;
     };
 
 } // namespace RHI
