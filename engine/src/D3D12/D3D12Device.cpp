@@ -68,11 +68,14 @@ struct D3D12Device::Impl {
     static constexpr const char* kCacheFileName = "engine.psocache";
     ComPtr<ID3D12RootSignature> globalRootSignature;
 
-    // ── 全局 Shader-Visible 描述符堆（用于 SetShaderResource） ──
+    // ── SM 6.6 Bindless 描述符堆 ──
     static constexpr uint32_t kVisibleHeapSize = 65536;
-    ComPtr<ID3D12DescriptorHeap> cbvSrvUavHeap;       // GPU 可见堆
-    uint32_t                     visibleHeapOffset{0}; // 当前帧偏移（每帧重置）
+    ComPtr<ID3D12DescriptorHeap> cbvSrvUavHeap;       // Resource 可见堆
+    ComPtr<ID3D12DescriptorHeap> samplerHeap;         // Sampler 可见堆 (独立于资源堆)
+    uint32_t                     visibleHeapOffset{0};
     uint32_t                     cbvSrvUavDescriptorSize{0};
+    uint32_t                     samplerDescriptorSize{0};
+    bool                         supportsSM66{false}; // SM 6.6 能力标志
 
     D3D12Queue* graphicsQueueWrapper{nullptr};
     bool initialized{false};
