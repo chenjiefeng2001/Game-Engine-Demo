@@ -133,6 +133,23 @@ set(FT_ENABLE_ERROR_STRINGS ON CACHE BOOL "" FORCE)
 add_subdirectory(freetype)
 
 # =============================================================================
+# Jolt Physics — 3D 物理引擎
+# =============================================================================
+if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/JoltPhysics/Build/CMakeLists.txt")
+    # 使用 Jolt 自带的 Build/CMakeLists.txt（它内部使用 Jolt.cmake）
+    # 此方法不会覆盖全局 C++ 标准
+    add_subdirectory(JoltPhysics/Build JoltPhysicsBuild)
+    
+    # Jolt 默认关闭 RTTI，若引擎需要则开启
+    # target_compile_options(Jolt PRIVATE /GR-)
+    
+    set_target_properties(Jolt PROPERTIES FOLDER "ThirdParty")
+    message(STATUS "Jolt Physics: integrated via add_subdirectory")
+else()
+    message(WARNING "Jolt Physics not found — skipping")
+endif()
+
+# =============================================================================
 # IDE 目标组织 — 将所有第三方库归入文件夹，隐藏不需要的目标
 # =============================================================================
 
