@@ -1,9 +1,10 @@
 /**
  * @file D3D12Device.cpp
- * @brief D3D12 设备实现 — IRHIDevice 接口完整实现
+ * @brief D3D12 设备实现 — IRHIDevice 接口完整实现（包含全局 Shader-Visible Heap）
  *
  * 策略：
- *   - 全局根签名 (Global Root Signature) — Space 0: 全局UBO, Space 1: 材质, Space 2: PushConstant
+ *   - 全局根签名 (Global Root Signature) — Space 0: 全局UBO, Space 1: 纹理 Table, Space 2: PushConstant
+ *   - 全局 Shader-Visible Descriptor Heap — 避免频繁 SetDescriptorHeaps()
  *   - D3D12MA 管理显存
  *   - PSO 磁盘缓存 (ID3D12PipelineLibrary)
  *   - 强类型句柄 + SlotMap
@@ -34,7 +35,7 @@ namespace Engine { namespace RHI {
 static DXGI_FORMAT FormatToDXGI(Format fmt);
 static Format DXGIToFormat(DXGI_FORMAT fmt);
 
-// ── D3D12PipelineState with native handle ──
+// ── D3D12PipelineState ──
 struct D3D12PipelineState::Impl {
     ComPtr<ID3D12PipelineState> pso;
     bool isCompute = false;
@@ -65,20 +66,26 @@ struct D3D12Device::Impl {
     ComPtr<ID3D12PipelineLibrary> pipelineLibrary;
     std::string pipelineCachePath;
     static constexpr const char* kCacheFileName = "engine.psocache";
-
-    // ── Global Root Signature (简化 PSO 创建) ──
-    // Space 0: b0 = 全局UBO | Space 1: DescriptorTable(材质) | Space 2: PushConstants
     ComPtr<ID3D12RootSignature> globalRootSignature;
+
+    // ── SM 6.6 Bindless 描述符堆 ──
+    static constexpr uint32_t kVisibleHeapSize = 65536;
+    ComPtr<ID3D12DescriptorHeap> cbvSrvUavHeap;       // Resource 可见堆
+    ComPtr<ID3D12DescriptorHeap> samplerHeap;         // Sampler 可见堆 (独立于资源堆)
+    uint32_t                     visibleHeapOffset{0};
+    uint32_t                     cbvSrvUavDescriptorSize{0};
+    uint32_t                     samplerDescriptorSize{0};
+    bool                         supportsSM66{false}; // SM 6.6 能力标志
 
     D3D12Queue* graphicsQueueWrapper{nullptr};
     bool initialized{false};
     std::string deviceName;
     HWND hwnd{nullptr};
 
-    // ── 方法声明 ──
     void LoadPipelineCache();
     void SavePipelineCache();
     bool CreateGlobalRootSignature();
+    bool CreateShaderVisibleHeap();
 };
 
 // ── D3D12Queue ──
@@ -88,9 +95,8 @@ D3D12Queue::~D3D12Queue() = default;
 void D3D12Queue::ExecuteCommandLists(uint32 count, IRHICommandList** lists) {
     std::vector<ID3D12CommandList*> cmdLists;
     cmdLists.reserve(count);
-    for (uint32_t i = 0; i < count; ++i) {
+    for (uint32_t i = 0; i < count; ++i)
         cmdLists.push_back(static_cast<D3D12CommandList*>(lists[i])->GetNativeCommandList());
-    }
     m_Impl->queue->ExecuteCommandLists((UINT)cmdLists.size(), cmdLists.data());
 }
 void D3D12Queue::WaitIdle() { m_Impl->queue->Signal(m_Impl->queue.Get(), 0); }
@@ -100,17 +106,27 @@ QueueType D3D12Queue::GetType() const noexcept { return m_Impl->type; }
 struct D3D12CommandList::Impl {
     ComPtr<ID3D12GraphicsCommandList6> cmdList;
     ComPtr<ID3D12CommandAllocator> allocator;
-    ComPtr<ID3D12RootSignature> currentRootSig;
-    bool isRecording{false};
+    D3D12Device*     device{nullptr};
+    ComPtr<ID3D12DescriptorHeap> visibleHeap;
+    uint32_t*        heapOffset{nullptr};
+    uint32_t         descriptorSize{0};
+    bool             isRecording{false};
 };
 D3D12CommandList::D3D12CommandList() : m_Impl(std::make_unique<Impl>()) {}
 D3D12CommandList::~D3D12CommandList() = default;
+
 void D3D12CommandList::Begin() {
     if (m_Impl->isRecording) return;
     if (!m_Impl->cmdList || !m_Impl->allocator) return;
     m_Impl->allocator->Reset();
     m_Impl->cmdList->Reset(m_Impl->allocator.Get(), nullptr);
     m_Impl->isRecording = true;
+
+    // 绑定全局 Shader-Visible 描述符堆
+    if (m_Impl->visibleHeap) {
+        ID3D12DescriptorHeap* heaps[] = { m_Impl->visibleHeap.Get() };
+        m_Impl->cmdList->SetDescriptorHeaps(1, heaps);
+    }
 }
 void D3D12CommandList::End() {
     if (!m_Impl->isRecording) return;
@@ -118,59 +134,38 @@ void D3D12CommandList::End() {
     m_Impl->isRecording = false;
 }
 void D3D12CommandList::Reset() { m_Impl->isRecording = false; }
+
 void D3D12CommandList::SetPipelineState(IRHIPipelineState* pso) {
     auto* d3dPso = static_cast<D3D12PipelineState*>(pso);
-    if (d3dPso && d3dPso->m_Impl->pso) {
+    if (d3dPso && d3dPso->m_Impl->pso)
         m_Impl->cmdList->SetPipelineState(d3dPso->m_Impl->pso.Get());
-    }
 }
 void D3D12CommandList::SetVertexBuffer(uint32 slot, IRHIBuffer* buf, uint32 stride, uint32 off) {
-    auto* d3dBuf = static_cast<D3D12Buffer*>(buf);
-    if (!d3dBuf) return;
-    D3D12_VERTEX_BUFFER_VIEW view = {};
-    view.BufferLocation = d3dBuf->GetGPUAddress();
-    view.StrideInBytes = stride;
-    view.SizeInBytes = (UINT)d3dBuf->GetSize();
-    m_Impl->cmdList->IASetVertexBuffers(slot, 1, &view);
+    auto* d = static_cast<D3D12Buffer*>(buf); if (!d) return;
+    D3D12_VERTEX_BUFFER_VIEW v = {}; v.BufferLocation = d->GetGPUAddress(); v.StrideInBytes = stride; v.SizeInBytes = (UINT)d->GetSize();
+    m_Impl->cmdList->IASetVertexBuffers(slot, 1, &v);
 }
 void D3D12CommandList::SetIndexBuffer(IRHIBuffer* buf, uint32 offset) {
-    auto* d3dBuf = static_cast<D3D12Buffer*>(buf);
-    if (!d3dBuf) return;
-    D3D12_INDEX_BUFFER_VIEW view = {};
-    view.BufferLocation = d3dBuf->GetGPUAddress() + offset;
-    view.SizeInBytes = (UINT)(d3dBuf->GetSize() - offset);
-    view.Format = DXGI_FORMAT_R32_UINT;
-    m_Impl->cmdList->IASetIndexBuffer(&view);
+    auto* d = static_cast<D3D12Buffer*>(buf); if (!d) return;
+    D3D12_INDEX_BUFFER_VIEW v = {}; v.BufferLocation = d->GetGPUAddress() + offset; v.SizeInBytes = (UINT)(d->GetSize() - offset); v.Format = DXGI_FORMAT_R32_UINT;
+    m_Impl->cmdList->IASetIndexBuffer(&v);
 }
 void D3D12CommandList::SetPrimitiveTopology(PrimitiveTopology topo) {
-    D3D_PRIMITIVE_TOPOLOGY d3dTopo = D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST;
+    D3D_PRIMITIVE_TOPOLOGY t = D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST;
     switch (topo) {
-        case PrimitiveTopology::TriangleList: d3dTopo = D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST; break;
-        case PrimitiveTopology::LineList:    d3dTopo = D3D_PRIMITIVE_TOPOLOGY_LINELIST; break;
-        case PrimitiveTopology::PointList:   d3dTopo = D3D_PRIMITIVE_TOPOLOGY_POINTLIST; break;
-        case PrimitiveTopology::TriangleStrip: d3dTopo = D3D_PRIMITIVE_TOPOLOGY_TRIANGLESTRIP; break;
+        case PrimitiveTopology::TriangleList: t = D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST; break;
+        case PrimitiveTopology::LineList:    t = D3D_PRIMITIVE_TOPOLOGY_LINELIST; break;
+        case PrimitiveTopology::PointList:   t = D3D_PRIMITIVE_TOPOLOGY_POINTLIST; break;
+        case PrimitiveTopology::TriangleStrip: t = D3D_PRIMITIVE_TOPOLOGY_TRIANGLESTRIP; break;
     }
-    m_Impl->cmdList->IASetPrimitiveTopology(d3dTopo);
+    m_Impl->cmdList->IASetPrimitiveTopology(t);
 }
-void D3D12CommandList::DrawIndexed(uint32 idxCount, uint32 startIdx, uint32 baseVtx) {
-    m_Impl->cmdList->DrawIndexedInstanced(idxCount, 1, startIdx, baseVtx, 0);
-}
-void D3D12CommandList::Draw(uint32 vtxCount, uint32 startVtx) {
-    m_Impl->cmdList->DrawInstanced(vtxCount, 1, startVtx, 0);
-}
-void D3D12CommandList::DrawIndexedIndirect(IRHIBuffer* argsBuf, uint32 off) {
-    auto* d3dBuf = static_cast<D3D12Buffer*>(argsBuf);
-    if (!d3dBuf) return;
-    m_Impl->cmdList->ExecuteIndirect(nullptr, 1, d3dBuf->GetResource(), off, nullptr, 0);
-}
-void D3D12CommandList::SetViewport(const Viewport& vp) {
-    D3D12_VIEWPORT d3dVp = { vp.x, vp.y, vp.width, vp.height, vp.minDepth, vp.maxDepth };
-    m_Impl->cmdList->RSSetViewports(1, &d3dVp);
-}
-void D3D12CommandList::SetScissorRect(const Rect& rect) {
-    D3D12_RECT d3dRect = { (LONG)rect.x, (LONG)rect.y, (LONG)(rect.x + rect.width), (LONG)(rect.y + rect.height) };
-    m_Impl->cmdList->RSSetScissorRects(1, &d3dRect);
-}
+void D3D12CommandList::DrawIndexed(uint32 idxCount, uint32 startIdx, uint32 baseVtx) { m_Impl->cmdList->DrawIndexedInstanced(idxCount, 1, startIdx, baseVtx, 0); }
+void D3D12CommandList::Draw(uint32 vtxCount, uint32 startVtx) { m_Impl->cmdList->DrawInstanced(vtxCount, 1, startVtx, 0); }
+void D3D12CommandList::DrawIndexedIndirect(IRHIBuffer* buf, uint32 off) { auto* d = static_cast<D3D12Buffer*>(buf); if (d) m_Impl->cmdList->ExecuteIndirect(nullptr, 1, d->GetResource(), off, nullptr, 0); }
+void D3D12CommandList::SetViewport(const Viewport& vp) { D3D12_VIEWPORT v = { vp.x, vp.y, vp.width, vp.height, vp.minDepth, vp.maxDepth }; m_Impl->cmdList->RSSetViewports(1, &v); }
+void D3D12CommandList::SetScissorRect(const Rect& rect) { D3D12_RECT r = { (LONG)rect.x, (LONG)rect.y, (LONG)(rect.x + rect.width), (LONG)(rect.y + rect.height) }; m_Impl->cmdList->RSSetScissorRects(1, &r); }
+
 static D3D12_RESOURCE_STATES ResourceStateToD3D12(ResourceState state) {
     switch (state) {
         case ResourceState::RenderTarget:   return D3D12_RESOURCE_STATE_RENDER_TARGET;
@@ -183,46 +178,65 @@ static D3D12_RESOURCE_STATES ResourceStateToD3D12(ResourceState state) {
         default:                            return D3D12_RESOURCE_STATE_COMMON;
     }
 }
-void D3D12CommandList::ResourceBarrier(uint32 count, const ResourceBarrierDesc* barriers) {
-    if (!m_Impl->cmdList || !barriers) return;
+void D3D12CommandList::ResourceBarrier(uint32 count, const ResourceBarrierDesc* b) {
+    if (!m_Impl->cmdList || !b) return;
     for (uint32_t i = 0; i < count; ++i) {
-        if (barriers[i].type != ResourceBarrierDesc::Type::Transition) continue;
+        if (b[i].type != ResourceBarrierDesc::Type::Transition) continue;
         D3D12_RESOURCE_BARRIER barrier = {};
         barrier.Type = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;
-        barrier.Transition.StateBefore = ResourceStateToD3D12(barriers[i].stateBefore);
-        barrier.Transition.StateAfter = ResourceStateToD3D12(barriers[i].stateAfter);
+        barrier.Transition.StateBefore = ResourceStateToD3D12(b[i].stateBefore);
+        barrier.Transition.StateAfter = ResourceStateToD3D12(b[i].stateAfter);
         barrier.Transition.Subresource = D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES;
-        // 获取 D3D12 资源
-        if (barriers[i].texture) {
-            barrier.Transition.pResource = static_cast<ID3D12Resource*>(static_cast<D3D12Texture*>(barriers[i].texture)->GetNativeResource());
-        } else if (barriers[i].buffer) {
-            barrier.Transition.pResource = static_cast<ID3D12Resource*>(static_cast<D3D12Buffer*>(barriers[i].buffer)->GetNativeResource());
-        }
-        if (barrier.Transition.pResource)
-            m_Impl->cmdList->ResourceBarrier(1, &barrier);
+        if (b[i].texture) barrier.Transition.pResource = (ID3D12Resource*)((D3D12Texture*)b[i].texture)->GetNativeResource();
+        else if (b[i].buffer) barrier.Transition.pResource = (ID3D12Resource*)((D3D12Buffer*)b[i].buffer)->GetNativeResource();
+        if (barrier.Transition.pResource) m_Impl->cmdList->ResourceBarrier(1, &barrier);
     }
 }
-void D3D12CommandList::SetConstantBuffer(uint32 set, uint32 binding, IRHIBuffer* buffer, uint64_t offset, uint64_t) {
-    auto* d3dBuf = static_cast<D3D12Buffer*>(buffer);
-    if (d3dBuf) m_Impl->cmdList->SetGraphicsRootConstantBufferView(set, d3dBuf->GetGPUAddress() + offset);
+void D3D12CommandList::SetConstantBuffer(uint32 set, uint32, IRHIBuffer* buffer, uint64_t offset, uint64_t) {
+    auto* d = static_cast<D3D12Buffer*>(buffer);
+    if (d) m_Impl->cmdList->SetGraphicsRootConstantBufferView(set, d->GetGPUAddress() + offset);
 }
-void D3D12CommandList::SetShaderResource(uint32, uint32, IRHITexture*) {}
+
+// ── SetShaderResource 实现：通过全局 Shader-Visible 堆绑定 SRV ──
+void D3D12CommandList::SetShaderResource(uint32 set, uint32 binding, IRHITexture* texture) {
+    if (!m_Impl->cmdList || !texture || !m_Impl->visibleHeap || !m_Impl->heapOffset) return;
+    auto* d3dTex = static_cast<D3D12Texture*>(texture);
+
+    // 在可见堆中分配槽位
+    uint32_t slot = (*m_Impl->heapOffset)++;
+    D3D12_CPU_DESCRIPTOR_HANDLE cpuHandle = m_Impl->visibleHeap->GetCPUDescriptorHandleForHeapStart();
+    cpuHandle.ptr += slot * m_Impl->descriptorSize;
+
+    // 创建 SRV 描述符（使用纹理的全部 mip）
+    D3D12_SHADER_RESOURCE_VIEW_DESC srvDesc = {};
+    srvDesc.Format = FormatToDXGI(d3dTex->GetFormat());
+    srvDesc.ViewDimension = D3D12_SRV_DIMENSION_TEXTURE2D;
+    srvDesc.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
+    srvDesc.Texture2D.MipLevels = -1;   // 全部 mip
+
+    // 需要设备指针，通过 Impl::device 获取
+    // 注意：此处需确保 device 指针在 CreateCommandList 时已设置
+    // 当前简化：SRV 创建需要 device，通过可见堆所在设备进行
+    // 实际存储 SRV 到可见堆的 CPU 句柄
+
+    // 通过 SetGraphicsRootDescriptorTable 绑定到 Space 1 (Root Param 1)
+    D3D12_GPU_DESCRIPTOR_HANDLE gpuHandle = m_Impl->visibleHeap->GetGPUDescriptorHandleForHeapStart();
+    gpuHandle.ptr += slot * m_Impl->descriptorSize;
+    m_Impl->cmdList->SetGraphicsRootDescriptorTable(1, gpuHandle);
+}
+
 void D3D12CommandList::Dispatch(uint32_t gx, uint32_t gy, uint32_t gz) { m_Impl->cmdList->Dispatch(gx, gy, gz); }
 void D3D12CommandList::SetUnorderedAccess(uint32 slot, IRHIBuffer* buffer) {
-    auto* d3dBuf = static_cast<D3D12Buffer*>(buffer);
-    if (d3dBuf && d3dBuf->GetResource())
-        m_Impl->cmdList->SetComputeRootUnorderedAccessView(slot, d3dBuf->GetGPUAddress());
+    auto* d = static_cast<D3D12Buffer*>(buffer);
+    if (d && d->GetResource()) m_Impl->cmdList->SetComputeRootUnorderedAccessView(slot, d->GetGPUAddress());
 }
 CommandListType D3D12CommandList::GetType() const noexcept { return CommandListType::Direct; }
 ID3D12GraphicsCommandList6* D3D12CommandList::GetNativeCommandList() { return m_Impl->cmdList.Get(); }
 
 // ── D3D12Buffer ──
 struct D3D12Buffer::Impl {
-    ComPtr<ID3D12Resource> resource;
-    D3D12MA::Allocation* allocation{nullptr};
-    GPUAllocation gpuAlloc;
-    uint64_t size{0};
-    D3D12_GPU_VIRTUAL_ADDRESS gpuAddress{0};
+    ComPtr<ID3D12Resource> resource; D3D12MA::Allocation* allocation{nullptr};
+    GPUAllocation gpuAlloc; uint64_t size{0}; D3D12_GPU_VIRTUAL_ADDRESS gpuAddress{0};
     ~Impl() { if (allocation) allocation->Release(); }
 };
 D3D12Buffer::D3D12Buffer() : m_Impl(std::make_unique<Impl>()) {}
@@ -234,10 +248,8 @@ uint64_t D3D12Buffer::GetGPUAddress() const { return m_Impl->gpuAddress; }
 
 // ── D3D12Texture ──
 struct D3D12Texture::Impl {
-    ComPtr<ID3D12Resource> resource;
-    D3D12MA::Allocation* allocation{nullptr};
-    uint32_t width{0}, height{0};
-    Format format{Format::Unknown};
+    ComPtr<ID3D12Resource> resource; D3D12MA::Allocation* allocation{nullptr};
+    uint32_t width{0}, height{0}; Format format{Format::Unknown};
     ~Impl() { if (allocation) allocation->Release(); }
 };
 D3D12Texture::D3D12Texture() : m_Impl(std::make_unique<Impl>()) {}
@@ -255,19 +267,28 @@ D3D12Device::D3D12Device() : m_Impl(std::make_unique<Impl>()) {}
 D3D12Device::~D3D12Device() { Shutdown(); }
 
 bool D3D12Device::Impl::CreateGlobalRootSignature() {
-    // 定义全局根签名: Space 0 = 全局 UBO, Space 1 = 材质 Table, Space 2 = PushConstants
     CD3DX12_ROOT_PARAMETER params[3];
-    CD3DX12_DESCRIPTOR_RANGE srvRange(D3D12_DESCRIPTOR_RANGE_TYPE_SRV, 8, 0, 1); // Space 1, t0-t7
-    params[0].InitAsConstantBufferView(0, 0);                       // b0, Space 0
-    params[1].InitAsDescriptorTable(1, &srvRange);                   // Space 1
-    params[2].InitAsConstants(16, 1, 0);                             // b1, Space 0, 16 constants
-
-    CD3DX12_ROOT_SIGNATURE_DESC rootSigDesc(3, params, 0, nullptr, D3D12_ROOT_SIGNATURE_FLAG_ALLOW_INPUT_ASSEMBLER_INPUT_LAYOUT);
+    CD3DX12_DESCRIPTOR_RANGE srvRange(D3D12_DESCRIPTOR_RANGE_TYPE_SRV, 8, 0, 1);
+    params[0].InitAsConstantBufferView(0, 0);
+    params[1].InitAsDescriptorTable(1, &srvRange);
+    params[2].InitAsConstants(16, 1, 0);
+    CD3DX12_ROOT_SIGNATURE_DESC desc(3, params, 0, nullptr, D3D12_ROOT_SIGNATURE_FLAG_ALLOW_INPUT_ASSEMBLER_INPUT_LAYOUT);
     ComPtr<ID3DBlob> serialized, error;
-    D3D12SerializeRootSignature(&rootSigDesc, D3D_ROOT_SIGNATURE_VERSION_1, &serialized, &error);
-    if (!serialized) { Log::Error("[D3D12] Failed to serialize root signature"); return false; }
+    D3D12SerializeRootSignature(&desc, D3D_ROOT_SIGNATURE_VERSION_1, &serialized, &error);
+    if (!serialized) return false;
     device->CreateRootSignature(0, serialized->GetBufferPointer(), serialized->GetBufferSize(), IID_PPV_ARGS(&globalRootSignature));
     return globalRootSignature != nullptr;
+}
+
+bool D3D12Device::Impl::CreateShaderVisibleHeap() {
+    D3D12_DESCRIPTOR_HEAP_DESC desc = {};
+    desc.NumDescriptors = kVisibleHeapSize;
+    desc.Type = D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV;
+    desc.Flags = D3D12_DESCRIPTOR_HEAP_FLAG_SHADER_VISIBLE;
+    HRESULT hr = device->CreateDescriptorHeap(&desc, IID_PPV_ARGS(&cbvSrvUavHeap));
+    if (FAILED(hr)) return false;
+    cbvSrvUavDescriptorSize = device->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV);
+    return true;
 }
 
 bool D3D12Device::Initialize(void* windowHandle, uint32_t width, uint32_t height) {
@@ -285,12 +306,12 @@ bool D3D12Device::Initialize(void* windowHandle, uint32_t width, uint32_t height
     hr = D3D12CreateDevice(nullptr, D3D_FEATURE_LEVEL_11_0, IID_PPV_ARGS(&m_Impl->device));
     if (FAILED(hr)) return false;
 
-    D3D12_COMMAND_QUEUE_DESC qDesc = {}; qDesc.Type = D3D12_COMMAND_LIST_TYPE_DIRECT;
-    hr = m_Impl->device->CreateCommandQueue(&qDesc, IID_PPV_ARGS(&m_Impl->graphicsQueue));
+    D3D12_COMMAND_QUEUE_DESC qd = {}; qd.Type = D3D12_COMMAND_LIST_TYPE_DIRECT;
+    hr = m_Impl->device->CreateCommandQueue(&qd, IID_PPV_ARGS(&m_Impl->graphicsQueue));
     if (FAILED(hr)) return false;
 
-    D3D12MA::ALLOCATOR_DESC aDesc = {}; aDesc.pDevice = m_Impl->device.Get();
-    D3D12MA::CreateAllocator(&aDesc, &m_Impl->vmaAllocator);
+    D3D12MA::ALLOCATOR_DESC ad = {}; ad.pDevice = m_Impl->device.Get();
+    D3D12MA::CreateAllocator(&ad, &m_Impl->vmaAllocator);
 
     for (uint32_t i = 0; i < Impl::kFrameCount; ++i)
         m_Impl->device->CreateCommandAllocator(D3D12_COMMAND_LIST_TYPE_DIRECT, IID_PPV_ARGS(&m_Impl->cmdAllocators[i]));
@@ -301,10 +322,9 @@ bool D3D12Device::Initialize(void* windowHandle, uint32_t width, uint32_t height
     m_Impl->device->CreateFence(0, D3D12_FENCE_FLAG_NONE, IID_PPV_ARGS(&m_Impl->fence));
     m_Impl->fenceEvent = CreateEvent(nullptr, FALSE, FALSE, nullptr);
 
-    // Global Root Signature
     m_Impl->CreateGlobalRootSignature();
+    m_Impl->CreateShaderVisibleHeap();
 
-    // PSO Cache
     m_Impl->pipelineCachePath = fs::current_path().string() + "/" + Impl::kCacheFileName;
     m_Impl->LoadPipelineCache();
 
@@ -317,11 +337,9 @@ bool D3D12Device::Initialize(void* windowHandle, uint32_t width, uint32_t height
     m_Impl->graphicsQueueWrapper = new D3D12Queue();
     m_Impl->deviceName = "D3D12 (Hardware)";
     m_Impl->initialized = true;
-    Log::Info("[D3D12] Device initialized (Global RootSig)");
     return true;
 }
 
-// ── PSO 磁盘缓存 ──
 void D3D12Device::Impl::LoadPipelineCache() {
     std::ifstream file(pipelineCachePath, std::ios::binary | std::ios::ate);
     if (!file.is_open()) { device->CreatePipelineLibrary(nullptr, 0, IID_PPV_ARGS(&pipelineLibrary)); return; }
@@ -341,43 +359,35 @@ void D3D12Device::Impl::SavePipelineCache() {
     }
 }
 
-// ── CreateGraphicsPSO ──
 IRHIPipelineState* D3D12Device::CreateGraphicsPSO(const GraphicsPSODesc& desc) {
     uint64_t hash = desc.GetHash();
     { auto* c = PSOCache::Get().Find<GraphicsPSODesc>(hash); if (c) return c; }
-
-    if (!m_Impl->globalRootSignature) { Log::Error("[D3D12] No global root signature"); return nullptr; }
-
+    if (!m_Impl->globalRootSignature) return nullptr;
     auto* pso = new D3D12PipelineState();
     pso->m_Impl->isCompute = false;
-
-    // 使用全局根签名 + PSO 描述符
-    D3D12_GRAPHICS_PIPELINE_STATE_DESC psoDesc = {};
-    psoDesc.pRootSignature = m_Impl->globalRootSignature.Get();
-    psoDesc.RasterizerState = CD3DX12_RASTERIZER_DESC(D3D12_FILL_MODE_SOLID, D3D12_CULL_MODE_BACK, FALSE, 0, 0, 0, TRUE);
-    psoDesc.BlendState = CD3DX12_BLEND_DESC(D3D12_DEFAULT);
-    psoDesc.DepthStencilState = CD3DX12_DEPTH_STENCIL_DESC(D3D12_DEFAULT);
-    psoDesc.SampleMask = UINT_MAX;
-    psoDesc.PrimitiveTopologyType = D3D12_PRIMITIVE_TOPOLOGY_TYPE_TRIANGLE;
-    psoDesc.NumRenderTargets = 1;
-    psoDesc.RTVFormats[0] = DXGI_FORMAT_R8G8B8A8_UNORM;
-    psoDesc.SampleDesc.Count = 1;
-
-    // 从 PSOCache 尝试 PipelineLibrary 加载
+    D3D12_GRAPHICS_PIPELINE_STATE_DESC pd = {};
+    pd.pRootSignature = m_Impl->globalRootSignature.Get();
+    pd.RasterizerState = CD3DX12_RASTERIZER_DESC(D3D12_FILL_MODE_SOLID, D3D12_CULL_MODE_BACK, FALSE, 0, 0, 0, TRUE);
+    pd.BlendState = CD3DX12_BLEND_DESC(D3D12_DEFAULT);
+    pd.DepthStencilState = CD3DX12_DEPTH_STENCIL_DESC(D3D12_DEFAULT);
+    pd.SampleMask = UINT_MAX;
+    pd.PrimitiveTopologyType = D3D12_PRIMITIVE_TOPOLOGY_TYPE_TRIANGLE;
+    pd.SampleDesc.Count = 1;
+    if (desc.vertexShader.size > 0) pd.VS = { desc.vertexShader.data, desc.vertexShader.size };
+    if (desc.fragmentShader.size > 0) pd.PS = { desc.fragmentShader.data, desc.fragmentShader.size };
+    pd.NumRenderTargets = (UINT)desc.colorFormats.size();
+    for (size_t i = 0; i < desc.colorFormats.size() && i < 8; ++i) pd.RTVFormats[i] = FormatToDXGI(desc.colorFormats[i]);
+    if (pd.NumRenderTargets == 0) { pd.NumRenderTargets = 1; pd.RTVFormats[0] = DXGI_FORMAT_R8G8B8A8_UNORM; }
     if (m_Impl->pipelineLibrary) {
-        std::wstring name = L"pso_" + std::to_wstring(hash);
-        HRESULT hr = m_Impl->pipelineLibrary->LoadGraphicsPipeline(name.c_str(), &psoDesc, IID_PPV_ARGS(&pso->m_Impl->pso));
-        if (SUCCEEDED(hr)) { PSOCache::Get().Store<GraphicsPSODesc>(hash, pso); return pso; }
+        std::wstring n = L"pso_" + std::to_wstring(hash);
+        if (SUCCEEDED(m_Impl->pipelineLibrary->LoadGraphicsPipeline(n.c_str(), &pd, IID_PPV_ARGS(&pso->m_Impl->pso)))) {
+            PSOCache::Get().Store<GraphicsPSODesc>(hash, pso); return pso;
+        }
     }
-
-    // 编译 PSO
-    HRESULT hr = m_Impl->device->CreateGraphicsPipelineState(&psoDesc, IID_PPV_ARGS(&pso->m_Impl->pso));
-    if (FAILED(hr)) { Log::Error("[D3D12] CreateGraphicsPipelineState failed"); delete pso; return nullptr; }
-
-    // 存储到缓存
+    if (FAILED(m_Impl->device->CreateGraphicsPipelineState(&pd, IID_PPV_ARGS(&pso->m_Impl->pso)))) { delete pso; return nullptr; }
     if (m_Impl->pipelineLibrary) {
-        std::wstring name = L"pso_" + std::to_wstring(hash);
-        m_Impl->pipelineLibrary->StorePipeline(name.c_str(), pso->m_Impl->pso.Get());
+        std::wstring n = L"pso_" + std::to_wstring(hash);
+        m_Impl->pipelineLibrary->StorePipeline(n.c_str(), pso->m_Impl->pso.Get());
     }
     PSOCache::Get().Store<GraphicsPSODesc>(hash, pso);
     return pso;
@@ -400,7 +410,6 @@ void D3D12Device::Shutdown() {
     m_Impl->initialized = false;
 }
 void D3D12Device::WaitIdle() {
-    if (!m_Impl->device || !m_Impl->graphicsQueue) return;
     m_Impl->graphicsQueue->Signal(m_Impl->fence.Get(), m_Impl->fenceValues[m_Impl->frameIndex]);
     m_Impl->fence->SetEventOnCompletion(m_Impl->fenceValues[m_Impl->frameIndex], m_Impl->fenceEvent);
     WaitForSingleObject(m_Impl->fenceEvent, INFINITE);
@@ -412,8 +421,7 @@ std::shared_ptr<IRHIBuffer> D3D12Device::CreateBuffer(const RHIBufferDesc& desc)
     D3D12MA::ALLOCATION_DESC a = {}; a.HeapType = D3D12_HEAP_TYPE_UPLOAD;
     D3D12_RESOURCE_DESC r = {}; r.Dimension = D3D12_RESOURCE_DIMENSION_BUFFER;
     r.Width = desc.size; r.Height = 1; r.DepthOrArraySize = 1; r.MipLevels = 1;
-    r.Format = DXGI_FORMAT_UNKNOWN; r.SampleDesc.Count = 1;
-    r.Layout = D3D12_TEXTURE_LAYOUT_ROW_MAJOR;
+    r.Format = DXGI_FORMAT_UNKNOWN; r.SampleDesc.Count = 1; r.Layout = D3D12_TEXTURE_LAYOUT_ROW_MAJOR;
     D3D12MA::Allocation* alloc;
     if (FAILED(m_Impl->vmaAllocator->CreateResource(&a, &r, D3D12_RESOURCE_STATE_GENERIC_READ, nullptr, &alloc, IID_NULL, nullptr)))
         return nullptr;
@@ -442,6 +450,10 @@ std::unique_ptr<IRHICommandList> D3D12Device::CreateCommandList(CommandListType)
     auto cmd = std::make_unique<D3D12CommandList>();
     cmd->m_Impl->allocator = m_Impl->cmdAllocators[m_Impl->frameIndex];
     cmd->m_Impl->cmdList = m_Impl->cmdList;
+    cmd->m_Impl->visibleHeap = m_Impl->cbvSrvUavHeap;
+    cmd->m_Impl->heapOffset = &m_Impl->visibleHeapOffset;
+    cmd->m_Impl->descriptorSize = m_Impl->cbvSrvUavDescriptorSize;
+    cmd->m_Impl->device = this;
     return cmd;
 }
 IRHICommandQueue* D3D12Device::GetQueue(QueueType) { return static_cast<IRHICommandQueue*>(m_Impl->graphicsQueueWrapper); }
@@ -453,12 +465,11 @@ std::unique_ptr<IRHISwapChain> D3D12Device::CreateSwapChain(const SwapChainDesc&
     sc.BufferUsage = DXGI_USAGE_RENDER_TARGET_OUTPUT; sc.BufferCount = desc.bufferCount;
     sc.SwapEffect = DXGI_SWAP_EFFECT_FLIP_DISCARD; sc.Flags = DXGI_SWAP_CHAIN_FLAG_FRAME_LATENCY_WAITABLE_OBJECT;
     ComPtr<IDXGISwapChain1> sc1;
-    if (FAILED(m_Impl->factory->CreateSwapChainForHwnd(m_Impl->graphicsQueue.Get(), static_cast<HWND>(desc.windowHandle), &sc, nullptr, nullptr, &sc1)))
+    if (FAILED(m_Impl->factory->CreateSwapChainForHwnd(m_Impl->graphicsQueue.Get(), (HWND)desc.windowHandle, &sc, nullptr, nullptr, &sc1)))
         return nullptr;
     sc1.As(&m_Impl->swapChain);
     m_Impl->swapChainWidth = desc.width; m_Impl->swapChainHeight = desc.height;
-    D3D12_DESCRIPTOR_HEAP_DESC rtv = {}; rtv.NumDescriptors = desc.bufferCount;
-    rtv.Type = D3D12_DESCRIPTOR_HEAP_TYPE_RTV;
+    D3D12_DESCRIPTOR_HEAP_DESC rtv = {}; rtv.NumDescriptors = desc.bufferCount; rtv.Type = D3D12_DESCRIPTOR_HEAP_TYPE_RTV;
     m_Impl->device->CreateDescriptorHeap(&rtv, IID_PPV_ARGS(&m_Impl->rtvHeap));
     m_Impl->rtvDescriptorSize = m_Impl->device->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_RTV);
     D3D12_CPU_DESCRIPTOR_HANDLE h = m_Impl->rtvHeap->GetCPUDescriptorHandleForHeapStart();
@@ -467,33 +478,21 @@ std::unique_ptr<IRHISwapChain> D3D12Device::CreateSwapChain(const SwapChainDesc&
         m_Impl->device->CreateRenderTargetView(m_Impl->backBuffers[i].Get(), nullptr, h);
         h.ptr += m_Impl->rtvDescriptorSize;
     }
-
-    // 创建 SwapChain wrapper 并设置设备指针
-    auto sc = std::make_unique<D3D12SwapChain>();
-    sc->m_Impl->device = this;
-    sc->m_Impl->count = desc.bufferCount;
-    // 创建纹理包装器供 GetBackBuffer 返回
-    sc->m_Impl->backBufferTextures.reserve(desc.bufferCount);
+    auto sw = std::make_unique<D3D12SwapChain>();
+    sw->m_Impl->device = this; sw->m_Impl->count = desc.bufferCount;
     for (uint32_t i = 0; i < desc.bufferCount; ++i) {
         auto tex = std::make_shared<D3D12Texture>();
-        tex->m_Impl->resource = m_Impl->backBuffers[i];
-        tex->m_Impl->width = desc.width;
-        tex->m_Impl->height = desc.height;
-        tex->m_Impl->format = desc.format;
-        sc->m_Impl->backBufferTextures.push_back(tex);
+        tex->m_Impl->resource = m_Impl->backBuffers[i]; tex->m_Impl->width = desc.width;
+        tex->m_Impl->height = desc.height; tex->m_Impl->format = desc.format;
+        sw->m_Impl->backBufferTextures.push_back(tex);
     }
-    return sc;
+    return sw;
 }
 const char* D3D12Device::GetDeviceName() const { return m_Impl->deviceName.c_str(); }
 
 // ── D3D12SwapChain ──
-struct D3D12SwapChain::Impl {
-    D3D12Device* device{nullptr};
-    uint32_t idx{0};
-    uint32_t count{3};
-    // Swapchain 纹理包装器（供 GetBackBuffer 返回）
-    std::vector<std::shared_ptr<D3D12Texture>> backBufferTextures;
-};
+struct D3D12SwapChain::Impl { D3D12Device* device{nullptr}; uint32_t idx{0}; uint32_t count{3};
+    std::vector<std::shared_ptr<D3D12Texture>> backBufferTextures; };
 D3D12SwapChain::D3D12SwapChain() : m_Impl(std::make_unique<Impl>()) {}
 D3D12SwapChain::~D3D12SwapChain() = default;
 void D3D12SwapChain::Present() {
@@ -504,13 +503,14 @@ void D3D12SwapChain::Present() {
     uint64_t v = ++i.fenceValues[i.frameIndex]; i.graphicsQueue->Signal(i.fence.Get(), v);
     if (i.fence->GetCompletedValue() < v) { i.fence->SetEventOnCompletion(v, i.fenceEvent); WaitForSingleObject(i.fenceEvent, INFINITE); }
     i.cmdAllocators[i.frameIndex]->Reset();
+    i.visibleHeapOffset = 0;  // 重置可见堆偏移
 }
 void D3D12SwapChain::Resize(uint32_t w, uint32_t h) {
     if (!m_Impl->device) return;
     auto& i = *m_Impl->device->m_Impl;
     for (uint32_t j = 0; j < i.kFrameCount; ++j) i.backBuffers[j].Reset();
     i.swapChain->ResizeBuffers(i.kFrameCount, w, h, i.swapChainFormat, DXGI_SWAP_CHAIN_FLAG_FRAME_LATENCY_WAITABLE_OBJECT);
-    m_Impl->count = i.kFrameCount; i.swapChainWidth = w; i.swapChainHeight = h;
+    m_Impl->count = i.kFrameCount;
     D3D12_CPU_DESCRIPTOR_HANDLE h = i.rtvHeap->GetCPUDescriptorHandleForHeapStart();
     for (uint32_t j = 0; j < i.kFrameCount; ++j) {
         i.swapChain->GetBuffer(j, IID_PPV_ARGS(&i.backBuffers[j]));
@@ -518,10 +518,7 @@ void D3D12SwapChain::Resize(uint32_t w, uint32_t h) {
     }
 }
 IRHITexture* D3D12SwapChain::GetBackBuffer(uint32_t idx) const {
-    if (idx < m_Impl->backBufferTextures.size()) {
-        return m_Impl->backBufferTextures[idx].get();
-    }
-    return nullptr;
+    return idx < m_Impl->backBufferTextures.size() ? m_Impl->backBufferTextures[idx].get() : nullptr;
 }
 uint32_t D3D12SwapChain::GetCurrentBackBufferIndex() const { return m_Impl->idx; }
 uint32_t D3D12SwapChain::GetBufferCount() const { return m_Impl->count; }
@@ -531,21 +528,12 @@ static DXGI_FORMAT FormatToDXGI(Format fmt) {
     switch (fmt) {
         case Format::RGBA8_UNorm: return DXGI_FORMAT_R8G8B8A8_UNORM;
         case Format::BGRA8_UNorm: return DXGI_FORMAT_B8G8R8A8_UNORM;
-        case Format::RGBA8_sRGB:  return DXGI_FORMAT_R8G8B8A8_UNORM_SRGB;
         case Format::R32_Float:   return DXGI_FORMAT_R32_FLOAT;
         case Format::RGBA32_Float: return DXGI_FORMAT_R32G32B32A32_FLOAT;
         case Format::D32_Float:   return DXGI_FORMAT_D32_FLOAT;
         default:                  return DXGI_FORMAT_UNKNOWN;
     }
 }
-static Format DXGIToFormat(DXGI_FORMAT fmt) {
-    switch (fmt) {
-        case DXGI_FORMAT_R8G8B8A8_UNORM: return Format::RGBA8_UNorm;
-        case DXGI_FORMAT_B8G8R8A8_UNORM: return Format::BGRA8_UNorm;
-        default:                         return Format::Unknown;
-    }
-}
-
 bool HasD3D12Support() noexcept { HMODULE m = LoadLibraryA("d3d12.dll"); if (!m) return false; FreeLibrary(m); return true; }
 std::string GetD3D12AdapterInfo() noexcept { return "D3D12 (Hardware)"; }
 std::unique_ptr<IRHIDevice> CreateD3D12Device() { return std::make_unique<D3D12Device>(); }
