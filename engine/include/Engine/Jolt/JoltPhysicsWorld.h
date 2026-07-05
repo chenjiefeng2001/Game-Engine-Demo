@@ -17,7 +17,8 @@
 #include <Jolt/Jolt.h>
 #include <Jolt/Physics/PhysicsSystem.h>
 #include <Jolt/Physics/Collision/BroadPhase/BroadPhaseLayer.h>
-#include <Jolt/Physics/Collision/ObjectLayerPairFilter.h>
+#include <Jolt/Physics/Collision/ObjectLayerPairFilterMask.h>
+#include <Jolt/Physics/Collision/ObjectLayerPairFilterTable.h>
 #include <Jolt/Physics/Collision/BroadPhase/BroadPhaseLayerInterfaceTable.h>
 #include <Jolt/Physics/Collision/ContactListener.h>
 #include <Jolt/Physics/Body/BodyManager.h>
@@ -93,7 +94,7 @@ private:
 
     // BroadPhase / ObjectLayer 映射
     JPH::BroadPhaseLayerInterfaceTable* m_BPInterface = nullptr;
-    JPH::ObjectVsBroadPhaseLayerFilterTable* m_ObjectVsBPFilter = nullptr;
+    JPH::ObjectVsBroadPhaseLayerFilter* m_ObjectVsBPFilter = nullptr;
     JPH::ObjectLayerPairFilterTable* m_ObjectLayerFilter = nullptr;
 
     // 碰撞事件回调

@@ -6,6 +6,10 @@
 #include "Engine/Jolt/JoltPhysicsBody.h"
 #include "Engine/Jolt/JoltPhysicsWorld.h"
 #include <Jolt/Physics/Body/BodyInterface.h>
+#include <Jolt/Physics/Body/Body.h>
+#include <Jolt/Physics/Body/BodyLock.h>
+#include <Jolt/Physics/Body/MotionProperties.h>
+#include <Jolt/Physics/Collision/Shape/Shape.h>
 #include <glm/glm.hpp>
 #include <glm/gtc/quaternion.hpp>
 #include <glm/gtc/type_ptr.hpp>
@@ -81,7 +85,7 @@ Vec3 JoltPhysicsBody::GetAngularVelocity() const {
 void JoltPhysicsBody::ApplyForce(const Vec3& force, const Vec3& point) {
     GetBodyInterface().AddForce(m_BodyID,
         JPH::Vec3(force.x, force.y, force.z),
-        JPH::Vec3(point.x, point.y, point.z));
+        JPH::RVec3(point.x, point.y, point.z));
 }
 
 void JoltPhysicsBody::ApplyForceAtCenter(const Vec3& force) {
@@ -92,7 +96,7 @@ void JoltPhysicsBody::ApplyForceAtCenter(const Vec3& force) {
 void JoltPhysicsBody::ApplyImpulse(const Vec3& impulse, const Vec3& point) {
     GetBodyInterface().AddImpulse(m_BodyID,
         JPH::Vec3(impulse.x, impulse.y, impulse.z),
-        JPH::Vec3(point.x, point.y, point.z));
+        JPH::RVec3(point.x, point.y, point.z));
 }
 
 void JoltPhysicsBody::SetType(BodyType3D type) {
@@ -114,13 +118,24 @@ BodyType3D JoltPhysicsBody::GetType() const {
 }
 
 float32 JoltPhysicsBody::GetMass() const {
-    return GetBodyInterface().GetMass(m_BodyID);
+    // Jolt v5.5: BodyInterface::GetMass() 已移除，通过 BodyLock 读取
+    JPH::PhysicsSystem* sys = static_cast<JPH::PhysicsSystem*>(m_World->GetNativeWorld());
+    JPH::BodyLockRead lock(sys->GetBodyLockInterface(), m_BodyID);
+    if (lock.Succeeded()) {
+        const JPH::Body& body = lock.GetBody();
+        if (body.GetMotionProperties()) {
+            return 1.0f / body.GetMotionProperties()->GetInverseMass();
+        }
+    }
+    return 0.0f;
 }
 
 float32 JoltPhysicsBody::GetInertia() const {
-    JPH::Vec3 inertia = GetBodyInterface().GetInverseInertiaDiagonal(m_BodyID);
-    // 返回最大的惯量分量
-    return 1.0f / std::max({inertia.GetX(), inertia.GetY(), inertia.GetZ()});
+    // Jolt v5.5: GetInverseInertiaDiagonal() 已移除，使用 GetInverseInertia()
+    JPH::Mat44 invInertia = GetBodyInterface().GetInverseInertia(m_BodyID);
+    // 取对角线最大值
+    JPH::Vec3 diagonal(invInertia(0, 0), invInertia(1, 1), invInertia(2, 2));
+    return 1.0f / std::max({diagonal.GetX(), diagonal.GetY(), diagonal.GetZ()});
 }
 
 Mat4 JoltPhysicsBody::GetInertiaTensor() const {
@@ -128,19 +143,50 @@ Mat4 JoltPhysicsBody::GetInertiaTensor() const {
 }
 
 void JoltPhysicsBody::SetLinearDamping(float32 damping) {
-    GetBodyInterface().SetLinearDamping(m_BodyID, damping);
+    // Jolt v5.5: 通过 MotionProperties 设置阻尼
+    JPH::PhysicsSystem* sys = static_cast<JPH::PhysicsSystem*>(m_World->GetNativeWorld());
+    JPH::BodyLockWrite lock(sys->GetBodyLockInterface(), m_BodyID);
+    if (lock.Succeeded()) {
+        JPH::Body& body = lock.GetBody();
+        if (body.GetMotionProperties()) {
+            body.GetMotionProperties()->SetLinearDamping(damping);
+        }
+    }
 }
 
 float32 JoltPhysicsBody::GetLinearDamping() const {
-    return GetBodyInterface().GetLinearDamping(m_BodyID);
+    JPH::PhysicsSystem* sys = static_cast<JPH::PhysicsSystem*>(m_World->GetNativeWorld());
+    JPH::BodyLockRead lock(sys->GetBodyLockInterface(), m_BodyID);
+    if (lock.Succeeded()) {
+        const JPH::Body& body = lock.GetBody();
+        if (body.GetMotionProperties()) {
+            return body.GetMotionProperties()->GetLinearDamping();
+        }
+    }
+    return 0.0f;
 }
 
 void JoltPhysicsBody::SetAngularDamping(float32 damping) {
-    GetBodyInterface().SetAngularDamping(m_BodyID, damping);
+    JPH::PhysicsSystem* sys = static_cast<JPH::PhysicsSystem*>(m_World->GetNativeWorld());
+    JPH::BodyLockWrite lock(sys->GetBodyLockInterface(), m_BodyID);
+    if (lock.Succeeded()) {
+        JPH::Body& body = lock.GetBody();
+        if (body.GetMotionProperties()) {
+            body.GetMotionProperties()->SetAngularDamping(damping);
+        }
+    }
 }
 
 float32 JoltPhysicsBody::GetAngularDamping() const {
-    return GetBodyInterface().GetAngularDamping(m_BodyID);
+    JPH::PhysicsSystem* sys = static_cast<JPH::PhysicsSystem*>(m_World->GetNativeWorld());
+    JPH::BodyLockRead lock(sys->GetBodyLockInterface(), m_BodyID);
+    if (lock.Succeeded()) {
+        const JPH::Body& body = lock.GetBody();
+        if (body.GetMotionProperties()) {
+            return body.GetMotionProperties()->GetAngularDamping();
+        }
+    }
+    return 0.0f;
 }
 
 void JoltPhysicsBody::SetMaxLinearVelocity(float32 maxVel) {
@@ -209,8 +255,13 @@ void* JoltPhysicsBody::GetComponentRef() const {
 }
 
 void* JoltPhysicsBody::GetNativeBody() {
-    JPH::Body* body = GetBodyInterface().FindBody(m_BodyID);
-    return static_cast<void*>(body);
+    // Jolt v5.5: FindBody() 已移除，使用 BodyLockRead
+    JPH::PhysicsSystem* sys = static_cast<JPH::PhysicsSystem*>(m_World->GetNativeWorld());
+    JPH::BodyLockWrite lock(sys->GetBodyLockInterface(), m_BodyID);
+    if (lock.Succeeded()) {
+        return static_cast<void*>(&lock.GetBody());
+    }
+    return nullptr;
 }
 
 } // namespace Engine
