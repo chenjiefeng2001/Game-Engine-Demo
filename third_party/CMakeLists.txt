@@ -138,6 +138,9 @@ add_subdirectory(freetype)
 if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/JoltPhysics/Build/CMakeLists.txt")
     # 使用 Jolt 自带的 Build/CMakeLists.txt（它内部使用 Jolt.cmake）
     # 此方法不会覆盖全局 C++ 标准
+    # 统一运行时库：Jolt 默认 USE_STATIC_MSVC_RUNTIME_LIBRARY=ON（/MTd），
+    # 而项目其他部分使用 /MDd，强制设置为 OFF 以保持一致性
+    set(USE_STATIC_MSVC_RUNTIME_LIBRARY OFF CACHE BOOL "" FORCE)
     add_subdirectory(JoltPhysics/Build JoltPhysicsBuild)
     
     # Jolt 默认关闭 RTTI，若引擎需要则开启
