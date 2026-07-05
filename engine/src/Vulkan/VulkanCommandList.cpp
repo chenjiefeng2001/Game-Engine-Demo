@@ -123,8 +123,13 @@ void VulkanCommandList::SetPipelineState(IRHIPipelineState* pso) {
     VkPipeline pipeline = vkPso->GetVkPipeline();
     VkPipelineLayout layout = vkPso->GetVkPipelineLayout();
     
+    // 检查是 Graphics 还是 Compute PSO
+    bool isCompute = vkPso->IsCompute();
+    VkPipelineBindPoint bindPoint = isCompute ? 
+        VK_PIPELINE_BIND_POINT_COMPUTE : VK_PIPELINE_BIND_POINT_GRAPHICS;
+    
     if (pipeline != VK_NULL_HANDLE && m_Impl->cmdBuffer != VK_NULL_HANDLE) {
-        vkCmdBindPipeline(m_Impl->cmdBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline);
+        vkCmdBindPipeline(m_Impl->cmdBuffer, bindPoint, pipeline);
     }
     
     m_Impl->currentPipeline = pipeline;
