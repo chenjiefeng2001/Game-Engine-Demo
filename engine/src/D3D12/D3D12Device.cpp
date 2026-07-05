@@ -359,9 +359,25 @@ IRHIPipelineState* D3D12Device::CreateGraphicsPSO(const GraphicsPSODesc& desc) {
     psoDesc.DepthStencilState = CD3DX12_DEPTH_STENCIL_DESC(D3D12_DEFAULT);
     psoDesc.SampleMask = UINT_MAX;
     psoDesc.PrimitiveTopologyType = D3D12_PRIMITIVE_TOPOLOGY_TYPE_TRIANGLE;
-    psoDesc.NumRenderTargets = 1;
-    psoDesc.RTVFormats[0] = DXGI_FORMAT_R8G8B8A8_UNORM;
     psoDesc.SampleDesc.Count = 1;
+
+    // 从 GraphicsPSODesc 传入着色器字节码
+    if (desc.vertexShader.size > 0) {
+        psoDesc.VS = { desc.vertexShader.data, desc.vertexShader.size };
+    }
+    if (desc.fragmentShader.size > 0) {
+        psoDesc.PS = { desc.fragmentShader.data, desc.fragmentShader.size };
+    }
+
+    // 渲染目标格式从 desc 读取而非硬编码
+    psoDesc.NumRenderTargets = static_cast<UINT>(desc.colorFormats.size());
+    for (size_t i = 0; i < desc.colorFormats.size() && i < 8; ++i) {
+        psoDesc.RTVFormats[i] = FormatToDXGI(desc.colorFormats[i]);
+    }
+    if (psoDesc.NumRenderTargets == 0) {
+        psoDesc.NumRenderTargets = 1;
+        psoDesc.RTVFormats[0] = DXGI_FORMAT_R8G8B8A8_UNORM;
+    }
 
     // 从 PSOCache 尝试 PipelineLibrary 加载
     if (m_Impl->pipelineLibrary) {
