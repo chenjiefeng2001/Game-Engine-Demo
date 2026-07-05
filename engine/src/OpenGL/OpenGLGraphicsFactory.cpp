@@ -1,7 +1,9 @@
 #include "Engine/OpenGL/OpenGLGraphicsFactory.h"
+#include "Engine/OpenGL/OpenGLAntiAliasing.h"
 
 #include "Engine/Platform/GlfwWindow.h"
 #include "Engine/OpenGL/OpenGLContext.h"
+#include "Engine/Core/Memory/StackAllocatorAdaptor.h"
 
 #include "Resources/OpenGLShader.h"
 #include "Resources/OpenGLTexture.h"
@@ -9,9 +11,17 @@
 #include "Resources/OpenGLIndexBuffer.h"
 #include "Resources/OpenGLVertexArray.h"
 #include "Resources/OpenGLSpriteBatch.h"
+#include "Resources/OpenGLPrimitiveBatch.h"
+#include "Resources/ImGuiUIManager.h"
+#include "OpenGLGBuffer.h"
 
+#include "Engine/Core/Log.h"
 #include <GLFW/glfw3.h>
-#include <iostream>
+#include <memory>
+
+namespace {
+    Engine::Logger s_Log("OpenGLGraphicsFactory");
+}
 
 namespace Engine {
 
@@ -20,7 +30,7 @@ namespace Engine {
 		// 初始化 GLFW
 		if (!glfwInit())
 		{
-			std::cerr << "[OpenGLGraphicsFactory] Failed to initialize GLFW" << std::endl;
+			s_Log.Error("Failed to initialize GLFW");
 			return;
 		}
 
@@ -39,19 +49,17 @@ namespace Engine {
 			int version = gladLoadGLContext(&m_GL, glfwGetProcAddress);
 			if (version == 0)
 			{
-				std::cerr << "[OpenGLGraphicsFactory] Failed to initialize GLAD" << std::endl;
+				s_Log.Error("Failed to initialize GLAD");
 			}
 			else
 			{
-				std::cout << "[OpenGLGraphicsFactory] OpenGL "
-						  << GLAD_VERSION_MAJOR(version) << "."
-						  << GLAD_VERSION_MINOR(version) << " loaded" << std::endl;
+				s_Log.Info("OpenGL {}.{} loaded", GLAD_VERSION_MAJOR(version), GLAD_VERSION_MINOR(version));
 			}
 			glfwDestroyWindow(tempWindow);
 		}
 		else
 		{
-			std::cerr << "[OpenGLGraphicsFactory] Failed to create temporary GLAD loader window" << std::endl;
+			s_Log.Error("Failed to create temporary GLAD loader window");
 		}
 
 
@@ -67,11 +75,18 @@ namespace Engine {
 	std::unique_ptr<IWindow> OpenGLGraphicsFactory::CreateWindow(
 		int width, int height, const std::string& title)
 	{
+		// ── FSAA: 请求多重采样帧缓冲 ──
+		if (m_SampleCount > 0) {
+			glfwWindowHint(GLFW_SAMPLES, m_SampleCount);
+		} else {
+			glfwWindowHint(GLFW_SAMPLES, 0);
+		}
+
 		GLFWwindow* nativeWindow = glfwCreateWindow(
 			width, height, title.c_str(), nullptr, nullptr);
 
 		if (!nativeWindow) {
-			std::cerr << "[OpenGLGraphicsFactory] Failed to create GLFW window" << std::endl;
+			s_Log.Error("Failed to create GLFW window");
 			return nullptr;
 		}
 
@@ -82,7 +97,7 @@ namespace Engine {
 		GladGLContext& ctxGL = static_cast<OpenGLContext*>(context.get())->GetGL();
 		int version = gladLoadGLContext(&ctxGL, glfwGetProcAddress);
 		if (version == 0) {
-			std::cerr << "[OpenGLGraphicsFactory] Failed to initialize GLAD for window" << std::endl;
+			s_Log.Error("Failed to initialize GLAD for window");
 			glfwDestroyWindow(nativeWindow);
 			return nullptr;
 		}
@@ -90,6 +105,9 @@ namespace Engine {
 		if (context) {
 			context->Init();  // ← 现在 m_GL 函数指针已就绪，不会崩溃
 		}
+
+		// 保存渲染上下文引用，便于后续 AA 配置传递
+		m_RenderContext = context.get();
 
 		return std::make_unique<GlfwWindow>(nativeWindow, std::move(context));
 	}
@@ -99,6 +117,7 @@ namespace Engine {
 		void* nativeWindowHandle)
 	{
 		auto* window = static_cast<GLFWwindow*>(nativeWindowHandle);
+
 		return std::make_unique<OpenGLContext>(window, m_GL);
 	}
 	// ---- GPU 资源 ----
@@ -106,12 +125,34 @@ namespace Engine {
 		const std::string& vertexPath,
 		const std::string& fragmentPath)
 	{
+		if (m_Allocator) {
+			StackAllocatorAdaptor<OpenGLShader> adaptor(m_Allocator);
+			return std::allocate_shared<OpenGLShader>(adaptor, vertexPath, fragmentPath, m_GL);
+		}
 		return std::make_shared<OpenGLShader>(vertexPath, fragmentPath, m_GL);
+	}
+
+	std::shared_ptr<Shader> OpenGLGraphicsFactory::CreateShaderFromStages(
+		const std::vector<ShaderStage>& stages)
+	{
+		// 使用临时名称（从第一阶段派生）
+		std::string name = "shader_" + std::to_string(reinterpret_cast<uint64>(stages.data()));
+
+		auto shader = std::make_shared<OpenGLShader>("", "", m_GL);
+		if (shader->LoadStages(stages)) {
+			return shader;
+		}
+		s_Log.Error("CreateShaderFromStages failed");
+		return nullptr;
 	}
 
 	std::shared_ptr<Texture> OpenGLGraphicsFactory::CreateTexture(
 		const std::string& path)
 	{
+		if (m_Allocator) {
+			StackAllocatorAdaptor<OpenGLTexture> adaptor(m_Allocator);
+			return std::allocate_shared<OpenGLTexture>(adaptor, path, m_GL);
+		}
 		return std::make_shared<OpenGLTexture>(path, m_GL);
 	}
 
@@ -119,6 +160,10 @@ namespace Engine {
 		float* vertices,
 		uint32_t size)
 	{
+		if (m_Allocator) {
+			StackAllocatorAdaptor<OpenGLVertexBuffer> adaptor(m_Allocator);
+			return std::allocate_shared<OpenGLVertexBuffer>(adaptor, vertices, size, m_GL);
+		}
 		return std::make_shared<OpenGLVertexBuffer>(vertices, size, m_GL);
 	}
 
@@ -126,18 +171,80 @@ namespace Engine {
 		uint32_t* indices,
 		uint32_t count)
 	{
+		if (m_Allocator) {
+			StackAllocatorAdaptor<OpenGLIndexBuffer> adaptor(m_Allocator);
+			return std::allocate_shared<OpenGLIndexBuffer>(adaptor, indices, count, m_GL);
+		}
 		return std::make_shared<OpenGLIndexBuffer>(indices, count, m_GL);
 	}
 
 	std::shared_ptr<VertexArray> OpenGLGraphicsFactory::CreateVertexArray()
 	{
+		if (m_Allocator) {
+			StackAllocatorAdaptor<OpenGLVertexArray> adaptor(m_Allocator);
+			return std::allocate_shared<OpenGLVertexArray>(adaptor, m_GL);
+		}
 		return std::make_shared<OpenGLVertexArray>(m_GL);
 	}
 
 	std::shared_ptr<ISpriteBatch> OpenGLGraphicsFactory::CreateSpriteBatch(
 		IRenderContext& renderContext)
 	{
+		if (m_Allocator) {
+			StackAllocatorAdaptor<OpenGLSpriteBatch> adaptor(m_Allocator);
+			return std::allocate_shared<OpenGLSpriteBatch>(adaptor, m_GL, renderContext);
+		}
 		return std::make_shared<OpenGLSpriteBatch>(m_GL, renderContext);
+	}
+
+	std::unique_ptr<IUIManager> OpenGLGraphicsFactory::CreateUIManager()
+	{
+		return std::make_unique<ImGuiUIManager>();
+	}
+
+	std::unique_ptr<IPrimitiveBatch> OpenGLGraphicsFactory::CreatePrimitiveBatch(
+		uint32 capacity)
+	{
+		return std::make_unique<OpenGLPrimitiveBatch>(m_GL, capacity);
+	}
+
+	// ---- 抗锯齿配置 ----
+	void OpenGLGraphicsFactory::SetAntiAliasingConfig(const AntiAliasingConfig& config)
+	{
+		if (m_RenderContext) {
+			auto* ctx = static_cast<OpenGLContext*>(m_RenderContext);
+			ctx->SetAntiAliasingConfig(config);
+		} else {
+			s_Log.Warn("SetAntiAliasingConfig: No render context available. Call CreateWindow first.");
+		}
+	}
+
+	AntiAliasingConfig OpenGLGraphicsFactory::GetAntiAliasingConfig() const
+	{
+		if (m_RenderContext) {
+			return static_cast<OpenGLContext*>(m_RenderContext)->GetAntiAliasingConfig();
+		}
+		return AntiAliasingConfig{};
+	}
+
+	AntiAliasingCaps OpenGLGraphicsFactory::GetAntiAliasingCaps() const
+	{
+		if (m_RenderContext) {
+			auto* aa = static_cast<OpenGLContext*>(m_RenderContext)->GetAntiAliasing();
+			if (aa) return aa->GetCaps();
+		}
+		return AntiAliasingCaps{};
+	}
+
+	std::unique_ptr<GBuffer> OpenGLGraphicsFactory::CreateGBuffer(
+		IRenderContext& context)
+	{
+		auto* ctx = dynamic_cast<OpenGLContext*>(&context);
+		if (!ctx) {
+			s_Log.Error("CreateGBuffer: context is not OpenGLContext");
+			return nullptr;
+		}
+		return std::make_unique<OpenGLGBuffer>(context);
 	}
 
 } // namespace Engine

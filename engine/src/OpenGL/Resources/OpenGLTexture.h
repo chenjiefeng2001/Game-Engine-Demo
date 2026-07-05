@@ -1,6 +1,7 @@
 #pragma once
 
 #include "Engine/Core/RenderResources/Texture.h"
+#include "Engine/Core/IGraphicsFactory.h"
 #include "Engine/Types.h"
 #include <glad/gl.h>
 
@@ -15,6 +16,9 @@ namespace Engine {
 		virtual void Bind(uint32 slot = 0) const override;
 		virtual uint32 GetWidth() const override { return m_Width; }
 		virtual uint32 GetHeight() const override { return m_Height; }
+
+		// ── 加载后初始化钩子 ──
+		bool PostLoad(IGraphicsFactory* factory) override;
 
 		// ── 热加载 ──
 		bool Reload() override;

@@ -1,6 +1,10 @@
 #include "Engine/Core/Audio/AudioClipManager.h"
 #include "Engine/Core/Resources/ResourceManager.h"
-#include <iostream>
+#include "Engine/Core/Log.h"
+
+namespace {
+    Engine::Logger s_Log("AudioClipManager");
+}
 
 namespace Engine {
 
@@ -16,7 +20,7 @@ namespace Engine {
         // 回退：ResourceManager 未初始化时的直接加载
         auto clip = std::make_shared<AudioClip>(path);
         if (!clip->LoadFromFile(path)) {
-            std::cerr << "[AudioClipManager] Failed to load audio: " << path << std::endl;
+            s_Log.Error("Failed to load audio: {}", path);
             return nullptr;
         }
         return clip;
@@ -89,7 +93,7 @@ namespace Engine {
         // 回退
         auto clip = std::make_shared<AudioClip>(path);
         if (!clip->LoadFromFile(path)) {
-            std::cerr << "[AudioClipManager] Failed to reload audio: " << path << std::endl;
+            s_Log.Error("Failed to reload audio: {}", path);
             return nullptr;
         }
         return clip;

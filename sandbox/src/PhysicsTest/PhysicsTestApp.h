@@ -55,7 +55,7 @@ namespace Engine {
         std::shared_ptr<ISpriteBatch> m_SpriteBatch;
         std::shared_ptr<Shader> m_BatchShader;
         std::shared_ptr<Texture> m_Texture;
-        std::unique_ptr<OrthographicCamera> m_Camera;
+        OrthographicCamera m_Camera;
 
         // ── 鼠标拖拽状态 ──
         std::shared_ptr<IJoint> m_MouseJoint;

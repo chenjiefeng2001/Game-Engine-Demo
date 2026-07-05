@@ -1,7 +1,11 @@
 #include "Engine/OpenAL/OpenALAudioSource.h"
 #include "Engine/OpenAL/OpenALAudioBuffer.h"
-#include <iostream>
+#include "Engine/Core/Log.h"
 #include <cfloat>
+
+namespace {
+    Engine::Logger s_Log("OpenAL");
+}
 #include <AL/al.h>
 #include <AL/alc.h>
 
@@ -10,7 +14,7 @@ namespace Engine {
     OpenALAudioSource::OpenALAudioSource() {
         alGenSources(1, &m_SourceID);
         if (alGetError() != AL_NO_ERROR) {
-            std::cerr << "[OpenAL] Failed to generate source" << std::endl;
+            s_Log.Error("Failed to generate source");
             m_SourceID = 0;
         }
     }
@@ -31,7 +35,7 @@ namespace Engine {
 
         ALenum err = alGetError();
         if (err != AL_NO_ERROR) {
-            std::cerr << "[OpenAL] Failed to play source (error: " << err << ")" << std::endl;
+            s_Log.Error("Failed to play source (error: {})", err);
         }
     }
 

@@ -1,5 +1,6 @@
 #include "Engine/Core/GameObject/GameObject.h"
-#include "Engine/Core/Scene/Scene.h"
+#include "Engine/Core/GameObject/SpriteComponent.h"
+#include "Engine/Core/Physics/PhysicsComponent.h"
 #include "Engine/Core/RHI/IRenderQueue.h"
 #include "Engine/Core/Renderer/SpriteBatch.h"
 #include <algorithm>
@@ -7,54 +8,41 @@
 
 namespace Engine {
 
-    // ============================================================
-    // EntityManager 全局访问器（由 Scene 在初始化时设置）
-    // ============================================================
-    // 为 GameObject 句柄提供方便的 EntityManager 访问。
-    // 新代码推荐直接通过 Scene::GetEntityManager() 获取。
-    static EntityManager* s_ActiveEntityManager = nullptr;
-
-    void Scene::SetActiveEntityManager(EntityManager* em) {
-        s_ActiveEntityManager = em;
-    }
-
-    EntityManager* Scene::GetActiveEntityManager() {
-        return s_ActiveEntityManager;
-    }
-
-    // ============================================================
-    // GameObject 构造 / 析构
-    // ============================================================
 
     GameObject::GameObject()
-        : m_Name("GameObject") {
+        : m_ID(GetNextID()), m_Name("GameObject") {
     }
 
     GameObject::GameObject(std::string name)
-        : m_Name(std::move(name)) {
+        : m_ID(GetNextID()), m_Name(std::move(name)) {
     }
 
     GameObject::~GameObject() {
+        // 通知所有组件销毁
+        for (auto& [hash, comp] : m_Components) {
+            (void)hash;
+            comp->OnDestroy();
+        }
+        m_Components.clear();
+        // 递归销毁子对象
         m_Children.clear();
     }
 
-    // ============================================================
-    // 生命周期钩子（子类可重写）
-    // ============================================================
-
-    void GameObject::OnCreate() {}
-    void GameObject::Update(float32 dt) {
-        // 默认递归更新子对象
-        for (auto& child : m_Children) {
-            child->Update(dt);
+    void GameObject::OnCreate() {
+        for (auto& [hash, comp] : m_Components) {
+            (void)hash;
+            if (comp->IsEnabled())
+                comp->OnCreate();
         }
     }
-    void GameObject::Render() {}
-    void GameObject::OnDestroy() {}
 
-    // ============================================================
-    // 组件访问（全部委托给 EntityManager）
-    // ============================================================
+    void GameObject::OnDestroy() {
+        for (auto& [hash, comp] : m_Components) {
+            (void)hash;
+            if (comp->IsEnabled())
+                comp->OnDestroy();
+        }
+    }
 
     bool GameObject::IsActiveInHierarchy() const {
         if (!m_Active) return false;
@@ -65,6 +53,7 @@ namespace Engine {
     void GameObject::SetParent(GameObject* parent) {
         if (m_Parent == parent) return;
 
+        // 从旧父级移除
         if (m_Parent) {
             auto& siblings = m_Parent->m_Children;
             auto it = std::remove_if(siblings.begin(), siblings.end(),
@@ -76,21 +65,36 @@ namespace Engine {
         }
 
         m_Parent = parent;
+
+        if (m_Parent) {
+            // 设置变换层级
+            m_Transform.SetParent(&m_Parent->m_Transform);
+        } else {
+            m_Transform.SetParent(nullptr);
+        }
     }
 
     void GameObject::AddChild(std::shared_ptr<GameObject> child) {
         if (!child) return;
+
+        // 如果已经存在，先移除旧引用
         auto it = std::find(m_Children.begin(), m_Children.end(), child);
         if (it != m_Children.end()) return;
+
         child->SetParent(this);
         m_Children.push_back(std::move(child));
     }
 
     bool GameObject::RemoveChild(GameObject* child) {
         if (!child) return false;
+
         auto it = std::find_if(m_Children.begin(), m_Children.end(),
-            [child](const std::shared_ptr<GameObject>& c) { return c.get() == child; });
+            [child](const std::shared_ptr<GameObject>& c) {
+                return c.get() == child;
+            });
+
         if (it == m_Children.end()) return false;
+
         (*it)->SetParent(nullptr);
         m_Children.erase(it);
         return true;
@@ -98,142 +102,101 @@ namespace Engine {
 
     GameObject* GameObject::FindChild(const std::string& name) {
         for (auto& child : m_Children) {
-            if (child->GetName() == name) return child.get();
+            if (child->GetName() == name)
+                return child.get();
         }
         return nullptr;
     }
 
     const GameObject* GameObject::FindChild(const std::string& name) const {
         for (const auto& child : m_Children) {
-            if (child->GetName() == name) return child.get();
+            if (child->GetName() == name)
+                return child.get();
         }
         return nullptr;
     }
 
-    // ============================================================
-    // 组件访问委托
-    // ============================================================
+    void GameObject::Update(float32 dt) {
+        if (!m_Active) return;
 
-    TransformComponent& GameObject::GetTransform() {
-        auto* em = s_ActiveEntityManager;
-        assert(em && m_Entity != ENTITY_NULL);
-        auto* t = em->GetComponent<TransformComponent>(m_Entity);
-        if (!t) {
-            return em->AddComponent<TransformComponent>(m_Entity);
+        // 更新所有已启用的组件
+        for (auto& [hash, comp] : m_Components) {
+            (void)hash;
+            if (comp->IsEnabled())
+                comp->OnUpdate(dt);
         }
-        return *t;
-    }
 
-    const TransformComponent& GameObject::GetTransform() const {
-        auto* em = s_ActiveEntityManager;
-        assert(em && m_Entity != ENTITY_NULL);
-        auto* t = em->GetComponent<TransformComponent>(m_Entity);
-        assert(t);
-        return *t;
-    }
-
-    bool GameObject::HasTransform() const noexcept {
-        auto* em = s_ActiveEntityManager;
-        return em && m_Entity != ENTITY_NULL && em->HasComponent<TransformComponent>(m_Entity);
-    }
-
-    SpriteComponent& GameObject::GetSprite() {
-        auto* em = s_ActiveEntityManager;
-        assert(em && m_Entity != ENTITY_NULL);
-        auto* s = em->GetComponent<SpriteComponent>(m_Entity);
-        if (!s) {
-            return em->AddComponent<SpriteComponent>(m_Entity);
+        // 递归更新所有子对象
+        for (auto& child : m_Children) {
+            child->Update(dt);
         }
-        return *s;
     }
-
-    const SpriteComponent* GameObject::GetSprite() const {
-        auto* em = s_ActiveEntityManager;
-        if (!em || m_Entity == ENTITY_NULL) return nullptr;
-        return em->GetComponent<SpriteComponent>(m_Entity);
-    }
-
-    bool GameObject::HasSprite() const noexcept {
-        auto* em = s_ActiveEntityManager;
-        if (!em || m_Entity == ENTITY_NULL) return false;
-        auto* s = em->GetComponent<SpriteComponent>(m_Entity);
-        return s && (s->HasTexture() || s->IsVisible());
-    }
-
-    PhysicsComponent& GameObject::GetPhysics() {
-        auto* em = s_ActiveEntityManager;
-        assert(em && m_Entity != ENTITY_NULL);
-        auto* p = em->GetComponent<PhysicsComponent>(m_Entity);
-        if (!p) {
-            return em->AddComponent<PhysicsComponent>(m_Entity);
-        }
-        return *p;
-    }
-
-    const PhysicsComponent* GameObject::GetPhysics() const {
-        auto* em = s_ActiveEntityManager;
-        if (!em || m_Entity == ENTITY_NULL) return nullptr;
-        return em->GetComponent<PhysicsComponent>(m_Entity);
-    }
-
-    bool GameObject::HasPhysics() const noexcept {
-        auto* em = s_ActiveEntityManager;
-        if (!em || m_Entity == ENTITY_NULL) return false;
-        auto* p = em->GetComponent<PhysicsComponent>(m_Entity);
-        return p && p->HasBody();
-    }
-
-    // ============================================================
-    // 渲染
-    // ============================================================
 
     void GameObject::CollectRenderCommands(IRenderQueue& queue) {
-        if (!m_Active || m_Entity == ENTITY_NULL) return;
-        auto* em = s_ActiveEntityManager;
-        if (!em) return;
+        if (!m_Active) return;
 
-        auto* sprite = em->GetComponent<SpriteComponent>(m_Entity);
-        if (!sprite || !sprite->IsVisible()) return;
-
-        auto* transform = em->GetComponent<TransformComponent>(m_Entity);
-        if (!transform) return;
-
-        RenderCommand cmd;
-        const Mat4& world = transform->GetWorldMatrix();
-        std::memcpy(cmd.worldMatrix, world.Data(), sizeof(cmd.worldMatrix));
-
-        cmd.uv[0] = sprite->GetUVX();
-        cmd.uv[1] = sprite->GetUVY();
-        cmd.uv[2] = sprite->GetUVW();
-        cmd.uv[3] = sprite->GetUVH();
-
-        const auto& color = sprite->GetColor();
-        cmd.color[0] = color.x;
-        cmd.color[1] = color.y;
-        cmd.color[2] = color.z;
-        cmd.color[3] = color.w;
-
-        cmd.texture = sprite->GetTexture();
-        cmd.sortingLayer = sprite->GetSortingLayer();
-        cmd.orderInLayer = sprite->GetOrderInLayer();
-
-        queue.Push(cmd);
+        // 收集所有组件的渲染命令
+        for (auto& [hash, comp] : m_Components) {
+            (void)hash;
+            if (comp->IsEnabled())
+                comp->CollectRenderCommands(queue);
+        }
     }
 
     void GameObject::SubmitSprite(ISpriteBatch& batch) {
-        if (!m_Active || m_Entity == ENTITY_NULL) return;
-        auto* em = s_ActiveEntityManager;
-        if (!em) return;
+        if (!m_Active) return;
 
-        auto* sprite = em->GetComponent<SpriteComponent>(m_Entity);
-        if (!sprite || !sprite->IsVisible()) return;
+        // 遍历组件，让每个 SpriteComponent 提交
+        for (auto& [hash, comp] : m_Components) {
+            (void)hash;
+            if (!comp->IsEnabled()) continue;
 
-        auto* transform = em->GetComponent<TransformComponent>(m_Entity);
-        if (!transform) return;
+            // dynamic_cast 检查是否是 SpriteComponent
+            auto* sprite = dynamic_cast<SpriteComponent*>(comp.get());
+            if (sprite && sprite->IsVisible()) {
+                const float32* worldData = m_Transform.GetWorldMatrixData();
+                SpriteData data = sprite->ToSpriteData(worldData);
+                batch.Draw(data);
+            }
+        }
+    }
 
-        const float32* worldData = transform->GetWorldMatrixData();
-        SpriteData data = sprite->ToSpriteData(worldData);
-        batch.Draw(data);
+    // ============================================================
+    // 便捷方法：SpriteComponent
+    // ============================================================
+
+    SpriteComponent& GameObject::GetSprite() {
+        auto* existing = GetComponent<SpriteComponent>();
+        if (existing) return *existing;
+        return *AddComponent<SpriteComponent>();
+    }
+
+    const SpriteComponent* GameObject::GetSprite() const {
+        return GetComponent<SpriteComponent>();
+    }
+
+    bool GameObject::HasSprite() const noexcept {
+        auto* sprite = GetComponent<SpriteComponent>();
+        return sprite != nullptr && (sprite->HasTexture() || sprite->IsVisible());
+    }
+
+    // ============================================================
+    // 便捷方法：PhysicsComponent
+    // ============================================================
+
+    PhysicsComponent& GameObject::GetPhysics() {
+        auto* existing = GetComponent<PhysicsComponent>();
+        if (existing) return *existing;
+        return *AddComponent<PhysicsComponent>();
+    }
+
+    const PhysicsComponent* GameObject::GetPhysics() const {
+        return GetComponent<PhysicsComponent>();
+    }
+
+    bool GameObject::HasPhysics() const noexcept {
+        auto* physics = GetComponent<PhysicsComponent>();
+        return physics != nullptr && physics->HasBody();
     }
 
 } // namespace Engine

@@ -21,7 +21,7 @@ namespace Engine {
         m_InputManager.Init(m_Window.get());
 
         // ── 3. 创建正交相机 ──
-        m_Camera = std::make_unique<OrthographicCamera>(-3.0f, 3.0f, -3.0f, 3.0f);
+        m_Camera = OrthographicCamera(-3.0f, 3.0f, -3.0f, 3.0f);
 
         // ── 4. 创建渲染资源 ──
         auto* context = m_Window->GetContext();
@@ -181,7 +181,7 @@ namespace Engine {
         bool isShiftDown = m_InputManager.IsKeyDown(KeyCode::LeftShift);
         if (isShiftDown) {
             m_WorldMousePos = m_InputManager.ScreenToWorld(
-                *m_Camera,
+                m_Camera,
                 static_cast<float32>(m_WindowWidth),
                 static_cast<float32>(m_WindowHeight)
             );
@@ -212,7 +212,7 @@ namespace Engine {
         // ── 渲染 10000 个精灵 ──
         m_BatchShader->Bind();
         m_BatchShader->SetMat4("u_ViewProjection",
-            m_Camera->GetViewProjectionMatrixPtr());
+            m_Camera.GetViewProjectionMatrixPtr());
         m_SpriteBatch->Begin(m_Texture);
 
         bool showCursor = m_InputManager.IsKeyDown(KeyCode::LeftShift);

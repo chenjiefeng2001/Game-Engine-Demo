@@ -1,9 +1,13 @@
 #include "Engine/OpenGL/OpenGLPhysicsDebugDraw.h"
 #include <glad/gl.h>
+#include "Engine/Core/Log.h"
 #include <cstring>
-#include <iostream>
 #include <cmath>
 #include <vector>
+
+namespace {
+    Engine::Logger s_Log("OpenGLPhysicsDebugDraw");
+}
 
 namespace Engine {
 
@@ -67,7 +71,7 @@ namespace Engine {
         if (!success) {
             char infoLog[512];
             m_GL.GetShaderInfoLog(id, 512, nullptr, infoLog);
-            std::cerr << "[DebugDraw] Shader compile error:\n" << infoLog << std::endl;
+            s_Log.Error("[DebugDraw] Shader compile error:\n{}", infoLog);
             m_GL.DeleteShader(id);
             return 0;
         }
@@ -85,7 +89,7 @@ namespace Engine {
         if (!success) {
             char infoLog[512];
             m_GL.GetProgramInfoLog(program, 512, nullptr, infoLog);
-            std::cerr << "[DebugDraw] Program link error:\n" << infoLog << std::endl;
+            s_Log.Error("[DebugDraw] Program link error:\n{}", infoLog);
             m_GL.DeleteProgram(program);
             return 0;
         }
@@ -97,7 +101,7 @@ namespace Engine {
         uint32 vs = CompileShader(GL_VERTEX_SHADER, s_DebugVertSrc);
         uint32 fs = CompileShader(GL_FRAGMENT_SHADER, s_DebugFragSrc);
         if (!vs || !fs) {
-            std::cerr << "[DebugDraw] Failed to compile shaders!" << std::endl;
+            s_Log.Error("[DebugDraw] Failed to compile shaders!");
             return;
         }
 
@@ -106,7 +110,7 @@ namespace Engine {
         m_GL.DeleteShader(fs);
 
         if (!m_ShaderID) {
-            std::cerr << "[DebugDraw] Failed to link shader program!" << std::endl;
+            s_Log.Error("[DebugDraw] Failed to link shader program!");
             return;
         }
 
@@ -131,7 +135,7 @@ namespace Engine {
         m_GL.BindBuffer(GL_ARRAY_BUFFER, 0);
         m_GL.BindVertexArray(0);
 
-        std::cout << "[DebugDraw] OpenGL debug draw initialized." << std::endl;
+        s_Log.Info("[DebugDraw] OpenGL debug draw initialized.");
     }
 
     // ============================================================

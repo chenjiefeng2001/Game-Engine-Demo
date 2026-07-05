@@ -1,49 +1,37 @@
 #include "Engine/Core/Scene/Scene.h"
-#include "Engine/Core/ECS/System.h"
-#include "Engine/Core/Physics/PhysicsComponent.h"
+#include "Engine/Core/Scene/Serializer.h"
 #include "Engine/Core/RHI/IRenderQueue.h"
+#include "Engine/Core/Physics/PhysicsComponent.h"
 #include <algorithm>
 #include <functional>
 
 namespace Engine {
 
-    Scene::Scene() {
-        SetActiveEntityManager(&m_EntityManager);
+    // ──────────────────────────────────────────────
+    // 构造 / 析构
+    // ──────────────────────────────────────────────
+
+    Scene::Scene()
+        : m_Name("Scene") {
+    }
+
+    Scene::Scene(std::string name)
+        : m_Name(std::move(name)) {
     }
 
     Scene::~Scene() {
         OnDestroy();
-        if (GetActiveEntityManager() == &m_EntityManager)
-            SetActiveEntityManager(nullptr);
         m_Objects.clear();
     }
 
     // ──────────────────────────────────────────────
-    // System 管理
-    // ──────────────────────────────────────────────
-
-    void Scene::AddSystem(std::unique_ptr<System> system) {
-        if (system) m_Systems.push_back(std::move(system));
-    }
-
-    void Scene::ClearSystems() {
-        m_Systems.clear();
-    }
-
-    // ──────────────────────────────────────────────
-    // 对象管理（向后兼容）
+    // 对象管理
     // ──────────────────────────────────────────────
 
     void Scene::AddObject(std::shared_ptr<GameObject> obj) {
         if (!obj) return;
         auto it = std::find(m_Objects.begin(), m_Objects.end(), obj);
         if (it != m_Objects.end()) return;
-
-        // 创建 ECS Entity 并关联
-        Entity entity = m_EntityManager.Create();
-        obj->SetEntity(entity);
-        m_EntityManager.AddComponent<TransformComponent>(entity);
-
         m_Objects.push_back(std::move(obj));
     }
 
@@ -52,16 +40,33 @@ namespace Engine {
         auto it = std::find_if(m_Objects.begin(), m_Objects.end(),
             [obj](const std::shared_ptr<GameObject>& o) { return o.get() == obj; });
         if (it == m_Objects.end()) return false;
-        if (obj->GetEntity() != ENTITY_NULL)
-            m_EntityManager.Destroy(obj->GetEntity());
+        (*it)->OnDestroy();
         m_Objects.erase(it);
         return true;
     }
 
     void Scene::Clear() {
         OnDestroy();
-        m_EntityManager.Clear();
         m_Objects.clear();
+    }
+
+    bool Scene::Contains(GameObject* obj) const {
+        if (!obj) return false;
+        return std::any_of(m_Objects.begin(), m_Objects.end(),
+            [obj](const std::shared_ptr<GameObject>& o) { return o.get() == obj; });
+    }
+
+    size_t Scene::GetTotalObjectCount() const {
+        size_t count = 0;
+        std::function<void(const std::vector<std::shared_ptr<GameObject>>&)> recCount;
+        recCount = [&](const auto& list) {
+            for (auto& obj : list) {
+                ++count;
+                recCount(obj->GetChildren());
+            }
+        };
+        recCount(m_Objects);
+        return count;
     }
 
     // ──────────────────────────────────────────────
@@ -69,31 +74,42 @@ namespace Engine {
     // ──────────────────────────────────────────────
 
     namespace detail {
-        // 递归查找（非 const 版本）
         GameObject* findRecursive(const std::string& name,
                                   const std::vector<std::shared_ptr<GameObject>>& objects) {
             for (auto& obj : objects) {
-                if (obj->GetName() == name)
-                    return obj.get();
-
+                if (obj->GetName() == name) return obj.get();
                 auto* found = findRecursive(name, obj->GetChildren());
-                if (found)
-                    return found;
+                if (found) return found;
             }
             return nullptr;
         }
 
-        // 递归查找（const 版本）
         const GameObject* findRecursiveConst(
                 const std::string& name,
                 const std::vector<std::shared_ptr<GameObject>>& objects) {
             for (const auto& obj : objects) {
-                if (obj->GetName() == name)
-                    return obj.get();
-
+                if (obj->GetName() == name) return obj.get();
                 auto* found = findRecursiveConst(name, obj->GetChildren());
-                if (found)
-                    return found;
+                if (found) return found;
+            }
+            return nullptr;
+        }
+        GameObject* findByIDRecursive(uint32 id,
+                const std::vector<std::shared_ptr<GameObject>>& objects) {
+            for (auto& obj : objects) {
+                if (obj->GetID() == id) return obj.get();
+                auto* found = findByIDRecursive(id, obj->GetChildren());
+                if (found) return found;
+            }
+            return nullptr;
+        }
+
+        const GameObject* findByIDRecursiveConst(uint32 id,
+                const std::vector<std::shared_ptr<GameObject>>& objects) {
+            for (const auto& obj : objects) {
+                if (obj->GetID() == id) return obj.get();
+                auto* found = findByIDRecursiveConst(id, obj->GetChildren());
+                if (found) return found;
             }
             return nullptr;
         }
@@ -107,57 +123,97 @@ namespace Engine {
         return detail::findRecursiveConst(name, m_Objects);
     }
 
+    GameObject* Scene::FindByID(uint32 id) {
+        return detail::findByIDRecursive(id, m_Objects);
+    }
+
+    const GameObject* Scene::FindByID(uint32 id) const {
+        return detail::findByIDRecursiveConst(id, m_Objects);
+    }
+
     // ──────────────────────────────────────────────
-    // 生命周期 — ECS System 驱动
+    // 生命周期（非活跃场景直接跳过）
     // ──────────────────────────────────────────────
 
     void Scene::OnCreate() {
-        std::function<void(GameObject&)> recCreate = [&](GameObject& o) {
-            for (auto& c : o.GetChildren()) recCreate(*c);
-        };
-        for (auto& obj : m_Objects) recCreate(*obj);
+        if (!m_Active) return;
+        for (auto& obj : m_Objects) {
+            obj->OnCreate();
+            std::function<void(GameObject&)> recCreate =
+                [&](GameObject& o) {
+                    for (auto& c : o.GetChildren()) {
+                        c->OnCreate();
+                        recCreate(*c);
+                    }
+                };
+            recCreate(*obj);
+        }
     }
 
     void Scene::Update(float32 dt) {
-        std::sort(m_Systems.begin(), m_Systems.end(),
-            [](const auto& a, const auto& b) {
-                return a->GetPriority() < b->GetPriority();
-            });
-        for (auto& sys : m_Systems) {
-            sys->OnUpdate(m_EntityManager, dt);
+        if (!m_Active) return;
+        for (auto& obj : m_Objects) {
+            obj->Update(dt);
         }
     }
 
     void Scene::Render() {
-        for (auto& sys : m_Systems) {
-            sys->OnRender(m_EntityManager);
+        if (!m_Active) return;
+        for (auto& obj : m_Objects) {
+            obj->Render();
+            std::function<void(GameObject&)> recRender =
+                [&](GameObject& o) {
+                    for (auto& c : o.GetChildren()) {
+                        c->Render();
+                        recRender(*c);
+                    }
+                };
+            recRender(*obj);
         }
     }
 
     void Scene::OnDestroy() {
-        std::function<void(GameObject&)> recDestroy = [&](GameObject& o) {
-            for (auto& c : o.GetChildren()) recDestroy(*c);
-        };
-        for (auto& obj : m_Objects) recDestroy(*obj);
+        for (auto& obj : m_Objects) {
+            obj->OnDestroy();
+            std::function<void(GameObject&)> recDestroy =
+                [&](GameObject& o) {
+                    for (auto& c : o.GetChildren()) {
+                        c->OnDestroy();
+                        recDestroy(*c);
+                    }
+                };
+            recDestroy(*obj);
+        }
     }
 
     // ──────────────────────────────────────────────
-    // 物理同步（ECS ForEach 方式）
+    // 物理同步
     // ──────────────────────────────────────────────
 
-    void Scene::PostPhysicsUpdate() {
-        m_EntityManager.ForEach<TransformComponent, PhysicsComponent>(
-            [](Entity entity, TransformComponent& transform, PhysicsComponent& physics) {
-                (void)entity;
-                Vec2 pos; float32 angle;
-                physics.SyncPhysicsToTransform(pos, angle);
-                transform.SetPosition(pos.x, pos.y, 0.0f);
-                transform.SetRotation(0.0f, 0.0f, angle);
+    namespace detail {
+        static void PostPhysicsUpdateRecursive(GameObject& obj) {
+            if (obj.HasPhysics()) {
+                Vec2 pos;
+                float32 angle;
+                obj.GetPhysics().SyncPhysicsToTransform(pos, angle);
+                obj.GetTransform().SetPosition(pos.x, pos.y, 0.0f);
+                obj.GetTransform().SetRotation(0.0f, 0.0f, angle);
             }
-        );
+            for (auto& child : obj.GetChildren()) {
+                PostPhysicsUpdateRecursive(*child);
+            }
+        }
+    } // namespace detail
+
+    void Scene::PostPhysicsUpdate() {
+        if (!m_Active) return;
+        for (auto& obj : m_Objects) {
+            detail::PostPhysicsUpdateRecursive(*obj);
+        }
     }
 
     void Scene::CollectRenderCommands(IRenderQueue& queue) {
+        if (!m_Active) return;
         for (auto& obj : m_Objects) {
             obj->CollectRenderCommands(queue);
             std::function<void(GameObject&)> collectRecursive =
@@ -169,6 +225,18 @@ namespace Engine {
                 };
             collectRecursive(*obj);
         }
+    }
+
+    // ──────────────────────────────────────────────
+    // 序列化/反序列化
+    // ──────────────────────────────────────────────
+
+    bool Scene::SaveToFile(const std::string& filePath) const {
+        return JsonSerializer::SaveToFile(*this, filePath);
+    }
+
+    bool Scene::LoadFromFile(const std::string& filePath) {
+        return JsonSerializer::LoadFromFile(*this, filePath);
     }
 
 } // namespace Engine

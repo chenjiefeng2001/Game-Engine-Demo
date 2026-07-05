@@ -4,6 +4,8 @@
 #include <Engine/Core/IWindow.h>
 #include <Engine/OpenGL/OpenGLContext.h>
 #include <Engine/Box2D/Box2DPhysicsWorld.h>
+#include <Engine/Core/GameObject/SpriteComponent.h>
+#include <Engine/Core/Physics/PhysicsComponent.h>
 #include <GLFW/glfw3.h>
 #include <glm/glm.hpp>
 #include <glm/gtc/type_ptr.hpp>
@@ -36,7 +38,7 @@ namespace Engine {
                                  static_cast<float32>(m_WindowHeight);
                 float32 viewHeight = 12.0f;
                 float32 viewWidth  = viewHeight * aspect;
-                m_Camera = std::make_unique<OrthographicCamera>(
+                m_Camera = OrthographicCamera(
                     -viewWidth * 0.5f, viewWidth * 0.5f,
                     -viewHeight * 0.5f, viewHeight * 0.5f);
 
@@ -51,7 +53,7 @@ namespace Engine {
                          static_cast<float32>(m_WindowHeight);
         float32 viewHeight = 12.0f;
         float32 viewWidth  = viewHeight * aspect;
-        m_Camera = std::make_unique<OrthographicCamera>(
+        m_Camera = OrthographicCamera(
             -viewWidth * 0.5f, viewWidth * 0.5f,
             -viewHeight * 0.5f, viewHeight * 0.5f);
 
@@ -84,7 +86,7 @@ namespace Engine {
             groundDef.position = Vec2(0.0f, -5.0f);
             groundDef.shape.type = ShapeType::Box;
             groundDef.shape.boxSize = Vec2(8.0f, 0.5f);
-            groundDef.friction = 0.5f;
+            groundDef.material.friction = 0.5f;
             m_PhysicsWorld->CreateBody(groundDef);
         }
 
@@ -111,8 +113,8 @@ namespace Engine {
                 bodyDef.type = BodyType::Dynamic;
                 bodyDef.shape.type = ShapeType::Box;
                 bodyDef.shape.boxSize = Vec2(0.45f, 0.45f);
-                bodyDef.density  = 1.0f;
-                bodyDef.friction = 0.5f;
+                bodyDef.material.density  = 1.0f;
+                bodyDef.material.friction = 0.5f;
                 box->GetPhysics().CreateBody(m_PhysicsWorld, bodyDef);
 
                 // 初始位置同步到物理体
@@ -136,8 +138,8 @@ namespace Engine {
                 bodyDef.type = BodyType::Dynamic;
                 bodyDef.shape.type = ShapeType::Box;
                 bodyDef.shape.boxSize = Vec2(0.45f, 0.45f);
-                bodyDef.density  = 1.0f;
-                bodyDef.friction = 0.5f;
+                bodyDef.material.density  = 1.0f;
+                bodyDef.material.friction = 0.5f;
                 box->GetPhysics().CreateBody(m_PhysicsWorld, bodyDef);
 
                 const auto& pos = box->GetTransform().GetPosition();
@@ -159,9 +161,9 @@ namespace Engine {
             bodyDef.type = BodyType::Dynamic;
             bodyDef.shape.type = ShapeType::Circle;
             bodyDef.shape.circleRadius = 0.5f;
-            bodyDef.density  = 1.0f;
-            bodyDef.friction = 0.3f;
-            bodyDef.restitution = 0.6f;
+            bodyDef.material.density     = 1.0f;
+            bodyDef.material.friction    = 0.3f;
+            bodyDef.material.restitution = 0.6f;
             ball->GetPhysics().CreateBody(m_PhysicsWorld, bodyDef);
 
             // 演示：碰撞回调（游戏对象级别）
@@ -285,7 +287,7 @@ namespace Engine {
         float32 ndcX = 2.0f * screenX / static_cast<float32>(m_WindowWidth) - 1.0f;
         float32 ndcY = 1.0f - 2.0f * screenY / static_cast<float32>(m_WindowHeight);
 
-        const float32* vp = m_Camera->GetViewProjectionMatrixPtr();
+        const float32* vp = m_Camera.GetViewProjectionMatrixPtr();
         glm::mat4 viewProj = glm::make_mat4(vp);
         glm::mat4 invVP = glm::inverse(viewProj);
 
@@ -420,7 +422,7 @@ namespace Engine {
         // ── 使用 SceneRenderer 风格渲染每个对象 ──
         m_BatchShader->Bind();
         m_BatchShader->SetMat4("u_ViewProjection",
-            m_Camera->GetViewProjectionMatrixPtr());
+            m_Camera.GetViewProjectionMatrixPtr());
 
         // 遍历场景中所有对象并提交精灵
         m_SpriteBatch->Begin(m_Texture);
@@ -443,7 +445,7 @@ namespace Engine {
 
         // ── 调试绘制（叠加在精灵之上） ──
         if (m_DebugDrawEnabled && m_DebugDraw) {
-            m_DebugDraw->SetViewProjection(m_Camera->GetViewProjectionMatrixPtr());
+            m_DebugDraw->SetViewProjection(m_Camera.GetViewProjectionMatrixPtr());
             m_PhysicsWorld->DebugDraw();
         }
     }

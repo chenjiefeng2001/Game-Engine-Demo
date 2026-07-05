@@ -123,19 +123,72 @@ namespace Engine {
         return m_WorldMatrix;
     }
 
-    // ── 朝向向量 ──
+    // ════════════════════════════════════════════════
+    // 坐标空间变换
+    // ════════════════════════════════════════════════
+
+    Vec3 TransformComponent::LocalToWorld(const Vec3& localPoint) {
+        const Mat4& world = GetWorldMatrix();
+        glm::vec4 p(localPoint.x, localPoint.y, localPoint.z, 1.0f);
+        glm::mat4 w = ToGlm(world);
+        glm::vec4 result = w * p;
+        return Vec3(result.x, result.y, result.z);
+    }
+
+    Vec3 TransformComponent::LocalToWorldDir(const Vec3& localDir) {
+        const Mat4& world = GetWorldMatrix();
+        glm::vec4 p(localDir.x, localDir.y, localDir.z, 0.0f); // 方向向量 w=0
+        glm::mat4 w = ToGlm(world);
+        glm::vec4 result = w * p;
+        return Vec3(result.x, result.y, result.z);
+    }
+
+    Vec3 TransformComponent::WorldToLocal(const Vec3& worldPoint) {
+        const Mat4& world = GetWorldMatrix();
+        glm::mat4 w = ToGlm(world);
+        glm::mat4 inv = glm::inverse(w);
+        glm::vec4 p(worldPoint.x, worldPoint.y, worldPoint.z, 1.0f);
+        glm::vec4 result = inv * p;
+        return Vec3(result.x, result.y, result.z);
+    }
+
+    Vec3 TransformComponent::WorldToLocalDir(const Vec3& worldDir) {
+        const Mat4& world = GetWorldMatrix();
+        glm::mat4 w = ToGlm(world);
+        glm::mat4 inv = glm::inverse(w);
+        glm::vec4 p(worldDir.x, worldDir.y, worldDir.z, 0.0f);
+        glm::vec4 result = inv * p;
+        return Vec3(result.x, result.y, result.z);
+    }
+
+    Vec3 TransformComponent::GetWorldForward() {
+        const Mat4& w = GetWorldMatrix();
+        // Z 轴（列 2）
+        return Vec3(w(0, 2), w(1, 2), w(2, 2));
+    }
+
+    Vec3 TransformComponent::GetWorldRight() {
+        const Mat4& w = GetWorldMatrix();
+        // X 轴（列 0）
+        return Vec3(w(0, 0), w(1, 0), w(2, 0));
+    }
+
+    Vec3 TransformComponent::GetWorldUp() {
+        const Mat4& w = GetWorldMatrix();
+        // Y 轴（列 1）
+        return Vec3(w(0, 1), w(1, 1), w(2, 1));
+    }
+
+    // ── 朝向向量（直接委托 GetWorld*）──
     Vec3 TransformComponent::GetForward() const noexcept {
-        // 从世界矩阵 col 2 (Z 轴)
         return Vec3(m_WorldMatrix(0, 2), m_WorldMatrix(1, 2), m_WorldMatrix(2, 2));
     }
 
     Vec3 TransformComponent::GetRight() const noexcept {
-        // 从世界矩阵 col 0 (X 轴)
         return Vec3(m_WorldMatrix(0, 0), m_WorldMatrix(1, 0), m_WorldMatrix(2, 0));
     }
 
     Vec3 TransformComponent::GetUp() const noexcept {
-        // 从世界矩阵 col 1 (Y 轴)
         return Vec3(m_WorldMatrix(0, 1), m_WorldMatrix(1, 1), m_WorldMatrix(2, 1));
     }
 

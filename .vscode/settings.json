@@ -1,1 +1,8 @@
-{}
+{
+    "chat.tools.terminal.autoApprove": {
+        "/^cd \"c:\\\\Users\\\\14977\\\\source\\\\repos\\\\Game-Engine-Demo\" ; git submodule status$/": {
+            "approve": true,
+            "matchCommandLine": true
+        }
+    }
+}

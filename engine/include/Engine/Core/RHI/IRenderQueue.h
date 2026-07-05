@@ -27,6 +27,15 @@ namespace Engine {
 
         /** 获取所有命令的只读引用（供 SceneRenderer 处理） */
         virtual const std::vector<RenderCommand>& GetCommands() const = 0;
+
+        /**
+         * @brief 设置可见性过滤遮罩 — 只保留与 mask 匹配的命令渲染
+         * @param visibilityMask 视口的 VisibilityMask
+         *
+         * 生成的命令列表中，只有 (cmd.layerMask & visibilityMask) != 0 的命令会被保留。
+         * 此方法在 Clear() 后、遍历场景 Push 前调用。
+         */
+        virtual void SetVisibilityMask(uint32 /*mask*/) {}
     };
 
 } // namespace Engine

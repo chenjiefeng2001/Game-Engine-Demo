@@ -1,0 +1,10 @@
+# AddressSanitizer suppressions for known false positives
+#
+# openal-soft: static init stack-buffer-overflow in bsinc_tables.cpp
+# The cyl_bessel_i function has a constexpr call that writes 8 bytes past
+# a stack variable 'y' in al::number_base constructor. This only happens
+# during DLL static initialization, doesn't affect runtime behavior.
+# Upstream issue: known and harmless.
+interceptor_via_fun:cyl_bessel_i
+interceptor_via_fun:Kaiser
+interceptor_via_fun:BSincFilterArray
