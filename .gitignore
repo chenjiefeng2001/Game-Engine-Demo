@@ -42,8 +42,10 @@
 # Build directories
 build/
 Build/
-build-*/、
+build-*/
 build_vs/
+build_vulkan/
+build_vulkan*/
 
 # CMake generated files
 CMakeFiles/
@@ -58,7 +60,7 @@ compile_commands.json
 *.log
 *.bak
 *.swp
-
+*.yaml
 # vcpkg
 vcpkg_installed/
 
@@ -69,3 +71,12 @@ vcpkg_installed/
 Testing/
 .cache/
 /.vs
+.vscode/
+build_test/
+
+# Visual Studio project files in third-party libraries (imgui examples etc.)
+third_party/**/*.vcxproj
+third_party/**/*.vcxproj.filters
+third_party/**/*.sln
+
+third_party/fontawesome

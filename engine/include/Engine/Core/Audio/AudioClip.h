@@ -28,6 +28,7 @@
 #include "Engine/Core/Audio/AudioDefs.h"
 #include "Engine/Core/Audio/AudioLoader.h"
 #include "Engine/Core/Resources/Resource.h"
+#include "Engine/Core/IGraphicsFactory.h"
 #include <string>
 
 namespace Engine {
@@ -101,6 +102,18 @@ public:
     // ── Resource 重写 ──
     size_t EstimatedMemoryBytes() const noexcept override {
         return static_cast<size_t>(m_Info.dataSize);
+    }
+
+    /** 加载后初始化：验证 OpenAL buffer 已就绪 */
+    bool PostLoad(IGraphicsFactory* factory) override {
+        (void)factory;
+        // 确保音频数据已成功上传到 OpenAL 缓冲区
+        if (m_BufferID == 0 && m_Info.dataSize > 0) {
+            // 数据已解码但尚未上传——尝试上传
+            // 注意：音频数据由 LoadFromFile/LoadFromMemory 上传，此处仅做验证
+            return false;
+        }
+        return IsValid();
     }
 
     /** 从磁盘重新加载音频文件 */

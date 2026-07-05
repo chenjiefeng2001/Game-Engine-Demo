@@ -6,10 +6,14 @@
 #include <glm/glm.hpp>
 #include <glm/gtc/matrix_transform.hpp>
 #include <glm/gtc/type_ptr.hpp>
+#include "Engine/Core/Log.h"
 #include <fstream>
 #include <sstream>
-#include <iostream>
 #include <cstring>
+
+namespace {
+    Engine::Logger s_Log("InputManager");
+}
 
 namespace Engine {
 
@@ -21,20 +25,20 @@ namespace Engine {
 
     void InputManager::Init(IWindow* window) {
         if (m_Initialized) {
-            std::cerr << "[InputManager] Already initialized, skipping." << std::endl;
+            s_Log.Error("Already initialized, skipping.");
             return;
         }
         auto* nativeWin = static_cast<GLFWwindow*>(window->GetNativeHandle());
         Input::Init(std::make_unique<GlfwInput>(nativeWin));
         m_Initialized = true;
-        std::cout << "[InputManager] Initialized." << std::endl;
+        s_Log.Info("Initialized.");
     }
 
     void InputManager::Shutdown() {
         m_Actions.clear();
         Input::Shutdown();
         m_Initialized = false;
-        std::cout << "[InputManager] Shutdown." << std::endl;
+        s_Log.Info("Shutdown.");
     }
 
 
@@ -144,7 +148,7 @@ namespace Engine {
     void InputManager::SaveBindings(const std::string& filePath) const {
         std::ofstream file(filePath);
         if (!file.is_open()) {
-            std::cerr << "[InputManager] Failed to save bindings to: " << filePath << std::endl;
+            s_Log.Error("Failed to save bindings to: {}", filePath);
             return;
         }
 
@@ -170,13 +174,13 @@ namespace Engine {
         }
         file << "\n}\n";
 
-        std::cout << "[InputManager] Bindings saved to: " << filePath << std::endl;
+        s_Log.Info("Bindings saved to: {}", filePath);
     }
 
     void InputManager::LoadBindings(const std::string& filePath) {
         std::ifstream file(filePath);
         if (!file.is_open()) {
-            std::cerr << "[InputManager] Failed to load bindings from: " << filePath << std::endl;
+            s_Log.Error("Failed to load bindings from: {}", filePath);
             return;
         }
 
@@ -185,9 +189,9 @@ namespace Engine {
         buffer << file.rdbuf();
         std::string content = buffer.str();
 
-        std::cout << "[InputManager] Bindings loaded from: " << filePath << std::endl;
-        std::cout << "[InputManager] Full JSON parser not implemented in this demo." << std::endl;
-        std::cout << "[InputManager] Content preview: " << content.substr(0, 100) << "..." << std::endl;
+        s_Log.Info("Bindings loaded from: {}", filePath);
+        s_Log.Info("Full JSON parser not implemented in this demo.");
+        s_Log.Info("Content preview: {}...", content.substr(0, 100));
     }
 
 } // namespace Engine

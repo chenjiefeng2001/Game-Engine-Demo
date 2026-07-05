@@ -34,7 +34,7 @@ namespace Engine {
         int            width  = 0;
         int            height = 0;
         int            channels = 0;
-        unsigned char* pixels = nullptr;  // 由 stbi_load 分配，上传后需释放
+        unsigned char* pixels = nullptr;  
 
         ~TextureLoadData() { Free(); }
         TextureLoadData() = default;

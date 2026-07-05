@@ -25,21 +25,22 @@ namespace Engine {
     private:
         // ── 静态回调函数（供 b2DebugDraw 函数指针使用） ──
 
-        static void DrawPolygonImpl(const b2Vec2* vertices, int vertexCount,
+        static void DrawPolygonImpl(b2WorldTransform transform,
+                                    const b2Vec2* vertices, int vertexCount,
                                     b2HexColor color, void* context);
-        static void DrawSolidPolygonImpl(b2Transform transform,
+        static void DrawSolidPolygonImpl(b2WorldTransform transform,
                                          const b2Vec2* vertices, int vertexCount,
                                          float radius, b2HexColor color,
                                          void* context);
         static void DrawCircleImpl(b2Vec2 center, float radius,
                                    b2HexColor color, void* context);
-        static void DrawSolidCircleImpl(b2Transform transform, float radius,
-                                        b2HexColor color, void* context);
+        static void DrawSolidCircleImpl(b2WorldTransform transform, b2Vec2 center,
+                                        float radius, b2HexColor color, void* context);
         static void DrawSolidCapsuleImpl(b2Vec2 p1, b2Vec2 p2, float radius,
                                          b2HexColor color, void* context);
         static void DrawLineImpl(b2Vec2 p1, b2Vec2 p2,
                                  b2HexColor color, void* context);
-        static void DrawTransformImpl(b2Transform transform, void* context);
+        static void DrawTransformImpl(b2WorldTransform transform, void* context);
         static void DrawPointImpl(b2Vec2 p, float size,
                                   b2HexColor color, void* context);
 

@@ -21,6 +21,7 @@ namespace Engine {
             case BodyType::Static:    return b2_staticBody;
             case BodyType::Dynamic:   return b2_dynamicBody;
             case BodyType::Kinematic: return b2_kinematicBody;
+            default:                  break;
         }
         return b2_staticBody;
     }
@@ -30,6 +31,7 @@ namespace Engine {
             case b2_staticBody:    return BodyType::Static;
             case b2_dynamicBody:   return BodyType::Dynamic;
             case b2_kinematicBody: return BodyType::Kinematic;
+            default:               break;
         }
         return BodyType::Static;
     }
@@ -202,6 +204,21 @@ namespace Engine {
                 segment.point1 = ToB2(def.shape.edgeStart);
                 segment.point2 = ToB2(def.shape.edgeEnd);
                 shapeId = b2CreateSegmentShape(m_BodyId, &shapeDef, &segment);
+                break;
+            }
+            case ShapeType::Polygon: {
+                if (def.shape.polygonVertices && def.shape.polygonVertexCount >= 3) {
+                    b2Vec2 vertices[B2_MAX_POLYGON_VERTICES];
+                    int32 count = (std::min)(def.shape.polygonVertexCount, static_cast<int32>(B2_MAX_POLYGON_VERTICES));
+                    for (int32 i = 0; i < count; ++i) {
+                        vertices[i] = ToB2(def.shape.polygonVertices[i]);
+                    }
+                    b2Hull hull = b2ComputeHull(vertices, count);
+                    if (hull.count > 0) {
+                        b2Polygon polygon = b2MakeOffsetPolygon(&hull, ToB2(def.shape.offset), b2MakeRot(0.0f));
+                        shapeId = b2CreatePolygonShape(m_BodyId, &shapeDef, &polygon);
+                    }
+                }
                 break;
             }
             case ShapeType::Chain: {

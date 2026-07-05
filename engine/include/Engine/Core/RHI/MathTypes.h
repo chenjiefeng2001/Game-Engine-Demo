@@ -13,13 +13,13 @@
 
 #include "Engine/Types.h"
 #include <cstring>   // memcpy, memset
+#include <cmath>     // sqrt, cos, sin
 
 namespace Engine {
 
 // ──────────────────────────────────────────
 // 2D 向量
 // ──────────────────────────────────────────
-#pragma pack(push, 1)
 struct Vec2 {
     float32 x, y;
 
@@ -31,7 +31,51 @@ struct Vec2 {
 
     bool operator==(const Vec2& o) const { return x == o.x && y == o.y; }
     bool operator!=(const Vec2& o) const { return !(*this == o); }
+
+    // 算术运算符
+    Vec2 operator+(const Vec2& o) const { return Vec2(x + o.x, y + o.y); }
+    Vec2 operator-(const Vec2& o) const { return Vec2(x - o.x, y - o.y); }
+    Vec2 operator*(float32 s) const { return Vec2(x * s, y * s); }
+    Vec2 operator/(float32 s) const { return Vec2(x / s, y / s); }
+    Vec2 operator-() const { return Vec2(-x, -y); }
+
+    Vec2& operator+=(const Vec2& o) { x += o.x; y += o.y; return *this; }
+    Vec2& operator-=(const Vec2& o) { x -= o.x; y -= o.y; return *this; }
+    Vec2& operator*=(float32 s) { x *= s; y *= s; return *this; }
+    Vec2& operator/=(float32 s) { x /= s; y /= s; return *this; }
+
+    // 静态工具方法声明（定义在 struct 外部避免 packed alignment 问题）
+    static float32 Dot(const Vec2& a, const Vec2& b);
+    static float32 Cross(const Vec2& a, const Vec2& b);
+    static float32 Length(const Vec2& v);
+    static float32 LengthSq(const Vec2& v);
+    static Vec2 Normalize(const Vec2& v);
+    static Vec2 Perp(const Vec2& v);
+    static float32 Distance(const Vec2& a, const Vec2& b);
+    static Vec2 Lerp(const Vec2& a, const Vec2& b, float32 t);
+    static Vec2 Rotate(const Vec2& v, float32 angle);
 };
+
+// ── Vec2 静态工具方法实现（在 struct 外部，确保 CRT 调用正确）──
+inline float32 Vec2::Dot(const Vec2& a, const Vec2& b) { return a.x * b.x + a.y * b.y; }
+inline float32 Vec2::Cross(const Vec2& a, const Vec2& b) { return a.x * b.y - a.y * b.x; }
+inline float32 Vec2::Length(const Vec2& v) { return std::sqrt(v.x * v.x + v.y * v.y); }
+inline float32 Vec2::LengthSq(const Vec2& v) { return v.x * v.x + v.y * v.y; }
+inline Vec2 Vec2::Normalize(const Vec2& v) {
+    float32 len = Length(v);
+    if (len < 1e-8f) return Vec2(0.0f, 0.0f);
+    return Vec2(v.x / len, v.y / len);
+}
+inline Vec2 Vec2::Perp(const Vec2& v) { return Vec2(-v.y, v.x); }
+inline float32 Vec2::Distance(const Vec2& a, const Vec2& b) { return Length(a - b); }
+inline Vec2 Vec2::Lerp(const Vec2& a, const Vec2& b, float32 t) { return a + (b - a) * t; }
+inline Vec2 Vec2::Rotate(const Vec2& v, float32 angle) {
+    float32 c = std::cos(angle), s = std::sin(angle);
+    return Vec2(v.x * c - v.y * s, v.x * s + v.y * c);
+}
+
+// 标量 * Vec2 的左乘
+inline Vec2 operator*(float32 s, const Vec2& v) { return Vec2(v.x * s, v.y * s); }
 
 // ──────────────────────────────────────────
 // 3D 向量
@@ -47,6 +91,32 @@ struct Vec3 {
 
     bool operator==(const Vec3& o) const { return x == o.x && y == o.y && z == o.z; }
     bool operator!=(const Vec3& o) const { return !(*this == o); }
+
+    Vec3 operator+(const Vec3& o) const { return Vec3(x + o.x, y + o.y, z + o.z); }
+    Vec3 operator-(const Vec3& o) const { return Vec3(x - o.x, y - o.y, z - o.z); }
+    Vec3 operator*(float32 s) const { return Vec3(x * s, y * s, z * s); }
+    Vec3 operator/(float32 s) const { return Vec3(x / s, y / s, z / s); }
+    Vec3 operator-() const { return Vec3(-x, -y, -z); }
+
+    Vec3& operator+=(const Vec3& o) { x += o.x; y += o.y; z += o.z; return *this; }
+    Vec3& operator-=(const Vec3& o) { x -= o.x; y -= o.y; z -= o.z; return *this; }
+    Vec3& operator*=(float32 s) { x *= s; y *= s; z *= s; return *this; }
+    Vec3& operator/=(float32 s) { x /= s; y /= s; z /= s; return *this; }
+
+    // 静态工具方法
+    static float32 Dot(const Vec3& a, const Vec3& b) { return a.x * b.x + a.y * b.y + a.z * b.z; }
+    static Vec3 Cross(const Vec3& a, const Vec3& b) {
+        return Vec3(a.y * b.z - a.z * b.y,
+                    a.z * b.x - a.x * b.z,
+                    a.x * b.y - a.y * b.x);
+    }
+    static float32 Length(const Vec3& v) { return std::sqrt(v.x * v.x + v.y * v.y + v.z * v.z); }
+    static float32 LengthSq(const Vec3& v) { return v.x * v.x + v.y * v.y + v.z * v.z; }
+    static Vec3 Normalize(const Vec3& v) {
+        float32 len = Length(v);
+        if (len < 1e-8f) return Vec3(0, 0, 0);
+        return Vec3(v.x / len, v.y / len, v.z / len);
+    }
 };
 
 // ──────────────────────────────────────────
@@ -65,7 +135,28 @@ struct Vec4 {
     bool operator==(const Vec4& o) const { return x == o.x && y == o.y && z == o.z && w == o.w; }
     bool operator!=(const Vec4& o) const { return !(*this == o); }
 };
-#pragma pack(pop)
+
+// ──────────────────────────────────────────
+// 四元数
+// ──────────────────────────────────────────
+struct Quat {
+    float32 x, y, z, w;
+
+    Quat() : x(0.0f), y(0.0f), z(0.0f), w(1.0f) {}
+    Quat(float32 x_, float32 y_, float32 z_, float32 w_)
+        : x(x_), y(y_), z(z_), w(w_) {}
+
+    float32& operator[](int32 i)       { return (&x)[i]; }
+    float32  operator[](int32 i) const { return (&x)[i]; }
+
+    bool operator==(const Quat& o) const {
+        return x == o.x && y == o.y && z == o.z && w == o.w;
+    }
+    bool operator!=(const Quat& o) const { return !(*this == o); }
+
+    /** 单位四元数（无旋转） */
+    static Quat Identity() { return Quat(0.0f, 0.0f, 0.0f, 1.0f); }
+};
 
 // ──────────────────────────────────────────
 // 4×4 矩阵（列主序，与 OpenGL / glm 内存布局一致）

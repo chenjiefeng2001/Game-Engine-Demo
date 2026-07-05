@@ -1,104 +1,193 @@
 #pragma once
 
-/**
- * @file GameObject.h
- * @brief 游戏对象 — ECS Entity 的轻量句柄（兼容层）
- *
- * 在 ECS 架构下，GameObject 是一个围绕 Entity ID 的轻量包装，
- * 提供 OOP 风格的便捷接口，底层操作由 EntityManager 执行。
- *
- * 架构关系：
- *   Scene
- *    └── EntityManager（ECS 核心）
- *          ├── Entity (uint32)
- *          ├── TransformComponent (内置)
- *          ├── SpriteComponent (按需)
- *          ├── PhysicsComponent (按需)
- *          └── ... 其他组件
- *
- * 新代码推荐直接使用 ECS API：
- * @code
- *   Entity e = scene.GetEntityManager().Create();
- *   scene.GetEntityManager().AddComponent<SpriteComponent>(e, texture);
- * @endcode
- */
-
+#include "Engine/Core/GameObject/Component.h"
 #include "Engine/Core/GameObject/TransformComponent.h"
-#include "Engine/Core/GameObject/SpriteComponent.h"
-#include "Engine/Core/Physics/PhysicsComponent.h"
-#include "Engine/Core/ECS/ECS.h"
 #include "Engine/Core/RHI/IRenderable.h"
 #include "Engine/Core/RHI/RenderCommand.h"
 #include <string>
 #include <vector>
 #include <memory>
+#include <unordered_map>
+#include <typeinfo>
 
 namespace Engine {
 
+    class SpriteComponent;
+    class PhysicsComponent;
     class ISpriteBatch;
     class Shader;
     class IRenderQueue;
 
-    /**
-     * @brief 游戏对象句柄 — 封装 Entity ID + EntityManager 引用
-     *
-     * 此类保持与现有沙箱代码的向后兼容，所有 GetSprite/GetPhysics
-     * 操作委托给 EntityManager 的组件池。
-     * 新实现建议直接通过 EntityManager API 操作。
-     */
-    class GameObject : public IRenderable {
+
+class GameObject : public IRenderable {
     public:
+        /** 全局自增 ID 生成器 */
+        static uint32 GetNextID() { static uint32 s_NextID = 1; return s_NextID++; }
+
         GameObject();
         explicit GameObject(std::string name);
         virtual ~GameObject();
-
-        GameObject(const GameObject&) = delete;
-        GameObject& operator=(const GameObject&) = delete;
-
-        // ── 生命周期钩子（子类可重写，默认操作组件） ──
-        /** 对象添加到场景后调用 */
         virtual void OnCreate();
-        /** 每帧更新 */
+
         virtual void Update(float32 dt);
-        /** 每帧渲染 */
-        virtual void Render();
-        /** 对象销毁时调用 */
+
+        virtual void Render() {}
+
         virtual void OnDestroy();
 
-        // ── ECS Entity ──
-        /** 获取底层 ECS Entity ID */
-        Entity GetEntity() const noexcept { return m_Entity; }
-        /** 设置底层 ECS Entity（由 Scene 在添加到 EntityManager 时调用） */
-        void SetEntity(Entity entity) noexcept { m_Entity = entity; }
+        // ============================================================
+        // 动态组件管理（结构化组件模型的核心 API）
+        // ============================================================
 
-        // ── IRenderable ──
-        void CollectRenderCommands(IRenderQueue& queue) override;
+        /**
+         * @brief 添加组件到对象上
+         * @tparam T 组件类型（必须继承自 Component）
+         * @param args 构造参数
+         * @return 组件指针（若已存在同类型组件则返回已存在的）
+         *
+         * 使用示例：
+         * @code
+         *   obj->AddComponent<SpriteComponent>(texture);
+         *   obj->AddComponent<PhysicsComponent>()->CreateBody(world, def);
+         * @endcode
+         */
+        template<typename T, typename... Args>
+        T* AddComponent(Args&&... args) {
+            static_assert(std::is_base_of_v<Component, T>,
+                          "T must derive from Component");
+            const size_t hash = typeid(T).hash_code();
 
-        // ── 组件访问（全部委托给 EntityManager） ──
+            // 如果已存在同类型组件，返回当前实例
+            auto it = m_Components.find(hash);
+            if (it != m_Components.end())
+                return static_cast<T*>(it->second.get());
 
-        /** 变换组件（每个 GameObject 始终拥有） */
-        TransformComponent& GetTransform();
-        const TransformComponent& GetTransform() const;
-        bool HasTransform() const noexcept;
+            // 创建新组件
+            auto ptr = std::make_shared<T>(std::forward<Args>(args)...);
+            T* raw = ptr.get();
 
-        /** 精灵组件（按需通过 AddComponent 获取） */
-        SpriteComponent& GetSprite();
-        const SpriteComponent* GetSprite() const;
+            // 设置组件所属对象
+            raw->m_Owner = this;
+            raw->OnCreate();
+
+            m_Components[hash] = std::move(ptr);
+            return raw;
+        }
+
+        /**
+         * @brief 获取已挂载的组件
+         * @tparam T 组件类型
+         * @return 组件指针，若不存在则返回 nullptr
+         */
+        template<typename T>
+        T* GetComponent() {
+            static_assert(std::is_base_of_v<Component, T>,
+                          "T must derive from Component");
+            auto it = m_Components.find(typeid(T).hash_code());
+            if (it != m_Components.end())
+                return static_cast<T*>(it->second.get());
+            return nullptr;
+        }
+
+        template<typename T>
+        const T* GetComponent() const {
+            static_assert(std::is_base_of_v<Component, T>,
+                          "T must derive from Component");
+            auto it = m_Components.find(typeid(T).hash_code());
+            if (it != m_Components.end())
+                return static_cast<const T*>(it->second.get());
+            return nullptr;
+        }
+
+        /**
+         * @brief 移除已挂载的组件
+         * @tparam T 组件类型
+         * @return 是否成功移除
+         */
+        template<typename T>
+        bool RemoveComponent() {
+            static_assert(std::is_base_of_v<Component, T>,
+                          "T must derive from Component");
+            auto it = m_Components.find(typeid(T).hash_code());
+            if (it != m_Components.end()) {
+                it->second->OnDestroy();
+                m_Components.erase(it);
+                return true;
+            }
+            return false;
+        }
+
+        /**
+         * @brief 检查是否挂载了指定类型的组件
+         */
+        template<typename T>
+        bool HasComponent() const {
+            return GetComponent<T>() != nullptr;
+        }
+
+        // ── 组件迭代（供序列化器等外部模块遍历所有组件） ──
+        /** 遍历所有已挂载的组件 */
+        void ForEachComponent(std::function<void(Component&)> callback) {
+            for (auto& [hash, comp] : m_Components) {
+                (void)hash;
+                if (comp) callback(*comp);
+            }
+        }
+        void ForEachComponent(std::function<void(const Component&)> callback) const {
+            for (const auto& [hash, comp] : m_Components) {
+                (void)hash;
+                if (comp) callback(*comp);
+            }
+        }
+
+        // ============================================================
+        // 便捷方法（向后兼容，旧代码无需改动）
+        // ============================================================
+
+        TransformComponent& GetTransform() noexcept { return m_Transform; }
+        const TransformComponent& GetTransform() const noexcept { return m_Transform; }
+
+        /**
+         * @brief 获取精灵组件（便捷方法，等价于 GetComponent<SpriteComponent>）
+         *
+         * 若不存在则自动添加并返回默认实例。
+         * 此设计确保 ->GetSprite().SetColor(...) 等旧代码无需预先 AddComponent。
+         */
+        class SpriteComponent& GetSprite();
+        const class SpriteComponent* GetSprite() const;
         bool HasSprite() const noexcept;
 
-        /** 物理组件 */
-        PhysicsComponent& GetPhysics();
-        const PhysicsComponent* GetPhysics() const;
+        /**
+         * @brief 获取物理组件（便捷方法，等价于 GetComponent<PhysicsComponent>）
+         */
+        class PhysicsComponent& GetPhysics();
+        const class PhysicsComponent* GetPhysics() const;
         bool HasPhysics() const noexcept;
 
-        // ── 通用属性 ──
+        // ============================================================
+        // 通用属性
+        // ============================================================
+
         void SetName(const std::string& name) { m_Name = name; }
         const std::string& GetName() const noexcept { return m_Name; }
+
+        // ── 唯一标识 ──
+        uint32 GetID() const noexcept { return m_ID; }
 
         void SetActive(bool active) { m_Active = active; }
         bool IsActive() const noexcept { return m_Active; }
         bool IsActiveInHierarchy() const;
 
+        // ── 可见性层级（Layer 系统，对应 ViewportConfig::VisibilityMask） ──
+        void SetLayer(uint32 layer) { m_Layer = layer; }
+        uint32 GetLayer() const noexcept { return m_Layer; }
+        void SetLayerMask(uint32 mask) { m_LayerMask = mask; }
+        uint32 GetLayerMask() const noexcept { return m_LayerMask; }
+
+        // ── IRenderable ──
+        void CollectRenderCommands(IRenderQueue& queue) override;
+
+        // ── 层级 ──
         void SetParent(GameObject* parent);
         GameObject* GetParent() const noexcept { return m_Parent; }
 
@@ -113,15 +202,20 @@ namespace Engine {
         void SubmitSprite(ISpriteBatch& batch);
 
     protected:
+        uint32 m_ID = 0;              ///< 唯一标识符（用于 Picking 和序列化）
         std::string m_Name;
 
-        // ECS 实体 ID（由 Scene 管理）
-        Entity m_Entity = ENTITY_NULL;
+        TransformComponent  m_Transform;   // 每个 GameObject 都有的内置变换
 
+        uint32 m_Layer = 0;          ///< 渲染层级（0=Default, 1=UI, 2=Effects...）
+        uint32 m_LayerMask = 0xFFFFFFFF; ///< 自身可见性掩码（默认全可见）
         bool m_Active = true;
 
         GameObject* m_Parent = nullptr;
         std::vector<std::shared_ptr<GameObject>> m_Children;
+
+        // 动态组件存储（type_index → Component）
+        std::unordered_map<size_t, std::shared_ptr<Component>> m_Components;
     };
 
 } // namespace Engine

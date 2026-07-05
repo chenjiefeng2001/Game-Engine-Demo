@@ -1,5 +1,9 @@
 #include "Engine/OpenAL/OpenALAudioBuffer.h"
-#include <iostream>
+#include "Engine/Core/Log.h"
+
+namespace {
+    Engine::Logger s_Log("OpenAL");
+}
 
 // OpenAL 头文件
 #include <AL/al.h>
@@ -10,7 +14,7 @@ namespace Engine {
     OpenALAudioBuffer::OpenALAudioBuffer() {
         alGenBuffers(1, &m_BufferID);
         if (alGetError() != AL_NO_ERROR) {
-            std::cerr << "[OpenAL] Failed to generate buffer" << std::endl;
+            s_Log.Error("Failed to generate buffer");
             m_BufferID = 0;
         }
     }
@@ -38,7 +42,7 @@ namespace Engine {
         }
 
         if (format == AL_NONE) {
-            std::cerr << "[OpenAL] Unsupported audio format" << std::endl;
+            s_Log.Error("Unsupported audio format");
             return;
         }
 
@@ -46,7 +50,7 @@ namespace Engine {
 
         ALenum err = alGetError();
         if (err != AL_NO_ERROR) {
-            std::cerr << "[OpenAL] Failed to buffer data (error: " << err << ")" << std::endl;
+            s_Log.Error("Failed to buffer data (error: {})", err);
             return;
         }
 

@@ -31,7 +31,7 @@ namespace Engine {
         IGraphicsFactory& m_Factory;
         TextureManager m_TextureManager;
         std::unique_ptr<IWindow> m_Window;
-        std::unique_ptr<OrthographicCamera> m_Camera;
+        OrthographicCamera m_Camera;
 
         std::shared_ptr<ISpriteBatch> m_SpriteBatch;
         std::shared_ptr<Shader> m_BatchShader;

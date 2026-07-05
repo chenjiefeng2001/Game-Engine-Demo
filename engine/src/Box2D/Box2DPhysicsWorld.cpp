@@ -28,6 +28,7 @@ namespace Engine {
                 case BodyType::Static:    return b2_staticBody;
                 case BodyType::Dynamic:   return b2_dynamicBody;
                 case BodyType::Kinematic: return b2_kinematicBody;
+                default:                  break;
             }
             return b2_staticBody;
         }
@@ -37,6 +38,7 @@ namespace Engine {
                 case b2_staticBody:    return BodyType::Static;
                 case b2_dynamicBody:   return BodyType::Dynamic;
                 case b2_kinematicBody: return BodyType::Kinematic;
+                default:               break;
             }
             return BodyType::Static;
         }
@@ -72,9 +74,9 @@ namespace Engine {
         /// 在刚体上创建初始形状（用于 CreateBody）
         void CreateShapesFromBodyDef(b2BodyId bodyId, const BodyDef& def) {
             b2ShapeDef shapeDef = b2DefaultShapeDef();
-            shapeDef.density     = def.density;
-            shapeDef.material.friction    = def.friction;
-            shapeDef.material.restitution = def.restitution;
+            shapeDef.density     = def.material.density;
+            shapeDef.material.friction    = def.material.friction;
+            shapeDef.material.restitution = def.material.restitution;
             shapeDef.filter.categoryBits = static_cast<uint64_t>(def.categoryBits);
             shapeDef.filter.maskBits     = static_cast<uint64_t>(def.maskBits);
             shapeDef.filter.groupIndex   = def.groupIndex;
@@ -100,6 +102,21 @@ namespace Engine {
                     seg.point1 = ToB2(def.shape.edgeStart);
                     seg.point2 = ToB2(def.shape.edgeEnd);
                     b2CreateSegmentShape(bodyId, &shapeDef, &seg);
+                    break;
+                }
+                case ShapeType::Polygon: {
+                    if (def.shape.polygonVertices && def.shape.polygonVertexCount >= 3) {
+                        b2Vec2 vertices[B2_MAX_POLYGON_VERTICES];
+                        int32 count = (std::min)(def.shape.polygonVertexCount, static_cast<int32>(B2_MAX_POLYGON_VERTICES));
+                        for (int32 i = 0; i < count; ++i) {
+                            vertices[i] = ToB2(def.shape.polygonVertices[i]);
+                        }
+                        b2Hull hull = b2ComputeHull(vertices, count);
+                        if (hull.count > 0) {
+                            b2Polygon poly = b2MakeOffsetPolygon(&hull, ToB2(def.shape.offset), b2MakeRot(0.0f));
+                            b2CreatePolygonShape(bodyId, &shapeDef, &poly);
+                        }
+                    }
                     break;
                 }
                 case ShapeType::Chain:
@@ -444,7 +461,7 @@ namespace Engine {
             return true;
         };
 
-        b2World_OverlapAABB(m_WorldId, aabb, b2DefaultQueryFilter(), callback, &ctx);
+        b2World_OverlapAABB(m_WorldId, {0, 0}, aabb, b2DefaultQueryFilter(), callback, &ctx);
         return results;
     }
 

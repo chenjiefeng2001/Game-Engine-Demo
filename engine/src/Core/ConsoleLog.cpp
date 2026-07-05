@@ -1,14 +1,8 @@
 #include "Engine/ConsoleLog.h"
-#include <iostream>
 #include <algorithm>
+#include <cstring>
 
 namespace Engine {
-
-    ConsoleLog& ConsoleLog::Instance()
-    {
-        static ConsoleLog instance;
-        return instance;
-    }
 
     void ConsoleLog::Log(LogLevel level, const std::string& message)
     {
@@ -33,21 +27,11 @@ namespace Engine {
 
         m_Buffer[index].level     = level;
         m_Buffer[index].timestamp = timestamp;
-        m_Buffer[index].message   = message;
-
-        // 同步输出到 stderr（方便 IDE 控制台调试）
-        switch (level)
-        {
-            case LogLevel::Info:
-                std::cout << "[INFO] " << message << std::endl;
-                break;
-            case LogLevel::Warn:
-                std::cout << "[WARN] " << message << std::endl;
-                break;
-            case LogLevel::Error:
-                std::cerr << "[ERROR] " << message << std::endl;
-                break;
-        }
+        // 固定缓冲区拷贝（安全截断，跨平台兼容）
+        message.copy(m_Buffer[index].message, sizeof(m_Buffer[index].message) - 1);
+        m_Buffer[index].message[sizeof(m_Buffer[index].message) - 1] = '\0';
+        // 注意：不写 std::cout / std::cerr。终端输出由
+        // spdlog 的 stdout_color_sink 统一管理，避免重复。
     }
 
     void ConsoleLog::Clear()
