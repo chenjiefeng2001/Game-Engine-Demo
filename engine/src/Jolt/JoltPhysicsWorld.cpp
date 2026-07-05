@@ -466,9 +466,9 @@ void JoltPhysicsWorld::DebugDraw() {
 JoltPhysicsWorld::Stats JoltPhysicsWorld::GetStats() const {
     Stats stats;
     stats.activeBodyCount = m_PhysicsSystem.GetBodyManager().GetNumActiveBodies();
-    stats.contactCount = 0;
-    stats.constraintCount = 0;
-    stats.stepTimeMs = 0.0f;
+    stats.contactCount = m_PhysicsSystem.GetNumContacts();
+    stats.constraintCount = 0; // Jolt 5.5 不直接暴露约束计数
+    stats.stepTimeMs = 0.0f;   // 留待接入 Tracy 后实现计时
     return stats;
 }
 
