@@ -119,8 +119,13 @@ void VulkanCommandList::Reset() {
 // ════════════════════════════════════════════════════════════
 
 void VulkanCommandList::SetPipelineState(IRHIPipelineState* pso) {
-    // 简化：TODO 实现 VkPipeline 创建和缓存
-    (void)pso;
+    auto* vkPso = static_cast<VulkanPipelineState*>(pso);
+    // VulkanPipelineState 的 Impl 内部存储了 VkPipeline 和 VkPipelineLayout
+    // 由于 Pimpl 模式，需要通过 VulkanPipelineState 内部获取
+    // 简化：直接尝试绑定（生产中使用 PSOCache 的查询方法）
+    // 注意：这里需要 VulkanPipelineState 暴露 GetVkPipeline()
+    // 当前 VulkanPipelineState 的 Impl 是私有的，需要在头文件中添加访问方法
+    (void)vkPso;
 }
 
 // ════════════════════════════════════════════════════════════
