@@ -34,6 +34,14 @@ void EntityManager::DestroyEntity(EntityHandle entity) {
     uint32 idx = entity.Index();
     EntityLocation& loc = m_Locations[idx];
 
+    // 触发所有组件的移除回调（物理层用于清理 Jolt Body）
+    if (m_OnComponentRemoved && loc.archetype != nullptr) {
+        for (uint32 ci = 0; ci < loc.archetype->GetComponentCount(); ++ci) {
+            const auto& meta = loc.archetype->GetComponentMetas()[ci];
+            m_OnComponentRemoved(entity, meta.typeID);
+        }
+    }
+
     if (loc.archetype != nullptr) {
         // 从所属 Archetype 移除
         loc.archetype->RemoveEntity(loc.chunk, loc.row);
@@ -135,6 +143,16 @@ void EntityManager::MigrateEntity(
     // 从旧 Archetype 移除
     fromArch->RemoveEntity(fromChunk, fromRow);
 
+    // 触发被移除组件的回调
+    if (m_OnComponentRemoved) {
+        for (uint32 i = 0; i < fromArch->GetComponentCount(); ++i) {
+            const auto& meta = fromArch->GetComponentMetas()[i];
+            if (toArch->GetComponentIndex(meta.typeID) < 0) {
+                m_OnComponentRemoved(entity, meta.typeID);
+            }
+        }
+    }
+
     // 更新 Location
     EntityLocation& loc = m_Locations[entity.Index()];
     loc.archetype = toArch;
@@ -221,6 +239,11 @@ void EntityManager::RemoveComponentRaw(EntityHandle entity, ComponentTypeID type
     newSig.reset(typeID);
 
     if (newSig.none()) {
+        // 触发组件移除回调（物理层清理 Jolt Body）
+        if (m_OnComponentRemoved) {
+            m_OnComponentRemoved(entity, typeID);
+        }
+
         // 移除后无任何组件：销毁实体
         DestroyEntity(entity);
         return;

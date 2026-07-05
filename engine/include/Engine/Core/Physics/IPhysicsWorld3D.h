@@ -48,6 +48,33 @@ namespace Engine {
         virtual std::shared_ptr<IPhysicsBody3D> CreateBody(const BodyDef3D& def) = 0;
         virtual void DestroyBody(IPhysicsBody3D* body) = 0;
 
+        // ── 刚体生命周期（安全销毁 + 查询） ──
+        /**
+         * @brief 通过运行时 ID 获取刚体指针
+         * @param bodyID 存储在 PhysicsRuntimeComponent::runtimeBodyID 中的 ID
+         * @return 刚体指针，若 ID 无效返回 nullptr
+         */
+        virtual IPhysicsBody3D* GetBodyByID(uint64 bodyID) = 0;
+
+        /**
+         * @brief 从物理世界安全移除刚体
+         * @param bodyID 要移除的刚体 ID
+         *
+         * 调用后该 ID 不再有效，IsBodyValid 返回 false。
+         * 会在 Jolt 中调用 RemoveBody() + DestroyBody()。
+         */
+        virtual void RemoveBody(uint64 bodyID) = 0;
+
+        /**
+         * @brief 检查刚体 ID 是否仍在物理世界中有效
+         * @param bodyID 要检查的 ID
+         * @return true=有效, false=已销毁或不存在
+         *
+         * 用于防止幽灵引用：在碰撞回调中先检查 IsBodyValid
+         * 再访问 EntityHandle。
+         */
+        virtual bool IsBodyValid(uint64 bodyID) = 0;
+
         // ── 关节管理 ──
         virtual std::shared_ptr<IJoint3D> CreateJoint(const JointDef3D& def) = 0;
         virtual void DestroyJoint(IJoint3D* joint) = 0;
