@@ -196,4 +196,35 @@ namespace Engine {
         class GameObject* Entity = nullptr;
     };
 
+    // ═══════════════════════════════════════════════════════════════
+    // ECS 集成事件
+    // ═══════════════════════════════════════════════════════════════
+
+    /** ECS 实体创建 */
+    struct ECS_EntityCreatedEvent {
+        class EntityHandle Entity;
+    };
+
+    /** ECS 实体销毁 */
+    struct ECS_EntityDestroyedEvent {
+        class EntityHandle Entity;
+    };
+
+    /** ECS 组件添加 */
+    struct ECS_ComponentAddedEvent {
+        class EntityHandle Entity;
+        uint32 ComponentTypeID = 0;
+    };
+
+    /** ECS 组件移除 */
+    struct ECS_ComponentRemovedEvent {
+        class EntityHandle Entity;
+        uint32 ComponentTypeID = 0;
+    };
+
+    /** ECS 系统更新（每帧触发） */
+    struct ECS_SystemUpdateEvent {
+        float32 DeltaTime = 0.0f;
+    };
+
 } // namespace Engine
