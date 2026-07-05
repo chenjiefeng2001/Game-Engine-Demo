@@ -26,15 +26,11 @@ namespace RHI {
     // 前向声明 Vulkan 帧资源
     struct VulkanFrameContext;
 
-    // ══════════════════════════════════════════════════════
-    // Vulkan Device 实现
-    // ══════════════════════════════════════════════════════
     class VulkanDevice final : public IRHIDevice {
     public:
         VulkanDevice();
         ~VulkanDevice() override;
 
-        // ── IRHIDevice ──
         std::shared_ptr<IRHIBuffer> CreateBuffer(const RHIBufferDesc& desc) override;
         std::shared_ptr<IRHITexture> CreateTexture(const TextureDesc& desc) override;
         IRHIPipelineState* CreateGraphicsPSO(const GraphicsPSODesc& desc) override;
@@ -45,10 +41,8 @@ namespace RHI {
         void WaitIdle() override;
         const char* GetDeviceName() const override;
 
-        // ── Vulkan 专有 ──
         bool Initialize(void* windowHandle, uint32_t width, uint32_t height);
 
-        // ── Vulkan 内部查询 ──
         VkDevice        GetVkDevice() const noexcept;
         VmaAllocator    GetVmaAllocator() const noexcept;
         VkPhysicalDevice GetVkPhysicalDevice() const noexcept;
@@ -57,31 +51,23 @@ namespace RHI {
         uint32_t        GetGraphicsQueueIndex() const noexcept;
         VulkanFrameContext& GetFrameContext() noexcept;
 
-        // ── 线程命令池 ──
         VkCommandPool GetOrCreateThreadCommandPool();
         void            ResetAllThreadCommandPools();
 
     private:
         struct Impl;
         std::unique_ptr<Impl> m_Impl;
-
-        // 内部辅助
         void CreateFrameResource(struct VulkanFrameResource& frame);
         void DestroyFrameResource(struct VulkanFrameResource& frame);
         void Shutdown();
     };
 
-    /** 查询 Vulkan 扩展是否已注册 */
     bool HasVulkanSupport() noexcept;
-
-    /** 获取可用的 Vulkan 实例和物理设备信息 */
     std::string GetVulkanDeviceInfo() noexcept;
-
-    /** 创建 Vulkan 设备（工厂内部调用） */
     std::unique_ptr<IRHIDevice> CreateVulkanDevice();
 
     // ══════════════════════════════════════════════════════
-    // Vulkan Command List 实现
+    // Vulkan Command List
     // ══════════════════════════════════════════════════════
     class VulkanCommandList final : public IRHICommandList {
     public:
@@ -103,9 +89,13 @@ namespace RHI {
         void ResourceBarrier(uint32 count, const ResourceBarrierDesc* barriers) override;
         void SetConstantBuffer(uint32 set, uint32 binding, IRHIBuffer* buffer, uint64_t offset, uint64_t size) override;
         void SetShaderResource(uint32 set, uint32 binding, IRHITexture* texture) override;
+        
+        // Compute
+        void Dispatch(uint32_t groupX, uint32_t groupY, uint32_t groupZ) override;
+        void SetUnorderedAccess(uint32 slot, IRHIBuffer* buffer) override;
+
         CommandListType GetType() const noexcept override;
 
-        // ── Vulkan 专有 ──
         VkCommandBuffer GetVkCommandBuffer() const noexcept;
         void SetVkCommandBuffer(VkCommandBuffer cmdBuf) noexcept;
         void SetVkPipelineState(VkPipeline pipeline, VkPipelineLayout layout) noexcept;
@@ -117,22 +107,18 @@ namespace RHI {
     };
 
     // ══════════════════════════════════════════════════════
-    // Vulkan Buffer / Texture / PipelineState 实现
+    // Vulkan Buffer / Texture / PipelineState
     // ══════════════════════════════════════════════════════
     class VulkanBuffer final : public IRHIBuffer {
     public:
         VulkanBuffer();
         ~VulkanBuffer() override;
-
         uint64_t GetSize() const noexcept override;
         const GPUAllocation& GetAllocation() const noexcept override;
-
-        // ── Vulkan 专有 ──
         VkBuffer GetVkBuffer() const noexcept;
         void SetAllocation(const GPUAllocation& alloc);
         void SetVkBuffer(VkBuffer buffer);
         void SetSize(uint64_t size);
-
     private:
         struct Impl;
         std::unique_ptr<Impl> m_Impl;
@@ -142,18 +128,14 @@ namespace RHI {
     public:
         VulkanTexture();
         ~VulkanTexture() override;
-
         uint32_t GetWidth()  const noexcept override;
         uint32_t GetHeight() const noexcept override;
         Format   GetFormat() const noexcept override;
-
-        // ── Vulkan 专有 ──
         VkImage GetVkImage() const noexcept;
         void SetVkImage(VkImage image);
         void SetWidth(uint32_t w);
         void SetHeight(uint32_t h);
         void SetFormat(Format fmt);
-
     private:
         struct Impl;
         std::unique_ptr<Impl> m_Impl;
@@ -163,53 +145,45 @@ namespace RHI {
     public:
         VulkanPipelineState();
         ~VulkanPipelineState() override;
-
-        // ── Vulkan 专有 ──
         VkPipeline GetVkPipeline() const noexcept;
         VkPipelineLayout GetVkPipelineLayout() const noexcept;
+        bool IsCompute() const noexcept;
         void SetNativeHandles(VkPipeline pipeline, VkPipelineLayout layout, VkDevice device) noexcept;
-
     private:
         struct Impl;
         std::unique_ptr<Impl> m_Impl;
     };
 
     // ══════════════════════════════════════════════════════
-    // Vulkan SwapChain 实现
+    // Vulkan SwapChain
     // ══════════════════════════════════════════════════════
     class VulkanSwapChain final : public IRHISwapChain {
     public:
         VulkanSwapChain();
         ~VulkanSwapChain() override;
-
         void Present() override;
         void Resize(uint32_t w, uint32_t h) override;
         IRHITexture* GetBackBuffer(uint32_t idx) const override;
         uint32_t GetCurrentBackBufferIndex() const override;
         uint32_t GetBufferCount() const override;
-
     private:
         struct Impl;
         std::unique_ptr<Impl> m_Impl;
     };
 
     // ══════════════════════════════════════════════════════
-    // Vulkan Command Queue 实现
+    // Vulkan Queue
     // ══════════════════════════════════════════════════════
     class VulkanQueue final : public IRHICommandQueue {
     public:
         VulkanQueue();
         ~VulkanQueue() override;
-
         void ExecuteCommandLists(uint32 count, IRHICommandList** lists) override;
         void WaitIdle() override;
         QueueType GetType() const noexcept override;
-
-        // ── Vulkan 专有 ──
         void SetVkQueue(VkQueue queue) noexcept;
         void SetDevice(VulkanDevice* device) noexcept;
         void SetType(QueueType type) noexcept;
-
     private:
         struct Impl;
         std::unique_ptr<Impl> m_Impl;
