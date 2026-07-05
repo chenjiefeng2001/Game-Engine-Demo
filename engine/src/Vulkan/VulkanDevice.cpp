@@ -598,6 +598,19 @@ std::shared_ptr<IRHITexture> VulkanDevice::CreateTexture(const TextureDesc& desc
 }
 
 IRHIPipelineState* VulkanDevice::CreateGraphicsPSO(const GraphicsPSODesc& desc) {
+    // 1. 查缓存
+    uint64_t hash = desc.GetHash();
+    {
+        auto hit = PSOCache::Get().Find<GraphicsPSODesc>(hash);
+        if (hit) return hit;
+    }
+    // 2. 实际创建
+    auto* pso = CreateGraphicsPSOInternal(desc);
+    if (pso) PSOCache::Get().Store(hash, pso);
+    return pso;
+}
+
+IRHIPipelineState* VulkanDevice::CreateGraphicsPSOInternal(const GraphicsPSODesc& desc) {
     VkPipelineLayout layout = VK_NULL_HANDLE;
     if (m_Impl->pipelineLayoutCache && desc.vertexShader.size > 0) {
         const uint32_t* spirv = reinterpret_cast<const uint32_t*>(desc.vertexShader.data);
