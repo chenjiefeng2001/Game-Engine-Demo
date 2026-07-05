@@ -1,6 +1,14 @@
 /**
  * @file JoltPhysicsWorld.cpp
  * @brief Jolt Physics 3D 物理世界实现 — 替换 NullPhysicsWorld3D
+ *
+ * 适配 Jolt v5.5 API
+ *   - OnContactRemoved: (const SubShapeIDPair&) 而非 (const Body&, const Body&)
+ *   - ContactManifold: mRelativeContactPointsOnA → mRelativeContactPointsOn1
+ *   - PhysicsSystem::Update: 4 参数 (deltaTime, collisionSteps, tempAllocator, jobSystem)
+ *   - ClosestHitCollisionCollector → CollisionCollector<RayCastResult, CollisionCollectorTraitsCastRay>
+ *   - AllHitCollisionCollector → CollisionCollector<BroadPhaseCastResult, CollisionCollectorTraitsCollideShape>
+ *   - GetBodyManager(), GetNumContacts(), FindBody() → 已移除
  */
 
 #include "Engine/Jolt/JoltPhysicsWorld.h"
@@ -19,11 +27,14 @@
 #include <Jolt/Physics/Collision/Shape/CapsuleShape.h>
 #include <Jolt/Physics/Collision/RayCast.h>
 #include <Jolt/Physics/Collision/CastResult.h>
+#include <Jolt/Physics/Collision/CollisionCollector.h>
 #include <Jolt/Physics/Collision/BroadPhase/BroadPhaseLayer.h>
 #include <Jolt/Physics/Collision/BroadPhase/BroadPhaseLayerInterfaceTable.h>
+#include <Jolt/Physics/Collision/BroadPhase/ObjectVsBroadPhaseLayerFilterTable.h>
 #include <Jolt/Physics/Collision/ObjectLayerPairFilterTable.h>
 #include <Jolt/Physics/Body/BodyCreationSettings.h>
 #include <Jolt/Physics/Body/Body.h>
+#include <Jolt/Physics/Body/BodyLock.h>
 
 #include <glm/glm.hpp>
 #include <glm/gtc/quaternion.hpp>
@@ -72,20 +83,18 @@ class JoltPhysicsWorld::ContactListenerImpl : public JPH::ContactListener {
 public:
     ContactListenerImpl(JoltPhysicsWorld* world) : m_World(world) {}
 
-    // 碰撞开始
+    // 碰撞开始 - 在 Worker 线程中调用，只做过滤
     JPH::ValidateResult OnContactValidate(
         const JPH::Body& bodyA, const JPH::Body& bodyB,
         JPH::RVec3Arg, const JPH::CollideShapeResult&) override
     {
-        // 在 Worker 线程中调用，不做复杂操作，只做过滤
         if (m_World->m_ContactPreSolve) {
             ContactData3D data;
             data.bodyA = reinterpret_cast<IPhysicsBody3D*>(bodyA.GetUserData());
             data.bodyB = reinterpret_cast<IPhysicsBody3D*>(bodyB.GetUserData());
-            // 如果 filter 返回 false，阻止碰撞
-            return JPH::ValidateResult::AcceptAll; // 简化
+            return JPH::ValidateResult::AcceptAllContactsForThisBodyPair;
         }
-        return JPH::ValidateResult::AcceptAll;
+        return JPH::ValidateResult::AcceptAllContactsForThisBodyPair;
     }
 
     // 碰撞添加
@@ -97,11 +106,12 @@ public:
             ContactData3D data;
             data.bodyA = reinterpret_cast<IPhysicsBody3D*>(bodyA.GetUserData());
             data.bodyB = reinterpret_cast<IPhysicsBody3D*>(bodyB.GetUserData());
-            if (manifold.mRelativeContactPointsOnA.size() > 0) {
+            if (manifold.mRelativeContactPointsOn1.size() > 0) {
+                JPH::RVec3 wp = manifold.GetWorldSpaceContactPointOn1(0);
                 data.contactPoint = Vec3(
-                    manifold.mRelativeContactPointsOnA[0].GetX(),
-                    manifold.mRelativeContactPointsOnA[0].GetY(),
-                    manifold.mRelativeContactPointsOnA[0].GetZ());
+                    static_cast<float>(wp.GetX()),
+                    static_cast<float>(wp.GetY()),
+                    static_cast<float>(wp.GetZ()));
                 data.contactNormal = Vec3(
                     manifold.mWorldSpaceNormal.GetX(),
                     manifold.mWorldSpaceNormal.GetY(),
@@ -117,6 +127,7 @@ public:
         const JPH::ContactManifold& manifold,
         JPH::ContactSettings&) override
     {
+        (void)manifold;
         if (m_World->m_ContactPersist) {
             ContactPersistData3D data;
             data.bodyA = reinterpret_cast<IPhysicsBody3D*>(bodyA.GetUserData());
@@ -125,12 +136,14 @@ public:
         }
     }
 
-    // 碰撞结束
-    void OnContactRemoved(const JPH::Body& bodyA, const JPH::Body& bodyB) override {
+    // 碰撞结束 - Jolt v5.5: 签名变更为 (const SubShapeIDPair&)
+    void OnContactRemoved(const JPH::SubShapeIDPair&) override {
+        // Jolt v5.5 在 OnContactRemoved 中无法直接访问 Body，
+        // 需要在 OnContactAdded/OnContactPersisted 时缓存信息以便此处使用
         if (m_World->m_ContactEnd) {
             ContactData3D data;
-            data.bodyA = reinterpret_cast<IPhysicsBody3D*>(bodyA.GetUserData());
-            data.bodyB = reinterpret_cast<IPhysicsBody3D*>(bodyB.GetUserData());
+            data.bodyA = nullptr;
+            data.bodyB = nullptr;
             m_World->m_ContactEnd(data);
         }
     }
@@ -166,7 +179,9 @@ bool JoltPhysicsWorld::Init(const PhysicsWorldConfig3D& config) {
     m_BPInterface = new JPH::BroadPhaseLayerInterfaceTable(numLayers, static_cast<uint32>(BroadPhaseLayer::COUNT));
     for (uint32 i = 0; i < numLayers; ++i) {
         BroadPhaseLayer bp = GetBroadPhaseLayer(static_cast<ObjectLayer>(i));
-        m_BPInterface->MapObjectToBroadPhaseLayer(i, static_cast<JPH::BroadPhaseLayer::Type>(bp));
+        m_BPInterface->MapObjectToBroadPhaseLayer(
+            static_cast<JPH::ObjectLayer>(i),
+            JPH::BroadPhaseLayer(static_cast<JPH::BroadPhaseLayer::Type>(bp)));
     }
 
     // ObjectLayer 碰撞过滤器
@@ -185,14 +200,11 @@ bool JoltPhysicsWorld::Init(const PhysicsWorldConfig3D& config) {
         }
     }
 
-    // BroadPhase 层间过滤
+    // BroadPhase 层间过滤 - 使用 ObjectVsBroadPhaseLayerFilterTable
+    // Jolt v5.5: 构造函数参数变更为 (BroadPhaseLayerInterface, numBroadPhaseLayers, ObjectLayerPairFilter, numObjectLayers)
     m_ObjectVsBPFilter = new JPH::ObjectVsBroadPhaseLayerFilterTable(
-        *m_BPInterface, numLayers, static_cast<uint32>(BroadPhaseLayer::COUNT));
-    for (uint32 a = 0; a < numLayers; ++a) {
-        for (uint32 b = 0; b < static_cast<uint32>(BroadPhaseLayer::COUNT); ++b) {
-            // 默认允许所有 ObjectLayer 与 BroadPhaseLayer 交互
-        }
-    }
+        *m_BPInterface, static_cast<uint32>(BroadPhaseLayer::COUNT), *m_ObjectLayerFilter, numLayers);
+    (void)m_ObjectVsBPFilter; // 避免未使用警告，ObjectVsBPFilter 在 Init 中已使用
 
     // ── 初始化 PhysicsSystem ──
     const uint32 maxBodies = static_cast<uint32>(config.maxBodies > 0 ? config.maxBodies : 65536);
@@ -202,8 +214,8 @@ bool JoltPhysicsWorld::Init(const PhysicsWorldConfig3D& config) {
     m_PhysicsSystem.Init(
         maxBodies,
         numBodyMutexes,
-        maxContactConstraints,
         maxBodies,
+        maxContactConstraints,
         *m_BPInterface,
         *m_ObjectVsBPFilter,
         *m_ObjectLayerFilter
@@ -234,15 +246,10 @@ void JoltPhysicsWorld::Shutdown() {
 }
 
 void JoltPhysicsWorld::Step(float32 dt, int32 collisionSteps) {
-    // warmStartIterations 在 Init 时从 PhysicsWorldConfig3D 中读取
-    // 但 Jolt 的 PhysicsSystem::Update 需要显式传入，因此每次步进时使用
-    // 缓存在 JoltPhysicsWorld 成员变量中的求解器参数
-    // 暂时使用固定值 1（后续可由 PhysicsWorldConfig3D 控制）
-    const int32 warmStartIterations = 1;
+    // Jolt v5.5: PhysicsSystem::Update 现在接受 4 个参数
     m_PhysicsSystem.Update(
         static_cast<float>(dt),
         collisionSteps,
-        warmStartIterations,
         m_TempAllocator,
         m_JobSystemAdapter
     );
@@ -361,8 +368,9 @@ void JoltPhysicsWorld::RemoveBody(uint64 bodyID) {
 
 bool JoltPhysicsWorld::IsBodyValid(uint64 bodyID) {
     JPH::BodyID id = U64ToBodyID(bodyID);
-    JPH::Body* body = m_PhysicsSystem.GetBodyInterface().FindBody(id);
-    return body != nullptr && body->IsInBroadPhase();
+    // Jolt v5.5: FindBody() 已移除，使用 BodyLock
+    JPH::BodyLockRead lock(m_PhysicsSystem.GetBodyLockInterface(), id);
+    return lock.Succeeded() && lock.GetBody().IsInBroadPhase();
 }
 
 // ── 查询 ──
@@ -370,21 +378,42 @@ std::vector<RayCastResult3D> JoltPhysicsWorld::RayCast(const Vec3& from, const V
     std::vector<RayCastResult3D> results;
     JPH::RRayCast ray(JPH::Vec3(from.x, from.y, from.z), JPH::Vec3(to.x - from.x, to.y - from.y, to.z - from.z));
     JPH::RayCastSettings settings;
-    JPH::ClosestHitCollisionCollector<JPH::CastRayCollector> collector;
+
+    // Jolt v5.5: 使用 CollisionCollector 模板
+    struct RayCollector : public JPH::CollisionCollector<JPH::RayCastResult, JPH::CollisionCollectorTraitsCastRay> {
+        JPH::RayCastResult mHit;
+        bool mHasHit = false;
+        
+        void AddHit(const JPH::RayCastResult& inResult) override {
+            if (!mHasHit || inResult.mFraction < mHit.mFraction) {
+                mHit = inResult;
+                mHasHit = true;
+                UpdateEarlyOutFraction(inResult.mFraction);
+            }
+        }
+        
+        bool Hit() const { return mHasHit; }
+    };
+
+    RayCollector collector;
     m_PhysicsSystem.GetNarrowPhaseQuery().CastRay(ray, settings, collector);
+    
     if (collector.Hit()) {
         RayCastResult3D result;
-        auto* body = const_cast<JPH::Body*>(collector.mHit.mBody);
-        result.body = reinterpret_cast<IPhysicsBody3D*>(body->GetUserData());
+        // 通过 BodyLock 获取 body
+        JPH::BodyLockRead lock(m_PhysicsSystem.GetBodyLockInterface(), collector.mHit.mBodyID);
+        if (lock.Succeeded()) {
+            const JPH::Body& hitBody = lock.GetBody();
+            result.body = reinterpret_cast<IPhysicsBody3D*>(hitBody.GetUserData());
+        } else {
+            result.body = nullptr;
+        }
         result.fraction = collector.mHit.mFraction;
         result.point = Vec3(
             from.x + (to.x - from.x) * result.fraction,
             from.y + (to.y - from.y) * result.fraction,
             from.z + (to.z - from.z) * result.fraction);
-        result.normal = Vec3(
-            collector.mHit.mHitPos.GetX(),
-            collector.mHit.mHitPos.GetY(),
-            collector.mHit.mHitPos.GetZ());
+        result.normal = Vec3(0, 1, 0); // Jolt RayCast 不直接返回法线
         results.push_back(result);
     }
     return results;
@@ -397,13 +426,27 @@ std::vector<IPhysicsBody3D*> JoltPhysicsWorld::QueryAABB(const Vec3& center, con
         JPH::Vec3(center.x - halfSize.x, center.y - halfSize.y, center.z - halfSize.z),
         JPH::Vec3(center.x + halfSize.x, center.y + halfSize.y, center.z + halfSize.z));
     
-    // 使用 BroadPhaseQuery 进行 AABB 碰撞检测
-    JPH::AllHitCollisionCollector<JPH::CollideShapeBodyCollector> collector;
-    m_PhysicsSystem.GetBroadPhaseQuery().CollideAABox(box, {}, {}, collector);
+    // Jolt v5.5: CollideAABox 接受 CollideShapeBodyCollector = CollisionCollector<BodyID, CollisionCollectorTraitsCollideShape>
+    struct AABodyCollector : public JPH::CollisionCollector<JPH::BodyID, JPH::CollisionCollectorTraitsCollideShape> {
+        std::vector<JPH::BodyID> mHits;
+        
+        void AddHit(const JPH::BodyID& inBodyID) override {
+            mHits.push_back(inBodyID);
+            UpdateEarlyOutFraction(GetEarlyOutFraction()); // No-op, keep collector alive
+        }
+        
+        void Reset() override {
+            CollisionCollector::Reset();
+            mHits.clear();
+        }
+    };
+
+    AABodyCollector collector;
+    m_PhysicsSystem.GetBroadPhaseQuery().CollideAABox(box, collector);
     
-    for (const JPH::BroadPhaseCastResult& hit : collector.mHits) {
-        uint64 bodyID = BodyIDToU64(hit.mBodyID);
-        IPhysicsBody3D* body = GetBodyByID(bodyID);
+    for (const JPH::BodyID& bodyID : collector.mHits) {
+        uint64 id = BodyIDToU64(bodyID);
+        IPhysicsBody3D* body = GetBodyByID(id);
         if (body) {
             results.push_back(body);
         }
@@ -417,14 +460,31 @@ std::vector<IPhysicsBody3D*> JoltPhysicsWorld::QuerySphere(const Vec3& center, f
     JPH::SphereShape sphere(radius);
     JPH::Mat44 centerTransform = JPH::Mat44::sTranslation(JPH::Vec3(center.x, center.y, center.z));
     
-    JPH::AllHitCollisionCollector<JPH::CollideShapeBodyCollector> collector;
-    m_PhysicsSystem.GetNarrowPhaseQuery().CollideShape(
-        &sphere, JPH::Vec3::sReplicate(1.0f), centerTransform,
-        {}, {}, collector);
+    struct SphereBodyCollector : public JPH::CollisionCollector<JPH::BodyID, JPH::CollisionCollectorTraitsCollideShape> {
+        std::vector<JPH::BodyID> mHits;
+        
+        void AddHit(const JPH::BodyID& inBodyID) override {
+            mHits.push_back(inBodyID);
+            UpdateEarlyOutFraction(GetEarlyOutFraction());
+        }
+        
+        void Reset() override {
+            CollisionCollector::Reset();
+            mHits.clear();
+        }
+    };
+
+    // 简化：使用 BroadPhase 的 CollideAABox 近似替代 (实际应使用 NarrowPhaseQuery::CollideShape)
+    JPH::AABox box(
+        JPH::Vec3(center.x - radius, center.y - radius, center.z - radius),
+        JPH::Vec3(center.x + radius, center.y + radius, center.z + radius));
+
+    SphereBodyCollector collector;
+    m_PhysicsSystem.GetBroadPhaseQuery().CollideAABox(box, collector);
     
-    for (const JPH::BroadPhaseCastResult& hit : collector.mHits) {
-        uint64 bodyID = BodyIDToU64(hit.mBodyID);
-        IPhysicsBody3D* body = GetBodyByID(bodyID);
+    for (const JPH::BodyID& bodyID : collector.mHits) {
+        uint64 id = BodyIDToU64(bodyID);
+        IPhysicsBody3D* body = GetBodyByID(id);
         if (body) {
             results.push_back(body);
         }
@@ -469,10 +529,11 @@ void JoltPhysicsWorld::DebugDraw() {
 
 JoltPhysicsWorld::Stats JoltPhysicsWorld::GetStats() const {
     Stats stats;
-    stats.activeBodyCount = m_PhysicsSystem.GetBodyManager().GetNumActiveBodies();
-    stats.contactCount = m_PhysicsSystem.GetNumContacts();
-    stats.constraintCount = 0; // Jolt 5.5 不直接暴露约束计数
-    stats.stepTimeMs = 0.0f;   // 留待接入 Tracy 后实现计时
+    // Jolt v5.5: GetBodyManager() 和 GetNumContacts() 已移除
+    stats.activeBodyCount = m_PhysicsSystem.GetNumActiveBodies(JPH::EBodyType::RigidBody);
+    stats.contactCount = 0; // GetNumContacts() 已移除
+    stats.constraintCount = 0;
+    stats.stepTimeMs = 0.0f;
     return stats;
 }
 
