@@ -120,6 +120,8 @@ namespace RHI {
         void ResourceBarrier(uint32 count, const ResourceBarrierDesc* barriers) override;
         void SetConstantBuffer(uint32 set, uint32 binding, IRHIBuffer* buffer, uint64_t offset, uint64_t size) override;
         void SetShaderResource(uint32 set, uint32 binding, IRHITexture* texture) override;
+        void Dispatch(uint32_t groupX, uint32_t groupY, uint32_t groupZ) override;
+        void SetUnorderedAccess(uint32 slot, IRHIBuffer* buffer) override;
         CommandListType GetType() const noexcept override;
 
         // ── 命令镜像专用 ──

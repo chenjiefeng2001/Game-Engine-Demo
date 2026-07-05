@@ -45,11 +45,12 @@ void PhysicsSyncSystem::Update(float32 realDt) {
 
 void PhysicsSyncSystem::SyncECSToPhysics() {
     auto query = m_EntityManager->Query()
-        .With<RigidBody3DComponent, PhysicsRuntimeComponent>()
+        .With<RigidBody3DComponent>()
+        .With<PhysicsRuntimeComponent>()
         .Build();
-    for (auto [chunk, start, count] : query) {
-        auto runtimes = chunk->GetComponentSpan<PhysicsRuntimeComponent>();
-        for (uint32 i = start; i < start + count; ++i) {
+    for (auto& range : query) {
+        auto runtimes = range.chunk->GetComponentSpan<PhysicsRuntimeComponent>();
+        for (uint32 i = range.startRow; i < range.startRow + range.count; ++i) {
             auto& rt = runtimes[i];
             if (!rt.isDirty || rt.runtimeBodyID == 0) continue;
             auto* body = m_PhysicsWorld->GetBodyByID(rt.runtimeBodyID);
@@ -60,12 +61,13 @@ void PhysicsSyncSystem::SyncECSToPhysics() {
 
 void PhysicsSyncSystem::BackupState() {
     auto query = m_EntityManager->Query()
-        .With<TransformComponent, PhysicsRuntimeComponent>()
+        .With<TransformComponent>()
+        .With<PhysicsRuntimeComponent>()
         .Build();
-    for (auto [chunk, start, count] : query) {
-        auto transforms = chunk->GetComponentSpan<TransformComponent>();
-        auto runtimes   = chunk->GetComponentSpan<PhysicsRuntimeComponent>();
-        for (uint32 i = start; i < start + count; ++i) {
+    for (auto& range : query) {
+        auto transforms = range.chunk->GetComponentSpan<TransformComponent>();
+        auto runtimes   = range.chunk->GetComponentSpan<PhysicsRuntimeComponent>();
+        for (uint32 i = range.startRow; i < range.startRow + range.count; ++i) {
             runtimes[i].prevPosition = transforms[i].GetPosition();
         }
     }
@@ -77,12 +79,13 @@ void PhysicsSyncSystem::StepPhysics(float32 fixedDt) {
 
 void PhysicsSyncSystem::SyncPhysicsToECS() {
     auto query = m_EntityManager->Query()
-        .With<TransformComponent, PhysicsRuntimeComponent>()
+        .With<TransformComponent>()
+        .With<PhysicsRuntimeComponent>()
         .Build();
-    for (auto [chunk, start, count] : query) {
-        auto transforms = chunk->GetComponentSpan<TransformComponent>();
-        auto runtimes   = chunk->GetComponentSpan<PhysicsRuntimeComponent>();
-        for (uint32 i = start; i < start + count; ++i) {
+    for (auto& range : query) {
+        auto transforms = range.chunk->GetComponentSpan<TransformComponent>();
+        auto runtimes   = range.chunk->GetComponentSpan<PhysicsRuntimeComponent>();
+        for (uint32 i = range.startRow; i < range.startRow + range.count; ++i) {
             if (!runtimes[i].isActive || runtimes[i].runtimeBodyID == 0) continue;
             auto* body = m_PhysicsWorld->GetBodyByID(runtimes[i].runtimeBodyID);
             if (body) {
