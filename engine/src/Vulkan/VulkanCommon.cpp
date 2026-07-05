@@ -1,6 +1,6 @@
 /**
  * @file VulkanCommon.cpp
- * @brief Vulkan 共享类型映射与辅助函数实现
+ * @brief Vulkan ĺąäşŤçąťĺć ĺ°ä¸čžĺŠĺ˝ć°ĺŽç?
  */
 
 #include "Engine/Vulkan/VulkanCommon.h"
@@ -16,11 +16,11 @@ namespace Engine {
 
 using namespace RHI;
 
-// ════════════════════════════════════════════════════════════
-// Format → VkFormat
-// ════════════════════════════════════════════════════════════
+// ââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââ
+// Format â?VkFormat
+// ââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââ
 
-VkFormat FormatToVk(Format fmt) noexcept {
+VkFormat FormatToVk(RHI::Format fmt) {
     switch (fmt) {
         case Format::R8_UNorm:     return VK_FORMAT_R8_UNORM;
         case Format::R8_SNorm:     return VK_FORMAT_R8_SNORM;
@@ -48,7 +48,7 @@ VkFormat FormatToVk(Format fmt) noexcept {
     }
 }
 
-RHI::Format VkToFormat(VkFormat fmt) noexcept {
+RHI::Format VkToFormat(VkFormat fmt) {
     switch (fmt) {
         case VK_FORMAT_R8_UNORM:         return Format::R8_UNorm;
         case VK_FORMAT_R8G8_UNORM:       return Format::RG8_UNorm;
@@ -64,71 +64,68 @@ RHI::Format VkToFormat(VkFormat fmt) noexcept {
     }
 }
 
-// ════════════════════════════════════════════════════════════
-// 资源状态 → Vulkan 枚举
-// ════════════════════════════════════════════════════════════
+// ââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââ
+// čľćşçść?â?Vulkan ćä¸ž
+// ââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââ
 
-VkImageLayout ResourceStateToLayout(ResourceState state) noexcept {
+VkImageLayout ResourceStateToLayout(RHI::ResourceState state) noexcept {
     switch (state) {
-        case ResourceState::Undefined:      return VK_IMAGE_LAYOUT_UNDEFINED;
-        case ResourceState::RenderTarget:   return VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
-        case ResourceState::DepthStencil:   return VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
-        case ResourceState::ShaderResource: return VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
-        case ResourceState::CopySource:     return VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;
-        case ResourceState::CopyDest:       return VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
-        case ResourceState::Present:        return VK_IMAGE_LAYOUT_PRESENT_SRC_KHR;
-        case ResourceState::UnorderedAccess: return VK_IMAGE_LAYOUT_GENERAL;
+        case RHI::ResourceState::Undefined:      return VK_IMAGE_LAYOUT_UNDEFINED;
+        case RHI::ResourceState::RenderTarget:   return VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
+        case RHI::ResourceState::DepthStencil:   return VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
+        case RHI::ResourceState::ShaderResource: return VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+        case RHI::ResourceState::CopySource:     return VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;
+        case RHI::ResourceState::CopyDest:       return VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
+        case RHI::ResourceState::Present:        return VK_IMAGE_LAYOUT_PRESENT_SRC_KHR;
+        case RHI::ResourceState::UnorderedAccess: return VK_IMAGE_LAYOUT_GENERAL;
         default: return VK_IMAGE_LAYOUT_GENERAL;
     }
 }
 
-VkPipelineStageFlags ResourceStateToStage(ResourceState state) noexcept {
+VkPipelineStageFlags ResourceStateToStage(RHI::ResourceState state) noexcept {
     uint16_t s = static_cast<uint16_t>(state);
     VkPipelineStageFlags flags = 0;
 
-    // 明确处理单一状态的精确映射
     switch (state) {
-        case ResourceState::Undefined:
+        case RHI::ResourceState::Undefined:
             flags = VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT;
             break;
-        case ResourceState::RenderTarget:
+        case RHI::ResourceState::RenderTarget:
             flags = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
             break;
-        case ResourceState::DepthStencil:
+        case RHI::ResourceState::DepthStencil:
             flags = VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT | VK_PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT;
             break;
-        case ResourceState::ShaderResource:
+        case RHI::ResourceState::ShaderResource:
             flags = VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT | VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT;
             break;
-        case ResourceState::UnorderedAccess:
-            // UAV 在 Compute Shader 中读写
+        case RHI::ResourceState::UnorderedAccess:
             flags = VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT;
             break;
-        case ResourceState::CopySource:
-        case ResourceState::CopyDest:
+        case RHI::ResourceState::CopySource:
+        case RHI::ResourceState::CopyDest:
             flags = VK_PIPELINE_STAGE_TRANSFER_BIT;
             break;
-        case ResourceState::Present:
+        case RHI::ResourceState::Present:
             flags = VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT;
             break;
-        case ResourceState::Common:
+        case RHI::ResourceState::Common:
             flags = VK_PIPELINE_STAGE_ALL_COMMANDS_BIT;
             break;
         default:
-            // 组合状态：通过位掩码累加
-            if (s & static_cast<uint16_t>(ResourceState::RenderTarget))
+            if (s & static_cast<uint16_t>(RHI::ResourceState::RenderTarget))
                 flags |= VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
-            if (s & static_cast<uint16_t>(ResourceState::DepthStencil))
+            if (s & static_cast<uint16_t>(RHI::ResourceState::DepthStencil))
                 flags |= VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT | VK_PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT;
-            if (s & static_cast<uint16_t>(ResourceState::ShaderResource))
+            if (s & static_cast<uint16_t>(RHI::ResourceState::ShaderResource))
                 flags |= VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT | VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT;
-            if (s & static_cast<uint16_t>(ResourceState::UnorderedAccess))
+            if (s & static_cast<uint16_t>(RHI::ResourceState::UnorderedAccess))
                 flags |= VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT;
-            if (s & static_cast<uint16_t>(ResourceState::CopySource) || s & static_cast<uint16_t>(ResourceState::CopyDest))
+            if (s & static_cast<uint16_t>(RHI::ResourceState::CopySource) || s & static_cast<uint16_t>(RHI::ResourceState::CopyDest))
                 flags |= VK_PIPELINE_STAGE_TRANSFER_BIT;
-            if (s & static_cast<uint16_t>(ResourceState::VertexBuffer) || s & static_cast<uint16_t>(ResourceState::IndexBuffer) || s & static_cast<uint16_t>(ResourceState::ConstantBuffer))
+            if (s & static_cast<uint16_t>(RHI::ResourceState::VertexBuffer) || s & static_cast<uint16_t>(RHI::ResourceState::IndexBuffer) || s & static_cast<uint16_t>(RHI::ResourceState::ConstantBuffer))
                 flags |= VK_PIPELINE_STAGE_VERTEX_INPUT_BIT;
-            if (s & static_cast<uint16_t>(ResourceState::Present))
+            if (s & static_cast<uint16_t>(RHI::ResourceState::Present))
                 flags |= VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT;
             break;
     }
@@ -137,26 +134,26 @@ VkPipelineStageFlags ResourceStateToStage(ResourceState state) noexcept {
     return flags;
 }
 
-VkAccessFlags ResourceStateToAccess(ResourceState state) noexcept {
+VkAccessFlags ResourceStateToAccess(RHI::ResourceState state) noexcept {
     uint16_t s = static_cast<uint16_t>(state);
     VkAccessFlags flags = 0;
-    if (s & static_cast<uint16_t>(ResourceState::RenderTarget))
+    if (s & static_cast<uint16_t>(RHI::ResourceState::RenderTarget))
         flags |= VK_ACCESS_COLOR_ATTACHMENT_READ_BIT | VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
-    if (s & static_cast<uint16_t>(ResourceState::DepthStencil))
+    if (s & static_cast<uint16_t>(RHI::ResourceState::DepthStencil))
         flags |= VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_READ_BIT | VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT;
-    if (s & static_cast<uint16_t>(ResourceState::ShaderResource))
+    if (s & static_cast<uint16_t>(RHI::ResourceState::ShaderResource))
         flags |= VK_ACCESS_SHADER_READ_BIT;
-    if (s & static_cast<uint16_t>(ResourceState::UnorderedAccess))
+    if (s & static_cast<uint16_t>(RHI::ResourceState::UnorderedAccess))
         flags |= VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT;
-    if (s & static_cast<uint16_t>(ResourceState::CopySource))
+    if (s & static_cast<uint16_t>(RHI::ResourceState::CopySource))
         flags |= VK_ACCESS_TRANSFER_READ_BIT;
-    if (s & static_cast<uint16_t>(ResourceState::CopyDest))
+    if (s & static_cast<uint16_t>(RHI::ResourceState::CopyDest))
         flags |= VK_ACCESS_TRANSFER_WRITE_BIT;
-    if (s & static_cast<uint16_t>(ResourceState::VertexBuffer))
+    if (s & static_cast<uint16_t>(RHI::ResourceState::VertexBuffer))
         flags |= VK_ACCESS_VERTEX_ATTRIBUTE_READ_BIT;
-    if (s & static_cast<uint16_t>(ResourceState::IndexBuffer))
+    if (s & static_cast<uint16_t>(RHI::ResourceState::IndexBuffer))
         flags |= VK_ACCESS_INDEX_READ_BIT;
-    if (s & static_cast<uint16_t>(ResourceState::ConstantBuffer))
+    if (s & static_cast<uint16_t>(RHI::ResourceState::ConstantBuffer))
         flags |= VK_ACCESS_UNIFORM_READ_BIT;
     if (flags == 0)
         flags = VK_ACCESS_MEMORY_READ_BIT | VK_ACCESS_MEMORY_WRITE_BIT;
@@ -167,7 +164,7 @@ void ConvertBarrierDesc(
     const ResourceBarrierDesc& src,
     VkImageMemoryBarrier& outBarrier,
     VkPipelineStageFlags& outSrcStage,
-    VkPipelineStageFlags& outDstStage) noexcept
+    VkPipelineStageFlags& outDstStage)
 {
     outBarrier = {};
     outBarrier.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
@@ -186,25 +183,25 @@ void ConvertBarrierDesc(
     outBarrier.dstAccessMask = ResourceStateToAccess(src.stateAfter);
 }
 
-// ════════════════════════════════════════════════════════════
-// 着色器阶段转换
-// ════════════════════════════════════════════════════════════
+// ââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââ
+// çč˛ĺ¨éśćŽľč˝Źć˘
+// ââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââ
 
-VkShaderStageFlagBits ShaderStageToVk(RHI::ShaderStage stage) {
-    switch (stage) {
-        case RHI::ShaderStage::Vertex:   return VK_SHADER_STAGE_VERTEX_BIT;
-        case RHI::ShaderStage::Fragment: return VK_SHADER_STAGE_FRAGMENT_BIT;
-        case RHI::ShaderStage::Compute:  return VK_SHADER_STAGE_COMPUTE_BIT;
-        case RHI::ShaderStage::Geometry: return VK_SHADER_STAGE_GEOMETRY_BIT;
-        case RHI::ShaderStage::TessControl: return VK_SHADER_STAGE_TESSELLATION_CONTROL_BIT;
-        case RHI::ShaderStage::TessEval: return VK_SHADER_STAGE_TESSELLATION_EVALUATION_BIT;
+VkShaderStageFlagBits ShaderStageToVk(ShaderStage stage) {
+    switch (stage.type) {
+        case ShaderStageType::Vertex:   return VK_SHADER_STAGE_VERTEX_BIT;
+        case ShaderStageType::Fragment: return VK_SHADER_STAGE_FRAGMENT_BIT;
+        case ShaderStageType::Compute:  return VK_SHADER_STAGE_COMPUTE_BIT;
+        case ShaderStageType::Geometry: return VK_SHADER_STAGE_GEOMETRY_BIT;
+        case ShaderStageType::TessControl: return VK_SHADER_STAGE_TESSELLATION_CONTROL_BIT;
+        case ShaderStageType::TessEvaluation: return VK_SHADER_STAGE_TESSELLATION_EVALUATION_BIT;
         default: return VK_SHADER_STAGE_ALL;
     }
 }
 
-// ════════════════════════════════════════════════════════════
-// 拓扑转换
-// ════════════════════════════════════════════════════════════
+// ââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââ
+// ććč˝Źć˘
+// ââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââ
 
 VkPrimitiveTopology TopologyToVk(RHI::PrimitiveTopology topology) {
     switch (topology) {
@@ -216,9 +213,9 @@ VkPrimitiveTopology TopologyToVk(RHI::PrimitiveTopology topology) {
     }
 }
 
-// ════════════════════════════════════════════════════════════
-// 格式大小
-// ════════════════════════════════════════════════════════════
+// ââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââ
+// ć źĺźĺ¤§ĺ°
+// ââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââ
 
 uint32_t GetFormatSize(RHI::Format format) {
     switch (format) {
@@ -247,11 +244,11 @@ uint32_t GetFormatSize(RHI::Format format) {
     }
 }
 
-// ════════════════════════════════════════════════════════════
-// 实例/设备扩展
-// ════════════════════════════════════════════════════════════
+// ââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââ
+// ĺŽäž/čŽžĺ¤ćŠĺą
+// ââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââ
 
-std::vector<const char*> GetRequiredInstanceExtensions(bool enableValidation) noexcept {
+std::vector<const char*> GetRequiredInstanceExtensions(bool enableValidation) {
     std::vector<const char*> extensions = {
         VK_KHR_SURFACE_EXTENSION_NAME,
 #ifdef VK_KHR_WIN32_SURFACE_EXTENSION_NAME
@@ -264,7 +261,7 @@ std::vector<const char*> GetRequiredInstanceExtensions(bool enableValidation) no
     return extensions;
 }
 
-std::vector<const char*> GetRequiredDeviceExtensions() noexcept {
+std::vector<const char*> GetRequiredDeviceExtensions() {
     return {
         VK_KHR_SWAPCHAIN_EXTENSION_NAME,
         VK_KHR_DYNAMIC_RENDERING_EXTENSION_NAME,

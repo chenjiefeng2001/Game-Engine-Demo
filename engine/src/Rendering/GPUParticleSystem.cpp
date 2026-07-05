@@ -31,8 +31,7 @@ struct GPUParticle {
     float size;         // 粒子大小
     float lifetime;     // 最大生命周期
     float age;          // 当前年龄
-    uint32_t alive;     // 1=活跃, 0=死亡
-    float pad[2];       // std140 16B 对齐
+    uint32_t alive;     // 1=活跃, 0=死亡 (4 bytes, total = 64)
 };
 #pragma pack(pop)
 

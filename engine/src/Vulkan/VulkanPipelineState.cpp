@@ -23,7 +23,6 @@ struct VulkanPipelineState::Impl {
         if (pipeline != VK_NULL_HANDLE && device != VK_NULL_HANDLE) {
             vkDestroyPipeline(device, pipeline, nullptr);
         }
-        // PipelineLayout 由 PipelineLayoutCache 管理，不在此销毁
     }
 };
 
@@ -56,9 +55,6 @@ IRHIPipelineState* CreateGraphicsPipeline(
     VkShaderModule fsModule)
 {
     auto pso = new VulkanPipelineState();
-    pso->m_Impl->device = device;
-    pso->m_Impl->layout = pipelineLayout;
-    // layout 由 PipelineLayoutCache 管理，不由 PSO 销毁
 
     std::vector<VkPipelineShaderStageCreateInfo> stages;
 
@@ -82,12 +78,10 @@ IRHIPipelineState* CreateGraphicsPipeline(
 
     // 顶点输入
     VkPipelineVertexInputStateCreateInfo vertexInput{VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO};
-    // 从 desc 解析 vertex buffer 布局
-    // 简化：使用默认设置
 
     // 输入组装
     VkPipelineInputAssemblyStateCreateInfo inputAssembly{VK_STRUCTURE_TYPE_PIPELINE_INPUT_ASSEMBLY_STATE_CREATE_INFO};
-    inputAssembly.topology = TopologyToVk(desc.primitiveTopology);
+    inputAssembly.topology = TopologyToVk(desc.topology);
 
     // 视口
     VkPipelineViewportStateCreateInfo viewportState{VK_STRUCTURE_TYPE_PIPELINE_VIEWPORT_STATE_CREATE_INFO};
@@ -113,12 +107,12 @@ IRHIPipelineState* CreateGraphicsPipeline(
 
     // 颜色混合
     VkPipelineColorBlendAttachmentState blendAttachment{};
-    blendAttachment.blendEnable = desc.blendState.blendEnable ? VK_TRUE : VK_FALSE;
+    blendAttachment.blendEnable = desc.blend.enable ? VK_TRUE : VK_FALSE;
     blendAttachment.colorWriteMask = VK_COLOR_COMPONENT_R_BIT | VK_COLOR_COMPONENT_G_BIT |
                                       VK_COLOR_COMPONENT_B_BIT | VK_COLOR_COMPONENT_A_BIT;
 
     VkPipelineColorBlendStateCreateInfo colorBlend{VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO};
-    colorBlend.attachmentCount = 1;
+    colorBlend.attachmentCount = desc.rtvCount;
     colorBlend.pAttachments = &blendAttachment;
 
     // 动态状态（视口+裁剪）
@@ -129,13 +123,13 @@ IRHIPipelineState* CreateGraphicsPipeline(
 
     // Dynamic Rendering
     VkPipelineRenderingCreateInfo renderingInfo{VK_STRUCTURE_TYPE_PIPELINE_RENDERING_CREATE_INFO};
-    renderingInfo.colorAttachmentCount = static_cast<uint32_t>(desc.colorFormats.size());
+    renderingInfo.colorAttachmentCount = desc.rtvCount;
     std::vector<VkFormat> colorFormats;
-    for (auto fmt : desc.colorFormats) {
-        colorFormats.push_back(FormatToVk(fmt));
+    for (uint32 i = 0; i < desc.rtvCount; ++i) {
+        colorFormats.push_back(FormatToVk(desc.rtvFormats[i]));
     }
     renderingInfo.pColorAttachmentFormats = colorFormats.data();
-    renderingInfo.depthAttachmentFormat = FormatToVk(desc.depthFormat);
+    renderingInfo.depthAttachmentFormat = FormatToVk(desc.dsvFormat);
     renderingInfo.stencilAttachmentFormat = VK_FORMAT_UNDEFINED;
 
     // 创建 Graphics Pipeline
@@ -153,13 +147,15 @@ IRHIPipelineState* CreateGraphicsPipeline(
     ci.pDynamicState = &dynamicState;
     ci.layout = pipelineLayout;
 
-    VkResult result = vkCreateGraphicsPipelines(device, VK_NULL_HANDLE, 1, &ci, nullptr, &pso->m_Impl->pipeline);
+    VkPipeline vkPipeline;
+    VkResult result = vkCreateGraphicsPipelines(device, VK_NULL_HANDLE, 1, &ci, nullptr, &vkPipeline);
     if (result != VK_SUCCESS) {
         std::fprintf(stderr, "[Vulkan] Failed to create graphics pipeline\n");
         delete pso;
         return nullptr;
     }
 
+    pso->SetNativeHandles(vkPipeline, pipelineLayout, device);
     return pso;
 }
 
@@ -169,9 +165,6 @@ IRHIPipelineState* CreateComputePipeline(
     VkShaderModule csModule)
 {
     auto pso = new VulkanPipelineState();
-    pso->m_Impl->device = device;
-    pso->m_Impl->layout = pipelineLayout;
-    pso->m_Impl->isCompute = true;
 
     VkPipelineShaderStageCreateInfo csCI{VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO};
     csCI.stage = VK_SHADER_STAGE_COMPUTE_BIT;
@@ -182,13 +175,15 @@ IRHIPipelineState* CreateComputePipeline(
     ci.stage = csCI;
     ci.layout = pipelineLayout;
 
-    VkResult result = vkCreateComputePipelines(device, VK_NULL_HANDLE, 1, &ci, nullptr, &pso->m_Impl->pipeline);
+    VkPipeline vkPipeline;
+    VkResult result = vkCreateComputePipelines(device, VK_NULL_HANDLE, 1, &ci, nullptr, &vkPipeline);
     if (result != VK_SUCCESS) {
         std::fprintf(stderr, "[Vulkan] Failed to create compute pipeline\n");
         delete pso;
         return nullptr;
     }
 
+    pso->SetNativeHandles(vkPipeline, pipelineLayout, device);
     return pso;
 }
 

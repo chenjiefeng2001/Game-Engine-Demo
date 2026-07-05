@@ -70,13 +70,13 @@ ShaderReflectionData ReflectSPIRV(const uint32_t* spirv, size_t wordCount) {
             data.resources.push_back(binding);
         }
 
-        // ── Uniform Texel Buffers ──
-        for (const auto& res : resources.uniform_texel_buffers) {
+        // ── Sampled Images (uniform texel buffers removed in newer SPIRV-Cross) ──
+        for (const auto& res : resources.sampled_images) {
             ShaderResourceBinding binding;
             binding.name        = compiler.get_name(res.id);
             binding.set         = compiler.get_decoration(res.id, spv::DecorationDescriptorSet);
             binding.binding     = compiler.get_decoration(res.id, spv::DecorationBinding);
-            binding.type        = ShaderResourceType::UniformTexelBuffer;
+            binding.type        = ShaderResourceType::SampledImage;
             binding.size        = 0;
             binding.arraySize   = 1;
             data.resources.push_back(binding);
