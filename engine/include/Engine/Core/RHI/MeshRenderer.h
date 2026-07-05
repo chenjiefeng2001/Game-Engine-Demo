@@ -2,6 +2,7 @@
 
 #include "Engine/Types.h"
 #include "Engine/Core/RHI/MathTypes.h"
+#include "Engine/Rendering/ShadowMapper.h"
 #include <memory>
 #include <vector>
 #include <unordered_map>
@@ -17,7 +18,7 @@ namespace Engine {
     class PotentiallyVisibleSet;
     class ISceneGraph;
     class IPrimitiveBatch;
-    class ShadowMapper;
+    namespace Rendering { class ShadowMapper; }
     class GBuffer;
     struct Frustum;
 
@@ -155,8 +156,8 @@ namespace Engine {
                                   bool forceDepthPrePass = false);
 
         // ── 阴影映射 ──
-        void SetShadowMapper(ShadowMapper* sm) { m_ShadowMapper = sm; }
-        ShadowMapper* GetShadowMapper() { return m_ShadowMapper; }
+        void SetShadowMapper(Rendering::ShadowMapper* sm) { m_ShadowMapper = sm; }
+        Rendering::ShadowMapper* GetShadowMapper() { return m_ShadowMapper; }
         void SetShadowEnabled(bool enable) { m_ShadowEnabled = enable; }
         bool IsShadowEnabled() const { return m_ShadowEnabled; }
         void RenderShadowPass(const std::vector<GameObject*>& objects);
@@ -204,7 +205,7 @@ namespace Engine {
         uint32 m_SGThreshold = 50;
 
         // ── 阴影 ──
-        ShadowMapper* m_ShadowMapper = nullptr;
+        Rendering::ShadowMapper* m_ShadowMapper = nullptr;
         bool m_ShadowEnabled = false;
 
         // ── SSAO ──

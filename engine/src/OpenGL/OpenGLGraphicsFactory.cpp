@@ -247,12 +247,4 @@ namespace Engine {
 		return std::make_unique<OpenGLGBuffer>(context);
 	}
 
-	std::unique_ptr<ShadowMapper> OpenGLGraphicsFactory::CreateShadowMapper(
-		IRenderContext& context)
-	{
-		// 暂时返回 nullptr，等待 OpenGLShadowMapper 实现
-		// return std::make_unique<OpenGLShadowMapper>(context);
-		return nullptr;
-	}
-
 } // namespace Engine

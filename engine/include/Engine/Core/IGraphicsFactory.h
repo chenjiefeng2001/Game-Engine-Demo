@@ -7,7 +7,6 @@
 #include "Engine/Core/RHI/AntiAliasingTypes.h"
 #include "Engine/Core/RHI/GBuffer.h"
 #include "Engine/Core/RHI/IGPUMemoryAllocator.h"
-#include "Engine/Core/RHI/ShadowMapper.h"
 
 namespace Engine {
 
@@ -25,7 +24,6 @@ namespace Engine {
 	class StackAllocator;
 	struct ShaderStage;
 	class GBuffer;
-	class ShadowMapper;
 	namespace RHI { class IGPUMemoryAllocator; }
 
 // ============================================================
@@ -142,9 +140,6 @@ namespace Engine {
 
 		// ---- 延迟渲染 ----
 		virtual std::unique_ptr<GBuffer> CreateGBuffer(
-			IRenderContext& context) = 0;
-
-		virtual std::unique_ptr<ShadowMapper> CreateShadowMapper(
 			IRenderContext& context) = 0;
 
 		// ---- UI 管理器 ----

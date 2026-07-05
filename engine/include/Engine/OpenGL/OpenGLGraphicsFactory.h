@@ -56,8 +56,6 @@ namespace Engine {
 		virtual std::unique_ptr<GBuffer> CreateGBuffer(
 			IRenderContext& context) override;
 
-		virtual std::unique_ptr<ShadowMapper> CreateShadowMapper(
-			IRenderContext& context) override;
 
 		// ---- 获取内部 OpenGL 上下文（仅限 OpenGL 实现内部使用） ----
 		GladGLContext& GetGLContext() { return m_GL; }
