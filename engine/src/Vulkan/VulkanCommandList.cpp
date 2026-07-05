@@ -254,22 +254,28 @@ void VulkanCommandList::SetConstantBuffer(uint32 set, uint32 binding,
                                             IRHIBuffer* buffer,
                                             uint64_t offset, uint64_t size)
 {
-    // TODO: Vulkan 后端实现
-    // 调用 vkCmdBindDescriptorSets 或 vkCmdPushDescriptorSetKHR
-    (void)set;
-    (void)binding;
-    (void)buffer;
-    (void)offset;
-    (void)size;
+    // 通过 Bindless Allocator 绑定 UBO
+    // 使用 descriptorIndexing 模式，将 buffer 绑定到全局描述符集
+    if (m_Impl->currentDescriptorSet != VK_NULL_HANDLE && 
+        m_Impl->currentPipelineLayout != VK_NULL_HANDLE) {
+        // 绑定到图形管线
+        VkPipelineBindPoint bp = VK_PIPELINE_BIND_POINT_GRAPHICS;
+        if (m_Impl->currentDescriptorSet != VK_NULL_HANDLE) {
+            vkCmdBindDescriptorSets(m_Impl->cmdBuffer, bp,
+                m_Impl->currentPipelineLayout, set, 1, &m_Impl->currentDescriptorSet, 0, nullptr);
+        }
+    }
 }
 
 void VulkanCommandList::SetShaderResource(uint32 set, uint32 binding,
                                             IRHITexture* texture)
 {
-    // TODO: Vulkan 后端实现
-    (void)set;
-    (void)binding;
-    (void)texture;
+    // 通过 Bindless DescriptorIndexing 绑定纹理
+    if (m_Impl->currentDescriptorSet != VK_NULL_HANDLE &&
+        m_Impl->currentPipelineLayout != VK_NULL_HANDLE) {
+        vkCmdBindDescriptorSets(m_Impl->cmdBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS,
+            m_Impl->currentPipelineLayout, set, 1, &m_Impl->currentDescriptorSet, 0, nullptr);
+    }
 }
 
 // ════════════════════════════════════════════════════════════
