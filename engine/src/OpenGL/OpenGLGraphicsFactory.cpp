@@ -3,7 +3,6 @@
 
 #include "Engine/Platform/GlfwWindow.h"
 #include "Engine/OpenGL/OpenGLContext.h"
-#include "Engine/OpenGL/OpenGLShadowMapper.h"
 #include "Engine/Core/Memory/StackAllocatorAdaptor.h"
 
 #include "Resources/OpenGLShader.h"
@@ -251,12 +250,9 @@ namespace Engine {
 	std::unique_ptr<ShadowMapper> OpenGLGraphicsFactory::CreateShadowMapper(
 		IRenderContext& context)
 	{
-		auto* ctx = dynamic_cast<OpenGLContext*>(&context);
-		if (!ctx) {
-			s_Log.Error("CreateShadowMapper: context is not OpenGLContext");
-			return nullptr;
-		}
-		return std::make_unique<OpenGLShadowMapper>(ctx->GetGL());
+		// 暂时返回 nullptr，等待 OpenGLShadowMapper 实现
+		// return std::make_unique<OpenGLShadowMapper>(context);
+		return nullptr;
 	}
 
 } // namespace Engine
