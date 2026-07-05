@@ -467,12 +467,33 @@ std::unique_ptr<IRHISwapChain> D3D12Device::CreateSwapChain(const SwapChainDesc&
         m_Impl->device->CreateRenderTargetView(m_Impl->backBuffers[i].Get(), nullptr, h);
         h.ptr += m_Impl->rtvDescriptorSize;
     }
-    return std::make_unique<D3D12SwapChain>();
+
+    // 创建 SwapChain wrapper 并设置设备指针
+    auto sc = std::make_unique<D3D12SwapChain>();
+    sc->m_Impl->device = this;
+    sc->m_Impl->count = desc.bufferCount;
+    // 创建纹理包装器供 GetBackBuffer 返回
+    sc->m_Impl->backBufferTextures.reserve(desc.bufferCount);
+    for (uint32_t i = 0; i < desc.bufferCount; ++i) {
+        auto tex = std::make_shared<D3D12Texture>();
+        tex->m_Impl->resource = m_Impl->backBuffers[i];
+        tex->m_Impl->width = desc.width;
+        tex->m_Impl->height = desc.height;
+        tex->m_Impl->format = desc.format;
+        sc->m_Impl->backBufferTextures.push_back(tex);
+    }
+    return sc;
 }
 const char* D3D12Device::GetDeviceName() const { return m_Impl->deviceName.c_str(); }
 
 // ── D3D12SwapChain ──
-struct D3D12SwapChain::Impl { D3D12Device* device{nullptr}; uint32_t idx{0}; uint32_t count{3}; };
+struct D3D12SwapChain::Impl {
+    D3D12Device* device{nullptr};
+    uint32_t idx{0};
+    uint32_t count{3};
+    // Swapchain 纹理包装器（供 GetBackBuffer 返回）
+    std::vector<std::shared_ptr<D3D12Texture>> backBufferTextures;
+};
 D3D12SwapChain::D3D12SwapChain() : m_Impl(std::make_unique<Impl>()) {}
 D3D12SwapChain::~D3D12SwapChain() = default;
 void D3D12SwapChain::Present() {
@@ -496,7 +517,12 @@ void D3D12SwapChain::Resize(uint32_t w, uint32_t h) {
         i.device->CreateRenderTargetView(i.backBuffers[j].Get(), nullptr, h); h.ptr += i.rtvDescriptorSize;
     }
 }
-IRHITexture* D3D12SwapChain::GetBackBuffer(uint32_t idx) const { return nullptr; }
+IRHITexture* D3D12SwapChain::GetBackBuffer(uint32_t idx) const {
+    if (idx < m_Impl->backBufferTextures.size()) {
+        return m_Impl->backBufferTextures[idx].get();
+    }
+    return nullptr;
+}
 uint32_t D3D12SwapChain::GetCurrentBackBufferIndex() const { return m_Impl->idx; }
 uint32_t D3D12SwapChain::GetBufferCount() const { return m_Impl->count; }
 
