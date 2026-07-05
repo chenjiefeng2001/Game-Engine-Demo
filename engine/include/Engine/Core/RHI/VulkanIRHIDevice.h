@@ -164,6 +164,11 @@ namespace RHI {
         VulkanPipelineState();
         ~VulkanPipelineState() override;
 
+        // ── Vulkan 专有 ──
+        VkPipeline GetVkPipeline() const noexcept;
+        VkPipelineLayout GetVkPipelineLayout() const noexcept;
+        void SetNativeHandles(VkPipeline pipeline, VkPipelineLayout layout, VkDevice device) noexcept;
+
     private:
         struct Impl;
         std::unique_ptr<Impl> m_Impl;

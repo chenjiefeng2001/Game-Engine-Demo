@@ -92,6 +92,9 @@ struct VulkanDevice::Impl {
     // ── Pipeline Layout 缓存 ──
     VulkanPipelineLayoutCache* pipelineLayoutCache{nullptr};
 
+    // ── Bindless 描述符 ──
+    BindlessAllocator* bindlessAllocator{nullptr};
+
     // ── 初始化标志 ──
     bool                 initialized{false};
 

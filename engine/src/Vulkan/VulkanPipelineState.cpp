@@ -30,6 +30,20 @@ struct VulkanPipelineState::Impl {
 VulkanPipelineState::VulkanPipelineState() : m_Impl(std::make_unique<Impl>()) {}
 VulkanPipelineState::~VulkanPipelineState() = default;
 
+VkPipeline VulkanPipelineState::GetVkPipeline() const noexcept {
+    return m_Impl->pipeline;
+}
+
+VkPipelineLayout VulkanPipelineState::GetVkPipelineLayout() const noexcept {
+    return m_Impl->layout;
+}
+
+void VulkanPipelineState::SetNativeHandles(VkPipeline pipeline, VkPipelineLayout layout, VkDevice device) noexcept {
+    m_Impl->pipeline = pipeline;
+    m_Impl->layout = layout;
+    m_Impl->device = device;
+}
+
 // ════════════════════════════════════════════════════════════
 // 工厂：创建 Graphics PSO
 // ════════════════════════════════════════════════════════════
@@ -44,6 +58,7 @@ IRHIPipelineState* CreateGraphicsPipeline(
     auto pso = new VulkanPipelineState();
     pso->m_Impl->device = device;
     pso->m_Impl->layout = pipelineLayout;
+    // layout 由 PipelineLayoutCache 管理，不由 PSO 销毁
 
     std::vector<VkPipelineShaderStageCreateInfo> stages;
 
