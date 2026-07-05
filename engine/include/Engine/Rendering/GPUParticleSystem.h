@@ -66,6 +66,9 @@ public:
     /** 获取最大粒子数 */
     uint32_t GetMaxParticles() const { return m_Config.maxParticles; }
 
+    /** 渲染所有活跃粒子 */
+    void Render(const Mat4& viewProj);
+
     /** 获取 SSBO 句柄（供 Compute Shader 和渲染使用） */
     uint32_t GetParticleSSBO() const { return m_SSBO; }
 
