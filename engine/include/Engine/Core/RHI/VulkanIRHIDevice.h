@@ -107,6 +107,9 @@ namespace RHI {
 
         // ── Vulkan 专有 ──
         VkCommandBuffer GetVkCommandBuffer() const noexcept;
+        void SetVkCommandBuffer(VkCommandBuffer cmdBuf) noexcept;
+        void SetVkPipelineState(VkPipeline pipeline, VkPipelineLayout layout) noexcept;
+        void SetDevice(VulkanDevice* device) noexcept;
 
     private:
         struct Impl;
@@ -160,6 +163,11 @@ namespace RHI {
     public:
         VulkanPipelineState();
         ~VulkanPipelineState() override;
+
+        // ── Vulkan 专有 ──
+        VkPipeline GetVkPipeline() const noexcept;
+        VkPipelineLayout GetVkPipelineLayout() const noexcept;
+        void SetNativeHandles(VkPipeline pipeline, VkPipelineLayout layout, VkDevice device) noexcept;
 
     private:
         struct Impl;
