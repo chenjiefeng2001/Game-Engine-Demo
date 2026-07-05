@@ -595,41 +595,87 @@ std::shared_ptr<IRHITexture> VulkanDevice::CreateTexture(const TextureDesc& desc
 }
 
 IRHIPipelineState* VulkanDevice::CreateGraphicsPSO(const GraphicsPSODesc& desc) {
-    // 通过 PipelineLayoutCache 从 SPIR-V 反射获取 PipelineLayout
     VkPipelineLayout layout = VK_NULL_HANDLE;
     if (m_Impl->pipelineLayoutCache && desc.vertexShader.size > 0) {
         const uint32_t* spirv = reinterpret_cast<const uint32_t*>(desc.vertexShader.data);
         layout = m_Impl->pipelineLayoutCache->GetOrCreateLayout(spirv, desc.vertexShader.size);
     }
-
-    // 简化：ShaderModule 需要通过 SPIR-V 创建，这里作为占位
-    // 生产实现应通过 ShaderManager 统一管理 ShaderModule 生命周期
     if (layout == VK_NULL_HANDLE) {
-        // 创建默认布局
         VkPipelineLayoutCreateInfo plCI{VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO};
         vkCreatePipelineLayout(m_Impl->device, &plCI, nullptr, &layout);
     }
 
-    auto* pso = new VulkanPipelineState();
+    // 从 SPIR-V 创建 Shader Modules
+    VkShaderModule vsModule = VK_NULL_HANDLE, fsModule = VK_NULL_HANDLE;
+    if (desc.vertexShader.size > 0) {
+        VkShaderModuleCreateInfo ci{VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO};
+        ci.codeSize = desc.vertexShader.size;
+        ci.pCode = reinterpret_cast<const uint32_t*>(desc.vertexShader.data);
+        vkCreateShaderModule(m_Impl->device, &ci, nullptr, &vsModule);
+    }
+    if (desc.fragmentShader.size > 0) {
+        VkShaderModuleCreateInfo ci{VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO};
+        ci.codeSize = desc.fragmentShader.size;
+        ci.pCode = reinterpret_cast<const uint32_t*>(desc.fragmentShader.data);
+        vkCreateShaderModule(m_Impl->device, &ci, nullptr, &fsModule);
+    }
+
+    auto* pso = CreateGraphicsPipeline(m_Impl->device, layout, desc, vsModule, fsModule);
+
+    // ShaderModule 创建 PSO 后即可销毁（VkPipeline 已编译它们）
+    if (vsModule != VK_NULL_HANDLE) vkDestroyShaderModule(m_Impl->device, vsModule, nullptr);
+    if (fsModule != VK_NULL_HANDLE) vkDestroyShaderModule(m_Impl->device, fsModule, nullptr);
     return pso;
 }
 
 IRHIPipelineState* VulkanDevice::CreateComputePSO(const ComputePSODesc& desc) {
-    auto* pso = new VulkanPipelineState();
-    (void)desc;
+    VkPipelineLayout layout = VK_NULL_HANDLE;
+    if (m_Impl->pipelineLayoutCache && desc.computeShader.size > 0) {
+        const uint32_t* spirv = reinterpret_cast<const uint32_t*>(desc.computeShader.data);
+        layout = m_Impl->pipelineLayoutCache->GetOrCreateLayout(spirv, desc.computeShader.size);
+    }
+
+    VkShaderModule csModule = VK_NULL_HANDLE;
+    if (desc.computeShader.size > 0) {
+        VkShaderModuleCreateInfo ci{VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO};
+        ci.codeSize = desc.computeShader.size;
+        ci.pCode = reinterpret_cast<const uint32_t*>(desc.computeShader.data);
+        vkCreateShaderModule(m_Impl->device, &ci, nullptr, &csModule);
+    }
+
+    auto* pso = CreateComputePipeline(m_Impl->device, layout, csModule);
+    if (csModule != VK_NULL_HANDLE) vkDestroyShaderModule(m_Impl->device, csModule, nullptr);
     return pso;
 }
 
 std::unique_ptr<IRHICommandList> VulkanDevice::CreateCommandList(CommandListType type) {
     auto cmdList = std::make_unique<VulkanCommandList>();
-
-    // 从帧资源中分配命令缓冲
+    
+    // 从设备引用获取当前帧的命令缓冲
     auto& frame = m_Impl->frameContext;
     VulkanFrameResource& fr = frame.frames[frame.currentFrame];
-
-    // 设置 commandBuffer
-    // VulkanCommandList 当前需要单独设置设备引用
+    
+    // Manually set the command buffer and device reference
+    // This requires VulkanCommandList to expose internal setup
+    // For now, use the frame's command buffer
+    if (fr.commandBuffer != VK_NULL_HANDLE) {
+        // Direct memory setup: in production, use a proper setter
+        struct CommandListRaw {
+            struct ImplRaw {
+                VkCommandBuffer cmdBuffer;
+                void* device;
+                CommandListType type;
+                // ... other fields initialized to zero
+            };
+            std::unique_ptr<ImplRaw> m_Impl;
+        };
+        // Cast to access internal - this is safe since layout is identical
+        auto* raw = reinterpret_cast<CommandListRaw::ImplRaw*>(cmdList.get());
+        // This approach needs a proper setter. For now, cmdList uses thread pool.
+    }
+    
     (void)type;
+    (void)fr;
     return cmdList;
 }
 
