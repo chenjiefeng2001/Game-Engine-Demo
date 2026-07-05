@@ -268,6 +268,29 @@ void VulkanCommandList::SetShaderResource(uint32 set, uint32 binding,
 }
 
 // ════════════════════════════════════════════════════════════
+// Compute 管线
+// ════════════════════════════════════════════════════════════
+
+void VulkanCommandList::Dispatch(uint32_t groupX, uint32_t groupY, uint32_t groupZ) {
+    if (m_Impl->cmdBuffer == VK_NULL_HANDLE) return;
+    m_Impl->FlushBarriers();
+    vkCmdDispatch(m_Impl->cmdBuffer, groupX, groupY, groupZ);
+}
+
+void VulkanCommandList::SetUnorderedAccess(uint32 slot, IRHIBuffer* buffer) {
+    auto* vkBuffer = static_cast<VulkanBuffer*>(buffer);
+    VkBuffer vkbuf = vkBuffer->GetVkBuffer();
+    
+    // 通过 descriptor set 绑定 SSBO
+    // 当前使用 Bindless 模式的底层描述符
+    if (m_Impl->currentPipelineLayout != VK_NULL_HANDLE && 
+        m_Impl->currentDescriptorSet != VK_NULL_HANDLE) {
+        vkCmdBindDescriptorSets(m_Impl->cmdBuffer, VK_PIPELINE_BIND_POINT_COMPUTE,
+            m_Impl->currentPipelineLayout, 0, 1, &m_Impl->currentDescriptorSet, 0, nullptr);
+    }
+}
+
+// ════════════════════════════════════════════════════════════
 // 查询
 // ════════════════════════════════════════════════════════════
 

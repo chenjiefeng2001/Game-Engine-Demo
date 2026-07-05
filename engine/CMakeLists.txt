@@ -28,8 +28,12 @@ file(GLOB ENGINE_SOURCES CONFIGURE_DEPENDS
     src/Platform/glfw/*.cpp
     src/Rendering/*.cpp
     src/Scripting/*.cpp
-    src/D3D12/*.cpp
 )
+if(WIN32 AND EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/src/D3D12")
+    # D3D12 源文件 — 仅在 Windows 平台编译
+    file(GLOB D3D12_SOURCES CONFIGURE_DEPENDS src/D3D12/*.cpp)
+    list(APPEND ENGINE_SOURCES ${D3D12_SOURCES})
+endif()
 file(GLOB ENGINE_HEADERS CONFIGURE_DEPENDS
     include/*.h
     include/Engine/*.h
@@ -89,7 +93,8 @@ if(TARGET tracy)
 endif()
 
 if(WIN32)
-    target_link_libraries(EngineCore PRIVATE dbghelp.lib)
+    target_link_libraries(EngineCore PRIVATE dbghelp.lib d3d12.lib dxgi.lib dxguid.lib)
+    target_compile_definitions(EngineCore PUBLIC ENGINE_HAS_D3D12)
 endif()
 
 # ════════════════════════════════════════════════════════
