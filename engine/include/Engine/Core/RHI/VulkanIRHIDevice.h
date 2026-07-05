@@ -107,6 +107,9 @@ namespace RHI {
 
         // ── Vulkan 专有 ──
         VkCommandBuffer GetVkCommandBuffer() const noexcept;
+        void SetVkCommandBuffer(VkCommandBuffer cmdBuf) noexcept;
+        void SetVkPipelineState(VkPipeline pipeline, VkPipelineLayout layout) noexcept;
+        void SetDevice(VulkanDevice* device) noexcept;
 
     private:
         struct Impl;

@@ -267,6 +267,19 @@ CommandListType VulkanCommandList::GetType() const noexcept {
     return m_Impl->type;
 }
 
+void VulkanCommandList::SetVkCommandBuffer(VkCommandBuffer cmdBuf) noexcept {
+    m_Impl->cmdBuffer = cmdBuf;
+}
+
+void VulkanCommandList::SetVkPipelineState(VkPipeline pipeline, VkPipelineLayout layout) noexcept {
+    m_Impl->currentPipeline = pipeline;
+    m_Impl->currentPipelineLayout = layout;
+}
+
+void VulkanCommandList::SetDevice(VulkanDevice* device) noexcept {
+    m_Impl->device = device;
+}
+
 VkCommandBuffer VulkanCommandList::GetVkCommandBuffer() const noexcept {
     return m_Impl->cmdBuffer;
 }
