@@ -2,7 +2,6 @@
 #include "Engine/Core/RHI/PotentiallyVisibleSet.h"
 #include "Engine/Core/RHI/IPrimitiveBatch.h"
 #include "Engine/Core/RHI/ISceneGraph.h"
-#include "Engine/Core/RHI/ShadowMapper.h"
 #include "Engine/Core/RHI/GBuffer.h"
 #include "Engine/Core/Renderer/Mesh.h"
 #include "Engine/Core/Renderer/PerspectiveCamera.h"
@@ -350,11 +349,17 @@ namespace Engine {
             lightShader->SetFloat(("u_LightIntensity["+si+"]").c_str(), L.intensity);
         }
 
-        // 阴影
+        // 阴影（使用新 Rendering::ShadowMapper 接口）
         if (m_ShadowEnabled && m_ShadowMapper && m_ShadowMapper->IsValid()) {
-            m_ShadowMapper->SetShaderUniforms(lightShader.get());
-            m_ShadowMapper->BindShadowMap(5);
-            lightShader->SetInt("u_ShadowMap", 5);
+            const auto& csmData = m_ShadowMapper->GetCSMData();
+            for (uint32 ci = 0; ci < csmData.cascadeCount; ++ci) {
+                std::string s = std::to_string(ci);
+                lightShader->SetMat4(("u_CSMData.cascades[" + s + "].lightViewProj").c_str(), csmData.cascades[ci].lightViewProj.Data());
+                lightShader->SetFloat(("u_CSMData.cascades[" + s + "].splitDepth").c_str(), csmData.cascades[ci].splitDepth);
+            }
+            lightShader->SetInt("u_CSMData.cascadeCount", (int)csmData.cascadeCount);
+            lightShader->SetFloat("u_CSMData.shadowBias", csmData.shadowBias);
+            lightShader->SetInt("u_ShadowEnabled", 1);
         } else {
             lightShader->SetInt("u_ShadowEnabled", 0);
         }
@@ -375,7 +380,8 @@ namespace Engine {
             return;
         }
 
-        m_ShadowMapper->BindForShadowPass();
+        // 从新接口获取 CSM 矩阵数据
+        const auto& csmData = m_ShadowMapper->GetCSMData();
         m_DepthShader->Bind();
 
         for (auto* obj : objects) {
@@ -395,14 +401,15 @@ namespace Engine {
 
             const auto& cached = it->second;
             glm::mat4 model = glm::make_mat4(obj->GetTransform().GetWorldMatrix().Data());
-            glm::mat4 mvp   = glm::make_mat4(m_ShadowMapper->GetLightVP().Data()) * model;
+            glm::mat4 lightVP;
+            std::memcpy(&lightVP, csmData.cascades[0].lightViewProj.data, sizeof(float) * 16);
+            glm::mat4 mvp = lightVP * model;
             m_DepthShader->SetMat4("u_MVP", glm::value_ptr(mvp));
             cached.vao->Bind();
             m_Context.DrawIndexed(cached.vao);
         }
 
         m_Shader->Bind(); // 绑定主 shader 以便继续主渲染
-        m_ShadowMapper->EndShadowPass();
     }
 
     // ════════════════════════════════════════════════
@@ -634,9 +641,9 @@ namespace Engine {
 
         // ── 阴影 uniform ──
         if (m_ShadowEnabled && m_ShadowMapper && m_ShadowMapper->IsValid()) {
-            m_ShadowMapper->BindShadowMap(3);
-            m_Shader->SetMat4("u_LightSpaceMatrix", m_ShadowMapper->GetLightVP().Data());
-            m_Shader->SetFloat("u_ShadowBias", 0.005f);
+            const auto& csmData = m_ShadowMapper->GetCSMData();
+            m_Shader->SetMat4("u_LightSpaceMatrix", csmData.cascades[0].lightViewProj.Data());
+            m_Shader->SetFloat("u_ShadowBias", csmData.shadowBias);
             m_Shader->SetInt("u_ShadowEnabled", 1);
         } else {
             m_Shader->SetInt("u_ShadowEnabled", 0);
