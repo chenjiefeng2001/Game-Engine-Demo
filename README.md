@@ -11,6 +11,8 @@
     ·
     <a href="#沙盒示例">沙盒示例</a>
     ·
+    <a href="#分支策略">分支策略</a>
+    ·
     <a href="#构建说明">构建说明</a>
     ·
     <a href="#许可证">许可证</a>
@@ -20,7 +22,9 @@
     <img src="https://img.shields.io/badge/status-experimental-red" alt="status: experimental"/>
     <img src="https://img.shields.io/badge/license-MIT-blue" alt="license: MIT"/>
     <img src="https://img.shields.io/badge/OpenGL-4.6-green" alt="OpenGL 4.6"/>
+    <img src="https://img.shields.io/badge/Vulkan-1.3-purple" alt="Vulkan 1.3"/>
     <img src="https://img.shields.io/badge/Box2D-3.0-orange" alt="Box2D 3.0"/>
+    <img src="https://img.shields.io/badge/Jolt%20Physics-5.5-brightgreen" alt="Jolt Physics 5.5"/>
     <img src="https://img.shields.io/badge/OpenAL--Soft-1.25-lightgrey" alt="OpenAL Soft 1.25"/>
     <img src="https://img.shields.io/badge/Dear%20ImGui-1.91-cyan" alt="Dear ImGui 1.91"/>
   </p>
@@ -33,8 +37,10 @@
 **Game Engine Demo** 是一个实验性的模块化游戏引擎演示项目，使用 **C++20** 标准开发。项目采用分层解耦架构，通过纯虚接口层（RHI 风格）将核心逻辑与具体实现分离，已集成：
 
 - **OpenGL 4.6** 渲染（2D 精灵批处理 + 3D 光照管线 + 延迟渲染 / SSAO）
+- **Vulkan 1.3** 渲染后端（95% 完成 — Dynamic Rendering / VMA / Bindless Descriptor）
+- **Jolt Physics 5.5** 3D 物理引擎（多线程 JobSystem 适配）
+- **Box2D 3.0** 2D 物理模拟（刚体、碰撞、关节）
 - **动画系统**（骨骼蒙皮、混合树、IK、动画状态机、重定向）
-- **Box2D 3.0** 物理模拟（刚体、碰撞、关节）
 - **OpenAL Soft** 3D 空间音频
 - **Dear ImGui + ImGuizmo** 编辑器界面
 - **nlohmann/json** 场景序列化
@@ -54,6 +60,7 @@
 | CMake | ≥ 3.20 |
 | 编译器 | MSVC 2022 (Visual Studio 17) / GCC 12+ / Clang 16+ |
 | C++ 标准 | C++20 或更高 |
+| Vulkan SDK | 可选（构建 Vulkan 后端时需要） |
 
 ### Windows 构建
 
@@ -91,64 +98,72 @@ cmake --build build --target AudioPhysicsSandbox
 ## 🏗️ 引擎架构
 
 ```
-┌────────────────────────────────────────────────────────────────────┐
-│                        Sandbox Layer                               │
-│  (沙盒示例, 直接使用引擎 API 构建场景和游戏逻辑)                    │
-├────────────────────────────────────────────────────────────────────┤
-│                         Engine API                                 │
-│  IGraphicsFactory · IWindow · IRenderContext · IPhysicsWorld       │
-│  IAudioEngine · Scene · GameObject · Component · Serializer        │
-│  JobSystem · SubsystemManager · ResourceManager · EngineEditor     │
-├──────────────┬──────────────┬──────────────┬───────────────────────┤
-│  OpenGL      │  Box2D       │  OpenAL      │  Core                 │
-│  Backend     │  Backend     │  Backend     │  (抽象层 + 工具)      │
-│  OpenGLContext│Box2DPhysWorld│OpenALAudioEng│  SubsystemMgr         │
-│  OpenGLSprite │Box2DPhysBody │OpenALAudioSrc│  JobSystem            │
-│  OpenGLShader │Box2DJoint    │OpenALAudioBuf│  FileSystem           │
-│  OpenGLTexture│PhysicsDebug  │AudioClip     │  Config               │
-│  GLResources  │Draw          │AudioLoader   │  ResourceMgr          │
-│  (VAO/VBO/IBO)│              │Listener      │  StackAllocator       │
-├──────────────┴──────────────┴──────────────┴───────────────────────┤
-│  Animation                 │  Rendering / RHI                      │
-│  Skeleton · SkinnedMesh    │  SceneRenderer · RenderQueue          │
-│  AnimationController       │  AntiAliasing · BufferVisualization   │
-│  AnimationBlend · BlendTree│  GeometryDebug · HelperToggles        │
-│  IK · ConstraintSolver     │  PrimitiveBatch                       │
-│  AnimationRetarget         │  IPrimitiveBatch                      │
-│  AnimStateMachine          │                                       │
-├────────────────────────────┴───────────────────────────────────────┤
-│  Debug                       │  Editor                             │
-│  CrashHandler · StackTrace   │  EngineEditor                       │
-│  ScreenshotCapture           │  MainMenuBar · Toolbar              │
-│  CrashContext                │  Viewport · ContentBrowser          │
-│  Profiler · MemoryTracker    │  AssetBrowser · DepGraph            │
-│  ConsoleVariableRegistry     │  SceneHierarchy · Inspector         │
-│                              │  ConsolePanel · PerformanceWindow   │
-│                              │  MemoryPanel                        │
-├──────────────────────────────┴─────────────────────────────────────┤
-│                     Third Party Libraries                           │
-│  GLFW · glad · glm · Box2D · OpenAL Soft · stb · imgui · imguizmo  │
-│  nlohmann/json · spdlog · freetype · tracy                          │
-└────────────────────────────────────────────────────────────────────┘
+┌──────────────────────────────────────────────────────────────────────────┐
+│                          Sandbox Layer                                   │
+│  (沙盒示例, 直接使用引擎 API 构建场景和游戏逻辑)                          │
+├──────────────────────────────────────────────────────────────────────────┤
+│                           Engine API                                     │
+│  IGraphicsFactory · IWindow · IRenderContext · IPhysicsWorld             │
+│  IPhysicsWorld3D · IAudioEngine · Scene · GameObject · Component         │
+│  JobSystem · SubsystemManager · ResourceManager · EngineEditor           │
+├──────────────┬──────────────┬──────────────┬─────────────────────────────┤
+│  OpenGL      │  Vulkan      │  Box2D       │  Jolt Physics              │
+│  Backend 95% │  Backend 95% │  Backend     │  Backend (Phase 1-3)       │
+│  GL46CmdList │  VkDevice    │  Box2DPhysWld│  JoltPhysicsWorld          │
+│  GL46SwapChn │  VkCmdList   │  Box2DPhysBd │  JoltPhysicsBody           │
+│  GL46Device  │  VkSwapChain │  Box2DJoint  │  JoltJobSystemAdapter      │
+│  OpenGLShader│  VkPSO       │  PhysicsDebug│  JoltContactListener       │
+│  OpenGLTex   │  BindlessDesc│  Draw        │  JoltDebugRenderer         │
+│  GLResources │  VMA+VkPSOCch│              │                            │
+├──────────────┴──────────────┴──────────────┴─────────────────────────────┤
+│  Animation                 │  Rendering / RHI                            │
+│  Skeleton · SkinnedMesh    │  SceneRenderer · RenderQueue                │
+│  AnimationController       │  AntiAliasing · BufferVisualization         │
+│  AnimationBlend · BlendTree│  GeometryDebug · HelperToggles              │
+│  IK · ConstraintSolver     │  PrimitiveBatch / IPrimitiveBatch           │
+│  AnimationRetarget         │  PhysicsLayers · LockFreeEventQueue         │
+│  AnimStateMachine          │  FixedTimestepAccumulator                   │
+│  TransformSystem           │  PhysicsSyncSystem                          │
+├────────────────────────────┴─────────────────────────────────────────────┤
+│  Physics PAL (Physics Abstraction Layer)                                │
+│  IPhysicsWorld (2D) · IPhysicsWorld3D · IPhysicsBody3D · IJoint3D      │
+│  PhysicsDefs · PhysicsDefs3D · PhysicsSystemManager                    │
+│  IPhysicsDebugDraw · IPhysicsDebugDraw3D                                │
+├──────────────────────────────────────────────────────────────────────────┤
+│  Debug                       │  Editor                                  │
+│  CrashHandler · StackTrace   │  EngineEditor                            │
+│  ScreenshotCapture           │  MainMenuBar · Toolbar                   │
+│  CrashContext                │  Viewport · ContentBrowser                │
+│  Profiler · MemoryTracker    │  AssetBrowser · DepGraph                 │
+│  ConsoleVariableRegistry     │  SceneHierarchy · Inspector              │
+│                              │  ConsolePanel · PerformanceWindow        │
+│                              │  MemoryPanel                             │
+├──────────────────────────────┴──────────────────────────────────────────┤
+│                       Third Party Libraries                              │
+│  GLFW · glad · glm · Box2D · JoltPhysics · OpenAL Soft · stb           │
+│  imgui · imguizmo · nlohmann/json · spdlog · freetype · tracy          │
+└──────────────────────────────────────────────────────────────────────────┘
 ```
 
 ### 设计原则
 
-- **接口与实现分离** — 核心层只依赖纯虚接口（`IPhysicsWorld`、`IAudioEngine` 等），实现层在编译时注入
+- **接口与实现分离** — 核心层只依赖纯虚接口（`IPhysicsWorld`、`IPhysicsWorld3D`、`IAudioEngine` 等），实现层在编译时注入
+- **多后端架构** — 同时支持 OpenGL 4.6 和 Vulkan 1.3 渲染后端，物理层支持 Box2D (2D) 和 Jolt Physics (3D)
 - **工厂模式** — 通过 `IGraphicsFactory` 统一创建窗口、上下文、着色器、精灵批处理等资源
 - **组件化** — `GameObject` 通过 `TransformComponent`、`SpriteComponent`、`PhysicsComponent`、`AudioSourceComponent` 等组合行为
 - **SubsystemManager** — 管理所有子系统初始化和关闭的生命周期，支持阶段式启动
 - **StackAllocator** — 子系统内存线性分配器，256KB 连续内存池，O(1) 分配，关闭时整块回收
 - **混合驱动调度** — 每个子系统可独立声明更新策略（可变步长/固定步长/限频/事件驱动/手动），由 `Application` 统一调度
-- **JobSystem** — 基于线程池的任务级并行调度，支持 `ParallelFor` 和 `Wait()` 工作窃取
+- **JobSystem** — 基于线程池的任务级并行调度，支持 `ParallelFor` 和 `Wait()` 工作窃取；Jolt Physics 通过 `JoltJobSystemAdapter` 接入
 - **注册式序列化** — 组件在静态初始化期自动注册到 `JsonSerializer`，新增组件无需修改序列化器代码
 - **RAII 资源管理** — 使用 `shared_ptr` / 智能指针管理 OpenGL 纹理、OpenAL 缓冲区和物理体的生命周期
+- **ECS 架构（实验性）** — 在 `ECS` 分支上提供 Archetype-based ECS（EntityManager + Chunk + Archetype + ECB + Query）
 
 ---
 
 ## 📦 模块详解
 
-### 🖼️ 渲染系统 (`Engine::OpenGL`)
+### 🖼️ 渲染系统 — OpenGL 4.6
 
 | 组件 | 说明 |
 |------|------|
@@ -163,11 +178,30 @@ cmake --build build --target AudioPhysicsSandbox
 | `ISpriteBatch` / `IPrimitiveBatch` | 批处理抽象接口（精灵 + 图元） |
 | `TextureManager` | 纹理缓存管理器，自动去重 |
 
-### 🧱 物理系统 (`Engine::Box2D`)
+### 🖼️ 渲染系统 — Vulkan 1.3
 
 | 组件 | 说明 |
 |------|------|
-| `IPhysicsWorld` | 物理世界抽象接口 |
+| `VulkanDevice` | Vulkan 设备封装（VkInstance / VkPhysicalDevice / VkDevice / VMA / Volk） |
+| `VulkanCommandList` | Vulkan 命令列表（Begin / End / Draw / DrawIndexed / Barrier / Viewport / Scissor） |
+| `VulkanSwapChain` | 交换链（Present / Resize / FrameInFlight 三帧飞行） |
+| `VulkanPipelineState` | 管线状态（SPIR-V 反射 + Dynamic Rendering + PSO Factory） |
+| `VulkanPipelineLayoutCache` | PipelineLayout 缓存（SPIRV-Cross 反射 UBO / Sampler / SSBO / PushConstant） |
+| `BindlessAllocator` | Bindless Descriptor Indexing（4096 binding，UpdateAfterBind，VariableDescriptorCount） |
+| `VulkanBuffer` | VMA Buffer（Vertex / Index / Uniform / Storage） |
+| `VulkanTexture` | VMA Image（支持各种格式和 mip levels） |
+| `VulkanQueue` | 命令队列（Graphics / Compute） |
+| `VulkanFrameResource` | 每帧资源（Fence / Semaphore / CommandPool / DynamicUBO） |
+| `VulkanLoader` | Volk 加载器（Instance / Device 函数加载） |
+| `PSOCache` | PSO 去重缓存（64-bit hash，线程安全 Find / Store） |
+
+当前 Vulkan 后端覆盖度：**~95%**，所有核心路径（设备创建→资源分配→管线编译→命令录制→提交呈现）均已实现真实 Vulkan API 调用。
+
+### 🧱 物理系统 — 2D (Box2D)
+
+| 组件 | 说明 |
+|------|------|
+| `IPhysicsWorld` | 2D 物理世界抽象接口 |
 | `IPhysicsBody` | 刚体抽象接口 |
 | `IJoint` | 关节抽象接口（支持鼠标/距离/旋转/滑动/焊接/轮式关节） |
 | `Box2DPhysicsWorld` | Box2D 物理世界封装 |
@@ -181,6 +215,24 @@ cmake --build build --target AudioPhysicsSandbox
 - **碰撞结束** `SetContactEndCallback` — 碰撞分离时触发
 - **碰撞持续** `SetContactPersistCallback` — 碰撞接触中每帧触发（带冲量）
 - **碰撞滤波** `SetContactPreSolveCallback` — 运行时控制是否产生碰撞
+
+### 🧱 物理系统 — 3D (Jolt Physics)
+
+| 组件 | 说明 |
+|------|------|
+| `IPhysicsWorld3D` | 3D 物理世界抽象接口（Init / Step / CreateBody / RayCast / Query） |
+| `IPhysicsBody3D` | 3D 刚体抽象接口（变换/运动/力/冲量/碰撞过滤/休眠） |
+| `IJoint3D` | 3D 关节抽象接口 |
+| `JoltPhysicsWorld` | Jolt Physics 5.5 实现（ObjectLayer 映射 / BroadPhaseLayer / 碰撞回调） |
+| `JoltPhysicsBody` | Jolt Body 封装（Euler↔Quat 转换 / BodyInterface / CCD） |
+| `JoltJobSystemAdapter` | JPH::JobSystem → Engine::JobSystem 适配（Barrier / Wait） |
+| `JoltContactListener` | Jolt → Engine 碰撞回调桥接 |
+| `PhysicsLayers` | 预定义 Layer 映射（8 ObjectLayer + 4 BroadPhaseLayer + ShouldCollide） |
+| `LockFreeEventQueue` | MPSC 无锁碰撞事件队列（CAS 原子操作 / Cache Line 隔离） |
+| `FixedTimestepAccumulator` | 固定步长累加器（防螺旋式死亡，渲染插值 alpha） |
+| `PhysicsSyncSystem` | 三级同步管线（ECS→Physics→Step→Physics→ECS） |
+| `PhysicsSystemManager` | 统一管理 2D + 3D 物理世界 |
+| `Bare2DPhysicsWorld/Body` | 纯 CPU 2D 物理实现（无外部依赖） |
 
 ### 🔊 音频系统 (`Engine::OpenAL`)
 
@@ -220,6 +272,7 @@ cmake --build build --target AudioPhysicsSandbox
 | `GameObject` | 游戏对象基类，持有 Transform/Sprite/Physics 组件，支持 `ForEachComponent` |
 | `Component` | 组件基类，提供 `Serialize`/`Deserialize` 虚方法供序列化 |
 | `TransformComponent` | 位置/旋转/缩放组件，支持层级变换 |
+| `TransformSystem` | 版本号驱动的线性批处理世界矩阵更新（Lazy Validation，O(N) 单次扫描） |
 | `SpriteComponent` | 精灵渲染组件，支持 JSON 序列化 |
 | `PhysicsComponent` | 物理组件（连接 GameObject 与 IPhysicsBody），支持 JSON 序列化 |
 | `AudioSourceComponent` | 音频源组件（可挂载到 GameObject） |
@@ -244,6 +297,7 @@ cmake --build build --target AudioPhysicsSandbox
 | `IGraphicsFactory` | 图形工厂抽象接口 |
 | `IUIManager` | UI 管理器接口 |
 | `IRenderContext` | 渲染上下文接口 |
+| `EventBus` | 类型安全的发布-订阅事件总线（支持 ECS 集成事件） |
 
 ### 🗄️ 内存与容器
 
@@ -306,8 +360,15 @@ cmake --build build --target AudioPhysicsSandbox
 
 | 组件 | 说明 |
 |------|------|
+| `IRHIDevice` | 渲染硬件设备抽象（CreateBuffer/CreateTexture/CreatePSO/CreateSwapChain） |
+| `IRHICommandList` | 命令列表抽象（Begin/End/Draw/Barrier/Bind） |
+| `IRHICommandQueue` | 命令队列抽象（ExecuteCommandLists/WaitIdle） |
+| `IRHISwapChain` | 交换链抽象（Present/Resize/GetBackBuffer） |
+| `IRHIBuffer` / `IRHITexture` / `IRHIPipelineState` | 渲染资源抽象 |
+| `PSOCache` | 全局 PSO 去重缓存，64-bit hash，线程安全 |
 | `SceneRenderer` | 场景渲染器 — 管理渲染队列和 pass 执行 |
 | `RenderQueue` | 渲染队列 — 排序/剔除/提交 |
+| `DynamicUBOAllocator` | 动态 Uniform Buffer 分配器 |
 | `AntiAliasingConfig` / `AntiAliasingCaps` / `AntiAliasingTypes` | 抗锯齿配置与能力查询 |
 | `BufferVisualization` | 缓冲区可视化调试工具 |
 | `GeometryDebug` | 几何调试绘制 |
@@ -377,6 +438,34 @@ JSON 格式示例：
     }
 }
 ```
+
+---
+
+## 🌿 分支策略
+
+本项目采用双分支策略，将实验性 ECS 架构与稳定主干分离：
+
+### `master` 分支（当前）
+**稳定的主分支** — 使用 OOP 风格的 `GameObject` + `Component` 模型。
+
+- 渲染：OpenGL 4.6（生产级）+ Vulkan 1.3（~95%）
+- 物理：Box2D 3.0（2D）+ Jolt Physics 5.5（3D）
+- 实体：`GameObject` — 组件化 `shared_ptr<Component>` 容器
+- 变换：`TransformComponent` + `TransformSystem`（版本号批处理）
+- 事件：`EventBus` — 类型安全 Pub/Sub
+
+### `ECS` 分支（实验性）
+**ECS 架构实验分支** — 使用 Archetype-based 数据导向设计。
+
+- 64-bit Generational EntityHandle（32-bit Index + 32-bit Generation）
+- 16KB Cache-aligned Chunk 内存块（ComponentMeta 安全处理非 POD 类型）
+- Archetype 组件签名分类 + 自动迁移
+- EntityCommandBuffer（延迟结构性变更，解决遍历安全性）
+- Query 引擎（Archetype 匹配缓存 + Chunk 迭代器）
+- SparseSet 实体池（O(1) 分配/释放）
+- ECSBridge（GameObject ↔ EntityHandle 双向映射，向后兼容）
+
+> ECS 分支的变更会定期合并到 master（仅合并非 ECS 部分，如渲染后端、物理引擎等通用改进）。
 
 ---
 
@@ -596,14 +685,15 @@ game-engine-demo/
 │   │   │   ├── Containers/          # 容器（IntrusiveList/SmallVector/StackList）
 │   │   │   ├── GameObject/          # 游戏对象与组件
 │   │   │   ├── Memory/              # 内存分配器（StackAllocator/MemoryTracker）
-│   │   │   ├── Physics/             # 物理接口（IPhysicsWorld/Body/Joint/DebugDraw）
+│   │   │   ├── Physics/             # 物理接口（IPhysicsWorld/3D） + PhysicsLayers
 │   │   │   ├── Renderer/            # 渲染器接口（OrthographicCamera/Renderer/SpriteBatch）
 │   │   │   ├── RenderResources/     # 渲染资源接口（Shader/Texture/VAO/VBO/IBO）
 │   │   │   ├── Resources/           # 资源管理（ResourceManager/FileWatcher/AssetDB）
-│   │   │   ├── RHI/                 # 渲染硬件接口（AntiAliasing/BufferVisualization）
+│   │   │   ├── RHI/                 # 渲染硬件接口（IRHIDevice/List/Queue/SwapChain + PSOCache）
 │   │   │   ├── Scene/               # 场景管理 + 序列化（Scene/Serializer）
 │   │   │   ├── Config.h             # JSON 配置系统
 │   │   │   ├── EngineSettings.h     # 引擎设置
+│   │   │   ├── EventBus.h           # 类型安全事件总线
 │   │   │   ├── FileSystem.h         # 文件系统（VFS 挂载/异步 I/O）
 │   │   │   ├── AsyncStream.h        # 异步文件流
 │   │   │   ├── FileStream.h         # 文件流适配器（第三方库回调）
@@ -622,10 +712,12 @@ game-engine-demo/
 │   │   │   └── UserSettings.h       # 用户设置
 │   │   ├── Debug/                   # 调试系统（CrashHandler/StackTrace/Screenshot/Profiler）
 │   │   ├── Editor/                  # 编辑器框架（EngineEditor + 面板）
+│   │   ├── Jolt/                    # Jolt Physics 实现（JoltPhysicsWorld/Body/Adapter）
 │   │   ├── OpenAL/                  # OpenAL 音频实现
 │   │   ├── OpenGL/                  # OpenGL 渲染实现
 │   │   ├── Platform/                # 平台层（GLFW 窗口/输入）
 │   │   ├── Rendering/               # 渲染管线（SceneRenderer/RenderQueue）
+│   │   ├── Vulkan/                  # Vulkan 渲染实现（VulkanCommon/FrameResource）
 │   │   ├── Application.h            # 应用入口基类
 │   │   ├── ConsoleCommandRegistry.h # 控制台命令注册表
 │   │   ├── ConsoleLog.h             # 控制台日志
@@ -657,12 +749,14 @@ game-engine-demo/
 │       │   └── ...
 │       ├── Debug/
 │       ├── Editor/
+│       ├── Jolt/                    # Jolt Physics 实现源文件
 │       ├── OpenAL/
 │       ├── OpenGL/
 │       │   └── Resources/           # GL 渲染资源（VAO/VBO/IBO 实现）
 │       ├── Platform/
 │       │   └── glfw/
-│       └── Rendering/               # 渲染管线实现
+│       ├── Rendering/               # 渲染管线实现
+│       └── Vulkan/                  # Vulkan 渲染实现源文件
 ├── sandbox/                         # 沙盒测试可执行文件
 │   ├── CMakeLists.txt
 │   └── src/
@@ -692,7 +786,8 @@ game-engine-demo/
 │   └── 3rdparty/                    # 第三方库文档
 ├── third_party/                     # 第三方库
 │   ├── CMakeLists.txt
-│   ├── box2d/                       # Box2D 3.0 (物理引擎)
+│   ├── box2d/                       # Box2D 3.0 (2D 物理引擎)
+│   ├── d3d12ma/                     # D3D12 Memory Allocator (预留)
 │   ├── freetype/                    # FreeType (字体渲染)
 │   ├── glad/                        # OpenGL 4.6 函数加载
 │   ├── glfw/                        # 窗口和输入管理
@@ -700,12 +795,15 @@ game-engine-demo/
 │   ├── imgui/                       # Dear ImGui 1.91 (git submodule)
 │   ├── imgui_build/                 # ImGui 构建配置
 │   ├── imguizmo/                    # ImGuizmo (3D 操纵器)
-│   ├── imguizmo_tmp/                # ImGuizmo 附加副本
+│   ├── JoltPhysics/                 # Jolt Physics 5.5 (3D 物理引擎, git submodule)
 │   ├── nlohmann/                    # JSON 库 (json.hpp)
 │   ├── openal-soft/                 # OpenAL Soft 1.25 (3D 空间音频)
+│   ├── shaderc/                     # Shaderc (GLSL→SPIR-V 编译, 可选)
 │   ├── spdlog/                      # 日志库
+│   ├── spirv-cross/                 # SPIRV-Cross (着色器反射)
 │   ├── stb/                         # 图像和音频解码
-│   └── tracy/                       # Tracy Profiler (性能剖析)
+│   ├── tracy/                       # Tracy Profiler (性能剖析)
+│   └── vma/                         # Vulkan Memory Allocator
 ├── CMakeLists.txt                   # 根构建文件
 ├── LICENSE.txt
 └── README.md
@@ -718,6 +816,7 @@ game-engine-demo/
 | 库 | 版本 | 用途 |
 |----|------|------|
 | [Box2D](https://github.com/erincatto/box2d) | 3.0 | 2D 物理模拟（刚体、碰撞、关节） |
+| [Jolt Physics](https://github.com/jrouwe/JoltPhysics) | 5.5 | 3D 物理引擎（多线程 JobSystem，AAA 级） |
 | [glfw](https://github.com/glfw/glfw) | 最新 | 跨平台窗口创建和输入处理 |
 | [glad](https://github.com/Dav1dde/glad) | 2+ | OpenGL 4.6 函数加载 |
 | [glm](https://github.com/g-truc/glm) | 1.1+ | 图形数学库（矩阵/向量运算） |
@@ -727,20 +826,25 @@ game-engine-demo/
 | [nlohmann/json](https://github.com/nlohmann/json) | 3.11.3 | JSON 序列化/反序列化（场景文件/配置） |
 | [spdlog](https://github.com/gabime/spdlog) | 1.x | 高性能日志库 |
 | [stb](https://github.com/nothings/stb) | 最新 | stb_image（纹理加载） + stb_vorbis（OGG 解码） |
+| [Vulkan Memory Allocator](https://github.com/GPUOpen-LibrariesAndSDKs/VulkanMemoryAllocator) | 3.x | Vulkan 显存分配管理 |
+| [SPIRV-Cross](https://github.com/KhronosGroup/SPIRV-Cross) | 最新 | SPIR-V 着色器反射（UBO/Sampler 提取） |
 | [FreeType](https://github.com/freetype/freetype) | 最新 | 字体栅格化与文本渲染 |
 | [Tracy](https://github.com/wolfpld/tracy) | 最新 | 实时性能剖析（Debug 模式默认启用） |
+| [Volk](https://github.com/zeux/volk) | 最新 | Vulkan 元加载器（内置） |
 
 ---
 
 ## ⚠️ 注意事项
 
 - 项目处于**快速迭代阶段**，API 和架构可能随时变更
-- 当前仅支持 **OpenGL 4.6** 渲染后端（Vulkan 等尚未接入）
-- 物理引擎使用 **Box2D 3.0**，API 与 2.x 有显著差异
+- 渲染后端支持 **OpenGL 4.6**（生产级）和 **Vulkan 1.3**（~95%，可使用）
+- 物理引擎同时支持 **Box2D 3.0**（2D）和 **Jolt Physics 5.5**（3D）
+- ECS 架构在 `ECS` 分支上维护，`master` 分支使用 OOP `GameObject`+`Component` 模型
 - Windows 构建需要安装 **Visual Studio 2022**（MSVC v14.4+）
+- Vulkan 后端需要安装 **Vulkan SDK**，cmake 会自动检测
 - 音频系统依赖 **OpenAL32.dll**，构建系统会自动复制到输出目录
-- ImGui / ImGuizmo 使用 git submodule 引入，克隆时需 `--recursive` 或执行 `git submodule update --init --recursive`
-- Tracy Profiler 在 Debug 配置下默认启用（`ENGINE_ENABLE_PROFILING` + `TRACY_ENABLE`），Release 配置下自动关闭；MSVC 下使用 `TRACY_DELAYED_INIT` 避免静态初始化期栈溢出
+- ImGui / ImGuizmo / JoltPhysics 使用 git submodule 引入，克隆时需 `--recursive` 或执行 `git submodule update --init --recursive`
+- Tracy Profiler 在 Debug 配置下默认启用（`ENGINE_ENABLE_PROFILING` + `TRACY_ENABLE`），Release 配置下自动关闭
 - 场景序列化使用 **nlohmann/json** 单头文件库，已预置于 `third_party/nlohmann/json.hpp`
 - 动画系统仍处于积极开发阶段，API 可能发生较大变化
 
