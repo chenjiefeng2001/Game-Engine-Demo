@@ -85,20 +85,54 @@ VkImageLayout ResourceStateToLayout(ResourceState state) noexcept {
 VkPipelineStageFlags ResourceStateToStage(ResourceState state) noexcept {
     uint16_t s = static_cast<uint16_t>(state);
     VkPipelineStageFlags flags = 0;
-    if (s & static_cast<uint16_t>(ResourceState::RenderTarget))
-        flags |= VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
-    if (s & static_cast<uint16_t>(ResourceState::DepthStencil))
-        flags |= VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT | VK_PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT;
-    if (s & static_cast<uint16_t>(ResourceState::ShaderResource))
-        flags |= VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT | VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT;
-    if (s & static_cast<uint16_t>(ResourceState::CopySource) || s & static_cast<uint16_t>(ResourceState::CopyDest))
-        flags |= VK_PIPELINE_STAGE_TRANSFER_BIT;
-    if (s & static_cast<uint16_t>(ResourceState::UnorderedAccess))
-        flags |= VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT;
-    if (s & static_cast<uint16_t>(ResourceState::VertexBuffer) || s & static_cast<uint16_t>(ResourceState::IndexBuffer) || s & static_cast<uint16_t>(ResourceState::ConstantBuffer))
-        flags |= VK_PIPELINE_STAGE_VERTEX_INPUT_BIT;
-    if (s & static_cast<uint16_t>(ResourceState::Present))
-        flags |= VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT;
+
+    // 明确处理单一状态的精确映射
+    switch (state) {
+        case ResourceState::Undefined:
+            flags = VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT;
+            break;
+        case ResourceState::RenderTarget:
+            flags = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
+            break;
+        case ResourceState::DepthStencil:
+            flags = VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT | VK_PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT;
+            break;
+        case ResourceState::ShaderResource:
+            flags = VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT | VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT;
+            break;
+        case ResourceState::UnorderedAccess:
+            // UAV 在 Compute Shader 中读写
+            flags = VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT;
+            break;
+        case ResourceState::CopySource:
+        case ResourceState::CopyDest:
+            flags = VK_PIPELINE_STAGE_TRANSFER_BIT;
+            break;
+        case ResourceState::Present:
+            flags = VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT;
+            break;
+        case ResourceState::Common:
+            flags = VK_PIPELINE_STAGE_ALL_COMMANDS_BIT;
+            break;
+        default:
+            // 组合状态：通过位掩码累加
+            if (s & static_cast<uint16_t>(ResourceState::RenderTarget))
+                flags |= VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
+            if (s & static_cast<uint16_t>(ResourceState::DepthStencil))
+                flags |= VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT | VK_PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT;
+            if (s & static_cast<uint16_t>(ResourceState::ShaderResource))
+                flags |= VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT | VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT;
+            if (s & static_cast<uint16_t>(ResourceState::UnorderedAccess))
+                flags |= VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT;
+            if (s & static_cast<uint16_t>(ResourceState::CopySource) || s & static_cast<uint16_t>(ResourceState::CopyDest))
+                flags |= VK_PIPELINE_STAGE_TRANSFER_BIT;
+            if (s & static_cast<uint16_t>(ResourceState::VertexBuffer) || s & static_cast<uint16_t>(ResourceState::IndexBuffer) || s & static_cast<uint16_t>(ResourceState::ConstantBuffer))
+                flags |= VK_PIPELINE_STAGE_VERTEX_INPUT_BIT;
+            if (s & static_cast<uint16_t>(ResourceState::Present))
+                flags |= VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT;
+            break;
+    }
+
     if (flags == 0) flags = VK_PIPELINE_STAGE_ALL_COMMANDS_BIT;
     return flags;
 }
