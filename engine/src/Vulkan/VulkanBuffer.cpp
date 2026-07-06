@@ -57,5 +57,13 @@ void VulkanBuffer::SetSize(uint64_t size) {
     m_Impl->size = size;
 }
 
+void VulkanBuffer::SetAllocator(VmaAllocator allocator) {
+    m_Impl->vmaAllocator = allocator;
+}
+
+void VulkanBuffer::SetVmaAllocation(VmaAllocation alloc) {
+    m_Impl->allocation = alloc;
+}
+
 } // namespace RHI
 } // namespace Engine

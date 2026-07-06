@@ -28,6 +28,7 @@ struct VulkanPipelineState::Impl {
 
 VulkanPipelineState::VulkanPipelineState() : m_Impl(std::make_unique<Impl>()) {}
 VulkanPipelineState::~VulkanPipelineState() = default;
+bool VulkanPipelineState::IsCompute() const noexcept { return m_Impl->isCompute; }
 
 VkPipeline VulkanPipelineState::GetVkPipeline() const noexcept {
     return m_Impl->pipeline;
@@ -74,6 +75,13 @@ IRHIPipelineState* CreateGraphicsPipeline(
         fsCI.module = fsModule;
         fsCI.pName = "main";
         stages.push_back(fsCI);
+    }
+
+    // Vulkan 规范要求 stageCount >= 1。若没有 shader module 则无法创建合法的 PSO。
+    if (stages.empty()) {
+        std::fprintf(stderr, "[Vulkan] CreateGraphicsPipeline: no shader stages provided\n");
+        delete pso;
+        return nullptr;
     }
 
     // 顶点输入

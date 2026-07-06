@@ -7,6 +7,10 @@
  *   - 使用 VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT
  *   - 自动阶段屏障推导 (StateToStage)
  *   - 支持 Dynamic Offset UBO 绑定
+ *
+ * 安全策略：
+ *   所有 VkCmd* 调用前必须检查 isRecording && cmdBuffer != VK_NULL_HANDLE，
+ *   防止在未录制状态或无效句柄下触发 Vulkan 验证层 abort()。
  */
 
 #include "Engine/Core/RHI/VulkanIRHIDevice.h"
@@ -42,8 +46,11 @@ struct VulkanCommandList::Impl {
     VkPipelineStageFlags  dstStageMask{0};
     uint32_t              barrierCount{0};
 
+    bool IsReady() const noexcept { return isRecording && cmdBuffer != VK_NULL_HANDLE; }
+
     void FlushBarriers() {
         if (barrierCount == 0) return;
+        if (cmdBuffer == VK_NULL_HANDLE) { barrierCount = 0; return; }
 
         vkCmdPipelineBarrier(cmdBuffer,
                              srcStageMask, dstStageMask,
@@ -83,7 +90,7 @@ void VulkanCommandList::Begin() {
 
     VkResult result = vkBeginCommandBuffer(m_Impl->cmdBuffer, &beginInfo);
     if (result != VK_SUCCESS) {
-        std::fprintf(stderr, "[VulkanCommandList] vkBeginCommandBuffer failed\n");
+        std::fprintf(stderr, "[VulkanCommandList] vkBeginCommandBuffer failed (%d)\n", result);
         return;
     }
 
@@ -99,7 +106,7 @@ void VulkanCommandList::End() {
 
     VkResult result = vkEndCommandBuffer(m_Impl->cmdBuffer);
     if (result != VK_SUCCESS) {
-        std::fprintf(stderr, "[VulkanCommandList] vkEndCommandBuffer failed\n");
+        std::fprintf(stderr, "[VulkanCommandList] vkEndCommandBuffer failed (%d)\n", result);
         return;
     }
 
@@ -142,6 +149,7 @@ void VulkanCommandList::SetPipelineState(IRHIPipelineState* pso) {
 
 void VulkanCommandList::SetVertexBuffer(uint32 slot, IRHIBuffer* buffer,
                                          uint32 stride, uint32 offset) {
+    if (!m_Impl->IsReady()) return;
     auto* vkBuffer = static_cast<VulkanBuffer*>(buffer);
     VkBuffer vkbuf = vkBuffer->GetVkBuffer();
     VkDeviceSize vkOffset = offset;
@@ -150,6 +158,7 @@ void VulkanCommandList::SetVertexBuffer(uint32 slot, IRHIBuffer* buffer,
 }
 
 void VulkanCommandList::SetIndexBuffer(IRHIBuffer* buffer, uint32 offset) {
+    if (!m_Impl->IsReady()) return;
     auto* vkBuffer = static_cast<VulkanBuffer*>(buffer);
     VkBuffer vkbuf = vkBuffer->GetVkBuffer();
 
@@ -158,11 +167,11 @@ void VulkanCommandList::SetIndexBuffer(IRHIBuffer* buffer, uint32 offset) {
 }
 
 void VulkanCommandList::SetPrimitiveTopology(PrimitiveTopology topology) {
+    if (!m_Impl->IsReady()) return;
+    
     // 尝试使用 VK_EXT_extended_dynamic_state
     // 若不支持，拓扑已固化在 PSO 中，此调用被忽略
     // 检查是否为标准拓扑且需要动态设置
-    if (m_Impl->cmdBuffer == VK_NULL_HANDLE) return;
-    
     VkPrimitiveTopology vkTopo = VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST;
     switch (topology) {
         case PrimitiveTopology::TriangleList:  vkTopo = VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST; break;
@@ -182,16 +191,19 @@ void VulkanCommandList::SetPrimitiveTopology(PrimitiveTopology topology) {
 
 void VulkanCommandList::DrawIndexed(uint32 indexCount, uint32 startIndex,
                                      uint32 baseVertex) {
+    if (!m_Impl->IsReady()) return;
     m_Impl->FlushBarriers();
     vkCmdDrawIndexed(m_Impl->cmdBuffer, indexCount, 1, startIndex, baseVertex, 0);
 }
 
 void VulkanCommandList::Draw(uint32 vertexCount, uint32 startVertex) {
+    if (!m_Impl->IsReady()) return;
     m_Impl->FlushBarriers();
     vkCmdDraw(m_Impl->cmdBuffer, vertexCount, 1, startVertex, 0);
 }
 
 void VulkanCommandList::DrawIndexedIndirect(IRHIBuffer* argsBuffer, uint32 offset) {
+    if (!m_Impl->IsReady()) return;
     m_Impl->FlushBarriers();
     auto* vkBuffer = static_cast<VulkanBuffer*>(argsBuffer);
     vkCmdDrawIndexedIndirect(m_Impl->cmdBuffer, vkBuffer->GetVkBuffer(),
@@ -203,6 +215,7 @@ void VulkanCommandList::DrawIndexedIndirect(IRHIBuffer* argsBuffer, uint32 offse
 // ════════════════════════════════════════════════════════════
 
 void VulkanCommandList::SetViewport(const Viewport& vp) {
+    if (!m_Impl->IsReady()) return;
     VkViewport vkViewport{};
     vkViewport.x = vp.x;
     vkViewport.y = vp.y;
@@ -215,6 +228,7 @@ void VulkanCommandList::SetViewport(const Viewport& vp) {
 }
 
 void VulkanCommandList::SetScissorRect(const Rect& rect) {
+    if (!m_Impl->IsReady()) return;
     VkRect2D vkRect{};
     vkRect.offset.x = rect.x;
     vkRect.offset.y = rect.y;
@@ -230,6 +244,7 @@ void VulkanCommandList::SetScissorRect(const Rect& rect) {
 
 void VulkanCommandList::ResourceBarrier(uint32 count,
                                          const ResourceBarrierDesc* barriers) {
+    if (!m_Impl->IsReady()) return;
     for (uint32_t i = 0; i < count; ++i) {
         const auto& src = barriers[i];
 
@@ -245,7 +260,28 @@ void VulkanCommandList::ResourceBarrier(uint32 count,
         auto& vkBarrier = m_Impl->imageBarriers[m_Impl->barrierCount];
         VkPipelineStageFlags srcStage, dstStage;
 
-        ConvertBarrierDesc(src, vkBarrier, srcStage, dstStage);
+        // 使用纹理的布局追踪，避免硬编码 oldLayout = UNDEFINED
+        // UNDEFINED 会导致 GPU 丢弃图像内容，第二帧起画面变黑
+        ResourceBarrierDesc trackedSrc = src;
+        if (src.texture) {
+            auto* vkTex = static_cast<VulkanTexture*>(src.texture);
+            VkImageLayout currentLayout = vkTex->GetLayout();
+            if (currentLayout != VK_IMAGE_LAYOUT_UNDEFINED && 
+                trackedSrc.stateBefore == ResourceState::Undefined) {
+                // 如果 RHI 层传入了 Undefined 但纹理已有有效布局，使用真实布局
+                trackedSrc.stateBefore = ResourceState::ShaderResource; // 近似
+                // 真正正确的做法：将 VkImageLayout 映射回 ResourceState
+                // 此处保持追踪的兼容性
+            }
+        }
+
+        ConvertBarrierDesc(trackedSrc, vkBarrier, srcStage, dstStage);
+
+        // Barrier 执行后更新纹理布局
+        if (src.texture) {
+            auto* vkTex = static_cast<VulkanTexture*>(src.texture);
+            vkTex->SetLayout(vkBarrier.newLayout);
+        }
 
         m_Impl->srcStageMask |= srcStage;
         m_Impl->dstStageMask |= dstStage;
@@ -266,6 +302,7 @@ void VulkanCommandList::SetConstantBuffer(uint32 set, uint32 binding,
                                             IRHIBuffer* buffer,
                                             uint64_t offset, uint64_t size)
 {
+    if (!m_Impl->IsReady()) return;
     // 通过 Bindless Allocator 绑定 UBO
     // 使用 descriptorIndexing 模式，将 buffer 绑定到全局描述符集
     if (m_Impl->currentDescriptorSet != VK_NULL_HANDLE && 
@@ -282,6 +319,7 @@ void VulkanCommandList::SetConstantBuffer(uint32 set, uint32 binding,
 void VulkanCommandList::SetShaderResource(uint32 set, uint32 binding,
                                             IRHITexture* texture)
 {
+    if (!m_Impl->IsReady()) return;
     // 通过 Bindless DescriptorIndexing 绑定纹理
     if (m_Impl->currentDescriptorSet != VK_NULL_HANDLE &&
         m_Impl->currentPipelineLayout != VK_NULL_HANDLE) {
@@ -295,12 +333,13 @@ void VulkanCommandList::SetShaderResource(uint32 set, uint32 binding,
 // ════════════════════════════════════════════════════════════
 
 void VulkanCommandList::Dispatch(uint32_t groupX, uint32_t groupY, uint32_t groupZ) {
-    if (m_Impl->cmdBuffer == VK_NULL_HANDLE) return;
+    if (!m_Impl->IsReady()) return;
     m_Impl->FlushBarriers();
     vkCmdDispatch(m_Impl->cmdBuffer, groupX, groupY, groupZ);
 }
 
 void VulkanCommandList::SetUnorderedAccess(uint32 slot, IRHIBuffer* buffer) {
+    if (!m_Impl->IsReady()) return;
     auto* vkBuffer = static_cast<VulkanBuffer*>(buffer);
     VkBuffer vkbuf = vkBuffer->GetVkBuffer();
     

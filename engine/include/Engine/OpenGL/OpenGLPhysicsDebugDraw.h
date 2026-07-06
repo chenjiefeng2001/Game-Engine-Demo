@@ -77,6 +77,9 @@ namespace Engine {
         // 缓存的视图投影矩阵
         float32 m_ViewProj[16];
         bool    m_ViewProjDirty = true;
+
+        /** 碰撞体在 3D 空间中的 Y 高度（用于 DebugDraw 将物理 2D 坐标映射到 3D 空间） */
+        float32 m_HeightOffset = -2.0f;
     };
 
 } // namespace Engine

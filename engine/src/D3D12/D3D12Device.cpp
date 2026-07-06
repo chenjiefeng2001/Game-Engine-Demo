@@ -352,15 +352,32 @@ bool D3D12Device::Initialize(void* windowHandle, uint32_t width, uint32_t height
 
     hr = CreateDXGIFactory1(IID_PPV_ARGS(&m_Impl->factory));
     if (FAILED(hr)) return false;
-    hr = D3D12CreateDevice(nullptr, D3D_FEATURE_LEVEL_11_0, IID_PPV_ARGS(&m_Impl->device));
-    if (FAILED(hr)) return false;
+
+    // 枚举适配器并创建设备（同时保存适配器指针给 D3D12MA）
+    ComPtr<IDXGIAdapter1> adapter;
+    for (uint32_t i = 0; ; ++i) {
+        ComPtr<IDXGIAdapter1> enumAdapter;
+        if (m_Impl->factory->EnumAdapters1(i, &enumAdapter) == DXGI_ERROR_NOT_FOUND) break;
+        DXGI_ADAPTER_DESC1 desc;
+        enumAdapter->GetDesc1(&desc);
+        if (desc.Flags & DXGI_ADAPTER_FLAG_SOFTWARE) continue; // 跳过软件适配器
+        if (SUCCEEDED(D3D12CreateDevice(enumAdapter.Get(), D3D_FEATURE_LEVEL_11_0, IID_PPV_ARGS(&m_Impl->device)))) {
+            adapter = enumAdapter;
+            break;
+        }
+    }
+    if (!m_Impl->device || !adapter) return false;
 
     D3D12_COMMAND_QUEUE_DESC qd = {}; qd.Type = D3D12_COMMAND_LIST_TYPE_DIRECT;
     hr = m_Impl->device->CreateCommandQueue(&qd, IID_PPV_ARGS(&m_Impl->graphicsQueue));
     if (FAILED(hr)) return false;
 
-    D3D12MA::ALLOCATOR_DESC ad = {}; ad.pDevice = m_Impl->device.Get();
-    D3D12MA::CreateAllocator(&ad, &m_Impl->vmaAllocator);
+    D3D12MA::ALLOCATOR_DESC ad = {};
+    ad.pDevice = m_Impl->device.Get();
+    ad.pAdapter = adapter.Get();
+    ad.PreferredBlockSize = 0; // 默认
+    hr = D3D12MA::CreateAllocator(&ad, &m_Impl->vmaAllocator);
+    if (FAILED(hr)) return false;
 
     for (uint32_t i = 0; i < Impl::kFrameCount; ++i)
         m_Impl->device->CreateCommandAllocator(D3D12_COMMAND_LIST_TYPE_DIRECT, IID_PPV_ARGS(&m_Impl->cmdAllocators[i]));
@@ -599,11 +616,32 @@ void D3D12SwapChain::Present() {
     if (!m_Impl->device) return;
     auto& d3dDevice = *m_Impl->device;
     auto& i = *d3dDevice.m_Impl;
-    i.swapChain->Present(1, 0); i.frameIndex = i.swapChain->GetCurrentBackBufferIndex();
-    m_Impl->idx = i.frameIndex;
-    uint64_t v = ++i.fenceValues[i.frameIndex]; i.graphicsQueue->Signal(i.fence.Get(), v);
-    if (i.fence->GetCompletedValue() < v) { i.fence->SetEventOnCompletion(v, i.fenceEvent); WaitForSingleObject(i.fenceEvent, INFINITE); }
-    i.cmdAllocators[i.frameIndex]->Reset();
+
+    // 提交当前帧
+    i.swapChain->Present(1, 0);
+
+    // 获取交换链旋转后的新 BackBuffer 索引
+    uint32_t newIdx = i.swapChain->GetCurrentBackBufferIndex();
+    m_Impl->idx = newIdx;
+
+    // 为【当前帧】触发 GPU 信号
+    uint64_t signalVal = ++i.fenceValues[newIdx];
+    i.graphicsQueue->Signal(i.fence.Get(), signalVal);
+
+    // 等待【即将被覆盖的帧】完成（三缓冲循环等待）
+    // 等待 (newIdx + 1) % kFrameCount 槽位的上一轮 GPU 工作
+    uint32_t waitIdx = (newIdx + 1) % i.kFrameCount;
+    uint64_t waitVal = i.fenceValues[waitIdx];
+    if (i.fence->GetCompletedValue() < waitVal) {
+        i.fence->SetEventOnCompletion(waitVal, i.fenceEvent);
+        WaitForSingleObject(i.fenceEvent, INFINITE);
+    }
+
+    // 重置即将被录制的帧的命令分配器
+    i.cmdAllocators[waitIdx]->Reset();
+
+    // 更新帧索引到【即将被渲染】的帧
+    i.frameIndex = waitIdx;
     i.visibleHeapOffset = 0;  // 重置可见堆偏移
 }
 void D3D12SwapChain::Resize(uint32_t w, uint32_t h) {

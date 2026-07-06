@@ -21,6 +21,7 @@ struct VulkanTexture::Impl {
     uint32_t      height{0};
     Format        format{Format::Unknown};
     VmaAllocator  vmaAllocator{nullptr};
+    VkImageLayout currentLayout{VK_IMAGE_LAYOUT_UNDEFINED};
 
     ~Impl() {
         if (vkImage != VK_NULL_HANDLE && vmaAllocator != nullptr) {
@@ -66,6 +67,22 @@ void VulkanTexture::SetHeight(uint32_t h) {
 
 void VulkanTexture::SetFormat(Format fmt) {
     m_Impl->format = fmt;
+}
+
+void VulkanTexture::SetAllocator(VmaAllocator allocator) {
+    m_Impl->vmaAllocator = allocator;
+}
+
+void VulkanTexture::SetAllocation(VmaAllocation alloc) {
+    m_Impl->allocation = alloc;
+}
+
+void VulkanTexture::SetLayout(VkImageLayout layout) noexcept {
+    m_Impl->currentLayout = layout;
+}
+
+VkImageLayout VulkanTexture::GetLayout() const noexcept {
+    return m_Impl->currentLayout;
 }
 
 } // namespace RHI
