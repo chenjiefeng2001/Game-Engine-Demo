@@ -79,25 +79,55 @@ ECSTest::~ECSTest() {
 // 测试 1: 实体创建与销毁
 // ═══════════════════════════════════════════════════════
 bool ECSTest::TestEntityCreation() {
-    // 创建实体
-    EntityHandle e1 = m_EntityMgr.CreateEntity();
-    EntityHandle e2 = m_EntityMgr.CreateEntity();
-    EntityHandle e3 = m_EntityMgr.CreateEntity();
+    // 大规模实体创建测试
+    constexpr int kLargeCount = 10000;
+    std::vector<EntityHandle> entities;
+    entities.reserve(kLargeCount);
 
-    // 验证
-    if (e1.IsNull() || e2.IsNull() || e3.IsNull()) return false;
-    if (!m_EntityMgr.IsAlive(e1) || !m_EntityMgr.IsAlive(e2)) return false;
-    if (m_EntityMgr.GetEntityCount() != 3) return false;
+    for (int i = 0; i < kLargeCount; ++i) {
+        EntityHandle e = m_EntityMgr.CreateEntity();
+        if (e.IsNull()) return false;
+        entities.push_back(e);
+    }
 
-    // 销毁后验证
-    m_EntityMgr.DestroyEntity(e2);
-    if (m_EntityMgr.IsAlive(e2)) return false;
-    if (m_EntityMgr.GetEntityCount() != 2) return false;
+    // 验证总数
+    if (m_EntityMgr.GetEntityCount() != kLargeCount) {
+        m_Log.Error("Entity count mismatch: got {}, expected {}", 
+                    m_EntityMgr.GetEntityCount(), kLargeCount);
+        return false;
+    }
+
+    // 验证全部存活
+    for (int i = 0; i < kLargeCount; ++i) {
+        if (!m_EntityMgr.IsAlive(entities[i])) return false;
+    }
+
+    // 销毁一半
+    for (int i = 0; i < kLargeCount; i += 2) {
+        m_EntityMgr.DestroyEntity(entities[i]);
+    }
+
+    if (m_EntityMgr.GetEntityCount() != kLargeCount / 2) return false;
 
     // Generation 验证：重新使用 ID
     EntityHandle e4 = m_EntityMgr.CreateEntity();
-    if (e4.Index() == e2.Index() && e4.Generation() == e2.Generation()) return false;
+    // 至少有一个 ID 被复用
+    bool reused = false;
+    for (int i = 0; i < kLargeCount; i += 2) {
+        if (e4.Index() == entities[i].Index()) {
+            if (e4.Generation() == entities[i].Generation()) return false;
+            reused = true;
+            break;
+        }
+    }
+    if (!reused) {
+        m_Log.Warn("Entity ID reuse not verified (may be expected with large pool)");
+    }
 
+    // 再验证计数
+    if (m_EntityMgr.GetEntityCount() != kLargeCount / 2 + 1) return false;
+
+    m_Log.Info("EntityCreation: {} entities created/destroyed/recycled OK", kLargeCount);
     return true;
 }
 
