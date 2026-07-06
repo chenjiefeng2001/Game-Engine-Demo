@@ -46,11 +46,12 @@ set(ALSOFT_INSTALL_EXAMPLES OFF CACHE BOOL "" FORCE)
 set(ALSOFT_INSTALL_CONFIG  OFF CACHE BOOL "" FORCE)
 set(ALSOFT_INSTALL_HRTF_DATA OFF CACHE BOOL "" FORCE)
 
-# 注意：openal-soft 的静态初始化代码（bsinc_tables.cpp）存在已知的
-# stack-buffer-overflow（涉及自定义 Number 类型的栈上数组，见 cyl_bessel_i
-# 函数中 const auto y = x2 / k 的 al::number_base 构造函数），
-# 这是上游库的自身问题，不影响运行时行为。
-# 因此对本目标构建时不加 ASan 编译标志。
+# 注意：openal-soft 的静态初始化代码（bsinc_tables.cpp）存在已知的 MSVC
+# 代码生成 Bug：Sinc() 函数中调用的 f64::epsilon() 是 consteval 立即函数，
+# 但 BSincFilterArray 构造函数不是 constexpr，导致 MSVC 在生成运行时调用
+# consteval 函数的代码时跳到非法地址，引发 0xC0000005 访问违规。
+# 已在 bsinc_tables.cpp 中修复，用 std::numeric_limits<double>::epsilon()
+# 替代 f64::epsilon() 以绕过此问题。
 add_subdirectory(openal-soft)
 
 # 对 OpenAL Soft 目标禁用 ASan：
