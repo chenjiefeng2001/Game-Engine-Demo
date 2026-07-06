@@ -41,11 +41,16 @@ void JoltJobSystemAdapter::QueueJob(Job* inJob) {
     if (slot->unfinishedDependencies.load(std::memory_order_acquire) > 0)
         return;
 
-    auto handle = Engine::JobSystem::Get()->Schedule([slot](uint32_t) {
+    auto* js = Engine::JobSystem::Get();
+    if (js) {
+        auto handle = js->Schedule([slot](uint32_t) {
+            slot->function();
+        });
+        slot->engineJobHandle = handle;
+    } else {
+        // Fallback: execute synchronously if no JobSystem
         slot->function();
-    });
-
-    slot->engineJobHandle = handle;
+    }
 }
 
 void JoltJobSystemAdapter::QueueJobs(Job** inJobs, uint inNumJobs) {
@@ -82,10 +87,16 @@ void JoltJobSystemAdapter::BarrierImpl::AddJobs(const JobHandle* inHandles, uint
 
 void JoltJobSystemAdapter::BarrierImpl::Wait() {
     for (auto& handle : m_JobTracker) {
-        if (handle.IsValid())
-            Engine::JobSystem::Get()->Wait(handle);
+        if (handle.IsValid()) {
+            auto* js = Engine::JobSystem::Get();
+            if (js) js->Wait(handle);
+        }
     }
     m_JobTracker.clear();
+}
+
+void JoltJobSystemAdapter::BarrierImpl::WaitForBarrierJobs() {
+    Wait();
 }
 
 JPH::JobSystem::Barrier* JoltJobSystemAdapter::CreateBarrier() {

@@ -47,6 +47,20 @@ add_sandbox_executable(BarePhysicsTest src/BarePhysicsTest/main.cpp src/BarePhys
 add_sandbox_executable(AudioSystemTest src/AudioSystemTest/main.cpp)
 add_sandbox_executable(ECSTest src/ECSTest/main.cpp src/ECSTest/ECSTest.cpp)
 add_sandbox_executable(BackendTest src/BackendTest/main.cpp src/BackendTest/BackendTest.cpp)
+add_sandbox_executable(RHI3DTest src/Rendering3DTest/main.cpp src/Rendering3DTest/Rendering3DTest.cpp src/Rendering3DTest/RenderTestOffscreen.cpp src/Rendering3DTest/ECSPerformanceTest.cpp src/Rendering3DTest/VisualRenderDemo.cpp)
+add_sandbox_executable(RenderTest src/RenderTest/main.cpp src/RenderTest/RenderTestApp.cpp)
+add_sandbox_executable(RHIDemo src/RHIDemo/RHIDemoApp.cpp)
+add_sandbox_executable(SpirVTest src/SpirVTest/SpirVTestApp.cpp)
+# Shaderc 编译链可选：如需 GLSL→SPIR-V 编译测试，需手动构建 shaderc 并链接。
+# 当前仅运行 SPIRV-Cross 反射测试（SPIRV-Cross 已集成到 EngineCore）。
+# 
+# 构建 shaderc 并启用编译测试：
+#   1. cd third_party/shaderc && cmake -B build -DSHADERC_SKIP_TESTS=ON
+#   2. cmake --build build --config Release --target shaderc_combined
+#   3. 取消下方注释
+# target_include_directories(SpirVTest PRIVATE "${PROJECT_SOURCE_DIR}/third_party/shaderc/libshaderc/include")
+# target_link_libraries(SpirVTest PRIVATE "${PROJECT_SOURCE_DIR}/third_party/shaderc/build/libshaderc/Release/shaderc_combined.lib")
+# target_compile_definitions(SpirVTest PRIVATE ENGINE_HAS_SHADERC)
 
 # ==============================================================================
 # 2. 资源同步 Target — 将 assets 和 OpenAL32.dll 拷贝到每个输出子目录
@@ -55,7 +69,7 @@ set(SANDBOX_TARGETS
     Sandbox InputTest SpriteBatchTest GameObjectTest
     TextureManagerTest PhysicsTest AudioTest ImGuiDemo
     CollisionAudioTest ImGuiTest AudioPhysicsSandbox SerializationTest MarioDemo EditorDemo
-    SystemTest _3DTest ComplexSceneTest AnimationTest AnimationDemo AudioSystemTest ECSTest BackendTest
+    SystemTest _3DTest ComplexSceneTest AnimationTest AnimationDemo AudioSystemTest ECSTest BackendTest RHI3DTest RenderTest RHIDemo SpirVTest
 )
 
 add_custom_target(SyncSandboxResources ALL

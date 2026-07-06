@@ -20,7 +20,11 @@ public:
     ~JoltJobSystemAdapter() override;
 
     int GetMaxConcurrency() const override {
-        return static_cast<int>(Engine::JobSystem::Get()->GetThreadCount());
+        auto* js = Engine::JobSystem::Get();
+        if (js) {
+            return static_cast<int>(js->GetThreadCount());
+        }
+        return 1; // Fallback: single thread if JobSystem not initialized
     }
 
     JobHandle CreateJob(const char* name,

@@ -68,7 +68,7 @@ public:
             std::memcpy(cmd.dataPtr, &component, sizeof(T));
         }
 
-        m_Commands.push_back(cmd);
+        m_Commands.push_back(std::move(cmd));
     }
 
     template<typename T>
@@ -78,7 +78,7 @@ public:
         cmd.entity = entity;
         cmd.componentTypeID = ComponentType<T>::ID();
         cmd.dataSize = 0;
-        m_Commands.push_back(cmd);
+        m_Commands.push_back(std::move(cmd));
     }
 
     // ── 批量执行 ──
