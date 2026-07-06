@@ -24,6 +24,7 @@
 #include <Engine/Core/ECS/PhysicsComponents.h>
 #include <Engine/Core/GameObject/GameObject.h>
 #include <Engine/Core/Scene/Scene.h>
+#include <Engine/Core/Log.h>
 #include <Engine/Types.h>
 #include <memory>
 #include <vector>
@@ -75,6 +76,9 @@ private:
     void ReportTestResult(const char* name, bool passed);
     int  m_PassedTests = 0;
     int  m_TotalTests  = 0;
+
+    // ── 日志 ──
+    Logger m_Log = Logger("ECSTest");
 
     // ── 依赖 ──
     IGraphicsFactory&  m_Factory;
