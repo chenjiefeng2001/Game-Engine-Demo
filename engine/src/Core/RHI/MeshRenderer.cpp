@@ -763,6 +763,190 @@ namespace Engine {
             m_Context.DrawIndexed(cached.vao);
         }
 
+    m_Shader->Unbind();
+    }
+
+    // ════════════════════════════════════════════════════════════
+    // RHI v2 新路径 — 使用 IRHIVertexArray 完全不依赖 OpenGL 类型
+    // ════════════════════════════════════════════════════════════
+
+    uint64 MeshRenderer::UploadMesh_RHI(const std::shared_ptr<Mesh>& mesh) {
+        if (!mesh || !mesh->IsValid()) return 0;
+
+        uint64 id = reinterpret_cast<uint64>(mesh.get());
+
+        auto it = m_MeshCache_RHI.find(id);
+        if (it != m_MeshCache_RHI.end())
+            return id;
+
+        const auto& vertices = mesh->GetVertices();
+        const auto& indices  = mesh->GetIndices();
+
+        // RHI 顶点缓冲区（const void* data, size_t size, uint32 stride）
+        auto vb = m_Factory.CreateVertexBuffer_RHI(
+            vertices.data(),
+            vertices.size() * sizeof(Vertex3D),
+            sizeof(Vertex3D));
+
+        // RHI 索引缓冲区
+        auto ib = m_Factory.CreateIndexBuffer_RHI(
+            indices.data(),
+            static_cast<uint32>(indices.size()));
+
+        // RHI 顶点数组
+        auto va = m_Factory.CreateVertexArray_RHI();
+
+        RHI::RHIVertexAttribute attributes[4] = {
+            {0, 3, sizeof(Vertex3D), static_cast<uint32>(offsetof(Vertex3D, position))},
+            {1, 3, sizeof(Vertex3D), static_cast<uint32>(offsetof(Vertex3D, normal))},
+            {2, 2, sizeof(Vertex3D), static_cast<uint32>(offsetof(Vertex3D, texCoord))},
+            {3, 3, sizeof(Vertex3D), static_cast<uint32>(offsetof(Vertex3D, tangent))},
+        };
+        va->AddVertexBuffer(vb, attributes, 4);
+        va->SetIndexBuffer(ib);
+
+        CachedMeshData_RHI cached;
+        cached.vertexBuffer = std::move(vb);
+        cached.indexBuffer  = std::move(ib);
+        cached.vertexArray  = std::move(va);
+        cached.indexCount   = static_cast<uint32>(indices.size());
+        m_MeshCache_RHI[id] = std::move(cached);
+
+        return id;
+    }
+
+    void MeshRenderer::Render_RHI(const std::vector<GameObject*>& objects) {
+        if (!m_Shader || !m_Camera)
+            return;
+
+        m_Shader->Bind();
+
+        const Mat4& projMatrix = m_Camera->GetProjectionMatrix();
+        const Mat4& viewMatrix = m_Camera->GetViewMatrix();
+
+        m_Shader->SetMat4("u_View",       viewMatrix.Data());
+        m_Shader->SetMat4("u_Projection", projMatrix.Data());
+
+        Vec3 viewPos = m_Camera->GetPosition();
+        m_Shader->SetInt("u_LightCount", (int)m_Lights.size());
+        for (size_t li = 0; li < m_Lights.size() && li < 4; ++li) {
+            auto& L = m_Lights[li];
+            std::string si = std::to_string(li);
+            m_Shader->SetVec3(("u_LightPos["+si+"]").c_str(), &L.position.x);
+            m_Shader->SetVec3(("u_LightColor["+si+"]").c_str(), &L.color.x);
+            m_Shader->SetFloat(("u_LightIntensity["+si+"]").c_str(), L.intensity);
+        }
+        m_Shader->SetVec3("u_ViewPos",        &viewPos.x);
+        m_Shader->SetVec3("u_AmbientColor",   &m_AmbientColor.x);
+
+        // 阴影 uniform
+        if (m_ShadowEnabled && m_ShadowMapper && m_ShadowMapper->IsValid()) {
+            const auto& csmData = m_ShadowMapper->GetCSMData();
+            m_Shader->SetMat4("u_LightSpaceMatrix", csmData.cascades[0].lightViewProj.Data());
+            m_Shader->SetFloat("u_ShadowBias", csmData.shadowBias);
+            m_Shader->SetInt("u_ShadowEnabled", 1);
+        } else {
+            m_Shader->SetInt("u_ShadowEnabled", 0);
+        }
+
+        // SSAO uniform
+        if (m_SSAOEnabled && m_SSAOTex) {
+            m_Shader->SetInt("u_SSAOMap", 4);
+            m_Shader->SetInt("u_SSAOEnabled", 1);
+            m_Shader->SetFloat("u_SSAOStrength", m_SSAOStrength);
+        } else {
+            m_Shader->SetInt("u_SSAOEnabled", 0);
+        }
+
+        // 焦散 uniform
+        if (m_CausticsEnabled) {
+            m_Shader->SetInt("u_CausticsEnabled", 1);
+            m_Shader->SetFloat("u_CausticStrength", m_CausticStrength);
+        } else {
+            m_Shader->SetInt("u_CausticsEnabled", 0);
+        }
+
+        for (auto* obj : objects) {
+            if (!obj || !obj->IsActive()) continue;
+
+            auto* meshComp = obj->GetComponent<MeshComponent>();
+            if (!meshComp || !meshComp->m_Visible || !meshComp->HasMesh())
+                continue;
+
+            auto mesh = meshComp->GetMesh();
+            uint64 gpuId = reinterpret_cast<uint64>(mesh.get());
+
+            auto it = m_MeshCache_RHI.find(gpuId);
+            if (it == m_MeshCache_RHI.end()) {
+                gpuId = UploadMesh_RHI(mesh);
+                if (gpuId == 0) continue;
+                it = m_MeshCache_RHI.find(gpuId);
+                if (it == m_MeshCache_RHI.end()) continue;
+            }
+
+            const auto& cached = it->second;
+
+            const Mat4& worldMatrix = obj->GetTransform().GetWorldMatrix();
+
+            glm::mat4 modelGlm;
+            std::memcpy(&modelGlm, worldMatrix.data, sizeof(float) * 16);
+            glm::mat4 viewGlm;
+            std::memcpy(&viewGlm, viewMatrix.data, sizeof(float) * 16);
+            glm::mat4 projGlm;
+            std::memcpy(&projGlm, projMatrix.data, sizeof(float) * 16);
+
+            glm::mat4 mvp = projGlm * viewGlm * modelGlm;
+            float mvpData[16];
+            std::memcpy(mvpData, &mvp, sizeof(float) * 16);
+
+            m_Shader->SetMat4("u_Model", worldMatrix.Data());
+            m_Shader->SetMat4("u_MVP",   mvpData);
+
+            glm::mat3 normalMat3 = glm::transpose(glm::inverse(glm::mat3(modelGlm)));
+            glm::mat4 normalMat4(normalMat3);
+            m_Shader->SetMat4("u_NormalMatrix", glm::value_ptr(normalMat4));
+
+            m_Shader->SetVec4("u_ObjectColor", &meshComp->m_Color.x);
+            m_Shader->SetInt("u_HasTexture", 0);
+            m_Shader->SetFloat("u_Shininess", meshComp->m_Shininess);
+            m_Shader->SetFloat("u_SpecularStrength", meshComp->m_SpecularStrength);
+
+            // 法线贴图
+            if (meshComp->m_NormalMap) {
+                m_Shader->SetInt("u_HasNormalMap", 1);
+                m_Shader->SetFloat("u_NormalStrength", meshComp->m_NormalStrength);
+                meshComp->m_NormalMap->Bind(1);
+                m_Shader->SetInt("u_NormalMap", 1);
+            } else {
+                m_Shader->SetInt("u_HasNormalMap", 0);
+            }
+
+            // 高度贴图
+            if (meshComp->m_HeightMap) {
+                m_Shader->SetInt("u_HasHeightMap", 1);
+                m_Shader->SetFloat("u_ParallaxScale", meshComp->m_ParallaxScale);
+                m_Shader->SetFloat("u_DisplacementStrength", meshComp->m_DisplacementStrength);
+                meshComp->m_HeightMap->Bind(2);
+                m_Shader->SetInt("u_HeightMap", 2);
+            } else {
+                m_Shader->SetInt("u_HasHeightMap", 0);
+                m_Shader->SetFloat("u_DisplacementStrength", 0.0f);
+            }
+
+            // 动态多光源
+            m_Shader->SetInt("u_LightCount", (int)m_Lights.size());
+            for (size_t li = 0; li < m_Lights.size() && li < 4; ++li) {
+                auto& L = m_Lights[li];
+                std::string si = std::to_string(li);
+                m_Shader->SetVec3(("u_LightPos["+si+"]").c_str(), &L.position.x);
+                m_Shader->SetVec3(("u_LightColor["+si+"]").c_str(), &L.color.x);
+                m_Shader->SetFloat(("u_LightIntensity["+si+"]").c_str(), L.intensity);
+            }
+
+            // 使用 RHI DrawIndexed
+            m_Context.DrawIndexed_RHI(cached.vertexArray);
+        }
+
         m_Shader->Unbind();
     }
 
