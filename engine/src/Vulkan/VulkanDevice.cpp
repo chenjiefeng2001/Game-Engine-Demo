@@ -9,6 +9,7 @@
 #include "Engine/Vulkan/VulkanLoader.h"
 #include "Engine/Vulkan/VulkanFrameResource.h"
 #include "Engine/Vulkan/VulkanPipelineLayoutCache.h"
+#include "Engine/Vulkan/VulkanDeferredDeletion.h"
 #include <cstdio>
 #include <cstdlib>
 #include <vector>
@@ -39,19 +40,62 @@ struct VulkanDevice::Impl {
     VulkanFrameContext frameContext;
     VulkanQueue* graphicsQueueWrapper{nullptr};
     VulkanPipelineLayoutCache* pipelineLayoutCache{nullptr};
+    VulkanDeferredDeletion* deletionQueue{nullptr};
+    uint32_t uboAlignment{256}; // 默认 256，初始化时从设备获取
     bool initialized{false};
     std::string deviceName;
-    ~Impl() { delete pipelineLayoutCache; delete graphicsQueueWrapper; }
+    ~Impl() {
+        delete pipelineLayoutCache;
+        delete graphicsQueueWrapper;
+        if (deletionQueue) {
+            deletionQueue->FlushAll();
+            delete deletionQueue;
+        }
+    }
 };
 
-struct VulkanQueue::Impl { VkQueue queue; QueueType type{QueueType::Graphics}; };
+struct VulkanQueue::Impl {
+    VkQueue queue;
+    QueueType type{QueueType::Graphics};
+
+    // 帧同步支持（可选，由 SetFrameSync 设置后使用）
+    VkSemaphore waitSemaphore{VK_NULL_HANDLE};
+    VkSemaphore signalSemaphore{VK_NULL_HANDLE};
+    VkFence     fence{VK_NULL_HANDLE};
+};
+
 VulkanQueue::VulkanQueue() : m_Impl(std::make_unique<Impl>()) {}
 VulkanQueue::~VulkanQueue() = default;
+
 void VulkanQueue::ExecuteCommandLists(uint32 count, IRHICommandList** lists) {
     std::vector<VkCommandBuffer> bufs(count);
-    for (uint32 i = 0; i < count; ++i) bufs[i] = static_cast<VulkanCommandList*>(lists[i])->GetVkCommandBuffer();
-    VkSubmitInfo si{VK_STRUCTURE_TYPE_SUBMIT_INFO}; si.commandBufferCount = count; si.pCommandBuffers = bufs.data();
-    vkQueueSubmit(m_Impl->queue, 1, &si, VK_NULL_HANDLE);
+    for (uint32 i = 0; i < count; ++i)
+        bufs[i] = static_cast<VulkanCommandList*>(lists[i])->GetVkCommandBuffer();
+
+    VkSubmitInfo si{VK_STRUCTURE_TYPE_SUBMIT_INFO};
+    si.commandBufferCount = count;
+    si.pCommandBuffers = bufs.data();
+
+    // 如果有等待信号量，则等待图像可用
+    VkPipelineStageFlags waitStage = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
+    if (m_Impl->waitSemaphore != VK_NULL_HANDLE) {
+        si.waitSemaphoreCount = 1;
+        si.pWaitSemaphores = &m_Impl->waitSemaphore;
+        si.pWaitDstStageMask = &waitStage;
+    }
+    // 如果有信号信号量，则渲染完通知
+    if (m_Impl->signalSemaphore != VK_NULL_HANDLE) {
+        si.signalSemaphoreCount = 1;
+        si.pSignalSemaphores = &m_Impl->signalSemaphore;
+    }
+
+    vkQueueSubmit(m_Impl->queue, 1, &si, m_Impl->fence);
+}
+
+void VulkanQueue::SetFrameSync(VkSemaphore wait, VkSemaphore signal, VkFence fence) noexcept {
+    m_Impl->waitSemaphore = wait;
+    m_Impl->signalSemaphore = signal;
+    m_Impl->fence = fence;
 }
 void VulkanQueue::WaitIdle() { vkQueueWaitIdle(m_Impl->queue); }
 QueueType VulkanQueue::GetType() const noexcept { return m_Impl->type; }
@@ -66,11 +110,21 @@ bool VulkanDevice::Initialize(void* windowHandle, uint32_t width, uint32_t heigh
     VkApplicationInfo app{VK_STRUCTURE_TYPE_APPLICATION_INFO};
     app.pApplicationName = "Engine"; app.apiVersion = VK_API_VERSION_1_3;
 
-    const char* exts[] = { VK_KHR_SURFACE_EXTENSION_NAME, "VK_KHR_win32_surface",
-                           VK_KHR_DYNAMIC_RENDERING_EXTENSION_NAME };
+    // ── Instance 扩展：Surface 相关扩展仅在有窗口时启用 ──
+    // 注意：VK_KHR_dynamic_rendering 是设备扩展，不是实例扩展，不在此处添加
+    std::vector<const char*> instanceExts;
+    if (windowHandle) {
+        instanceExts.push_back(VK_KHR_SURFACE_EXTENSION_NAME);
+        instanceExts.push_back("VK_KHR_win32_surface");
+    }
     VkInstanceCreateInfo ici{VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO};
-    ici.pApplicationInfo = &app; ici.enabledExtensionCount = 3; ici.ppEnabledExtensionNames = exts;
-    if (vkCreateInstance(&ici, nullptr, &m_Impl->instance) != VK_SUCCESS) return false;
+    ici.pApplicationInfo = &app;
+    ici.enabledExtensionCount = static_cast<uint32_t>(instanceExts.size());
+    ici.ppEnabledExtensionNames = instanceExts.data();
+    if (vkCreateInstance(&ici, nullptr, &m_Impl->instance) != VK_SUCCESS) {
+        std::fprintf(stderr, "[Vulkan] Failed to create instance\n");
+        return false;
+    }
     VulkanLoader::LoadInstance(m_Impl->instance);
 
     uint32_t devCnt = 0;
@@ -91,13 +145,21 @@ bool VulkanDevice::Initialize(void* windowHandle, uint32_t width, uint32_t heigh
     VkDeviceQueueCreateInfo qci{VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO};
     qci.queueFamilyIndex = m_Impl->graphicsQueueIndex; qci.queueCount = 1; qci.pQueuePriorities = &qp;
 
-    const char* devExts[] = { VK_KHR_SWAPCHAIN_EXTENSION_NAME, VK_KHR_DYNAMIC_RENDERING_EXTENSION_NAME };
+    // ── Device 扩展：仅在 Headless 模式下排除 Swapchain 扩展 ──
+    std::vector<const char*> deviceExts = { VK_KHR_DYNAMIC_RENDERING_EXTENSION_NAME };
+    if (windowHandle) {
+        deviceExts.push_back(VK_KHR_SWAPCHAIN_EXTENSION_NAME);
+    }
     VkPhysicalDeviceDynamicRenderingFeatures drf{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_DYNAMIC_RENDERING_FEATURES};
     drf.dynamicRendering = VK_TRUE;
     VkDeviceCreateInfo dci{VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO};
     dci.pNext = &drf; dci.queueCreateInfoCount = 1; dci.pQueueCreateInfos = &qci;
-    dci.enabledExtensionCount = 2; dci.ppEnabledExtensionNames = devExts;
-    if (vkCreateDevice(m_Impl->physicalDevice, &dci, nullptr, &m_Impl->device) != VK_SUCCESS) return false;
+    dci.enabledExtensionCount = static_cast<uint32_t>(deviceExts.size());
+    dci.ppEnabledExtensionNames = deviceExts.data();
+    if (vkCreateDevice(m_Impl->physicalDevice, &dci, nullptr, &m_Impl->device) != VK_SUCCESS) {
+        std::fprintf(stderr, "[Vulkan] Failed to create device\n");
+        return false;
+    }
     VulkanLoader::LoadDevice(m_Impl->device);
 
     vkGetDeviceQueue(m_Impl->device, m_Impl->graphicsQueueIndex, 0, &m_Impl->graphicsQueue);
@@ -114,6 +176,16 @@ bool VulkanDevice::Initialize(void* windowHandle, uint32_t width, uint32_t heigh
     aci.physicalDevice = m_Impl->physicalDevice; aci.device = m_Impl->device;
     aci.instance = m_Impl->instance; aci.pVulkanFunctions = &vf;
     vmaCreateAllocator(&aci, &m_Impl->vmaAllocator);
+
+    // 保存 GPU 硬件名称到 deviceName
+    if (m_Impl->physicalDevice != VK_NULL_HANDLE) {
+        VkPhysicalDeviceProperties props;
+        vkGetPhysicalDeviceProperties(m_Impl->physicalDevice, &props);
+        m_Impl->deviceName = props.deviceName;
+    }
+
+    // 创建 Vulkan 延迟销毁队列（GPU 资源安全释放）
+    m_Impl->deletionQueue = new VulkanDeferredDeletion(m_Impl->device);
 
     m_Impl->pipelineLayoutCache = new VulkanPipelineLayoutCache(this);
     m_Impl->graphicsQueueWrapper = new VulkanQueue();
@@ -152,10 +224,20 @@ void VulkanDevice::DestroyFrameResource(VulkanFrameResource& frame) {
 void VulkanDevice::Shutdown() {
     if (!m_Impl->initialized) return;
     vkDeviceWaitIdle(m_Impl->device);
+    // 清理延迟销毁队列中的待删资源
+    if (m_Impl->deletionQueue) {
+        m_Impl->deletionQueue->FlushAll();
+        delete m_Impl->deletionQueue;
+        m_Impl->deletionQueue = nullptr;
+    }
+    // 清理全局 PSO 缓存（确保没有资源引用残留）
+    PSOCache::Get().Clear();
     for (uint32 i = 0; i < kMaxFramesInFlight; ++i) DestroyFrameResource(m_Impl->frameContext.frames[i]);
     if (m_Impl->swapChain) vkDestroySwapchainKHR(m_Impl->device, m_Impl->swapChain, nullptr);
     if (m_Impl->surface) vkDestroySurfaceKHR(m_Impl->instance, m_Impl->surface, nullptr);
+    // VMA 要求：销毁前所有由它分配的资源必须已释放
     if (m_Impl->vmaAllocator) vmaDestroyAllocator(m_Impl->vmaAllocator);
+    m_Impl->vmaAllocator = VK_NULL_HANDLE;
     if (m_Impl->device) vkDestroyDevice(m_Impl->device, nullptr);
     if (m_Impl->instance) vkDestroyInstance(m_Impl->instance, nullptr);
     m_Impl->initialized = false;
@@ -163,13 +245,22 @@ void VulkanDevice::Shutdown() {
 
 std::shared_ptr<IRHIBuffer> VulkanDevice::CreateBuffer(const RHIBufferDesc& desc) {
     auto buf = std::make_shared<VulkanBuffer>();
+    if (!m_Impl || !m_Impl->vmaAllocator) {
+        std::fprintf(stderr, "[Vulkan] CreateBuffer called before Initialize()\n");
+        return buf;
+    }
     VkBufferCreateInfo bi{VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO};
     bi.size = desc.size; bi.usage = VK_BUFFER_USAGE_VERTEX_BUFFER_BIT | VK_BUFFER_USAGE_INDEX_BUFFER_BIT |
                VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT | VK_BUFFER_USAGE_STORAGE_BUFFER_BIT;
     VmaAllocationCreateInfo ai{}; ai.usage = VMA_MEMORY_USAGE_AUTO_PREFER_HOST;
     VkBuffer vkBuf; VmaAllocation alloc; VmaAllocationInfo ari;
-    vmaCreateBuffer(m_Impl->vmaAllocator, &bi, &ai, &vkBuf, &alloc, &ari);
+    if (vmaCreateBuffer(m_Impl->vmaAllocator, &bi, &ai, &vkBuf, &alloc, &ari) != VK_SUCCESS) {
+        std::fprintf(stderr, "[Vulkan] CreateBuffer failed\n");
+        return buf;
+    }
     buf->SetVkBuffer(vkBuf); buf->SetSize(desc.size);
+    buf->SetAllocator(m_Impl->vmaAllocator); // VMA RAII 析构需要
+    buf->SetVmaAllocation(alloc); // 【核心修复】保存 VmaAllocation 句柄给 RAII 析构
     GPUAllocation ga; ga.mappedPtr = ari.pMappedData; buf->SetAllocation(ga);
     if (desc.initialData && ari.pMappedData) std::memcpy(ari.pMappedData, desc.initialData, desc.size);
     return buf;
@@ -185,6 +276,8 @@ std::shared_ptr<IRHITexture> VulkanDevice::CreateTexture(const TextureDesc& desc
     VkImage vkImg; VmaAllocation alloc;
     vmaCreateImage(m_Impl->vmaAllocator, &ii, nullptr, &vkImg, &alloc, nullptr);
     tex->SetVkImage(vkImg); tex->SetWidth(desc.width); tex->SetHeight(desc.height); tex->SetFormat(desc.format);
+    tex->SetAllocator(m_Impl->vmaAllocator); // VMA RAII 析构需要
+    tex->SetAllocation(alloc);
     return tex;
 }
 
@@ -235,9 +328,12 @@ std::unique_ptr<IRHISwapChain> VulkanDevice::CreateSwapChain(const SwapChainDesc
     vkGetSwapchainImagesKHR(m_Impl->device, m_Impl->swapChain, &actualCnt, m_Impl->swapChainImages.data());
     auto sc = std::make_unique<VulkanSwapChain>();
     sc->SetDevice(this); sc->SetSwapChain(m_Impl->swapChain);
+    sc->SetSwapChainImages(m_Impl->swapChainImages);
     for (auto vkImg : m_Impl->swapChainImages) {
         auto tex = std::make_shared<VulkanTexture>();
         tex->SetVkImage(vkImg); tex->SetWidth(desc.width); tex->SetHeight(desc.height);
+        // 初始布局：交换链图像创建后处于 PRESENT_SRC_KHR
+        tex->SetLayout(VK_IMAGE_LAYOUT_PRESENT_SRC_KHR);
         sc->AddBackBuffer(tex);
     }
     return sc;
@@ -252,12 +348,18 @@ VkInstance VulkanDevice::GetVkInstance() const noexcept { return m_Impl->instanc
 VkQueue VulkanDevice::GetGraphicsQueue() const noexcept { return m_Impl->graphicsQueue; }
 uint32_t VulkanDevice::GetGraphicsQueueIndex() const noexcept { return m_Impl->graphicsQueueIndex; }
 VulkanFrameContext& VulkanDevice::GetFrameContext() noexcept { return m_Impl->frameContext; }
+uint32_t VulkanDevice::GetUBOAlignment() const noexcept { return m_Impl->uboAlignment; }
+VulkanDeferredDeletion* VulkanDevice::GetDeletionQueue() const noexcept { return m_Impl->deletionQueue; }
 VkCommandPool VulkanDevice::GetOrCreateThreadCommandPool() { return VK_NULL_HANDLE; }
 void VulkanDevice::ResetAllThreadCommandPools() {}
 
 bool HasVulkanSupport() noexcept { HMODULE m = LoadLibraryA("vulkan-1.dll"); if (!m) return false; FreeLibrary(m); return true; }
 std::string GetVulkanDeviceInfo() noexcept { return "Vulkan 1.3"; }
-std::unique_ptr<IRHIDevice> CreateVulkanDevice() { return std::make_unique<VulkanDevice>(); }
+std::unique_ptr<IRHIDevice> CreateVulkanDevice() {
+    auto dev = std::make_unique<VulkanDevice>();
+    dev->Initialize(nullptr, 0, 0);
+    return dev;
+}
 
 } // namespace RHI
 } // namespace Engine

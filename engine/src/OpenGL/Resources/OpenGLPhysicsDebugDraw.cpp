@@ -20,9 +20,11 @@ namespace Engine {
         layout(location = 0) in vec2 aPos;
 
         uniform mat4 u_ViewProjection;
+        uniform float u_Height;
 
         void main() {
-            gl_Position = u_ViewProjection * vec4(aPos, 0.0, 1.0);
+            // 物理 2D (x, y) → 3D (x, u_Height, y)
+            gl_Position = u_ViewProjection * vec4(aPos.x, u_Height, aPos.y, 1.0);
         }
     )";
 
@@ -117,6 +119,10 @@ namespace Engine {
         // 获取 uniform 位置
         m_UniformVP    = m_GL.GetUniformLocation(m_ShaderID, "u_ViewProjection");
         m_UniformColor = m_GL.GetUniformLocation(m_ShaderID, "u_Color");
+        m_GL.UseProgram(m_ShaderID);
+        GLint heightLoc = m_GL.GetUniformLocation(m_ShaderID, "u_Height");
+        if (heightLoc >= 0) m_GL.Uniform1f(heightLoc, m_HeightOffset);
+        m_GL.UseProgram(0);
 
         // ── 创建 VAO / VBO ──
         m_GL.GenVertexArrays(1, &m_VAO);
