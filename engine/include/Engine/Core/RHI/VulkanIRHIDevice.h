@@ -10,6 +10,9 @@
 namespace Engine {
 namespace RHI {
 
+class VulkanDeferredDeletion;
+
+
     class VulkanDevice final : public IRHIDevice {
     public:
         VulkanDevice();
@@ -34,6 +37,8 @@ namespace RHI {
         VkQueue         GetGraphicsQueue() const noexcept;
         uint32_t        GetGraphicsQueueIndex() const noexcept;
         VulkanFrameContext& GetFrameContext() noexcept;
+        uint32_t        GetUBOAlignment() const noexcept;
+        VulkanDeferredDeletion* GetDeletionQueue() const noexcept;
 
         VkCommandPool GetOrCreateThreadCommandPool();
         void            ResetAllThreadCommandPools();
@@ -97,10 +102,11 @@ namespace RHI {
         void SetAllocation(const GPUAllocation& alloc);
         void SetVkBuffer(VkBuffer buffer);
         void SetSize(uint64_t size);
+        void SetAllocator(VmaAllocator allocator);
+        void SetVmaAllocation(VmaAllocation alloc);
     private:
         struct Impl;
         std::unique_ptr<Impl> m_Impl;
-        friend class VulkanDevice;
     };
 
     class VulkanTexture final : public IRHITexture {
@@ -115,6 +121,11 @@ namespace RHI {
         void SetWidth(uint32_t w);
         void SetHeight(uint32_t h);
         void SetFormat(Format fmt);
+        void SetAllocator(VmaAllocator allocator);
+        void SetAllocation(VmaAllocation alloc);
+        // 布局追踪（用于 ResourceBarrier 的正确 oldLayout）
+        void SetLayout(VkImageLayout layout) noexcept;
+        VkImageLayout GetLayout() const noexcept;
     private:
         struct Impl;
         std::unique_ptr<Impl> m_Impl;
@@ -145,6 +156,7 @@ namespace RHI {
         uint32_t GetBufferCount() const override;
         void SetDevice(VulkanDevice* dev) { m_Device = dev; }
         void SetSwapChain(VkSwapchainKHR sc) { m_SwapChain = sc; }
+        void SetSwapChainImages(const std::vector<VkImage>& images);
         void AddBackBuffer(std::shared_ptr<VulkanTexture> tex) { m_BackBuffers.push_back(tex); }
         VulkanDevice* GetDevice() const { return m_Device; }
         VkSwapchainKHR GetSwapChain() const { return m_SwapChain; }
@@ -152,6 +164,8 @@ namespace RHI {
         VulkanDevice* m_Device = nullptr;
         VkSwapchainKHR m_SwapChain = VK_NULL_HANDLE;
         std::vector<std::shared_ptr<VulkanTexture>> m_BackBuffers;
+        std::vector<VkImage> m_SwapChainImages;
+        uint32_t m_ImageIndex = 0;
         friend class VulkanDevice;
     };
 
@@ -165,6 +179,8 @@ namespace RHI {
         void SetVkQueue(VkQueue queue) noexcept;
         void SetDevice(VulkanDevice* device) noexcept;
         void SetType(QueueType type) noexcept;
+        // 帧同步：设置 WaitSemaphore/SignalSemaphore/Fence 用于 Present 同步
+        void SetFrameSync(VkSemaphore wait, VkSemaphore signal, VkFence fence) noexcept;
     private:
         struct Impl;
         std::unique_ptr<Impl> m_Impl;

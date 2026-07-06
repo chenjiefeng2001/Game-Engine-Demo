@@ -50,6 +50,8 @@ namespace RHI {
         const char* GetDeviceName() const override;
 
         bool Initialize(void* windowHandle, uint32_t width, uint32_t height);
+        /** 获取全局根签名（D3D12CommandList::Begin 需要绑定） */
+        ID3D12RootSignature* GetGlobalRootSignature() const;
 
     private:
         struct Impl;

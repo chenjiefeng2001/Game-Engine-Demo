@@ -144,6 +144,21 @@ namespace RHI {
     public:
         virtual ~IRHIDevice() = default;
 
+        // ── 初始化 ──
+
+        /**
+         * @brief 初始化底层硬件设备
+         *
+         * 必须在任何资源创建（CreateBuffer/CreateTexture/CreateCommandList等）之前调用。
+         * 
+         * @param windowHandle 窗口句柄，headless 模式传 nullptr
+         * @param width  后备缓冲宽度
+         * @param height 后备缓冲高度
+         * @return true  初始化成功
+         * @return false 初始化失败（如无物理设备、驱动不支持等）
+         */
+        virtual bool Initialize(void* windowHandle, uint32_t width, uint32_t height) = 0;
+
         // ── 显存分配器 ──
 
         /** 设置显存分配器（在 CreateBuffer/CreateTexture 前调用） */

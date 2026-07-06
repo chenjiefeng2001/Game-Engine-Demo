@@ -26,6 +26,7 @@ file(GLOB ENGINE_SOURCES CONFIGURE_DEPENDS
     src/OpenGL/Resources/*.cpp
     src/Platform/*.cpp
     src/Platform/glfw/*.cpp
+    src/RHI/*.cpp
     src/Rendering/*.cpp
     src/Scripting/*.cpp
 )
@@ -95,6 +96,9 @@ endif()
 if(WIN32)
     target_link_libraries(EngineCore PRIVATE dbghelp.lib d3d12.lib dxgi.lib dxguid.lib)
     target_compile_definitions(EngineCore PUBLIC ENGINE_HAS_D3D12)
+    
+    # D3D12MA 实现文件（INTERFACE 库不编译源码，需要显示添加）
+    target_sources(EngineCore PRIVATE "${PROJECT_SOURCE_DIR}/third_party/d3d12ma/src/D3D12MemAlloc.cpp")
 endif()
 
 # ════════════════════════════════════════════════════════
@@ -105,6 +109,13 @@ if(Vulkan_FOUND)
     # 添加 Vulkan 源文件
     file(GLOB VULKAN_SOURCES CONFIGURE_DEPENDS src/Vulkan/*.cpp)
     target_sources(EngineCore PRIVATE ${VULKAN_SOURCES})
+    
+    # VMA 实现文件（VMA_IMPLEMENTATION 必须恰好在一个 .cpp 中定义）
+    # VMAImpl.cpp 应已包含在 src/Vulkan/ 下；若不存在则添加默认实现
+    if(NOT EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/src/Vulkan/VMAImpl.cpp")
+        file(WRITE "${CMAKE_CURRENT_SOURCE_DIR}/src/Vulkan/VMAImpl.cpp"
+            "#define VMA_IMPLEMENTATION\n#include <vk_mem_alloc.h>\n")
+    endif()
 
     target_link_libraries(EngineCore PUBLIC Vulkan::Vulkan vma)
     target_include_directories(EngineCore PRIVATE "${Vulkan_INCLUDE_DIRS}")
@@ -127,11 +138,14 @@ target_include_directories(EngineCore PUBLIC
 )
 
 # ════════════════════════════════════════════════════════
-# SPIRV-Cross 库 — 着色器反射（SPIR-V → UBO/Sampler 提取）
+# SPIRV-Cross 库 — 着色器反射（直接纳入 EngineCore 统一编译）
 # ════════════════════════════════════════════════════════
+# 将 SPIRV-Cross 源文件直接加入 EngineCore，而非独立静态库。
+# 这样避免了 MSVC 单独库目标不继承根项目 /MDd 运行时的问题。
 if(EXISTS "${PROJECT_SOURCE_DIR}/third_party/spirv-cross/spirv_cross.cpp")
-    add_library(spirvcross STATIC
+    target_sources(EngineCore PRIVATE
         "${PROJECT_SOURCE_DIR}/third_party/spirv-cross/spirv_cross.cpp"
+        "${PROJECT_SOURCE_DIR}/third_party/spirv-cross/spirv_cross_parsed_ir.cpp"
         "${PROJECT_SOURCE_DIR}/third_party/spirv-cross/spirv_glsl.cpp"
         "${PROJECT_SOURCE_DIR}/third_party/spirv-cross/spirv_hlsl.cpp"
         "${PROJECT_SOURCE_DIR}/third_party/spirv-cross/spirv_msl.cpp"
@@ -141,29 +155,21 @@ if(EXISTS "${PROJECT_SOURCE_DIR}/third_party/spirv-cross/spirv_cross.cpp")
         "${PROJECT_SOURCE_DIR}/third_party/spirv-cross/spirv_cross_util.cpp"
         "${PROJECT_SOURCE_DIR}/third_party/spirv-cross/spirv_cross_c.cpp"
     )
-    target_include_directories(spirvcross PUBLIC "${PROJECT_SOURCE_DIR}/third_party/spirv-cross")
-    target_link_libraries(EngineCore PUBLIC spirvcross)
+    target_include_directories(EngineCore PUBLIC "${PROJECT_SOURCE_DIR}/third_party/spirv-cross")
     target_compile_definitions(EngineCore PUBLIC ENGINE_HAS_SPIRV_CROSS)
-    message(STATUS "SPIRV-Cross: integrated")
+    message(STATUS "SPIRV-Cross sources: integrated directly into EngineCore")
 endif()
 
 # ════════════════════════════════════════════════════════
-# Shaderc 库 — GLSL/HLSL → SPIR-V 编译（可选）
+# Shaderc 库 — GLSL/HLSL → SPIR-V 编译（仅 sandbox 测试使用）
 # ════════════════════════════════════════════════════════
-# 注意：Shaderc 依赖 glslang 和 spirv-tools，完整构建需要较多步骤。
-# 此处先添加 libshaderc 接口头文件和 stub 库骨架。
-# 完整构建需在 third_party/shaderc 中执行：
-#   python3 utils/git-sync-deps
+# 构建说明：
+#   cd third_party/shaderc
+#   python utils/git-sync-deps
 #   cmake -B build -DSHADERC_SKIP_TESTS=ON
-#   cmake --build build
-#
-# 以下代码在 shaderc 库构建就绪后激活：
-# if(EXISTS "${PROJECT_SOURCE_DIR}/third_party/shaderc/libshaderc/include/shaderc/shaderc.hpp")
-#     add_subdirectory(${PROJECT_SOURCE_DIR}/third_party/shaderc third_party/shaderc/build)
-#     target_link_libraries(EngineCore PUBLIC shaderc_combined)
-#     target_compile_definitions(EngineCore PUBLIC ENGINE_HAS_SHADERC)
-#     message(STATUS "Shaderc: integrated")
-# endif()
+#   cmake --build build --config Release --target shaderc_combined
+# EngineCore 本身不链接 shaderc，仅在 SpirVTest sandbox 中使用。
+# 保持 shaderc 头文件路径可用，供需要时引用。
 
 # ── Lua 脚本支持（可选） ──
 # 如需启用 Lua 脚本功能，请将 Lua 源码放入 third_party/lua/
@@ -175,4 +181,4 @@ endif()
 #     target_compile_definitions(EngineCore PRIVATE ENGINE_ENABLE_LUA)
 # endif()
 
-source_group(TREE ${CMAKE_CURRENT_SOURCE_DIR} FILES ${ENGINE_SOURCES} ${ENGINE_HEADERS})
+# source_group(TREE ${CMAKE_CURRENT_SOURCE_DIR} FILES ${ENGINE_SOURCES} ${ENGINE_HEADERS})
