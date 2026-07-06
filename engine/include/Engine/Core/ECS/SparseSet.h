@@ -42,8 +42,8 @@ public:
             // 从空闲池复用
             index = m_FreeList.back();
             m_FreeList.pop_back();
-            // generation 递增（在原值 +1），确保旧引用失效
-            generation = (m_Sparse[index] >> 1) + 1;  // 低1bit 保留给 aliveness
+            // generation 递增，确保旧引用失效
+            generation = (m_Sparse[index] >> 1) + 1;
             // 标记为活跃 (bit0 = 1)
             m_Sparse[index] = (generation << 1) | 1;
         } else {
@@ -57,6 +57,7 @@ public:
             m_Dense.emplace_back();
         }
 
+        m_ActiveCount++;
         return index;
     }
 
@@ -68,6 +69,7 @@ public:
         // 标记为死亡 (bit0 = 0)，保留 generation 不变
         m_Sparse[index] &= ~1u;
         m_FreeList.push_back(index);
+        m_ActiveCount--;
     }
 
     /** 检查索引是否存活 */
@@ -82,6 +84,9 @@ public:
         return m_Sparse[index] >> 1;
     }
 
+    /** 活跃实体计数（非 Dense 大小，Dense 不会被压缩） */
+    size_t Size() const { return m_ActiveCount; }
+
     // ── Dense 数组访问 ──
 
     T& GetDense(uint32 denseIndex) {
@@ -94,11 +99,12 @@ public:
         return m_Dense[denseIndex];
     }
 
-    size_t Size() const { return m_Dense.size(); }
-    bool Empty() const { return m_Dense.empty(); }
+    bool Empty() const { return m_ActiveCount == 0; }
 
     T* Data() { return m_Dense.data(); }
     const T* Data() const { return m_Dense.data(); }
+
+    size_t DenseSize() const { return m_Dense.size(); }
 
     // ── 迭代器 ──
     using iterator = typename std::vector<T>::iterator;
@@ -109,13 +115,10 @@ public:
     const_iterator begin() const { return m_Dense.begin(); }
     const_iterator end()   const { return m_Dense.end(); }
 
-    // ── Sparse 索引 → Dense 索引的映射 ──
-    // 需要额外存储，当前不实现（用于高级 ECS 特征）
-    // 可在此扩展 m_IndexToDense 数组
-
     void Clear() {
         m_Dense.clear();
         m_FreeList.clear();
+        m_ActiveCount = 0;
         std::fill(m_Sparse.begin(), m_Sparse.end(), 0);
     }
 
@@ -124,6 +127,7 @@ private:
     std::vector<uint32> m_Sparse;
     std::vector<T>      m_Dense;
     std::vector<uint32> m_FreeList;
+    size_t              m_ActiveCount = 0;
 };
 
 } // namespace Engine

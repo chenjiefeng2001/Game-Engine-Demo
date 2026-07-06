@@ -244,8 +244,13 @@ void EntityManager::RemoveComponentRaw(EntityHandle entity, ComponentTypeID type
             m_OnComponentRemoved(entity, typeID);
         }
 
-        // 移除后无任何组件：销毁实体
-        DestroyEntity(entity);
+        // 从旧 Archetype 移除，但保留实体存活（无组件实体）
+        if (loc.archetype != nullptr) {
+            loc.archetype->RemoveEntity(loc.chunk, loc.row);
+        }
+        loc.archetype = nullptr;
+        loc.chunk = nullptr;
+        loc.row = 0;
         return;
     }
 
