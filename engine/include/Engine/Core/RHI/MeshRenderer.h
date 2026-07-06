@@ -2,6 +2,9 @@
 
 #include "Engine/Types.h"
 #include "Engine/Core/RHI/MathTypes.h"
+#include "Engine/Core/RHI/IRHIVertexArray.h"
+#include "Engine/Core/RHI/IRHIVertexBuffer.h"
+#include "Engine/Core/RHI/IRHIIndexBuffer.h"
 #include "Engine/Rendering/ShadowMapper.h"
 #include <memory>
 #include <vector>
@@ -37,6 +40,10 @@ namespace Engine {
      *   2. 管理 GPU 资源（VBO/IBO/VAO）
      *   3. 绑定 3D Shader 并设置光源、相机 uniform
      *   4. 提交绘制调用
+     *
+     * RHI 路径（v2）：使用 IRHIVertexArray/IRHIVertexBuffer/IRHIIndexBuffer，
+     *   完全不依赖 OpenGL 具体类型，支持多后端。
+     * 旧路径（v1）：使用 VertexArray/VertexBuffer/IndexBuffer（保留向后兼容）。
      */
     class MeshRenderer {
     public:
@@ -83,74 +90,31 @@ namespace Engine {
             std::vector<uint32> indices;
         };
 
-        /**
-         * @brief 生成世界坐标轴网格（3 条带颜色的线段: R=X, G=Y, B=Z）
-         * @param length 轴的长度
-         * @return AxisMesh 可用于 GL_LINES 绘制
-         */
         static AxisMesh GenerateAxes(float length = 10.0f);
-
-        /**
-         * @brief 生成半透明网格辅助线（用于可视化世界地面）
-         * @param size  网格大小
-         * @param steps 分段数
-         * @return AxisMesh 可用于 GL_LINES 绘制
-         */
         static AxisMesh GenerateGrid(float size = 10.0f, int32 steps = 10);
 
         // ── 潜在可见集 (PVS) ──
         void SetPVS(const PotentiallyVisibleSet* pvs) { m_PVS = pvs; }
         const PotentiallyVisibleSet* GetPVS() const { return m_PVS; }
 
-        /**
-         * @brief 使用 PVS 加速渲染
-         * @param objects   所有场景物体列表
-         * @param cameraPos 相机世界坐标（用于 PVS 查询）
-         */
         void RenderWithPVS(const std::vector<GameObject*>& objects,
                            const Vec3& cameraPos);
 
-        /**
-         * @brief 使用批处理器渲染 — 所有网格合并到单个 DrawCall
-         * @param objects  物体列表
-         * @param batch    图元批处理器
-         */
         void RenderBatched(const std::vector<GameObject*>& objects,
                            IPrimitiveBatch& batch);
 
         // ── 深度预渲染 (Depth Pre-Pass) ──
-        /**
-         * @brief 设置深度预渲染着色器
-         * @param shader 深度只写着色器（assets/shaders/depth_only）
-         */
         void SetDepthShader(std::shared_ptr<Shader> shader) { m_DepthShader = std::move(shader); }
-
-        /** 是否启用深度预渲染（减少 overdraw） */
         void SetDepthPrePassEnabled(bool enable) { m_DepthPrePassEnabled = enable; }
         bool IsDepthPrePassEnabled() const { return m_DepthPrePassEnabled; }
-
-        /**
-         * @brief 执行深度预渲染 + 主渲染（两遍法）
-         * @param objects 物体列表
-         */
         void RenderWithDepthPrePass(const std::vector<GameObject*>& objects);
 
-        // ── 场景图管理（支持 Flat / BVH / Grid 切换） ──
-        /**
-         * @brief 设置场景图（用于平截头体剔除加速）
-         * @param sceneGraph 场景图接口指针（可运行时切换）
-         */
+        // ── 场景图管理 ──
         void SetSceneGraph(const ISceneGraph* sceneGraph) { m_SceneGraph = sceneGraph; }
         const ISceneGraph* GetSceneGraph() const { return m_SceneGraph; }
-
-        /** 自动切换阈值：物体数超过此值启用场景图剔除 */
         void SetSceneGraphThreshold(uint32 threshold) { m_SGThreshold = threshold; }
         uint32 GetSceneGraphThreshold() const { return m_SGThreshold; }
-
-        /** 获取内部批处理器（用于粒子/贴花等） */
         IPrimitiveBatch* GetBatch() const { return m_Batch.get(); }
-
-        /** 使用场景图渲染（自动平截头体剔除 + 深度预渲染） */
         void RenderWithSceneGraph(const std::vector<GameObject*>& objects,
                                   const Frustum* frustum = nullptr,
                                   bool forceDepthPrePass = false);
@@ -177,22 +141,33 @@ namespace Engine {
         RenderMode GetRenderMode() const { return m_RenderMode; }
         bool IsDeferred() const { return m_RenderMode == RenderMode::Deferred; }
 
-        // ── GBuffer（延迟渲染用） ──
+        // ── GBuffer ──
         void SetGBuffer(GBuffer* gbuf) { m_GBuffer = gbuf; }
         GBuffer* GetGBuffer() const { return m_GBuffer; }
-
-        /** 延迟渲染入口 */
         void RenderDeferred(const std::vector<GameObject*>& objects,
                             std::shared_ptr<Shader> lightShader);
 
-        // ── 主渲染入口（无 PVS 剔除） ──
+        // ── 主渲染入口 ──
         void Render(const std::vector<GameObject*>& objects);
+
+        // ═══════════════════════════════════════════════
+        // 【RHI v2 新路径】
+        // ═══════════════════════════════════════════════
+
+        /** 启用/禁用 RHI 渲染路径 */
+        void SetRHIEnabled(bool enable) { m_RHIEnabled = enable; }
+        bool IsRHIEnabled() const { return m_RHIEnabled; }
+
+        /**
+         * @brief 使用 RHI 路径渲染主场景
+         * @param objects 物体列表
+         */
+        void Render_RHI(const std::vector<GameObject*>& objects);
 
     private:
         const PotentiallyVisibleSet* m_PVS = nullptr;
         std::unique_ptr<IPrimitiveBatch> m_Batch;
 
-        // ── 全屏四边形（延迟渲染光照通道用） ──
         void InitFullscreenQuad();
         void RenderFullscreenQuad();
 
@@ -221,18 +196,46 @@ namespace Engine {
         // ── 延迟渲染 ──
         RenderMode m_RenderMode = RenderMode::Forward;
         GBuffer*   m_GBuffer = nullptr;
-        std::shared_ptr<Shader> m_GeomShader;  // 几何通道着色器
+        std::shared_ptr<Shader> m_GeomShader;
 
         // ── 统计 ──
         mutable uint32 m_LastTotalObjects = 0;
         mutable uint32 m_LastVisibleObjects = 0;
 
-        // ── GPU 资源管理 ──
+        // ════════════════════════════════════
+        // v1 旧路径 GPU 资源（向后兼容）
+        // ════════════════════════════════════
+
         /**
-         * @brief 为 Mesh 创建或获取 GPU 资源
-         * 返回一个不透明的 GPU 资源句柄（由具体实现管理）
+         * @brief 为 Mesh 创建或获取旧路径 GPU 资源
          */
         uint64 UploadMesh(const std::shared_ptr<Mesh>& mesh);
+
+        struct CachedMeshData {
+            std::shared_ptr<class VertexArray> vao;
+            std::shared_ptr<class VertexBuffer> vbo;
+            std::shared_ptr<class IndexBuffer>  ibo;
+            uint32 indexCount = 0;
+        };
+        std::unordered_map<uint64, CachedMeshData> m_MeshCache;
+
+        // ════════════════════════════════════
+        // v2 RHI 新路径 GPU 资源
+        // ════════════════════════════════════
+
+        /**
+         * @brief 为 Mesh 创建或获取 RHI GPU 资源
+         * @return RHI 资源哈希键
+         */
+        uint64 UploadMesh_RHI(const std::shared_ptr<Mesh>& mesh);
+
+        struct CachedMeshData_RHI {
+            std::shared_ptr<RHI::IRHIVertexBuffer> vertexBuffer;
+            std::shared_ptr<RHI::IRHIIndexBuffer>  indexBuffer;
+            std::shared_ptr<RHI::IRHIVertexArray>   vertexArray;
+            uint32 indexCount = 0;
+        };
+        std::unordered_map<uint64, CachedMeshData_RHI> m_MeshCache_RHI;
 
     private:
         IGraphicsFactory& m_Factory;
@@ -243,16 +246,7 @@ namespace Engine {
         Vec3  m_AmbientColor  = {0.15f, 0.15f, 0.20f};
         std::vector<Light> m_Lights;
 
-        // 向后兼容单光源（由 SetLightPosition 等填充）
-
-        // GPU 资源缓存
-        struct CachedMeshData {
-            std::shared_ptr<class VertexArray> vao;
-            std::shared_ptr<class VertexBuffer> vbo;
-            std::shared_ptr<class IndexBuffer>  ibo;
-            uint32 indexCount = 0;
-        };
-        std::unordered_map<uint64, CachedMeshData> m_MeshCache;
+        bool m_RHIEnabled = false;
     };
 
 } // namespace Engine

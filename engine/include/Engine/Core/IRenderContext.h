@@ -14,6 +14,7 @@
 
 namespace Engine {
 	class VertexArray;
+	namespace RHI { class IRHIVertexArray; }
 
 	/// 单帧 GPU Pass 时间戳记录
 	struct GPUTimestampRecord {
@@ -51,6 +52,12 @@ namespace Engine {
 		virtual void ClearColor(float r, float g, float b, float a) = 0;
 		virtual void SwapBuffers() = 0;
 		virtual void DrawIndexed(const std::shared_ptr<VertexArray>& va) = 0;
+
+		/**
+		 * @brief 使用 RHI 顶点数组绘制索引网格
+		 * @param va RHI 顶点数组（不依赖 OpenGL 具体类型）
+		 */
+		virtual void DrawIndexed_RHI(const std::shared_ptr<RHI::IRHIVertexArray>& va) = 0;
 
 		virtual void OnResize(int32 width, int32 height) = 0;
 

@@ -25,6 +25,9 @@ namespace Engine {
 	struct ShaderStage;
 	class GBuffer;
 	namespace RHI { class IGPUMemoryAllocator; }
+	namespace RHI { class IRHIVertexBuffer; }
+	namespace RHI { class IRHIIndexBuffer; }
+	namespace RHI { class IRHIVertexArray; }
 
 // ============================================================
 // RHI 抽象工厂 — 完全与具体图形 API 解耦
@@ -87,6 +90,30 @@ namespace Engine {
 			uint32 count) = 0;
 
 		virtual std::shared_ptr<VertexArray> CreateVertexArray() = 0;
+
+		// ---- RHI 抽象资源（全新接口，不依赖 OpenGL 具体类型） ----
+
+		/**
+		 * @brief 创建 RHI 顶点缓冲区
+		 * @param data    顶点数据指针
+		 * @param size    数据大小（字节）
+		 * @param stride  单个顶点步长（字节）
+		 */
+		virtual std::shared_ptr<RHI::IRHIVertexBuffer> CreateVertexBuffer_RHI(
+			const void* data, size_t size, uint32 stride) = 0;
+
+		/**
+		 * @brief 创建 RHI 索引缓冲区
+		 * @param data    索引数据指针（uint32）
+		 * @param count   索引数量
+		 */
+		virtual std::shared_ptr<RHI::IRHIIndexBuffer> CreateIndexBuffer_RHI(
+			const uint32* data, uint32 count) = 0;
+
+		/**
+		 * @brief 创建 RHI 顶点数组
+		 */
+		virtual std::shared_ptr<RHI::IRHIVertexArray> CreateVertexArray_RHI() = 0;
 
 		// ---- 高级渲染工具 ----
 		virtual std::shared_ptr<ISpriteBatch> CreateSpriteBatch(
