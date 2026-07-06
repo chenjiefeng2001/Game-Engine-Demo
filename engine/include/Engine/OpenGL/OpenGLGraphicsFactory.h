@@ -1,6 +1,9 @@
 #pragma once
 
 #include "Engine/Core/IGraphicsFactory.h"
+#include "Engine/Core/RHI/IRHIVertexBuffer.h"
+#include "Engine/Core/RHI/IRHIIndexBuffer.h"
+#include "Engine/Core/RHI/IRHIVertexArray.h"
 #include <glad/gl.h>
 
 namespace Engine {
@@ -40,6 +43,13 @@ namespace Engine {
 			uint32_t count) override;
 
 		virtual std::shared_ptr<VertexArray> CreateVertexArray() override;
+
+		// ---- RHI 抽象资源（全新接口） ----
+		virtual std::shared_ptr<RHI::IRHIVertexBuffer> CreateVertexBuffer_RHI(
+			const void* data, size_t size, uint32 stride) override;
+		virtual std::shared_ptr<RHI::IRHIIndexBuffer> CreateIndexBuffer_RHI(
+			const uint32* data, uint32 count) override;
+		virtual std::shared_ptr<RHI::IRHIVertexArray> CreateVertexArray_RHI() override;
 
 		// ---- Advanced Render Toolbox----
 		virtual std::shared_ptr<ISpriteBatch> CreateSpriteBatch(

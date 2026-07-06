@@ -10,6 +10,9 @@
 #include "Resources/OpenGLVertexBuffer.h"
 #include "Resources/OpenGLIndexBuffer.h"
 #include "Resources/OpenGLVertexArray.h"
+#include "Resources/OpenGLVertexBuffer_RHI.h"
+#include "Resources/OpenGLIndexBuffer_RHI.h"
+#include "Resources/OpenGLVertexArray_RHI.h"
 #include "Resources/OpenGLSpriteBatch.h"
 #include "Resources/OpenGLPrimitiveBatch.h"
 #include "Resources/ImGuiUIManager.h"
@@ -185,6 +188,37 @@ namespace Engine {
 			return std::allocate_shared<OpenGLVertexArray>(adaptor, m_GL);
 		}
 		return std::make_shared<OpenGLVertexArray>(m_GL);
+	}
+
+	// ---- RHI 抽象资源（全新接口） ----
+
+	std::shared_ptr<RHI::IRHIVertexBuffer> OpenGLGraphicsFactory::CreateVertexBuffer_RHI(
+		const void* data, size_t size, uint32 stride)
+	{
+		if (m_Allocator) {
+			StackAllocatorAdaptor<RHI::OpenGLVertexBuffer_RHI> adaptor(m_Allocator);
+			return std::allocate_shared<RHI::OpenGLVertexBuffer_RHI>(adaptor, data, size, stride, m_GL);
+		}
+		return std::make_shared<RHI::OpenGLVertexBuffer_RHI>(data, size, stride, m_GL);
+	}
+
+	std::shared_ptr<RHI::IRHIIndexBuffer> OpenGLGraphicsFactory::CreateIndexBuffer_RHI(
+		const uint32* data, uint32 count)
+	{
+		if (m_Allocator) {
+			StackAllocatorAdaptor<RHI::OpenGLIndexBuffer_RHI> adaptor(m_Allocator);
+			return std::allocate_shared<RHI::OpenGLIndexBuffer_RHI>(adaptor, data, count, m_GL);
+		}
+		return std::make_shared<RHI::OpenGLIndexBuffer_RHI>(data, count, m_GL);
+	}
+
+	std::shared_ptr<RHI::IRHIVertexArray> OpenGLGraphicsFactory::CreateVertexArray_RHI()
+	{
+		if (m_Allocator) {
+			StackAllocatorAdaptor<RHI::OpenGLVertexArray_RHI> adaptor(m_Allocator);
+			return std::allocate_shared<RHI::OpenGLVertexArray_RHI>(adaptor, m_GL);
+		}
+		return std::make_shared<RHI::OpenGLVertexArray_RHI>(m_GL);
 	}
 
 	std::shared_ptr<ISpriteBatch> OpenGLGraphicsFactory::CreateSpriteBatch(

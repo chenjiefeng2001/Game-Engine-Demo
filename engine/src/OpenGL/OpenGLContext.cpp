@@ -92,13 +92,28 @@ namespace Engine {
 		m_GL.Clear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
 	}
 
-	void OpenGLContext::DrawIndexed(const std::shared_ptr<VertexArray>& va)
+void OpenGLContext::DrawIndexed(const std::shared_ptr<VertexArray>& va)
 	{
 		va->Bind();
 		const auto& indexBuffer = va->GetIndexBuffer();
 		if (indexBuffer)
 		{
 			uint32 indexCount = indexBuffer->GetCount();
+			m_GL.DrawElements(GL_TRIANGLES, indexCount, GL_UNSIGNED_INT, nullptr);
+			++m_DrawCallCount;
+
+			uint32 triCount = indexCount / 3;
+			m_TriangleCount += triCount;
+			m_VertexCount += indexCount;
+		}
+	}
+
+	void OpenGLContext::DrawIndexed_RHI(const std::shared_ptr<RHI::IRHIVertexArray>& va)
+	{
+		va->Bind();
+		uint32 indexCount = va->GetIndexCount();
+		if (indexCount > 0)
+		{
 			m_GL.DrawElements(GL_TRIANGLES, indexCount, GL_UNSIGNED_INT, nullptr);
 			++m_DrawCallCount;
 
