@@ -16,6 +16,7 @@
 
 #include <Engine/Core/ECS/ECS.h>
 #include <Engine/Core/ECS/ComponentRegistry.h>
+#include <Engine/Core/RHI/MathTypes.h>
 #include <Engine/Core/RHI/IRHIDevice.h>
 #include <Engine/Core/RHI/IRHICommandList.h>
 #include <Engine/Core/RHI/PSOCache.h>
@@ -33,9 +34,9 @@ namespace Engine {
 // ECS 组件（用于集成测试）
 // ═══════════════════════════════════════════════════════
 struct Transform3D {
-    RHI::Vec3 position{0,0,0};
-    RHI::Vec3 rotation{0,0,0};
-    RHI::Vec3 scale{1,1,1};
+    Vec3 position{0,0,0};
+    Vec3 rotation{0,0,0};
+    Vec3 scale{1,1,1};
 };
 
 struct RenderProxy {
