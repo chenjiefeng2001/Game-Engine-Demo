@@ -2,6 +2,7 @@
 
 #include "Engine/Core/IRenderContext.h"
 #include "Engine/OpenGL/OpenGLAntiAliasing.h"
+#include "Engine/Core/RHI/IRHIVertexArray.h"
 #include <memory>
 #include <string>
 #include <array>
@@ -24,6 +25,7 @@ namespace Engine {
 		void ClearColor(float r, float g, float b, float a) override;
 		void SwapBuffers() override;
 		void DrawIndexed(const std::shared_ptr<VertexArray>& va) override;
+		void DrawIndexed_RHI(const std::shared_ptr<RHI::IRHIVertexArray>& va) override;
 		void OnResize(int32 width, int32 height) override;
 
 		// ── 统计 ──
