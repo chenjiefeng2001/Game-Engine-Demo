@@ -26,6 +26,16 @@ namespace Engine {
 
     class PhysicsSystemManager {
     public:
+        // ════════════════════════════════════════════
+        // v4.0: 后端类型枚举
+        // ════════════════════════════════════════════
+        enum class BackendType : uint8 {
+            Jolt5,      // 当前
+            PhysX5,     // 预留
+            Bullet3,    // 预留
+        };
+
+    public:
         PhysicsSystemManager() = default;
         ~PhysicsSystemManager() = default;
 
@@ -103,7 +113,27 @@ namespace Engine {
         /** 获取渲染插值因子（0~1，供 Renderer 使用） */
         float32 GetRenderAlpha() const { return m_RenderAlpha; }
 
+        // ════════════════════════════════════════════
+        // v4.0: 全局上下文管理（PhysX 5 预留）
+        // ════════════════════════════════════════════
+        /**
+         * @brief 初始化物理系统全局上下文
+         *
+         * Jolt: 由 JoltPhysicsWorld 的原子引用计数自动管理
+         * PhysX: 需要创建 PxFoundation / PxPvd / PxPhysics
+         */
+        void InitGlobalContext();
+
+        /**
+         * @brief 关闭物理系统全局上下文
+         */
+        void ShutdownGlobalContext();
+
+        /** 获取当前物理后端类型 */
+        BackendType GetBackendType() const { return m_Backend; }
+
     private:
+        BackendType m_Backend = BackendType::Jolt5;
         std::shared_ptr<IPhysicsWorld>   m_World2D;
         std::shared_ptr<IPhysicsWorld3D> m_World3D;
         FixedTimestepAccumulator         m_FixedAccumulator{1.0f / 60.0f};

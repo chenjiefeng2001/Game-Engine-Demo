@@ -52,8 +52,18 @@ namespace Engine {
         return "Jolt Physics 5.5";
     }
 
-    // ════════════════════════════════════════════
-    // 统一步进（固定时间步长）
+    void PhysicsSystemManager::InitGlobalContext() {
+        Log::Info("[Physics] Global context initialized (backend={})",
+            m_Backend == BackendType::Jolt5 ? "Jolt5" : "Other");
+        // Jolt: 由 JoltPhysicsWorld ctor/dtor 的原子引用计数自动管理
+        // PhysX: 此处需要创建 PxFoundation / PxPvd / PxPhysics
+    }
+
+    void PhysicsSystemManager::ShutdownGlobalContext() {
+        Log::Info("[Physics] Global context shutdown");
+        // PhysX: 此处需要销毁 PxFoundation / PxPvd / PxPhysics
+    }
+
     // ════════════════════════════════════════════
 
     void PhysicsSystemManager::StepAll(float32 dt) {

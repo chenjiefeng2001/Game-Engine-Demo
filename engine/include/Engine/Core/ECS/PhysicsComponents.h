@@ -71,6 +71,9 @@ struct BoxCollider3DComponent {
     float friction    = 0.5f;
     float restitution = 0.2f;
     bool isSensor     = false;
+    bool isDirty      = false;   ///< v4.0: 标记需要重新创建 Shape 到物理引擎
+
+    void MarkDirty() { isDirty = true; }
 };
 
 struct SphereCollider3DComponent {
@@ -80,6 +83,9 @@ struct SphereCollider3DComponent {
     float friction    = 0.5f;
     float restitution = 0.2f;
     bool isSensor     = false;
+    bool isDirty      = false;   ///< v4.0
+
+    void MarkDirty() { isDirty = true; }
 };
 
 struct CapsuleCollider3DComponent {
@@ -90,6 +96,9 @@ struct CapsuleCollider3DComponent {
     float friction    = 0.5f;
     float restitution = 0.2f;
     bool isSensor     = false;
+    bool isDirty      = false;   ///< v4.0
+
+    void MarkDirty() { isDirty = true; }
 };
 
 } // namespace Engine
