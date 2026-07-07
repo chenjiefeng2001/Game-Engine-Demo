@@ -950,4 +950,161 @@ namespace Engine {
         m_Shader->Unbind();
     }
 
+    // ════════════════════════════════════════════════════════════
+    // v3 提取 + 执行分离
+    // ════════════════════════════════════════════════════════════
+
+    void MeshRenderer::ExtractScene(const std::vector<GameObject*>& objects,
+                                     RHI::SceneExtraction& outExtraction)
+    {
+        outExtraction.Clear();
+
+        if (!m_MeshSlotMap) {
+            // 没有 SlotMap 则跳过（需要在提取前设置）
+            return;
+        }
+
+        for (auto* obj : objects) {
+            if (!obj || !obj->IsActive()) continue;
+
+            auto* meshComp = obj->GetComponent<MeshComponent>();
+            if (!meshComp || !meshComp->m_Visible || !meshComp->HasMesh())
+                continue;
+
+            auto mesh = meshComp->GetMesh();
+            if (!mesh || !mesh->IsValid()) continue;
+
+            // ── 构建 RenderPacket ──
+            RHI::RenderPacket pkt = {};
+
+            // 复制世界矩阵
+            const Mat4& worldMatrix = obj->GetTransform().GetWorldMatrix();
+            std::memcpy(pkt.worldMatrix, worldMatrix.data, sizeof(float) * 16);
+
+            // 资源句柄（暂时设为 Invalid，执行时通过 SharedPtr 查找）
+            // 实际使用 Handle 时，需要 Mesh 管理器注册 mesh → handle 的映射
+            pkt.meshHandle    = RHI::MeshHandle::Invalid();
+            pkt.textureHandle = RHI::TextureHandle::Invalid();
+            pkt.shaderHandle  = RHI::ShaderHandle::Invalid();
+
+            // 从 MeshComponent 提取材质数据
+            pkt.baseColor[0] = meshComp->m_Color.x;
+            pkt.baseColor[1] = meshComp->m_Color.y;
+            pkt.baseColor[2] = meshComp->m_Color.z;
+            pkt.baseColor[3] = meshComp->m_Color.w;
+            pkt.metallic     = 0.0f;   // MeshComponent 暂无 PBR 属性
+            pkt.roughness    = 0.5f;
+            pkt.ao           = 1.0f;
+
+            // UV 偏移默认值
+            pkt.uvOffset[0] = 0.0f;
+            pkt.uvOffset[1] = 0.0f;
+            pkt.uvOffset[2] = 1.0f;
+            pkt.uvOffset[3] = 1.0f;
+
+            // 排序键（默认不透明，深度基于摄像机距离平方）
+            Vec3 objPos(
+                worldMatrix.data[12],
+                worldMatrix.data[13],
+                worldMatrix.data[14]
+            );
+            Vec3 camPos = m_Camera ? m_Camera->GetPosition() : Vec3();
+            Vec3 delta  = objPos - camPos;
+            float depth = delta.x * delta.x + delta.y * delta.y + delta.z * delta.z;
+            pkt.sortKey  = RHI::SortKey::Make(false, 0, depth);
+            pkt.layerMask = 0xFFFFFFFF;
+
+            outExtraction.packets.push_back(pkt);
+        }
+
+        // 排序
+        outExtraction.Sort();
+    }
+
+    void MeshRenderer::ExecuteRenderPackets(const RHI::SceneExtraction& extraction)
+    {
+        if (!m_Shader || !m_Camera)
+            return;
+
+        m_Shader->Bind();
+
+        const Mat4& projMatrix = m_Camera->GetProjectionMatrix();
+        const Mat4& viewMatrix = m_Camera->GetViewMatrix();
+
+        m_Shader->SetMat4("u_View",       viewMatrix.Data());
+        m_Shader->SetMat4("u_Projection", projMatrix.Data());
+
+        Vec3 viewPos = m_Camera->GetPosition();
+        m_Shader->SetVec3("u_ViewPos",      &viewPos.x);
+        m_Shader->SetVec3("u_AmbientColor", &m_AmbientColor.x);
+        m_Shader->SetInt("u_LightCount", (int)m_Lights.size());
+        for (size_t li = 0; li < m_Lights.size() && li < 4; ++li) {
+            auto& L = m_Lights[li];
+            std::string si = std::to_string(li);
+            m_Shader->SetVec3(("u_LightPos["+si+"]").c_str(), &L.position.x);
+            m_Shader->SetVec3(("u_LightColor["+si+"]").c_str(), &L.color.x);
+            m_Shader->SetFloat(("u_LightIntensity["+si+"]").c_str(), L.intensity);
+        }
+
+        // 阴影
+        if (m_ShadowEnabled && m_ShadowMapper && m_ShadowMapper->IsValid()) {
+            const auto& csmData = m_ShadowMapper->GetCSMData();
+            m_Shader->SetMat4("u_LightSpaceMatrix", csmData.cascades[0].lightViewProj.Data());
+            m_Shader->SetFloat("u_ShadowBias", csmData.shadowBias);
+            m_Shader->SetInt("u_ShadowEnabled", 1);
+        } else {
+            m_Shader->SetInt("u_ShadowEnabled", 0);
+        }
+
+        // 遍历 RenderPackets
+        for (const auto& pkt : extraction.packets) {
+            // 跳过无效句柄的包（实际使用 Handle 时需从 SlotMap 获取资源）
+            if (!pkt.meshHandle.IsValid())
+                continue;
+
+            // 从 MeshSlotMap 获取 Mesh 对象
+            Mesh* mesh = m_MeshSlotMap ? m_MeshSlotMap->Get(pkt.meshHandle) : nullptr;
+            if (!mesh) continue;
+
+            // 上传/获取 RHI 资源
+            auto meshShared = std::shared_ptr<Mesh>(mesh, [](Mesh*) {});
+            uint64 gpuId = reinterpret_cast<uint64>(mesh);
+            auto it = m_MeshCache_RHI.find(gpuId);
+            if (it == m_MeshCache_RHI.end()) {
+                gpuId = UploadMesh_RHI(meshShared);
+                if (gpuId == 0) continue;
+                it = m_MeshCache_RHI.find(gpuId);
+                if (it == m_MeshCache_RHI.end()) continue;
+            }
+
+            const auto& cached = it->second;
+
+            // 计算 MVP
+            glm::mat4 modelGlm;
+            std::memcpy(&modelGlm, pkt.worldMatrix, sizeof(float) * 16);
+            glm::mat4 viewGlm;
+            std::memcpy(&viewGlm, viewMatrix.data, sizeof(float) * 16);
+            glm::mat4 projGlm;
+            std::memcpy(&projGlm, projMatrix.data, sizeof(float) * 16);
+            glm::mat4 mvp = projGlm * viewGlm * modelGlm;
+
+            m_Shader->SetMat4("u_Model", pkt.worldMatrix);
+            m_Shader->SetMat4("u_MVP",   glm::value_ptr(mvp));
+
+            glm::mat3 normalMat3 = glm::transpose(glm::inverse(glm::mat3(modelGlm)));
+            glm::mat4 normalMat4(normalMat3);
+            m_Shader->SetMat4("u_NormalMatrix", glm::value_ptr(normalMat4));
+
+            m_Shader->SetVec4("u_ObjectColor", pkt.baseColor);
+            m_Shader->SetInt("u_HasTexture", 0);
+            m_Shader->SetFloat("u_Shininess", 32.0f);
+            m_Shader->SetFloat("u_SpecularStrength", 0.5f);
+
+            // 绘制
+            m_Context.DrawIndexed_RHI(cached.vertexArray);
+        }
+
+        m_Shader->Unbind();
+    }
+
 } // namespace Engine
