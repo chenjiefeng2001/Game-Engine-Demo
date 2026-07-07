@@ -183,7 +183,8 @@ bool SpirVTestApp::TestShaderCompileAndReflect() {
 
     shaderc::CompileOptions opts;
     opts.SetTargetEnvironment(shaderc_target_env_vulkan, shaderc_env_version_vulkan_1_3);
-    opts.SetOptimizationLevel(shaderc_optimization_level_performance);
+    opts.SetOptimizationLevel(shaderc_optimization_level_zero);
+    opts.SetGenerateDebugInfo();
 
     // ── 顶点着色器 ──
     auto vertResult = compiler.CompileGlslToSpv(
