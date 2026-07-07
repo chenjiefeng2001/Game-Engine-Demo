@@ -49,10 +49,20 @@ void JoltPhysicsBody::SetRotation(const Vec3& euler) {
 }
 
 Vec3 JoltPhysicsBody::GetRotation() const {
+    // Euler angles are computed from quat for backward compatibility
     JPH::Quat q = GetBodyInterface().GetRotation(m_BodyID);
     glm::quat gq(q.GetW(), q.GetX(), q.GetY(), q.GetZ());
     glm::vec3 euler = glm::degrees(glm::eulerAngles(gq));
     return Vec3(euler.x, euler.y, euler.z);
+}
+
+Quat JoltPhysicsBody::GetRotationQuat() const {
+    JPH::Quat q = GetBodyInterface().GetRotation(m_BodyID);
+    return Quat(q.GetX(), q.GetY(), q.GetZ(), q.GetW());
+}
+
+void JoltPhysicsBody::SetRotationQuat(const Quat& q) {
+    GetBodyInterface().SetRotation(m_BodyID, JPH::Quat(q.x, q.y, q.z, q.w), JPH::EActivation::Activate);
 }
 
 Mat4 JoltPhysicsBody::GetWorldMatrix() const {

@@ -121,6 +121,36 @@ namespace Engine {
         virtual void SetDebugDraw(IPhysicsDebugDraw3D* draw) = 0;
         virtual void DebugDraw() = 0;
 
+        // ── v4.0: Batch API（工业级批量变换操作） ──
+        /**
+         * @brief 批量设置 Kinematic 目标变换（避免逐体虚函数调用）
+         * @param count 物体数量
+         * @param bodyIDs 64-bit BodyID 数组
+         * @param positions 位置数组
+         * @param rotations 四元数数组（避免欧拉角万向锁）
+         *
+         * Jolt 实现：一次性遍历，SIMD 友好
+         * PhysX 实现：通过 PxRigidDynamic::setKinematicTarget 批量
+         */
+        virtual void BatchSetKinematicTargets(
+            uint32 count,
+            const uint64* bodyIDs,
+            const Vec3* positions,
+            const Quat* rotations) = 0;
+
+        /**
+         * @brief 批量读取变换（同步回 ECS）
+         * @param count 物体数量
+         * @param bodyIDs 输入：BodyID 数组
+         * @param outPositions 输出：位置数组
+         * @param outRotations 输出：四元数数组
+         */
+        virtual void BatchGetTransforms(
+            uint32 count,
+            const uint64* bodyIDs,
+            Vec3* outPositions,
+            Quat* outRotations) = 0;
+
         // ── 性能统计 ──
         struct Stats {
             int32 activeBodyCount = 0;

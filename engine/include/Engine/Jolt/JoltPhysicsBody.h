@@ -27,6 +27,10 @@ public:
     Vec3 GetRotation() const override;
     Mat4 GetWorldMatrix() const override;
 
+    // ── 四元数直通（v4.0：避免万向锁）──
+    Quat GetRotationQuat() const;
+    void SetRotationQuat(const Quat& q);
+
     // ── 运动 ──
     void SetLinearVelocity(const Vec3& velocity) override;
     Vec3 GetLinearVelocity() const override;
