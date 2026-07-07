@@ -51,11 +51,9 @@ namespace Engine {
         if (!owner) return;
 
         auto& transform = owner->GetTransform();
-        Vec3 pos = m_Body->GetPosition();
-        Vec3 rot = m_Body->GetRotation();
-
-        transform.SetPosition(pos.x, pos.y, pos.z);
-        transform.SetRotation(rot.x, rot.y, rot.z);
+        transform.SetPosition(m_Body->GetPosition());
+        // Use quaternion to avoid gimbal lock
+        transform.SetRotationQuat(m_Body->GetRotationQuat());
     }
 
     void PhysicsComponent3D::SyncTransformToPhysics() {
@@ -66,7 +64,7 @@ namespace Engine {
 
         auto& transform = owner->GetTransform();
         m_Body->SetPosition(transform.GetPosition());
-        m_Body->SetRotation(transform.GetRotation());
+        m_Body->SetRotationQuat(transform.GetRotationQuat());
     }
 
     void PhysicsComponent3D::OnDestroy() {
