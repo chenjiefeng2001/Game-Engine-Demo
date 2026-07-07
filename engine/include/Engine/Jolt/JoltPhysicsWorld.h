@@ -6,6 +6,12 @@
  *
  * 实现 IPhysicsWorld3D 接口，替换 NullPhysicsWorld3D。
  * 集成 Engine::JobSystem 用于多线程模拟。
+ *
+ * v4.0 变更：
+ *   - 添加 LockFreeEventQueue m_EventQueue，Worker 线程只传 BodyID
+ *   - 添加 ProcessCollisionEvents() 在主线程安全消费碰撞事件
+ *   - 添加 BatchSetKinematicTargets / BatchGetTransforms 批量 API
+ *   - 添加 GetPhysicsSystem() 供 PhysicsSyncSystem 访问 BodyLockInterface
  */
 
 #include "Engine/Core/Physics/IPhysicsWorld3D.h"
@@ -13,6 +19,7 @@
 #include "Engine/Core/Physics/PhysicsLayers.h"
 #include "Engine/Core/Physics/LockFreeEventQueue.h"
 #include "Engine/Jolt/JoltJobSystemAdapter.h"
+#include "Engine/Jolt/JoltDebugRenderer.h"
 
 #include <Jolt/Jolt.h>
 #include <Jolt/Physics/PhysicsSystem.h>
@@ -72,6 +79,25 @@ public:
     Stats GetStats() const override;
     void* GetNativeWorld() override { return &m_PhysicsSystem; }
 
+    // ── v4.0: 碰撞事件消费（主线程调用，在 Step 之后同步阶段之前） ──
+    /**
+     * @brief 消费碰撞事件队列，路由到注册的回调
+     *
+     * 必须在主线程调用（通常在 PhysicsSyncSystem::SyncPhysicsToECS 之前）。
+     * Worker 线程在 Jolt 回调中只 Push BodyID，不 touch Body。
+     * 此函数通过 GetBodyByID 安全反查 IPhysicsBody3D 指针。
+     */
+    void ProcessCollisionEvents();
+
+    // ── v4.0: Batch API（工业级批量变换操作） ──
+    void BatchSetKinematicTargets(
+        uint32 count, const uint64* bodyIDs,
+        const Vec3* positions, const Quat* rotations) override;
+
+    void BatchGetTransforms(
+        uint32 count, const uint64* bodyIDs,
+        Vec3* outPositions, Quat* outRotations) override;
+
     // ── 工具函数 ──
     /** 将 Engine::BodyDef3D 转换为 Jolt 的 BodyCreationSettings */
     JPH::BodyCreationSettings ToJoltBodySettings(const BodyDef3D& def);
@@ -86,6 +112,9 @@ public:
         return JPH::BodyID(static_cast<uint32>(id));
     }
 
+    /** 获取 Jolt PhysicsSystem 引用（供 PhysicsSyncSystem 用于 BodyLock） */
+    JPH::PhysicsSystem& GetPhysicsSystem() { return m_PhysicsSystem; }
+
 private:
     // ── Jolt 内部对象 ──
     JPH::TempAllocatorImpl*        m_TempAllocator   = nullptr;
@@ -96,6 +125,9 @@ private:
     JPH::BroadPhaseLayerInterfaceTable* m_BPInterface = nullptr;
     JPH::ObjectVsBroadPhaseLayerFilter* m_ObjectVsBPFilter = nullptr;
     JPH::ObjectLayerPairFilterTable* m_ObjectLayerFilter = nullptr;
+
+    // ── v4.0: 无锁碰撞事件队列（Worker 线程只 Push BodyID） ──
+    LockFreeEventQueue m_EventQueue{256};
 
     // 碰撞事件回调
     ContactCallback3D        m_ContactBegin;
@@ -109,6 +141,7 @@ private:
 
     // 调试绘制
     IPhysicsDebugDraw3D* m_DebugDraw = nullptr;
+    std::unique_ptr<JoltDebugRenderer> m_DebugRenderer;
 
     // ECS BodyID → IPhysicsBody3D 映射
     std::unordered_map<uint64, std::shared_ptr<IPhysicsBody3D>> m_BodyMap;
