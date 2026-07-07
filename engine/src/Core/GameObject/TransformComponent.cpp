@@ -19,6 +19,14 @@ namespace Engine {
             return Vec3(v.x, v.y, v.z);
         }
 
+        inline glm::quat ToGlmQuat(const Quat& q) {
+            return glm::quat(q.w, q.x, q.y, q.z);
+        }
+
+        inline Quat FromGlmQuat(const glm::quat& q) {
+            return Quat(q.x, q.y, q.z, q.w);
+        }
+
         inline glm::mat4 ToGlm(const Mat4& m) {
             glm::mat4 result;
             std::memcpy(&result, m.data, sizeof(float32) * 16);
@@ -40,14 +48,14 @@ namespace Engine {
     // ── 构造 ──
     TransformComponent::TransformComponent()
         : m_Position(0.0f, 0.0f, 0.0f)
-        , m_Rotation(0.0f, 0.0f, 0.0f)
+        , m_RotationQuat(Quat::Identity())
         , m_Scale(1.0f, 1.0f, 1.0f)
     {
     }
 
     TransformComponent::TransformComponent(const Vec3& position)
         : m_Position(position)
-        , m_Rotation(0.0f, 0.0f, 0.0f)
+        , m_RotationQuat(Quat::Identity())
         , m_Scale(1.0f, 1.0f, 1.0f)
     {
     }
@@ -56,9 +64,33 @@ namespace Engine {
                                            const Vec3& rotation,
                                            const Vec3& scale)
         : m_Position(position)
-        , m_Rotation(rotation)
         , m_Scale(scale)
     {
+        // Convert Euler → Quat
+        glm::quat q = glm::quat(glm::radians(glm::vec3(rotation.x, rotation.y, rotation.z)));
+        m_RotationQuat = FromGlmQuat(q);
+        m_CachedEuler = rotation;
+        m_EulerDirty = false;
+    }
+
+    // ── 旋转访问器实现 ──
+
+    Vec3 TransformComponent::GetRotationEuler() const {
+        if (m_EulerDirty) {
+            glm::quat q = ToGlmQuat(m_RotationQuat);
+            glm::vec3 euler = glm::degrees(glm::eulerAngles(q));
+            m_CachedEuler = Vec3(euler.x, euler.y, euler.z);
+            m_EulerDirty = false;
+        }
+        return m_CachedEuler;
+    }
+
+    void TransformComponent::SetRotationEuler(const Vec3& euler) {
+        glm::quat q = glm::quat(glm::radians(glm::vec3(euler.x, euler.y, euler.z)));
+        m_RotationQuat = FromGlmQuat(q);
+        m_CachedEuler = euler;
+        m_EulerDirty = false;
+        m_Dirty = true;
     }
 
     // ── 相对变换 ──
@@ -70,9 +102,10 @@ namespace Engine {
     }
 
     void TransformComponent::Rotate(const Vec3& eulerDelta) {
-        m_Rotation.x += eulerDelta.x;
-        m_Rotation.y += eulerDelta.y;
-        m_Rotation.z += eulerDelta.z;
+        // Use quaternion multiplication instead of euler addition
+        glm::quat delta = glm::quat(glm::radians(glm::vec3(eulerDelta.x, eulerDelta.y, eulerDelta.z)));
+        m_RotationQuat = FromGlmQuat(delta * ToGlmQuat(m_RotationQuat));
+        m_EulerDirty = true;
         m_Dirty = true;
     }
 
@@ -87,8 +120,8 @@ namespace Engine {
     void TransformComponent::RecalculateMatrices() {
         glm::mat4 translation = glm::translate(glm::mat4(1.0f), ToGlm(m_Position));
 
-        // 使用四元数避免万向锁，按 Yaw → Pitch → Roll 顺序
-        glm::quat q = glm::quat(glm::radians(ToGlm(m_Rotation)));
+        // 使用四元数直接构造旋转矩阵，避免万向锁
+        glm::quat q = ToGlmQuat(m_RotationQuat);
         glm::mat4 rot = glm::mat4_cast(q);
 
         glm::mat4 scaling = glm::scale(glm::mat4(1.0f), ToGlm(m_Scale));
