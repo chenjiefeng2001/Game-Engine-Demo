@@ -154,6 +154,20 @@ else()
 endif()
 
 # =============================================================================
+# yaml-cpp — YAML 序列化/反序列化
+# =============================================================================
+if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/yaml-cpp/CMakeLists.txt")
+    set(YAML_CPP_BUILD_TESTS OFF CACHE BOOL "" FORCE)
+    set(YAML_CPP_BUILD_TOOLS OFF CACHE BOOL "" FORCE)
+    set(YAML_CPP_INSTALL OFF CACHE BOOL "" FORCE)
+    set(YAML_CPP_FORMAT_SOURCE OFF CACHE BOOL "" FORCE)
+    add_subdirectory(yaml-cpp)
+    message(STATUS "yaml-cpp: integrated")
+else()
+    message(WARNING "yaml-cpp not found — scene serialization disabled")
+endif()
+
+# =============================================================================
 # IDE 目标组织 — 将所有第三方库归入文件夹，隐藏不需要的目标
 # =============================================================================
 
