@@ -10,6 +10,11 @@ namespace Engine {
      * RHI 原则：头文件只依赖 RHI/MathTypes.h（纯数据），不依赖 glm。
      * 所有数学运算在 .cpp 中使用 glm 实现。
      *
+     * 关键设计变更（v4.0）：
+     *   - 内部使用四元数 (m_RotationQuat) 存储旋转，彻底避免万向锁
+     *   - 欧拉角访问 (GetRotationEuler/SetRotationEuler) 通过四元数转换
+     *   - 物理同步通过 GetRotationQuat/SetRotationQuat 直通，无额外开销
+     *
      * 支持：
      *   - 局部 / 世界变换矩阵
      *   - 父级层级变换链
@@ -23,19 +28,34 @@ namespace Engine {
                            const Vec3& rotation,
                            const Vec3& scale);
 
-        // ── 访问器 ──
+        // ── 位置访问器 ──
         const Vec3& GetPosition() const noexcept { return m_Position; }
-        const Vec3& GetRotation() const noexcept { return m_Rotation; }
-        const Vec3& GetScale()     const noexcept { return m_Scale; }
-
         void SetPosition(const Vec3& pos)     { m_Position = pos; m_Dirty = true; }
-        void SetRotation(const Vec3& rot)     { m_Rotation = rot; m_Dirty = true; }
-        void SetScale(const Vec3& s)          { m_Scale = s;    m_Dirty = true; }
-
-        // ── 便捷设置 ──
         void SetPosition(float32 x, float32 y, float32 z) { SetPosition(Vec3(x, y, z)); }
-        void SetRotation(float32 pitch, float32 yaw, float32 roll) { SetRotation(Vec3(pitch, yaw, roll)); }
-        void SetScale(float32 uniform)                      { SetScale(Vec3(uniform, uniform, uniform)); }
+
+        // ── 缩放访问器 ──
+        const Vec3& GetScale() const noexcept { return m_Scale; }
+        void SetScale(const Vec3& s)          { m_Scale = s;    m_Dirty = true; }
+        void SetScale(float32 uniform)        { SetScale(Vec3(uniform, uniform, uniform)); }
+
+        // ── 旋转访问器（内部使用四元数，避免万向锁）──
+
+        /// 获取四元数旋转（物理同步/矩阵计算使用，无万向锁）
+        const Quat& GetRotationQuat() const noexcept { return m_RotationQuat; }
+
+        /// 获取欧拉角旋转（Editor/脚本使用，可能有万向锁）
+        Vec3 GetRotationEuler() const;
+
+        /// 设置四元数旋转（物理同步使用）
+        void SetRotationQuat(const Quat& q) { m_RotationQuat = q; m_EulerDirty = true; m_Dirty = true; }
+
+        /// 设置欧拉角旋转（Editor/脚本使用）
+        void SetRotationEuler(const Vec3& euler);
+
+        // ── 向后兼容（委托到四元数接口）──
+        Vec3 GetRotation() const { return GetRotationEuler(); }
+        void SetRotation(const Vec3& rot) { SetRotationEuler(rot); }
+        void SetRotation(float32 pitch, float32 yaw, float32 roll) { SetRotationEuler(Vec3(pitch, yaw, roll)); }
 
         // ── 相对变换 ──
         void Translate(const Vec3& delta);
@@ -86,9 +106,13 @@ namespace Engine {
         void RecalculateMatrices();
 
         // ── 数据（纯 POD，无第三方库类型）──
-        Vec3 m_Position = { 0.0f, 0.0f, 0.0f };
-        Vec3 m_Rotation = { 0.0f, 0.0f, 0.0f };
-        Vec3 m_Scale    = { 1.0f, 1.0f, 1.0f };
+        Vec3 m_Position       = { 0.0f, 0.0f, 0.0f };
+        Quat m_RotationQuat   = Quat::Identity();  ///< 内部使用四元数，避免万向锁
+        Vec3 m_Scale          = { 1.0f, 1.0f, 1.0f };
+
+        /// 欧拉角缓存（Editor/脚本读取用，惰性计算）
+        mutable Vec3  m_CachedEuler = { 0.0f, 0.0f, 0.0f };
+        mutable bool  m_EulerDirty  = false;
 
         Mat4 m_LocalMatrix;   //  model → parent（局部空间）
         Mat4 m_WorldMatrix;   //  model → world（世界空间）
