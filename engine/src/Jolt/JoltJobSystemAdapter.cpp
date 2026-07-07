@@ -1,10 +1,13 @@
 /**
  * @file JoltJobSystemAdapter.cpp
- * @brief Jolt ↔ Engine JobSystem 适配器实现（v5.5）
+ * @brief Jolt ↔ Engine JobSystem 适配器实现（v6.1）
+ *
+ * 继承 JPH::Job 以正确支持 Ref<Job> 引用计数生命周期管理。
+ * 使用 new/delete 分配。
  */
 
 #include "Engine/Jolt/JoltJobSystemAdapter.h"
-#include <cassert>
+#include <thread>
 
 namespace Engine {
 
@@ -17,39 +20,33 @@ JoltJobSystemAdapter::JoltJobSystemAdapter(uint32 maxJobs)
 JoltJobSystemAdapter::~JoltJobSystemAdapter() = default;
 
 JPH::JobSystem::JobHandle JoltJobSystemAdapter::CreateJob(
-    const char*, JPH::ColorArg,
+    const char* name, JPH::ColorArg color,
     const JobFunction& jobFunction,
     uint32 numDependencies)
 {
-    auto* slot = new JobSlot();
-    slot->function = jobFunction;
-    slot->numDependencies = numDependencies;
-    slot->unfinishedDependencies.store(numDependencies, std::memory_order_relaxed);
-    slot->engineJobHandle = Engine::JobHandle{};
-
-    return JobHandle(reinterpret_cast<Job*>(slot));
+    EngineJob* engineJob = new EngineJob(name, color, this, jobFunction, numDependencies);
+    return JobHandle(engineJob);
 }
 
 void JoltJobSystemAdapter::FreeJob(Job* inJob) {
-    delete reinterpret_cast<JobSlot*>(inJob);
+    if (!inJob) return;
+    delete inJob;
 }
 
 void JoltJobSystemAdapter::QueueJob(Job* inJob) {
     if (!inJob) return;
-    JobSlot* slot = reinterpret_cast<JobSlot*>(inJob);
 
-    if (slot->unfinishedDependencies.load(std::memory_order_acquire) > 0)
-        return;
-
+    EngineJob* engineJob = static_cast<EngineJob*>(inJob);
     auto* js = Engine::JobSystem::Get();
     if (js) {
-        auto handle = js->Schedule([slot](uint32_t) {
-            slot->function();
+        // 增加引用，确保执行期间不会被销毁
+        inJob->AddRef();
+        js->Schedule([engineJob](uint32_t) {
+            engineJob->Execute();
+            engineJob->Release();
         });
-        slot->engineJobHandle = handle;
     } else {
-        // Fallback: execute synchronously if no JobSystem
-        slot->function();
+        engineJob->Execute();
     }
 }
 
@@ -57,6 +54,8 @@ void JoltJobSystemAdapter::QueueJobs(Job** inJobs, uint inNumJobs) {
     for (uint i = 0; i < inNumJobs; ++i)
         QueueJob(inJobs[i]);
 }
+
+// ── BarrierImpl ──
 
 JoltJobSystemAdapter::BarrierImpl::BarrierImpl(
     JoltJobSystemAdapter* adapter,
@@ -71,13 +70,11 @@ JoltJobSystemAdapter::BarrierImpl::BarrierImpl(
 JoltJobSystemAdapter::BarrierImpl::~BarrierImpl() = default;
 
 void JoltJobSystemAdapter::BarrierImpl::AddJob(const JobHandle& inJob) {
-    JobSlot* slot = reinterpret_cast<JobSlot*>(inJob.GetPtr());
+    // 通过 JobHandle::RemoveDependency 减少依赖计数
+    // 如果归零则自动触发 QueueJob（由 JPH::Job 内部机制处理）
+    inJob.RemoveDependency(1);
 
-    uint32 prev = slot->unfinishedDependencies.fetch_sub(1, std::memory_order_acq_rel);
-    if (prev == 1)
-        m_Adapter->QueueJob(inJob.GetPtr());
-
-    m_JobTracker.push_back(slot->engineJobHandle);
+    m_JobTracker.push_back(inJob.GetPtr());
 }
 
 void JoltJobSystemAdapter::BarrierImpl::AddJobs(const JobHandle* inHandles, uint inNumHandles) {
@@ -86,10 +83,11 @@ void JoltJobSystemAdapter::BarrierImpl::AddJobs(const JobHandle* inHandles, uint
 }
 
 void JoltJobSystemAdapter::BarrierImpl::Wait() {
-    for (auto& handle : m_JobTracker) {
-        if (handle.IsValid()) {
-            auto* js = Engine::JobSystem::Get();
-            if (js) js->Wait(handle);
+    for (Job* job : m_JobTracker) {
+        if (job) {
+            while (!job->IsDone()) {
+                std::this_thread::yield();
+            }
         }
     }
     m_JobTracker.clear();

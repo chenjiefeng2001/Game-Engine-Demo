@@ -2,7 +2,10 @@
 
 /**
  * @file JoltJobSystemAdapter.h
- * @brief Jolt Physics ↔ Engine JobSystem 适配器（v5.5）
+ * @brief Jolt Physics ↔ Engine JobSystem 适配器（v6.0）
+ *
+ * 修复：JPH::JobSystem::Job 内部使用 Ref<Job>（引用计数）管理生命周期。
+ * JobSlot 必须继承 Job 才能被 JobHandle 正确 AddRef/Release。
  */
 
 #include "Engine/Core/JobSystem.h"
@@ -24,7 +27,7 @@ public:
         if (js) {
             return static_cast<int>(js->GetThreadCount());
         }
-        return 1; // Fallback: single thread if JobSystem not initialized
+        return 1;
     }
 
     JobHandle CreateJob(const char* name,
@@ -35,6 +38,26 @@ public:
     void FreeJob(Job* inJob) override;
     void QueueJob(Job* inJob) override;
     void QueueJobs(Job** inJobs, uint inNumJobs) override;
+
+    /// 继承 JPH::JobSystem::Job 的自定义 Job
+    /// JPH::Job 内部持有 mReferenceCount, mJobSystem, mJobFunction, mNumDependencies
+    /// 我们只需在 Execute() 中转发到自己的调度器
+    class EngineJob : public Job {
+    public:
+        EngineJob(const char* inName, JPH::ColorArg inColor,
+                  JoltJobSystemAdapter* inAdapter,
+                  const JobFunction& inFunction,
+                  uint32 inNumDependencies)
+            : Job(inName, inColor, inAdapter, inFunction, inNumDependencies)
+            , m_Adapter(inAdapter)
+        {
+        }
+
+        JoltJobSystemAdapter* GetAdapter() const { return m_Adapter; }
+
+    private:
+        JoltJobSystemAdapter* m_Adapter;
+    };
 
     class BarrierImpl : public JPH::JobSystem::Barrier {
     public:
@@ -48,7 +71,7 @@ public:
 
     private:
         JoltJobSystemAdapter* m_Adapter;
-        std::vector<Engine::JobHandle> m_JobTracker;
+        std::vector<JPH::JobSystem::Job*> m_JobTracker;
         friend class JoltJobSystemAdapter;
     };
 
@@ -57,14 +80,8 @@ public:
     void WaitForJobs(Barrier* inBarrier) override;
 
 private:
-    struct alignas(16) JobSlot {
-        JobFunction         function;
-        uint32              numDependencies;
-        std::atomic<uint32> unfinishedDependencies{0};
-        Engine::JobHandle   engineJobHandle;
-    };
-
-    JPH::FixedSizeFreeList<JobSlot> m_JobPool;
+    /// 固定大小的空闲列表，存储 EngineJob 对象
+    JPH::FixedSizeFreeList<EngineJob> m_JobPool;
 };
 
 } // namespace Engine
