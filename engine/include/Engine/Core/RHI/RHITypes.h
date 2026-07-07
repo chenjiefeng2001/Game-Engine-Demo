@@ -111,6 +111,7 @@ namespace RHI {
         CopySource         = 1 << 7,
         CopyDest           = 1 << 8,
         Present            = 1 << 9,
+        IndirectArgument   = 1 << 10,
         Common             = VertexBuffer | IndexBuffer | ConstantBuffer |
                              ShaderResource | CopySource | CopyDest,
     };
