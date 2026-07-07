@@ -192,6 +192,11 @@ void OpenGLContext::DrawIndexed(const std::shared_ptr<VertexArray>& va)
 	void OpenGLContext::Init()
 	{
 		m_GL.Enable(GL_DEPTH_TEST);
+		// Reverse-Z: 近平面 → depth=1.0, 远平面 → depth=0.0
+		// 使用 GL_GEQUAL 确保深度大于等于当前深度时才通过（传统是 GL_LESS）
+		m_GL.DepthFunc(GL_GEQUAL);
+		// 设置深度清除值为 0.0（远平面），匹配 Reverse-Z 的深度映射
+		m_GL.ClearDepth(0.0);
 		m_GL.Enable(GL_BLEND);
 		m_GL.BlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
 		m_GL.Enable(GL_MULTISAMPLE);
