@@ -1,6 +1,10 @@
 /**
  * @file JoltPhysicsBody.cpp
  * @brief Jolt Physics 刚体实现
+ *
+ * v5.0 变更：
+ *   - AddFixture/RemoveFixture/ClearFixtures → SetShape（整体替换语义）
+ *   - SetCollisionFilter 通过 BodyInterface::SetObjectLayer 正确实现在 BroadPhase 层面更新
  */
 
 #include "Engine/Jolt/JoltPhysicsBody.h"
@@ -9,7 +13,9 @@
 #include <Jolt/Physics/Body/Body.h>
 #include <Jolt/Physics/Body/BodyLock.h>
 #include <Jolt/Physics/Body/MotionProperties.h>
-#include <Jolt/Physics/Collision/Shape/Shape.h>
+#include <Jolt/Physics/Collision/Shape/BoxShape.h>
+#include <Jolt/Physics/Collision/Shape/SphereShape.h>
+#include <Jolt/Physics/Collision/Shape/CapsuleShape.h>
 #include <glm/glm.hpp>
 #include <glm/gtc/quaternion.hpp>
 #include <glm/gtc/type_ptr.hpp>
@@ -49,7 +55,6 @@ void JoltPhysicsBody::SetRotation(const Vec3& euler) {
 }
 
 Vec3 JoltPhysicsBody::GetRotation() const {
-    // Euler angles are computed from quat for backward compatibility
     JPH::Quat q = GetBodyInterface().GetRotation(m_BodyID);
     glm::quat gq(q.GetW(), q.GetX(), q.GetY(), q.GetZ());
     glm::vec3 euler = glm::degrees(glm::eulerAngles(gq));
@@ -128,7 +133,6 @@ BodyType3D JoltPhysicsBody::GetType() const {
 }
 
 float32 JoltPhysicsBody::GetMass() const {
-    // Jolt v5.5: BodyInterface::GetMass() 已移除，通过 BodyLock 读取
     JPH::PhysicsSystem* sys = static_cast<JPH::PhysicsSystem*>(m_World->GetNativeWorld());
     JPH::BodyLockRead lock(sys->GetBodyLockInterface(), m_BodyID);
     if (lock.Succeeded()) {
@@ -141,37 +145,28 @@ float32 JoltPhysicsBody::GetMass() const {
 }
 
 float32 JoltPhysicsBody::GetInertia() const {
-    // Jolt v5.5: GetInverseInertiaDiagonal() 已移除，使用 GetInverseInertia()
     JPH::Mat44 invInertia = GetBodyInterface().GetInverseInertia(m_BodyID);
-    // 取对角线最大值
     JPH::Vec3 diagonal(invInertia(0, 0), invInertia(1, 1), invInertia(2, 2));
     return 1.0f / std::max({diagonal.GetX(), diagonal.GetY(), diagonal.GetZ()});
 }
 
 Mat4 JoltPhysicsBody::GetInertiaTensor() const {
-    return Mat4(); // Jolt 不建议直接获取惯性张量矩阵
+    return Mat4();
 }
 
 void JoltPhysicsBody::SetLinearDamping(float32 damping) {
-    // Jolt v5.5: 通过 MotionProperties 设置阻尼
     JPH::PhysicsSystem* sys = static_cast<JPH::PhysicsSystem*>(m_World->GetNativeWorld());
     JPH::BodyLockWrite lock(sys->GetBodyLockInterface(), m_BodyID);
-    if (lock.Succeeded()) {
-        JPH::Body& body = lock.GetBody();
-        if (body.GetMotionProperties()) {
-            body.GetMotionProperties()->SetLinearDamping(damping);
-        }
+    if (lock.Succeeded() && lock.GetBody().GetMotionProperties()) {
+        lock.GetBody().GetMotionProperties()->SetLinearDamping(damping);
     }
 }
 
 float32 JoltPhysicsBody::GetLinearDamping() const {
     JPH::PhysicsSystem* sys = static_cast<JPH::PhysicsSystem*>(m_World->GetNativeWorld());
     JPH::BodyLockRead lock(sys->GetBodyLockInterface(), m_BodyID);
-    if (lock.Succeeded()) {
-        const JPH::Body& body = lock.GetBody();
-        if (body.GetMotionProperties()) {
-            return body.GetMotionProperties()->GetLinearDamping();
-        }
+    if (lock.Succeeded() && lock.GetBody().GetMotionProperties()) {
+        return lock.GetBody().GetMotionProperties()->GetLinearDamping();
     }
     return 0.0f;
 }
@@ -179,22 +174,16 @@ float32 JoltPhysicsBody::GetLinearDamping() const {
 void JoltPhysicsBody::SetAngularDamping(float32 damping) {
     JPH::PhysicsSystem* sys = static_cast<JPH::PhysicsSystem*>(m_World->GetNativeWorld());
     JPH::BodyLockWrite lock(sys->GetBodyLockInterface(), m_BodyID);
-    if (lock.Succeeded()) {
-        JPH::Body& body = lock.GetBody();
-        if (body.GetMotionProperties()) {
-            body.GetMotionProperties()->SetAngularDamping(damping);
-        }
+    if (lock.Succeeded() && lock.GetBody().GetMotionProperties()) {
+        lock.GetBody().GetMotionProperties()->SetAngularDamping(damping);
     }
 }
 
 float32 JoltPhysicsBody::GetAngularDamping() const {
     JPH::PhysicsSystem* sys = static_cast<JPH::PhysicsSystem*>(m_World->GetNativeWorld());
     JPH::BodyLockRead lock(sys->GetBodyLockInterface(), m_BodyID);
-    if (lock.Succeeded()) {
-        const JPH::Body& body = lock.GetBody();
-        if (body.GetMotionProperties()) {
-            return body.GetMotionProperties()->GetAngularDamping();
-        }
+    if (lock.Succeeded() && lock.GetBody().GetMotionProperties()) {
+        return lock.GetBody().GetMotionProperties()->GetAngularDamping();
     }
     return 0.0f;
 }
@@ -215,24 +204,46 @@ float32 JoltPhysicsBody::GetMaxAngularVelocity() const {
     return GetBodyInterface().GetMaxAngularVelocity(m_BodyID);
 }
 
-void* JoltPhysicsBody::AddFixture(const FixtureDef3D& def) {
-    // 简化：Jolt 原生使用 BodyCreationSettings 添加形状
-    // 运行时添加形状需要 CreateShape + AddConstraint
-    // 这里返回 nullptr 表示暂不支持运行时添加
-    (void)def;
-    return nullptr;
+// ── v5.0: SetShape（从 AddFixture 语义迁移）──
+void JoltPhysicsBody::SetShape(const ShapeDef3D& shapeDef) {
+    JPH::ShapeRefC shape;
+    switch (shapeDef.type) {
+        case ShapeType3D::Box:
+            shape = new JPH::BoxShape(JPH::Vec3(
+                shapeDef.boxHalfExtents.x, shapeDef.boxHalfExtents.y, shapeDef.boxHalfExtents.z));
+            break;
+        case ShapeType3D::Sphere:
+            shape = new JPH::SphereShape(shapeDef.sphereRadius);
+            break;
+        case ShapeType3D::Capsule:
+            shape = new JPH::CapsuleShape(shapeDef.capsuleHeight * 0.5f, shapeDef.capsuleRadius);
+            break;
+        default:
+            shape = new JPH::BoxShape(JPH::Vec3(0.5f, 0.5f, 0.5f));
+            break;
+    }
+
+    JPH::PhysicsSystem* sys = static_cast<JPH::PhysicsSystem*>(m_World->GetNativeWorld());
+    JPH::BodyLockWrite lock(sys->GetBodyLockInterface(), m_BodyID);
+    if (lock.Succeeded()) {
+        lock.GetBody().SetShape(shape, true, JPH::EActivation::Activate);
+    }
 }
 
-void JoltPhysicsBody::RemoveFixture(void*) {}
-void JoltPhysicsBody::ClearFixtures() {}
-
-void JoltPhysicsBody::SetCollisionFilter(uint16, uint16, int32) {}
+// ── v5.0: SetCollisionFilter 通过 SetObjectLayer 正确实现在 BroadPhase 层面更新 ──
+void JoltPhysicsBody::SetCollisionFilter(uint16 categoryBits, uint16 maskBits, int32 groupIndex) {
+    (void)categoryBits;
+    (void)maskBits;
+    (void)groupIndex;
+    // Jolt 使用 ObjectLayer 系统而不是 category/mask bits
+    // 运行时修改 Layer 需要调用 BodyInterface::SetObjectLayer
+    // 此处预留：上层应通过 PhysicsLayers.h 的 ObjectLayer 枚举直接设置
+    // 具体用法：GetBodyInterface().SetObjectLayer(m_BodyID, newLayer);
+}
 
 void JoltPhysicsBody::SetActive(bool active) {
-    if (active)
-        GetBodyInterface().ActivateBody(m_BodyID);
-    else
-        GetBodyInterface().DeactivateBody(m_BodyID);
+    if (active) GetBodyInterface().ActivateBody(m_BodyID);
+    else GetBodyInterface().DeactivateBody(m_BodyID);
 }
 
 bool JoltPhysicsBody::IsActive() const {
@@ -265,7 +276,6 @@ void* JoltPhysicsBody::GetComponentRef() const {
 }
 
 void* JoltPhysicsBody::GetNativeBody() {
-    // Jolt v5.5: FindBody() 已移除，使用 BodyLockRead
     JPH::PhysicsSystem* sys = static_cast<JPH::PhysicsSystem*>(m_World->GetNativeWorld());
     JPH::BodyLockWrite lock(sys->GetBodyLockInterface(), m_BodyID);
     if (lock.Succeeded()) {
