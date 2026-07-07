@@ -1,0 +1,78 @@
+#version 460 core
+
+// ── TAA Resolve Pass ──
+// 每帧混合当前帧颜色与历史帧颜色，利用运动矩量进行重投影。
+// 使用 Clamp 和 Clip 技术防止历史帧错误积累。
+
+layout(local_size_x = 8, local_size_y = 8, local_size_z = 1) in;
+
+layout(binding = 0, rgba16f) readonly uniform image2D u_CurrentColor;
+layout(binding = 1, rgba16f) readonly uniform image2D u_HistoryColor;
+layout(binding = 2, rgba16f) readonly uniform image2D u_Velocity;
+layout(binding = 3, rgba16f) writeonly uniform image2D u_Output;
+
+uniform vec2 u_TexelSize;
+uniform float u_BlendFactor = 0.05; // 历史帧混合权重
+
+// ── 3x3 YCoCg 颜色空间 Clamp ──
+// 对历史帧颜色在邻域内做 AABB Clamp，防止鬼影
+vec3 RGBToYCoCg(vec3 c) {
+    float Y  = 0.25*c.r + 0.5*c.g + 0.125*c.b;
+    float Co = 0.5*c.r - 0.5*c.b;
+    float Cg = -0.25*c.r + 0.5*c.g - 0.125*c.b;
+    return vec3(Y, Co, Cg);
+}
+
+vec3 YCoCgToRGB(vec3 c) {
+    float tmp = c.x - c.z;
+    float g   = c.x + c.z;
+    float b   = tmp - c.y;
+    float r   = tmp + c.y;
+    return vec3(r, g, b);
+}
+
+void main() {
+    ivec2 pix = ivec2(gl_GlobalInvocationID.xy);
+    ivec2 size = imageSize(u_CurrentColor);
+    if (pix.x >= size.x || pix.y >= size.y) return;
+
+    // 当前帧颜色
+    vec3 current = imageLoad(u_CurrentColor, pix).rgb;
+
+    // 运动矩量
+    vec2 velocity = imageLoad(u_Velocity, pix).rg;
+    // 重投影到历史帧坐标
+    vec2 historyUV = (vec2(pix) + 0.5) * u_TexelSize + velocity;
+
+    // 采样历史帧（双线性）
+    ivec2 hpos = ivec2(historyUV / u_TexelSize - 0.5);
+    vec3 history = imageLoad(u_HistoryColor, hpos).rgb;
+
+    // ── AABB Clamp 防鬼影 ──
+    vec3 boxMin = current, boxMax = current;
+    for (int dy = -1; dy <= 1; dy++) {
+        for (int dx = -1; dx <= 1; dx++) {
+            ivec2 np = pix + ivec2(dx, dy);
+            np = clamp(np, ivec2(0), size - 1);
+            vec3 c = imageLoad(u_CurrentColor, np).rgb;
+
+            // 在 YCoCg 空间中计算邻域范围
+            vec3 yc = RGBToYCoCg(c);
+            vec3 mn = RGBToYCoCg(boxMin);
+            vec3 mx = RGBToYCoCg(boxMax);
+            boxMin = YCoCgToRGB(min(mn, yc));
+            boxMax = YCoCgToRGB(max(mx, yc));
+        }
+    }
+
+    // 在 AABB 范围内 Clamp 历史帧
+    vec3 clamped = clamp(history, boxMin, boxMax);
+
+    // 混合
+    float blend = u_BlendFactor;
+    // 运动越大，当前帧权重越高
+    blend = mix(blend, 0.5, length(velocity) * 10.0);
+    vec3 result = mix(clamped, current, blend);
+
+    imageStore(u_Output, pix, vec4(result, 1.0));
+}
