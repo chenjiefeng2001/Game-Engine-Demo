@@ -161,15 +161,32 @@ if(EXISTS "${PROJECT_SOURCE_DIR}/third_party/spirv-cross/spirv_cross.cpp")
 endif()
 
 # ════════════════════════════════════════════════════════
-# Shaderc 库 — GLSL/HLSL → SPIR-V 编译（仅 sandbox 测试使用）
+# Shaderc 库 — GLSL/HLSL → SPIR-V 编译
 # ════════════════════════════════════════════════════════
-# 构建说明：
-#   cd third_party/shaderc
-#   python utils/git-sync-deps
-#   cmake -B build -DSHADERC_SKIP_TESTS=ON
-#   cmake --build build --config Release --target shaderc_combined
-# EngineCore 本身不链接 shaderc，仅在 SpirVTest sandbox 中使用。
-# 保持 shaderc 头文件路径可用，供需要时引用。
+# 检测预编译的 shaderc_combined.lib（Release / Debug 两个配置）
+set(SHADERC_RELEASE_LIB "${PROJECT_SOURCE_DIR}/third_party/shaderc/build/libshaderc/Release/shaderc_combined.lib")
+set(SHADERC_DEBUG_LIB "${PROJECT_SOURCE_DIR}/third_party/shaderc/build/libshaderc/Debug/shaderc_combined.lib")
+
+if(EXISTS "${SHADERC_RELEASE_LIB}" AND EXISTS "${SHADERC_DEBUG_LIB}")
+    message(STATUS "Shaderc: found — enabling GLSL→SPIR-V compilation")
+
+    # 创建接口库封装 shaderc 链接细节
+    add_library(shaderc_wrapper INTERFACE)
+    target_include_directories(shaderc_wrapper INTERFACE
+        "${PROJECT_SOURCE_DIR}/third_party/shaderc/libshaderc/include"
+    )
+    target_link_libraries(shaderc_wrapper INTERFACE
+        debug "${SHADERC_DEBUG_LIB}"
+        optimized "${SHADERC_RELEASE_LIB}"
+    )
+    target_compile_definitions(shaderc_wrapper INTERFACE ENGINE_HAS_SHADERC)
+
+    # EngineCore 链接 shaderc，ShaderCompiler.cpp 真正可用
+    target_link_libraries(EngineCore PUBLIC shaderc_wrapper)
+    message(STATUS "Shaderc wrapper: linked to EngineCore")
+else()
+    message(WARNING "Shaderc lib not found — GLSL→SPIR-V compilation disabled")
+endif()
 
 # ── Lua 脚本支持（可选） ──
 # 如需启用 Lua 脚本功能，请将 Lua 源码放入 third_party/lua/

@@ -51,16 +51,9 @@ add_sandbox_executable(RHI3DTest src/Rendering3DTest/main.cpp src/Rendering3DTes
 add_sandbox_executable(RenderTest src/RenderTest/main.cpp src/RenderTest/RenderTestApp.cpp)
 add_sandbox_executable(RHIDemo src/RHIDemo/RHIDemoApp.cpp)
 add_sandbox_executable(SpirVTest src/SpirVTest/SpirVTestApp.cpp)
-# Shaderc 编译链可选：如需 GLSL→SPIR-V 编译测试，需手动构建 shaderc 并链接。
-# 当前仅运行 SPIRV-Cross 反射测试（SPIRV-Cross 已集成到 EngineCore）。
-# 
-# 构建 shaderc 并启用编译测试：
-#   1. cd third_party/shaderc && cmake -B build -DSHADERC_SKIP_TESTS=ON
-#   2. cmake --build build --config Release --target shaderc_combined
-#   3. 取消下方注释
-# target_include_directories(SpirVTest PRIVATE "${PROJECT_SOURCE_DIR}/third_party/shaderc/libshaderc/include")
-# target_link_libraries(SpirVTest PRIVATE "${PROJECT_SOURCE_DIR}/third_party/shaderc/build/libshaderc/Release/shaderc_combined.lib")
-# target_compile_definitions(SpirVTest PRIVATE ENGINE_HAS_SHADERC)
+# Shaderc 编译链 — 由 EngineCore 通过 shaderc_wrapper 接口库自动链接。
+# ENGINE_HAS_SHADERC 定义通过 EngineCore 的 PUBLIC 接口传播至此。
+add_sandbox_executable(AssetBakery src/AssetBakery/main.cpp)
 
 # ==============================================================================
 # 2. 资源同步 Target — 将 assets 和 OpenAL32.dll 拷贝到每个输出子目录
@@ -69,7 +62,7 @@ set(SANDBOX_TARGETS
     Sandbox InputTest SpriteBatchTest GameObjectTest
     TextureManagerTest PhysicsTest AudioTest ImGuiDemo
     CollisionAudioTest ImGuiTest AudioPhysicsSandbox SerializationTest MarioDemo EditorDemo
-    SystemTest _3DTest ComplexSceneTest AnimationTest AnimationDemo AudioSystemTest ECSTest BackendTest RHI3DTest RenderTest RHIDemo SpirVTest
+    SystemTest _3DTest ComplexSceneTest AnimationTest AnimationDemo AudioSystemTest ECSTest BackendTest RHI3DTest RenderTest RHIDemo SpirVTest AssetBakery
 )
 
 add_custom_target(SyncSandboxResources ALL

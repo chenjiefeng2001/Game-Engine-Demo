@@ -27,8 +27,13 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 # Visual Studio / MSVC 兼容性设置
 # ============================================================================
 if(MSVC)
-    # 统一 MSVC 运行时库为 DLL 模式（/MDd /MD），避免第三方库（如 Jolt）默认为静态的冲突
-    set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreadedDLL")
+    # 统一 MSVC 运行时库为 DLL 模式，避免第三方库（如 Jolt）默认为静态的冲突
+    # Debug-ASan 必须用 /MDd 以便与 shaderc Debug CRT 匹配
+    if(ENABLE_ASAN)
+        set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreadedDebugDLL")
+    else()
+        set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreadedDLL")
+    endif()
     
     # 使用 UTF-8 源码编码
     add_compile_options(/utf-8)
