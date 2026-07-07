@@ -205,6 +205,7 @@ float32 JoltPhysicsBody::GetMaxAngularVelocity() const {
 }
 
 // ── v5.0: SetShape（从 AddFixture 语义迁移）──
+// 安全修复: 动态刚体必须更新惯性张量, 否则旋转行为异常甚至引发 NaN
 void JoltPhysicsBody::SetShape(const ShapeDef3D& shapeDef) {
     JPH::ShapeRefC shape;
     switch (shapeDef.type) {
@@ -224,9 +225,21 @@ void JoltPhysicsBody::SetShape(const ShapeDef3D& shapeDef) {
     }
 
     JPH::PhysicsSystem* sys = static_cast<JPH::PhysicsSystem*>(m_World->GetNativeWorld());
-    JPH::BodyLockWrite lock(sys->GetBodyLockInterface(), m_BodyID);
-    if (lock.Succeeded()) {
-        lock.GetBody().SetShape(shape, true, JPH::EActivation::Activate);
+    JPH::BodyInterface& bodyInterface = sys->GetBodyInterface();
+
+    // 1. 替换形状（激活刚体）
+    bodyInterface.SetShape(m_BodyID, shape, true, JPH::EActivation::Activate);
+
+    // 2. 如果是动态刚体，必须根据新形状重算惯性张量
+    //    否则从 1x1 盒子变成 10x10 盒子后，旋转行为异常
+    if (bodyInterface.GetMotionType(m_BodyID) == JPH::EMotionType::Dynamic) {
+        JPH::BodyLockWrite lock(sys->GetBodyLockInterface(), m_BodyID);
+        if (lock.Succeeded() && lock.GetBody().GetMotionProperties()) {
+            lock.GetBody().GetMotionProperties()->SetMassProperties(
+                JPH::EMassPropertiesAllowedCalculation::CalculateMassAndInertia,
+                shape->GetMassProperties(1.0f) // density = 1.0, 上层通过 SetMassProperties 调整
+            );
+        }
     }
 }
 

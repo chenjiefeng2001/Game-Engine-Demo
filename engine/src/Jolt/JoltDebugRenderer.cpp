@@ -24,14 +24,11 @@ JoltDebugRenderer::JoltDebugRenderer(IPhysicsDebugDraw3D* draw)
 JoltDebugRenderer::~JoltDebugRenderer() = default;
 
 uint32 JoltDebugRenderer::GetThreadIndex() const {
-    // 使用 thread_id 哈希后取模，确保每个线程有稳定的槽位
-    static thread_local uint32 s_CachedIndex = 0xFFFFFFFF;
-    if (s_CachedIndex == 0xFFFFFFFF) {
-        auto id = std::this_thread::get_id();
-        std::hash<std::thread::id> hasher;
-        s_CachedIndex = static_cast<uint32>(hasher(id) % MAX_THREADS);
-    }
-    return s_CachedIndex;
+    // v5.0 安全修复: 使用原子计数器分配永不重复的索引, 避免 hash 碰撞
+    // 每个线程第一次调用时, fetch_add 原子分配一个唯一 ID
+    static std::atomic<uint32_t> s_NextIndex{0};
+    thread_local uint32_t tls_Index = s_NextIndex.fetch_add(1, std::memory_order_relaxed) % MAX_THREADS;
+    return tls_Index;
 }
 
 Vec4 JoltDebugRenderer::ToVec4(JPH::ColorArg color) {

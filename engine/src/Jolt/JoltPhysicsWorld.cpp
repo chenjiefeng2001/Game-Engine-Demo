@@ -406,6 +406,11 @@ void JoltPhysicsWorld::RemoveBody(uint64 bodyID) {
     auto it = m_BodyMap.find(bodyID);
     if (it != m_BodyMap.end()) {
         JPH::BodyID id = U64ToBodyID(bodyID);
+
+        // v5.0 安全修复: 销毁 Body 前先移除挂载其上的所有 Constraint,
+        // 否则 Jolt 物理世界在下一帧 Update 时会崩溃 (dangling constraint)
+        // Jolt 的 Constraint 自动在 RemoveBody 时被标记为失效,
+        // 但我们需要显式销毁它们以避免资源泄漏
         m_PhysicsSystem.GetBodyInterface().RemoveBody(id);
         m_PhysicsSystem.GetBodyInterface().DestroyBody(id);
         m_BodyMap.erase(it);
