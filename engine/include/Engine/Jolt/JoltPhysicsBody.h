@@ -61,12 +61,10 @@ public:
     void SetMaxAngularVelocity(float32 maxVel) override;
     float32 GetMaxAngularVelocity() const override;
 
-    // ── Fixture ──
-    void* AddFixture(const FixtureDef3D& def) override;
-    void RemoveFixture(void* fixtureId) override;
-    void ClearFixtures() override;
+    // ── v5.0: 形状替换 ──
+    void SetShape(const ShapeDef3D& shapeDef) override;
 
-    // ── 碰撞过滤 ──
+    // ── v5.0: 碰撞过滤（通过 Jolt BodyInterface::SetObjectLayer）──
     void SetCollisionFilter(uint16 categoryBits, uint16 maskBits, int32 groupIndex) override;
 
     // ── 激活 ──

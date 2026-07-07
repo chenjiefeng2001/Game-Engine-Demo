@@ -58,12 +58,18 @@ namespace Engine {
         virtual void  SetMaxAngularVelocity(float32 maxVel) = 0;
         virtual float32 GetMaxAngularVelocity() const = 0;
 
-        // ── Fixture 管理 ──
-        virtual void*  AddFixture(const FixtureDef3D& def) = 0;
-        virtual void   RemoveFixture(void* fixtureId) = 0;
-        virtual void   ClearFixtures() = 0;
+        // ── v5.0: 形状替换（废弃 AddFixture 语义）──
+        /**
+         * @brief 替换刚体的形状（运行时修改碰撞体拓扑）
+         * @param shapeDef 新形状定义
+         *
+         * Jolt 中改变形状需要构造新 CompoundShape 并通过 SetShape 整体替换。
+         * 不再支持 Box2D 风格的 "一个 Body 上 Add/Remove 多个 Fixture"，
+         * 改为 SetShape 整体替换，自动重算质心和惯性张量。
+         */
+        virtual void SetShape(const ShapeDef3D& shapeDef) = 0;
 
-        // ── 碰撞过滤 ──
+        // ── 碰撞过滤（v5.0: 调用 Jolt BodyInterface::SetObjectLayer）──
         virtual void   SetCollisionFilter(uint16 categoryBits,
                                           uint16 maskBits,
                                           int32  groupIndex) = 0;
