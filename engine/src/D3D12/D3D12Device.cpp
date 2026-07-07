@@ -48,6 +48,7 @@ struct D3D12Device::Impl {
     ComPtr<ID3D12Device5> device;
     ComPtr<IDXGIFactory4> factory;
     ComPtr<ID3D12CommandQueue> graphicsQueue;
+    ComPtr<ID3D12CommandSignature> indirectDrawSignature; // 间接绘制命令签名
     ComPtr<ID3D12Debug> debugController;
     ComPtr<IDXGISwapChain3> swapChain;
     uint32_t swapChainWidth{0}, swapChainHeight{0};
@@ -77,11 +78,16 @@ struct D3D12Device::Impl {
     uint32_t                     samplerDescriptorSize{0};
     bool                         supportsSM66{false}; // SM 6.6 能力标志
 
+    // ── Compute 专用 ──
+    ComPtr<ID3D12RootSignature> computeRootSignature;
+    std::unordered_map<uint64_t, ComPtr<ID3D12PipelineState>> computePSOCache;
+
     D3D12Queue* graphicsQueueWrapper{nullptr};
     bool initialized{false};
     std::string deviceName;
     HWND hwnd{nullptr};
 
+    bool CreateComputeRootSignature();
     void LoadPipelineCache();
     void SavePipelineCache();
     bool CreateGlobalRootSignature();
@@ -130,6 +136,7 @@ struct D3D12CommandList::Impl {
     uint32_t*        heapOffset{nullptr};
     uint32_t         descriptorSize{0};
     bool             isRecording{false};
+    ComPtr<ID3D12CommandSignature> indirectDrawSignature; // 懒初始化
 };
 D3D12CommandList::D3D12CommandList() : m_Impl(std::make_unique<Impl>()) {}
 D3D12CommandList::~D3D12CommandList() = default;
@@ -183,7 +190,25 @@ void D3D12CommandList::DrawIndexed(uint32 idxCount, uint32 startIdx, uint32 base
 void D3D12CommandList::Draw(uint32 vtxCount, uint32 startVtx) { m_Impl->cmdList->DrawInstanced(vtxCount, 1, startVtx, 0); }
 void D3D12CommandList::DrawIndexedIndirect(IRHIBuffer* buf, uint32 off) {
     auto* d = static_cast<D3D12Buffer*>(buf);
-    if (d) m_Impl->cmdList->ExecuteIndirect(nullptr, 1, d->GetD3D12Resource(), off, nullptr, 0);
+    if (!d || !m_Impl->cmdList) return;
+    // 在 CommandList 级别创建命令签名（懒初始化，避免跨对象访问 private 成员）
+    if (!m_Impl->indirectDrawSignature) {
+        D3D12_INDIRECT_ARGUMENT_DESC argDesc = {};
+        argDesc.Type = D3D12_INDIRECT_ARGUMENT_TYPE_DRAW_INDEXED;
+        D3D12_COMMAND_SIGNATURE_DESC sigDesc = {};
+        sigDesc.ByteStride = sizeof(D3D12_DRAW_INDEXED_ARGUMENTS);
+        sigDesc.NumArgumentDescs = 1;
+        sigDesc.pArgumentDescs = &argDesc;
+        ID3D12Device* rawDevice = nullptr;
+        m_Impl->cmdList->GetDevice(IID_PPV_ARGS(&rawDevice));
+        if (rawDevice) {
+            rawDevice->CreateCommandSignature(&sigDesc, nullptr, IID_PPV_ARGS(&m_Impl->indirectDrawSignature));
+            rawDevice->Release();
+        }
+    }
+    if (m_Impl->indirectDrawSignature) {
+        m_Impl->cmdList->ExecuteIndirect(m_Impl->indirectDrawSignature.Get(), 1, d->GetD3D12Resource(), off, nullptr, 0);
+    }
 }
 void D3D12CommandList::SetViewport(const Viewport& vp) { D3D12_VIEWPORT v = { vp.x, vp.y, vp.width, vp.height, vp.minDepth, vp.maxDepth }; m_Impl->cmdList->RSSetViewports(1, &v); }
 void D3D12CommandList::SetScissorRect(const Rect& rect) { D3D12_RECT r = { (LONG)rect.x, (LONG)rect.y, (LONG)(rect.x + rect.width), (LONG)(rect.y + rect.height) }; m_Impl->cmdList->RSSetScissorRects(1, &r); }
@@ -510,10 +535,78 @@ IRHIPipelineState* D3D12Device::CreateGraphicsPSO(const GraphicsPSODesc& desc) {
     return pso;
 }
 
+bool D3D12Device::Impl::CreateComputeRootSignature() {
+    // 计算专用根签名: RootParam[0] = CBV(b0), RootParam[1] = UAV/DescriptorTable, RootParam[2] = PushConstants
+    D3D12_ROOT_PARAMETER params[3] = {};
+    D3D12_DESCRIPTOR_RANGE uavRange = {};
+    uavRange.RangeType = D3D12_DESCRIPTOR_RANGE_TYPE_UAV;
+    uavRange.NumDescriptors = 8;
+    uavRange.BaseShaderRegister = 0;
+    uavRange.RegisterSpace = 0;
+
+    params[0].ParameterType = D3D12_ROOT_PARAMETER_TYPE_CBV;
+    params[0].Descriptor.ShaderRegister = 0;
+    params[0].Descriptor.RegisterSpace = 0;
+    params[0].ShaderVisibility = D3D12_SHADER_VISIBILITY_ALL;
+
+    params[1].ParameterType = D3D12_ROOT_PARAMETER_TYPE_DESCRIPTOR_TABLE;
+    params[1].DescriptorTable.NumDescriptorRanges = 1;
+    params[1].DescriptorTable.pDescriptorRanges = &uavRange;
+    params[1].ShaderVisibility = D3D12_SHADER_VISIBILITY_ALL;
+
+    params[2].ParameterType = D3D12_ROOT_PARAMETER_TYPE_32BIT_CONSTANTS;
+    params[2].Constants.ShaderRegister = 1;
+    params[2].Constants.RegisterSpace = 0;
+    params[2].Constants.Num32BitValues = 16;
+    params[2].ShaderVisibility = D3D12_SHADER_VISIBILITY_ALL;
+
+    D3D12_ROOT_SIGNATURE_DESC desc = {};
+    desc.NumParameters = 3;
+    desc.pParameters = params;
+    desc.Flags = D3D12_ROOT_SIGNATURE_FLAG_NONE;
+
+    ComPtr<ID3DBlob> serialized, error;
+    if (FAILED(D3D12SerializeRootSignature(&desc, D3D_ROOT_SIGNATURE_VERSION_1, &serialized, &error)))
+        return false;
+    if (FAILED(device->CreateRootSignature(0, serialized->GetBufferPointer(), serialized->GetBufferSize(), IID_PPV_ARGS(&computeRootSignature))))
+        return false;
+    return true;
+}
+
 IRHIPipelineState* D3D12Device::CreateComputePSO(const ComputePSODesc& desc) {
-    (void)desc;
+    uint64_t hash = desc.GetHash();
+    
+    // 检查缓存
+    auto cacheIt = m_Impl->computePSOCache.find(hash);
+    if (cacheIt != m_Impl->computePSOCache.end()) {
+        auto* pso = new D3D12PipelineState();
+        pso->m_Impl->isCompute = true;
+        pso->m_Impl->pso = cacheIt->second;
+        return pso;
+    }
+
+    // 确保计算根签名已创建
+    if (!m_Impl->computeRootSignature) {
+        if (!m_Impl->CreateComputeRootSignature()) {
+            return nullptr;
+        }
+    }
+
+    // 创建计算 PSO（需要从 PSOCache 获取着色器字节码）
+    auto* cachedPSO = PSOCache::Get().Find<ComputePSODesc>(hash);
+    if (cachedPSO) {
+        auto* pso = new D3D12PipelineState();
+        pso->m_Impl->isCompute = true;
+        pso->m_Impl->pso = static_cast<D3D12PipelineState*>(cachedPSO)->m_Impl->pso;
+        m_Impl->computePSOCache[hash] = pso->m_Impl->pso;
+        return pso;
+    }
+
     auto* pso = new D3D12PipelineState();
     pso->m_Impl->isCompute = true;
+    // PSO 将在运行时通过 SetPipelineState 设置，此处仅创建包装器
+    // 实际 D3D12_COMPUTE_PIPELINE_STATE_DESC 创建由外部 ShaderCompiler 提供
+    PSOCache::Get().Store<ComputePSODesc>(hash, pso);
     return pso;
 }
 
@@ -576,7 +669,9 @@ std::unique_ptr<IRHICommandList> D3D12Device::CreateCommandList(CommandListType)
     cmd->m_Impl->device = this;
     return cmd;
 }
-IRHICommandQueue* D3D12Device::GetQueue(QueueType) { return static_cast<IRHICommandQueue*>(m_Impl->graphicsQueueWrapper); }
+IRHICommandQueue* D3D12Device::GetQueue(QueueType type) { 
+    return static_cast<IRHICommandQueue*>(m_Impl->graphicsQueueWrapper); 
+}
 
 std::unique_ptr<IRHISwapChain> D3D12Device::CreateSwapChain(const SwapChainDesc& desc) {
     if (!m_Impl->device || !m_Impl->factory) return nullptr;
