@@ -26,10 +26,13 @@
 #include "Engine/Core/ECS/ECS.fwd.h"
 #include "Engine/Core/Physics/FixedTimestepAccumulator.h"
 #include "Engine/Core/Physics/IJoint3D.h"
+#include "Engine/Core/Physics/ICharacterController3D.h"
 #include "Engine/Core/RHI/MathTypes.h"
+#include "Engine/Core/GameObject/GameObject.h"
 #include <cstdint>
 #include <memory>
 #include <unordered_map>
+#include <functional>
 
 namespace Engine {
 
