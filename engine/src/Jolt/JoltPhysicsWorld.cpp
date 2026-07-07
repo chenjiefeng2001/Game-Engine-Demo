@@ -20,6 +20,7 @@
 
 #include "Engine/Jolt/JoltPhysicsWorld.h"
 #include "Engine/Jolt/JoltPhysicsBody.h"
+#include "Engine/Jolt/JoltJoint3D.h"
 #include "Engine/Jolt/JoltJobSystemAdapter.h"
 #include "Engine/Core/Log.h"
 #include "Engine/Core/Physics/PhysicsDefs3D.h"
@@ -32,6 +33,11 @@
 #include <Jolt/Physics/Collision/Shape/BoxShape.h>
 #include <Jolt/Physics/Collision/Shape/SphereShape.h>
 #include <Jolt/Physics/Collision/Shape/CapsuleShape.h>
+#include <Jolt/Physics/Constraints/HingeConstraint.h>
+#include <Jolt/Physics/Constraints/SliderConstraint.h>
+#include <Jolt/Physics/Constraints/PointConstraint.h>
+#include <Jolt/Physics/Constraints/DistanceConstraint.h>
+#include <Jolt/Physics/Constraints/FixedConstraint.h>
 #include <Jolt/Physics/Collision/RayCast.h>
 #include <Jolt/Physics/Collision/CastResult.h>
 #include <Jolt/Physics/Collision/CollisionCollector.h>
@@ -603,10 +609,113 @@ JoltPhysicsWorld::Stats JoltPhysicsWorld::GetStats() const {
     return stats;
 }
 
-std::shared_ptr<IJoint3D> JoltPhysicsWorld::CreateJoint(const JointDef3D&) {
-    return nullptr;
+std::shared_ptr<IJoint3D> JoltPhysicsWorld::CreateJoint(const JointDef3D& def) {
+    if (!def.bodyA || !def.bodyB) return nullptr;
+
+    // 获取 Body 引用（通过 BodyLock）
+    auto& bodyInterface = m_PhysicsSystem.GetBodyInterface();
+    JPH::BodyID idA = static_cast<JoltPhysicsBody*>(def.bodyA)->GetBodyID();
+    JPH::BodyID idB = static_cast<JoltPhysicsBody*>(def.bodyB)->GetBodyID();
+
+    // 通过 BodyLock 获取 Body 指针（Create 需要 Body&）
+    JPH::BodyLockWrite lockA(m_PhysicsSystem.GetBodyLockInterface(), idA);
+    JPH::BodyLockWrite lockB(m_PhysicsSystem.GetBodyLockInterface(), idB);
+    if (!lockA.Succeeded() || !lockB.Succeeded()) return nullptr;
+    JPH::Body& bodyA = lockA.GetBody();
+    JPH::Body& bodyB = lockB.GetBody();
+
+    JPH::TwoBodyConstraint* constraint = nullptr;
+
+    switch (def.type) {
+        case JointType3D::Hinge: {
+            JPH::HingeConstraintSettings settings;
+            settings.mPoint1 = JPH::RVec3(def.anchorPointA.x, def.anchorPointA.y, def.anchorPointA.z);
+            settings.mPoint2 = JPH::RVec3(def.anchorPointB.x, def.anchorPointB.y, def.anchorPointB.z);
+            settings.mSliderAxis1 = JPH::Vec3(def.hingeAxis.x, def.hingeAxis.y, def.hingeAxis.z);
+            settings.mSliderAxis2 = JPH::Vec3(def.hingeAxis.x, def.hingeAxis.y, def.hingeAxis.z);
+            if (def.limits.enableMin || def.limits.enableMax) {
+                settings.mLimitsMin = def.limits.min;
+                settings.mLimitsMax = def.limits.max;
+            }
+            settings.mDrawConstraintSize = 0.1f;
+            constraint = static_cast<JPH::TwoBodyConstraint*>(settings.Create(bodyA, bodyB));
+            break;
+        }
+        case JointType3D::Slider: {
+            JPH::SliderConstraintSettings settings;
+            settings.mPoint1 = JPH::RVec3(def.anchorPointA.x, def.anchorPointA.y, def.anchorPointA.z);
+            settings.mPoint2 = JPH::RVec3(def.anchorPointB.x, def.anchorPointB.y, def.anchorPointB.z);
+            settings.mSliderAxis1 = JPH::Vec3(def.sliderAxis.x, def.sliderAxis.y, def.sliderAxis.z);
+            settings.mSliderAxis2 = JPH::Vec3(def.sliderAxis.x, def.sliderAxis.y, def.sliderAxis.z);
+            if (def.limits.enableMin || def.limits.enableMax) {
+                settings.mLimitsMin = -def.limits.max;
+                settings.mLimitsMax = def.limits.max;
+            }
+            constraint = static_cast<JPH::TwoBodyConstraint*>(settings.Create(bodyA, bodyB));
+            break;
+        }
+        case JointType3D::Ball: {
+            JPH::PointConstraintSettings settings;
+            settings.mPoint1 = JPH::RVec3(def.anchorPointA.x, def.anchorPointA.y, def.anchorPointA.z);
+            settings.mPoint2 = JPH::RVec3(def.anchorPointB.x, def.anchorPointB.y, def.anchorPointB.z);
+            constraint = static_cast<JPH::TwoBodyConstraint*>(settings.Create(bodyA, bodyB));
+            break;
+        }
+        case JointType3D::Distance: {
+            JPH::DistanceConstraintSettings settings;
+            settings.mPoint1 = JPH::RVec3(def.anchorPointA.x, def.anchorPointA.y, def.anchorPointA.z);
+            settings.mPoint2 = JPH::RVec3(def.anchorPointB.x, def.anchorPointB.y, def.anchorPointB.z);
+            settings.mMinDistance = def.distance * 0.9f;
+            settings.mMaxDistance = def.distance * 1.1f;
+            constraint = static_cast<JPH::TwoBodyConstraint*>(settings.Create(bodyA, bodyB));
+            break;
+        }
+        case JointType3D::Spring: {
+            JPH::DistanceConstraintSettings settings;
+            settings.mPoint1 = JPH::RVec3(def.anchorPointA.x, def.anchorPointA.y, def.anchorPointA.z);
+            settings.mPoint2 = JPH::RVec3(def.anchorPointB.x, def.anchorPointB.y, def.anchorPointB.z);
+            settings.mMinDistance = 0.0f;
+            settings.mMaxDistance = def.distance * 2.0f;
+            settings.mFrequency = def.spring.stiffness;
+            settings.mDamping = def.spring.damping;
+            constraint = static_cast<JPH::TwoBodyConstraint*>(settings.Create(bodyA, bodyB));
+            break;
+        }
+        default: {
+            JPH::FixedConstraintSettings settings;
+            settings.mPoint1 = JPH::RVec3(def.anchorPointA.x, def.anchorPointA.y, def.anchorPointA.z);
+            settings.mPoint2 = JPH::RVec3(def.anchorPointB.x, def.anchorPointB.y, def.anchorPointB.z);
+            constraint = static_cast<JPH::TwoBodyConstraint*>(settings.Create(bodyA, bodyB));
+            break;
+        }
+    }
+
+    if (!constraint) return nullptr;
+
+    m_PhysicsSystem.AddConstraint(constraint);
+
+    // 配置马达
+    if (def.enableMotor && (def.type == JointType3D::Hinge || def.type == JointType3D::Slider)) {
+        constraint->SetMotorState(JPH::EMotorState::Velocity);
+        if (def.type == JointType3D::Hinge) {
+            static_cast<JPH::HingeConstraint*>(constraint)->SetTargetAngularVelocity(def.motorSpeed);
+            static_cast<JPH::HingeConstraint*>(constraint)->SetMaxMotorTorque(def.maxMotorTorque);
+        } else {
+            static_cast<JPH::SliderConstraint*>(constraint)->SetTargetVelocity(def.motorSpeed);
+            static_cast<JPH::SliderConstraint*>(constraint)->SetMaxMotorForce(def.maxMotorTorque);
+        }
+    }
+
+    return std::make_shared<JoltJoint3D>(constraint, def);
 }
 
-void JoltPhysicsWorld::DestroyJoint(IJoint3D*) {}
+void JoltPhysicsWorld::DestroyJoint(IJoint3D* joint) {
+    if (!joint) return;
+    auto* joltJoint = static_cast<JoltJoint3D*>(joint);
+    JPH::TwoBodyConstraint* constraint = joltJoint->GetConstraint();
+    if (constraint) {
+        m_PhysicsSystem.RemoveConstraint(constraint);
+    }
+}
 
 } // namespace Engine

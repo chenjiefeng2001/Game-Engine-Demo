@@ -183,4 +183,9 @@ namespace Engine {
         int32   positionSteps         = 2;  // 位置迭代（穿透修复，推荐 2-8）
     };
 
+    // ════════════════════════════════════════════════
+    // v6.0: Physics Material handle (资产管线预留)
+    // ════════════════════════════════════════════════
+    using PhysicsMaterialHandle = uint32;
+
 } // namespace Engine

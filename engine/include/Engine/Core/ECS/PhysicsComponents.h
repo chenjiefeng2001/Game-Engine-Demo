@@ -4,9 +4,11 @@
  * @file PhysicsComponents.h
  * @brief ECS 3D 物理组件 — 数据与运行期状态分离
  *
- * 设计原则（v3.1）：
+ * 设计原则（v6.0）：
  *   - RigidBody3DComponent: 开发人员配置数据（编辑器可修改）
  *   - PhysicsRuntimeComponent: 物理系统内部运行期状态（不暴露给编辑器）
+ *   - Joint3DComponent: 连接两个实体的关节定义（v6.0 新增）
+ *   - CollisionListenerComponent: 碰撞事件回调（v6.0 新增）
  *   - 配置数据修改触发 Resync，运行期状态由物理系统自动管理
  *
  *   TransformComponent 永远只存储物理积分后的"真实"坐标。
@@ -16,7 +18,9 @@
 #include "Engine/Types.h"
 #include "Engine/Core/RHI/MathTypes.h"
 #include "Engine/Core/Physics/PhysicsLayers.h"
+#include "Engine/Core/Physics/IJoint3D.h"
 #include <cstdint>
+#include <functional>
 
 namespace Engine {
 
@@ -99,6 +103,46 @@ struct CapsuleCollider3DComponent {
     bool isDirty      = false;   ///< v4.0
 
     void MarkDirty() { isDirty = true; }
+};
+
+// ════════════════════════════════════════════════════════
+// v6.0: 关节组件（连接两个实体的约束定义）
+// ════════════════════════════════════════════════════════
+struct Joint3DComponent {
+    EntityHandle entityA = {};          ///< 第一个实体
+    EntityHandle entityB = {};          ///< 第二个实体
+    JointType3D  jointType = JointType3D::Fixed;
+
+    Vec3 anchorPointA = {0, 0, 0};     ///< 实体A上的连接点（世界空间）
+    Vec3 anchorPointB = {0, 0, 0};     ///< 实体B上的连接点（世界空间）
+
+    // Hinge: 旋转轴
+    Vec3 hingeAxis = {0, 0, 1};
+
+    // Slider: 滑动轴
+    Vec3 sliderAxis = {1, 0, 0};
+
+    // Distance: 目标距离
+    float distance = 1.0f;
+
+    // 限制
+    JointLimits3D limits;
+
+    // 马达
+    bool   enableMotor    = false;
+    float  motorSpeed     = 0.0f;
+    float  maxMotorTorque = 100.0f;
+};
+
+// ════════════════════════════════════════════════════════
+// v6.0: 碰撞事件监听组件（接收 OnCollisionEnter/Exit 回调）
+// ════════════════════════════════════════════════════════
+struct CollisionListenerComponent {
+    /// 碰撞开始时触发（otherBodyID: 碰撞对方的 BodyID）
+    std::function<void(uint64 otherBodyID, const Vec3& point)> onCollisionEnter;
+
+    /// 碰撞结束时触发
+    std::function<void(uint64 otherBodyID)> onCollisionExit;
 };
 
 } // namespace Engine

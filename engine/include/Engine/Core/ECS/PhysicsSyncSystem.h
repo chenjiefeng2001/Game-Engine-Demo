@@ -25,8 +25,11 @@
 
 #include "Engine/Core/ECS/ECS.fwd.h"
 #include "Engine/Core/Physics/FixedTimestepAccumulator.h"
+#include "Engine/Core/Physics/IJoint3D.h"
 #include "Engine/Core/RHI/MathTypes.h"
 #include <cstdint>
+#include <memory>
+#include <unordered_map>
 
 namespace Engine {
 
@@ -47,6 +50,8 @@ public:
     /**
      * @brief 执行完整物理同步管线
      * @param realDt 实际帧时间（秒）
+     *
+     * v6.0: 新增 ProcessCollisionEvents 路由到 CollisionListenerComponent
      */
     void Update(float32 realDt);
 
@@ -64,12 +69,12 @@ private:
     /**
      * @brief 步骤 1: ECS → Physics
      * 同步编辑器和脚本对 Transform/RigidBody 的修改到物理引擎
+     * v6.0: 新增 Joint3DComponent 扫描创建/销毁约束
      */
     void SyncECSToPhysics();
 
     /**
      * @brief 步骤 2a: Pre-Step 状态备份
-     * 在物理步进前将当前位置备份到 PhysicsRuntimeComponent::prev*
      */
     void BackupState();
 
@@ -80,13 +85,21 @@ private:
 
     /**
      * @brief 步骤 3: Physics → ECS
-     * 将物理引擎积分后的位置写回 TransformComponent
      */
     void SyncPhysicsToECS();
+
+    /**
+     * @brief v6.0: 消费碰撞事件队列并路由到 CollisionListenerComponent
+     * 在 StepPhysics 之后 SyncPhysicsToECS 之前调用
+     */
+    void ProcessCollisionEvents();
 
     EntityManager*    m_EntityManager = nullptr;
     IPhysicsWorld3D*  m_PhysicsWorld  = nullptr;
     FixedTimestepAccumulator m_Accumulator{1.0f / 60.0f};
+
+    // v6.0: 已创建的关节映射 (EntityHandle.Index() → IJoint3D)
+    std::unordered_map<uint64, std::shared_ptr<IJoint3D>> m_Joints;
 };
 
 } // namespace Engine
