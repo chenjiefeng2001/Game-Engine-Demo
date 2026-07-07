@@ -37,7 +37,8 @@
 **Game Engine Demo** 是一个实验性的模块化游戏引擎演示项目，使用 **C++20** 标准开发。项目采用分层解耦架构，通过纯虚接口层（RHI 风格）将核心逻辑与具体实现分离，已集成：
 
 - **OpenGL 4.6** 渲染（2D 精灵批处理 + 3D 光照管线 + 延迟渲染 / SSAO）
-- **Vulkan 1.3** 渲染后端（95% 完成 — Dynamic Rendering / VMA / Bindless Descriptor）
+- **Vulkan 1.3** 渲染后端（95% 完成 — Dynamic Rendering / VMA / Bindless Descriptor，跨平台首选）
+- **D3D12** 渲染后端（已实现但休眠 — 777 行完整 IRHIDevice + D3D12MA，无沙盒验证）
 - **Jolt Physics 5.5** 3D 物理引擎（多线程 JobSystem 适配，v4.0-v7.0 迭代）
 - **Box2D 3.0** 2D 物理模拟（刚体、碰撞、关节）
 - **Bare2D** 纯 CPU 2D 物理引擎（自制，1302 行完整物理管线）
