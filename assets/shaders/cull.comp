@@ -1,0 +1,76 @@
+#version 460 core
+#extension GL_EXT_shader_atomic_int : require
+
+/**
+ * @file cull.comp
+ * @brief GPU 视锥体裁剪 Compute Shader
+ *
+ * 输入: SceneAABBs (所有物体的包围盒)
+ *       视锥体平面数据
+ * 输出: VisibleIndices (可见物体的索引列表 + count)
+ *
+ * 每个线程处理一个 AABB，测试与视锥体的相交性。
+ * 可见物体 ID 通过 atomicAdd 写入输出缓冲区。
+ * 输出可直接作为 Indirect Draw 的 draw count。
+ */
+
+// ── 包围盒 ──
+struct AABB {
+    vec3 min;
+    float _pad1;
+    vec3 max;
+    float _pad2;
+};
+
+// ── 视锥体平面 (4 分量: normal.xyz + d) ──
+struct FrustumPlane {
+    vec4 plane;
+};
+
+// ── 输入: 场景所有物体的 AABB ──
+layout(std430, binding = 0) readonly buffer SceneAABBs {
+    AABB aabbs[];
+};
+
+// ── 输入: 视锥体 6 个平面 ──
+layout(std430, binding = 1) readonly buffer FrustumData {
+    FrustumPlane planes[6];
+    uint totalCount;
+};
+
+// ── 输出: 可见物体的索引 ──
+layout(std430, binding = 2) buffer VisibleIndices {
+    uint count;
+    uint indices[];
+};
+
+layout(local_size_x = 64, local_size_y = 1, local_size_z = 1) in;
+
+/**
+ * @brief AABB 与视锥体相交测试 (循环遍历 6 个平面)
+ *
+ * 使用"中心-半长"测试法，比 SAT 更快且足够准确。
+ * 如果 AABB 完全在任何平面之外，则不可见。
+ */
+bool TestAABBVsFrustum(AABB box) {
+    vec3 center = (box.min + box.max) * 0.5;
+    vec3 extents = (box.max - box.min) * 0.5;
+
+    for (int i = 0; i < 6; i++) {
+        vec4 p = planes[i].plane;
+        float d = dot(center, p.xyz) + p.w;
+        float r = dot(extents, abs(p.xyz));
+        if (d + r < 0.0) return false;
+    }
+    return true;
+}
+
+void main() {
+    uint idx = gl_GlobalInvocationID.x;
+    if (idx >= totalCount) return;
+
+    if (TestAABBVsFrustum(aabbs[idx])) {
+        uint prev = atomicAdd(count, 1u);
+        indices[prev] = idx;
+    }
+}
