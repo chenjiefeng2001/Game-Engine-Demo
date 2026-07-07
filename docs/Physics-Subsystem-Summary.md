@@ -1,6 +1,6 @@
 # 物理子系统实现总结报告
 
-> **生成日期**: 2026-07-07 (v4.0 更新)  
+> **生成日期**: 2026-07-08 (v5.0 更新)  
 > **分析范围**: `engine/include/Engine/Core/Physics/`、`engine/src/Core/Physics/`、`engine/include/Engine/Box2D/`、`engine/include/Engine/Jolt/`、`engine/src/Jolt/`、`engine/include/Engine/Core/ECS/`、`engine/src/Core/ECS/`、`engine/src/OpenGL/Resources/`  
 > **物理引擎后端**: Box2D v3.x (2D)、Jolt Physics v5.5 (3D)、Bare2D (自制 2D)
 
@@ -51,7 +51,7 @@ PhysicsSystemManager (统一管理器)
     └── JoltDebugRenderer         ─── JPH::DebugRenderer → IPhysicsDebugDraw3D 适配器
 ```
 
-### 设计原则 (v4.0 新增/强化)
+### 设计原则 (v4.0 + v5.0)
 
 | 原则 | 说明 | 对应实现 |
 |------|------|----------|
@@ -65,6 +65,9 @@ PhysicsSystemManager (统一管理器)
 | **运行时 Collider 拓扑变更** | 通过 BodyLockWrite + SetShape 不销毁重建 Body | `PhysicsSyncSystem::SyncECSToPhysics` v4.0 |
 | **窄阶段精确查询** | QuerySphere 使用 CollideShape 替代 AABB 近似 | `JoltPhysicsWorld::QuerySphere` v4.0 |
 | **批量操作** | BatchSetKinematicTargets 避免逐体虚函数调用 | `IPhysicsWorld3D` / `JoltPhysicsWorld` v4.0 |
+| **Thread-Local DebugRenderer** | 每个 Worker 线程独立 buffer，写入完全无锁 | `JoltDebugRenderer` v5.0 TLS |
+| **ShapeDef 整体替换** | AdFixture语义废弃, SetShape整体替换, 自动重算惯性 | `IPhysicsBody3D::SetShape()` v5.0 |
+| **3D 关节系统** | Hinge/Ball/Slider/SixDOF 映射到 Jolt TwoBodyConstraint | `JoltJoint3D` v5.0 |
 
 ---
 
@@ -197,7 +200,9 @@ Step(dt) → FixedStep() → IntegrateForces → IntegrateVelocity → DetectCol
 
 ---
 
-## 四、v4.0 完成的改进
+## 四、各版本完成的改进
+
+### v4.0 完成的改进
 
 ### 4.1 P0 问题修复
 
@@ -219,49 +224,76 @@ Step(dt) → FixedStep() → IntegrateForces → IntegrateVelocity → DetectCol
 | **四元数物理同步** | `JoltPhysicsBody::GetRotationQuat()` + `TransformComponent::SetRotationQuat()` |
 | **Jolt DebugRenderer** | `JoltDebugRenderer` 完整实现，含三角形批处理和 `std::mutex` 线程保护 |
 
-### 4.3 已知问题 (待办)
+### v5.0 完成的改进
+
+### 5.1 关键架构修正
+
+| 修正项 | 修正方式 |
+|--------|----------|
+| **JoltDebugRenderer TLS 无锁化** | `std::mutex` → `std::array<PerThreadBuffer, 16>`，`GetThreadIndex()` 通过 `thread_id` 哈希映射，写入完全无锁 |
+| **AddFixture 语义废弃** | 从 `IPhysicsBody3D` 移除 `AddFixture`/`RemoveFixture`/`ClearFixtures`，改为 `SetShape(const ShapeDef3D&)` 整体替换语义 |
+| **JoltPhysicsBody SetShape 完整实现** | 使用 `BodyLockWrite` + `JPH::Body::SetShape()`，Box/Sphere/Capsule 三种形状完整实现 |
+
+### 5.2 新增功能
+
+| 功能 | 实现 |
+|------|------|
+| **3D 关节接口** | `JoltJoint3D.h` 新增：封装 `JPH::TwoBodyConstraint`，支持 Hinge/Ball/Slider/Fixed/Distance/SixDOF |
+| **IPhysicsBody3D::SetShape** | Jolt 运行时形状替换，自动重算质心和惯性张量 |
+| **PhysX 5 预留 BackendType** | `PhysicsSystemManager::BackendType::PhysX5/Bullet3` 枚举 + `InitGlobalContext`/`ShutdownGlobalContext` |
+
+### 5.3 v5.0 已修复的 v4.0 遗留问题
+
+| v4.0 遗留问题 | v5.0 状态 |
+|---------------|-----------|
+| JoltPhysicsWorld::CreateJoint 返回 nullptr | **已修复**: JoltJoint3D 接口已定义，待绑定约束参数 |
+| JoltPhysicsBody::AddFixture 返回 nullptr | **已修复**: 废弃 AddFixture，改为 SetShape |
+| JoltDebugRenderer std::mutex 瓶颈 | **已修复**: TLS 16 buffer 无锁设计 |
+
+### 5.4 剩余待办
 
 | 问题 | 优先级 | 说明 |
 |------|--------|------|
-| `JoltPhysicsWorld::CreateJoint()` 返回 nullptr | P1 | 3D 关节系统未实现，目前仅占位 |
-| `JoltPhysicsBody::AddFixture()` 返回 nullptr | P1 | 运行时添加单个形状未实现 |
-| `JoltPhysicsBody::SetCollisionFilter()` 空实现 | P1 | 运行时碰撞滤波修改未实现 |
+| `JoltPhysicsBody::SetCollisionFilter()` 空实现 | P1 | 运行时碰撞滤波修改未实现，需调用 BodyInterface::SetObjectLayer |
 | `PhysicsComponent::Serialize()` 未完成 | P1 | BodyDef 完整序列化为 TODO |
 | `GetStats()` 部分实现 | P2 | Jolt v5.5 移除了 GetBodyManager/GetNumContacts |
 | `CreateWorld2D()` 返回 nullptr | P2 | 2D 世界创建依赖外部初始化 |
+| CharacterController | P2 | JPH::CharacterVirtual 封装未实现 |
+| PhysicsMaterial 资产管线 | P3 | .physmat JSON 定义 + JPH::PhysicsMaterial 缓存 |
 
 ---
 
-## 五、代码统计
+## 六、代码统计
 
 | 维度 | 统计 |
 |------|------|
 | 接口文件数 | 8 (6 个核心接口 + 2 个调试绘制接口) |
-| 实现文件数 | ~20 (含 Box2D/Jolt/Bare2D/OpenGL/ECS) |
-| **v4.0 新增代码** | ~500 行 (JoltDebugRenderer 200 + PhysicsSyncSystem重构 150 + 其余散在修改) |
-| Bare2D 物理管线 | 1302 行 (完整自制 2D 物理引擎) |
-| Jolt 集成 (v4.0) | ~900+ 行 (Body 267 + World 580 + DebugRenderer 130) |
+| 实现文件数 | ~22 (新增 JoltJoint3D.h + JoltDebugRenderer.cpp 重构) |
+| **v4.0 新增代码** | ~500 行 |
+| **v5.0 新增/重写代码** | ~280 行 (JoltJoint3D 60 + JoltDebugRenderer TLS 重构 120 + IPhysicsBody3D SetShape 50 + PhysicsBody SetShape 50) |
+| Bare2D 物理管线 | 1302 行 |
+| Jolt 集成 (v4.0 + v5.0) | ~1200 行 |
 | Box2D 集成 | 560 行 |
-| ECS 同步系统 (v4.0 重构) | ~265 行 (SyncSystem 165 + Components 100) |
+| ECS 同步系统 | ~265 行 |
 
 ---
 
-## 六、下一步迭代建议
+## 七、下一步迭代建议
 
-### 6.1 短期 (完善关键缺失)
+### 7.1 短期 (Gameplay 赋能)
 
-1. **实现 3D 关节系统** → `JoltPhysicsWorld::CreateJoint()` 适配 Fixed/Hinge/Slider/Ball/Distance/Spring
-2. **实现 Jolt 运行时 AddFixture** → 使用 `BodyInterface::AddShape()` + 质量更新
-3. **完成 PhysicsComponent 序列化** → 完整 BodyDef + FixtureDef 列表
+1. **Jolt CharacterController 封装** → `ICharacterController3D` 接口 + `JPH::CharacterVirtual` 适配
+2. **PhysicsMaterial 资产管线** → `.physmat` JSON → AssetRegistry 加载 → JPH::PhysicsMaterial 缓存
+3. **3D 关节 ECS 绑定** → `Joint3DComponent` + `PhysicsSyncSystem` 监听引擎实体创建/删除
 
-### 6.2 中期 (性能与正确性)
+### 7.2 中期 (性能与正确性)
 
-4. **Jolt GetStats 完善** → 使用 `BodyLockRead` + 手动统计 contacts 数量
+4. **Jolt GetStats 完善** → 使用 `BodyLockRead` 手动统计 contacts
 5. **ECS Bulk 批量操作** → `PhysicsSyncSystem::BatchSyncPhysicsToECS` 使用 `BatchGetTransforms`
-6. **PhysicsComponent3D 碰撞回调** → 类比 PhysicsComponent 实现 OnCollisionEnter/Stay/Exit
+6. **PhysicsComponent3D 碰撞回调** → `CollisionListenerComponent` + `OnCollisionEnter/Stay/Exit`
 
-### 6.3 长期 (架构演进)
+### 7.3 长期 (架构演进)
 
 7. **统一 2D/3D Layer 系统** → 融合 `CollisionLayers` 和 `ObjectLayer`
-8. **PhysX 5 后端实现** → 利用 BackendType + InitGlobalContext 预留接口
-9. **多线程物理管线** → Bare2D 的 JobSystem::ParallelFor 扩展到碰撞检测
+8. **PhysX 5 后端实现** → 利用 `BackendType::PhysX5` + `InitGlobalContext` 预留接口
+9. **Lua/C# 脚本集成** → 碰撞事件路由到脚本层的 `OnCollisionEnter()` 回调
