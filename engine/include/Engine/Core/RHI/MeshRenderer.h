@@ -2,6 +2,8 @@
 
 #include "Engine/Types.h"
 #include "Engine/Core/RHI/MathTypes.h"
+#include "Engine/Core/RHI/Handle.h"
+#include "Engine/Core/RHI/RenderPacket.h"
 #include "Engine/Core/RHI/IRHIVertexArray.h"
 #include "Engine/Core/RHI/IRHIVertexBuffer.h"
 #include "Engine/Core/RHI/IRHIIndexBuffer.h"
@@ -164,6 +166,34 @@ namespace Engine {
          */
         void Render_RHI(const std::vector<GameObject*>& objects);
 
+        // ═══════════════════════════════════════════════
+        // 【v3 提取+执行分离】
+        // ═══════════════════════════════════════════════
+
+        /// 设置渲染中使用的槽位映射（必须在使用 ExtractScene 前设置）
+        void SetMeshSlotMap(RHI::MeshSlotMap* map) { m_MeshSlotMap = map; }
+        void SetTextureSlotMap(RHI::TextureSlotMap* map) { m_TextureSlotMap = map; }
+
+        /**
+         * @brief 从 GameObject 列表中提取渲染数据包到 SceneExtraction
+         * @param objects 物体列表
+         * @param outExtraction 输出提取结果
+         *
+         * 此方法不绑定任何 shader / 不产生任何 glDraw 调用。
+         * 纯粹从 ECS 中拷贝变换矩阵和材质信息。
+         */
+        void ExtractScene(const std::vector<GameObject*>& objects,
+                          RHI::SceneExtraction& outExtraction);
+
+        /**
+         * @brief 执行提取后的渲染数据包
+         * @param extraction 由 ExtractScene 填充的提取结果
+         *
+         * 遍历 packets，绑定 shader 并发出 DrawIndexed 调用。
+         * 可在线程安全的情况下调用（此时 packets 是只读快照）。
+         */
+        void ExecuteRenderPackets(const RHI::SceneExtraction& extraction);
+
     private:
         const PotentiallyVisibleSet* m_PVS = nullptr;
         std::unique_ptr<IPrimitiveBatch> m_Batch;
@@ -247,6 +277,10 @@ namespace Engine {
         std::vector<Light> m_Lights;
 
         bool m_RHIEnabled = false;
+
+        // ── v3 SplotMap 指针（由外部设置，不拥有所有权） ──
+        RHI::MeshSlotMap*    m_MeshSlotMap    = nullptr;
+        RHI::TextureSlotMap* m_TextureSlotMap = nullptr;
     };
 
 } // namespace Engine
