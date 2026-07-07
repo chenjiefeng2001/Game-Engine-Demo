@@ -6,22 +6,24 @@
  *
  * 用于 Jolt Physics 碰撞回调 — 多个 Worker 线程同时 Push，主线程 Pop 处理。
  *
- * 设计要点（v3.1）：
- *   - MPSC 而非 SPSC：Jolt 的 OnContactBegin 由多个 Worker 线程同时触发
+ * 设计要点（v4.0）：
+ *   - MPSC 而非 SPSC：Jolt 的 OnContact* 由多个 Worker 线程同时触发
  *   - 无锁（lock-free）：基于原子 CAS 操作，绝不阻塞 Worker 线程
  *   - 固定容量环形缓冲区：无动态分配，适合实时系统
  *   - Cache Line 隔离：避免 False Sharing
+ *   - v4.0: CollisionEvent 只传递 64-bit BodyID，绝不传递指针。
+ *     Worker 线程在回调中仅读取 SubShapeIDPair 中的 ID，不 touch Body。
  */
 
 #include "Engine/Types.h"
-#include "Engine/Core/RHI/MathTypes.h"
 #include <atomic>
 #include <cstddef>
+#include <cstdint>
 
 namespace Engine {
 
 // ════════════════════════════════════════════════════════
-// 碰撞事件类型
+// 碰撞事件类型（v4.0：只传 BodyID，绝不传指针）
 // ════════════════════════════════════════════════════════
 struct CollisionEvent {
     enum class Type : uint8 {
@@ -32,15 +34,14 @@ struct CollisionEvent {
 
     Type type = Type::Begin;
 
-    // 两个碰撞体的 EntityHandle ID（传输 uint64 避免暴露 EntityHandle 头文件）
-    uint64 entityAID = 0;
-    uint64 entityBID = 0;
+    // 两个碰撞体的 JPH::BodyID（64-bit 包装）
+    // 安全原则：Worker 线程只读取 ID 不 touch Body，
+    // 主线程通过 GetBodyByID() 安全解析
+    uint64 bodyIDA = 0;
+    uint64 bodyIDB = 0;
 
-    // 碰撞信息
-    Vec3  contactPoint  = {0, 0, 0};
-    Vec3  contactNormal = {0, 0, 0};
-    float penetration   = 0.0f;
-    float totalImpulse  = 0.0f;   // Persist 事件专用
+    // Persist 事件：总冲量
+    float totalImpulse = 0.0f;
 };
 
 // ════════════════════════════════════════════════════════
