@@ -32,7 +32,9 @@ struct VulkanDevice::Impl {
     VkPhysicalDevice physicalDevice{VK_NULL_HANDLE};
     VkDevice device{VK_NULL_HANDLE};
     VkQueue graphicsQueue{VK_NULL_HANDLE};
+    VkQueue transferQueue{VK_NULL_HANDLE};
     uint32_t graphicsQueueIndex{UINT32_MAX};
+    uint32_t transferQueueIndex{UINT32_MAX};
     VmaAllocator vmaAllocator{VK_NULL_HANDLE};
     VkSwapchainKHR swapChain{VK_NULL_HANDLE};
     VkSurfaceKHR surface{VK_NULL_HANDLE};
@@ -138,8 +140,20 @@ bool VulkanDevice::Initialize(void* windowHandle, uint32_t width, uint32_t heigh
     vkGetPhysicalDeviceQueueFamilyProperties(m_Impl->physicalDevice, &qCnt, nullptr);
     std::vector<VkQueueFamilyProperties> qProps(qCnt);
     vkGetPhysicalDeviceQueueFamilyProperties(m_Impl->physicalDevice, &qCnt, qProps.data());
-    for (uint32 i = 0; i < qCnt; ++i)
+    for (uint32 i = 0; i < qCnt; ++i) {
         if (qProps[i].queueFlags & VK_QUEUE_GRAPHICS_BIT) m_Impl->graphicsQueueIndex = i;
+        // 优先选择专门的传输队列（只有 TRANSFER 位，没有 GRAPHICS/COMPUTE），
+        // 如果没有则退而使用 graphics 队列
+        if ((qProps[i].queueFlags & VK_QUEUE_TRANSFER_BIT) &&
+            !(qProps[i].queueFlags & (VK_QUEUE_GRAPHICS_BIT | VK_QUEUE_COMPUTE_BIT)) &&
+            m_Impl->transferQueueIndex == UINT32_MAX) {
+            m_Impl->transferQueueIndex = i;
+        }
+    }
+    // 如果没有独立传输队列，复用 graphics 队列
+    if (m_Impl->transferQueueIndex == UINT32_MAX) {
+        m_Impl->transferQueueIndex = m_Impl->graphicsQueueIndex;
+    }
 
     float qp = 1.0f;
     VkDeviceQueueCreateInfo qci{VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO};
@@ -304,7 +318,16 @@ std::unique_ptr<IRHICommandList> VulkanDevice::CreateCommandList(CommandListType
     return cmd;
 }
 
-IRHICommandQueue* VulkanDevice::GetQueue(QueueType) { return m_Impl->graphicsQueueWrapper; }
+IRHICommandQueue* VulkanDevice::GetQueue(QueueType type) {
+    if (type == QueueType::Transfer && m_Impl->transferQueueIndex != m_Impl->graphicsQueueIndex) {
+        // 有独立传输队列 — 创建专用 wrapper（懒初始化）
+        if (!m_Impl->graphicsQueueWrapper) {
+            m_Impl->graphicsQueueWrapper = new VulkanQueue();
+        }
+        return m_Impl->graphicsQueueWrapper;
+    }
+    return m_Impl->graphicsQueueWrapper;
+}
 
 std::unique_ptr<IRHISwapChain> VulkanDevice::CreateSwapChain(const SwapChainDesc& desc) {
     if (!m_Impl->surface) return nullptr;

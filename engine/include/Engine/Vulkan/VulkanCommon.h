@@ -61,4 +61,11 @@ VkImageLayout ResourceStateToLayout(RHI::ResourceState state) noexcept;
 VkPipelineStageFlags ResourceStateToStage(RHI::ResourceState state) noexcept;
 VkAccessFlags ResourceStateToAccess(RHI::ResourceState state) noexcept;
 
+// ── 计算管线辅助（VulkanComputePipelineHelper.cpp） ──
+VkPipeline CreateVulkanComputePipeline(
+    VkDevice device,
+    VkPipelineCache pipelineCache,
+    const std::vector<uint32_t>& shaderSPIRV,
+    const char* entryPoint = "main");
+
 } // namespace Engine
