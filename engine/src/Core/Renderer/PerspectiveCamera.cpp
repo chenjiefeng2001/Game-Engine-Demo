@@ -81,11 +81,27 @@ namespace Engine {
     // ============================================================
 
     void PerspectiveCamera::RecalculateProjection() {
-        glm::mat4 proj = glm::perspective(
-            glm::radians(m_Fov), m_AspectRatio, m_Near, m_Far
+        // ── Reverse-Z 深度缓冲 ──
+        //   使用 glm::perspectiveRH_ZO (右手坐标系, Z在[0,1]区间)，
+        //   交换 near/far 并设置 far=0, near=farPlane 来实现 Reverse-Z。
+        //   配合 DepthFunc=GREATER, ClearDepth=0.0，在远处的精度提升数千倍。
+        //
+        //   Reverse-Z 原理：
+        //     传统: near=0.1 → depth=0.999, far=100 → depth=0.0  (深度浪费)
+        //   Reverse: near=100 → depth=0.0,   far=0.1 → depth=0.999 (精度集中在远处)
+        //
+        //   注意: 使用 glm::perspectiveRH_ZO 时参数顺序仍是 (fov, aspect, near, far)，
+        //   但内部矩阵会将 Z 映射到 [0,1] 区间（Vulkan style），
+        //   然后通过交换 near/far 参数实现反转。
+        //
+        //   修改：perspectiveRH_ZO + 交换 near/far 参数。
+        //   m_Near 保留原始近距离值（如 0.1），传参时传远距离给 near 参数。
+        glm::mat4 proj = glm::perspectiveRH_ZO(
+            glm::radians(m_Fov), m_AspectRatio, m_Far, m_Near
         );
-        // glm 默认是右手系，NDC z 范围 [-1, 1]。
-        // 对于 OpenGL 4.6，可以直接使用。如果需要左手系可反转 z。
+        // 透视投影矩阵的 [2][2] 和 [2][3] 控制 Z 映射。
+        // 默认: Z_near → 1.0, Z_far → 0.0 （Reverse-Z 需要的映射）
+        // GLM 的 perspectiveRH_ZO 已正确处理这个映射。
         StoreGlm(proj, m_ProjectionMatrix);
         m_ProjectionDirty = false;
     }
