@@ -38,7 +38,7 @@
 
 - **OpenGL 4.6** 渲染（2D 精灵批处理 + 3D 光照管线 + 延迟渲染 / SSAO）
 - **Vulkan 1.3** 渲染后端（95% 完成 — Dynamic Rendering / VMA / Bindless Descriptor，跨平台首选）
-- **D3D12** 渲染后端（已实现但休眠 — 777 行完整 IRHIDevice + D3D12MA，无沙盒验证）
+- **D3D12** 渲染后端（⏸️ 休眠状态 — 777 行完整 IRHIDevice + D3D12MA，基础架构已跑通但功能未对齐 Vulkan，暂不作为日常迭代重心）
 - **Jolt Physics 5.5** 3D 物理引擎（多线程 JobSystem 适配，v4.0-v7.0 迭代）
 - **Box2D 3.0** 2D 物理模拟（刚体、碰撞、关节）
 - **Bare2D** 纯 CPU 2D 物理引擎（自制，1302 行完整物理管线）
@@ -533,7 +533,7 @@ game-engine-demo/
 ## ⚠️ 注意事项
 
 - 项目处于**快速迭代阶段**，API 和架构可能随时变更
-- 渲染后端支持 **OpenGL 4.6**（生产级）和 **Vulkan 1.3**（~95%，可使用）
+- 渲染后端支持 **OpenGL 4.6**（生产级）和 **Vulkan 1.3**（~95%，**主力后端**），**D3D12** 处于休眠状态
 - **物理引擎 v4.0-v7.0 已全部完成**：四元数 → 碰撞管道 → Batch API → TLS DebugRenderer → SetShape → CharacterController → Joint3D → 碰撞路由
 - 零 stub 承诺：CreateJoint/DestroyJoint/CharacterVirtual 全生产级实现
 - ECS 架构在 `ECS` 分支上维护，`master` 分支使用 OOP `GameObject`+`Component` 模型
