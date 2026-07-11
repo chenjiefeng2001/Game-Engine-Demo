@@ -76,15 +76,43 @@ D3D12 代码虽然"能编译"但缺乏任何使用验证。
 
 **假设要带 D3D12 到 Vulkan 同等水平 (95%)，需要：**
 
-| 模块 | 工作量估算 |
-|------|-----------|
-| 着色器反射 (SPIRV-Cross → DXIL) | 1-2 周 |
-| 管线状态对象缓存 (PSOCache D3D12) | 3-5 天 |
-| 描述符环缓冲区 (DescriptorRingBuffer) | 3-5 天 |
-| Compute Culling / IDBuffer Pass | 1 周 |
-| GPUProfiler (D3D12 Timestamp) | 2-3 天 |
-| 物理调试绘制 (OpenGLPhysicsDebugDraw) | 3-5 天 |
-| **总计** | **3-4 周** |
+| 模块 | 工作量估算 | 备注 |
+|------|-----------|------|
+| ~~着色器反射 (SPIRV-Cross → DXIL)~~ | ~~1-2 周~~ | **❌ 已废弃 — 见 2.3.1** |
+| 管线状态对象缓存 (PSOCache D3D12) | 3-5 天 | |
+| 描述符环缓冲区 (DescriptorRingBuffer) | 3-5 天 | |
+| Compute Culling / IDBuffer Pass | 1 周 | |
+| GPUProfiler (D3D12 Timestamp) | 2-3 天 | |
+| 物理调试绘制 (OpenGLPhysicsDebugDraw) | 3-5 天 | |
+| **总计** | **2-3 周** | 更现实的估算 |
+
+### 2.3.1 ⚠️ 架构决策：废弃 SPIRV-Cross → DXIL 路线
+
+在业界实践中，**SPIR-V 转 DXIL 是一个极其危险的反模式（Anti-pattern）**：
+- SPIR-V 转 DXIL 会丢失大量高级语义（如 UAV 屏障、波形操作、子对象）
+- 极易引发难以排查的 Bug，且性能不可控
+- 主流引擎（UE5、Unity、自研跨平台引擎）均不采用此路线
+
+**修正后策略：未来若需复活 D3D12，统一采用 HLSL + DXC 双端编译方案**
+
+```
+当前资产 (Shader Source)
+│
+├── GLSL (现有) ──→ shaderc ──→ SPIR-V ──→ Vulkan (保持现状)
+│                                       │
+│                                       └── SPIRV-Cross ──→ GLSL（回读，调试用）
+│
+└── 未来统一方案 (HLSL as Single Source of Truth)
+    │
+    ├── HLSL ──→ Microsoft DXC ──→ DXIL ──→ D3D12
+    │
+    └── HLSL ──→ Microsoft DXC ──→ SPIR-V ──→ Vulkan (DXC 官方支持 HLSL→SPIR-V)
+```
+
+**行动项**:
+- 当前 SPIRV-Cross 在此引擎中的角色仅限 **Vulkan PipelineLayout 反射**（读取 UBO/Sampler/SSBO/PushConstant 布局），无需改动
+- 未来 Roadmap 中彻底删除「SPIRV-Cross → DXIL」的规划项
+- 若需 D3D12，重构 Shader 资产管线为 **HLSL 单一事实来源 + DXC 双端编译**
 
 ### 2.4 物理迭代与 D3D12 无关联
 
@@ -121,6 +149,8 @@ v4.0-v7.0 的物理系统迭代（四元数→碰撞管道→Batch API→Charact
 
 当前 README 的 D3D12 描述应调整为"已实现但休眠"状态，而非"预留"或"未完成"。
 
+> **已执行**: README.md 中 D3D12 已标记为 `⏸️ 休眠状态 — 777 行完整 IRHIDevice + D3D12MA，基础架构已跑通但功能未对齐 Vulkan，暂不作为日常迭代重心`
+
 ---
 
 ## 四、总结
@@ -128,6 +158,6 @@ v4.0-v7.0 的物理系统迭代（四元数→碰撞管道→Batch API→Charact
 | 问题 | 答案 |
 |------|------|
 | D3D12 代码存在吗？ | **存在** — 777 行完整 IRHIDevice 实现 + D3D12MA 集成 |
-| 为什么不是重点？ | **跨平台策略**: Vulkan 覆盖 4 平台而 D3D12 仅 Windows。**维护成本**: 3-4 周全模块人力。**无沙盒验证**: 编译通过但无实际使用 |
-| 带它到 95% 需要什么？ | 着色器反射、PSOCache、DescriptorRingBuffer、Compute Pass、物理调试绘制，共约 3-4 周 |
-| 当前策略正确吗？ | **正确**。Vulkan-first 是跨平台引擎的工业标准选择。D3D12 保持"休眠"状态，不投入主动维护 |
+| 为什么不是重点？ | **跨平台策略**: Vulkan 覆盖 4 平台而 D3D12 仅 Windows。**维护成本**: 2-3 周全模块人力（且须采用 HLSL+DXC 而非 SPIRV→DXIL）。**无沙盒验证**: 编译通过但无实际使用 |
+| 带它到 95% 需要什么？ | PSOCache、DescriptorRingBuffer、Compute Pass、GPUProfiler、物理调试绘制，共约 2-3 周（不含着色器反射——已废弃 SPIRV→DXIL 路线，若需复活统一采用 HLSL + DXC 双端编译） |
+| 当前策略正确吗？ | **正确**。Vulkan-first 是跨平台引擎的工业标准选择。D3D12 保持"休眠"状态，不投入主动维护。未来若需复活，需将 Shader 资产管线重构为 HLSL 单一事实来源 + DXC 双端编译方案 |

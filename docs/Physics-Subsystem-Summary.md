@@ -178,19 +178,124 @@ PhysicsSystemManager (统一管理器)
 
 ---
 
-## 五、下一步建议
+## 五、纯 GPU 物理引擎架构前瞻
+
+> **分析范围**: 当前引擎基于 CPU 物理后端（Jolt Physics / Box2D），本节探讨纯 GPU 物理管线的可行性、技术路径及对本引擎架构的潜在影响。
+
+### 5.1 为什么关注纯 GPU 物理？
+
+传统 CPU 物理引擎（包括当前使用的 Jolt Physics）在游戏领域表现优异，但在以下场景中面临根本性瓶颈：
+
+| 瓶颈 | 说明 | 影响场景 |
+|------|------|----------|
+| **PCIe 拷贝开销** | CPU ↔ GPU 之间的显存/系统内存传输延迟 | 大规模粒子/布料/流体模拟 |
+| **CPU 算力天花板** | 多核 CPU 的并行度远低于 GPU 的数千核心 | 数千级别以上的刚体/约束求解 |
+| **SIMT 架构不匹配** | 传统 OOP 设计的物理引擎存在大量分支和指针跳转 | GPU 执行效率低下 |
+
+在强化学习仿真、具身智能训练和高端视觉特效领域，纯 GPU 物理引擎已经完成技术验证并成为主流（详见附录分析）。
+
+### 5.2 GPU 物理核心技术路径
+
+若要将当前引擎的物理管线扩展至纯 GPU 计算，需要在架构层面做出以下重构：
+
+#### 5.2.1 碰撞检测的 GPU 化
+
+| 阶段 | 当前 CPU 做法 | GPU 解法 |
+|------|--------------|----------|
+| **Broad Phase** | 动态 AABB 树 / 四叉树递归遍历 | 并行基数排序 + 扫描线算法 (Sweep and Prune)，或 GPU 上构建 **LBVH** (线性包围盒层次结构) |
+| **Narrow Phase** | GJK/EPA 串行求交 | 海量线程暴力并行，每个线程处理一个凸包对 |
+
+**参考**: Tero Karras (NVIDIA) 关于快速 GPU BVH 构建的论文已完整解决了 GPU 上并行碰撞树的构建问题。
+
+#### 5.2.2 约束求解器的 GPU 化 —— 核心难点
+
+CPU 物理引擎（包括 Jolt Physics）使用顺序计算的 **Gauss-Seidel 迭代法**，天然串行依赖。GPU 上需要替换为以下方案之一：
+
+| 方案 | 原理 | 优势 | 劣势 |
+|------|------|------|------|
+| **图染色 (Graph Coloring)** | 将无约束依赖的物体群标为同色，同色物体绝对并行 | 收敛快，精度高 | 染色计算本身开销大 |
+| **并行雅可比 (Jacobi)** | 所有物体基于上一帧状态并行计算约束后求均值 | 实现简单 | 收敛慢，需更多迭代 |
+| **XPBD (扩展位置动力学)** | 直接计算位置约束而非力/冲量，天然可并行 | **当前最主流的 GPU 物理理论**，可统一刚体/柔体/布料/流体 | 对刚性物体需额外处理 |
+
+**对本引擎的意义**: 当前物理子系统已采用 `FixedTimestepAccumulator` 固定步长架构，这一设计恰好为未来切换至 XPBD 风格的并行求解器提供了时间步层面的兼容基础。
+
+#### 5.2.3 领域前沿参考
+
+当前纯 GPU 物理引擎的代表性成果：
+
+| 引擎/框架 | 研发方 | 架构特色 | 与本引擎的关联 |
+|-----------|--------|----------|---------------|
+| **Brax / MJX** | Google | 基于 JAX 张量化物理，完全消灭串行计算 | 验证了 GPU 物理在 RL 仿真中的高吞吐优势 |
+| **NVIDIA Newton** | NVIDIA + Google DeepMind + Disney Research | 基于 NVIDIA Warp (Python→CUDA JIT 编译) | 展示了 GPU 原生物理管线的灵活性 |
+| **Genesis** | 学术界 | 纯 GPU MPM 物质点法 + 软体/刚体统一 | 自由度数极高的变形体模拟可达百万 FPS |
+| **NVIDIA Flex** | NVIDIA (Miles Macklin) | **XPBD 算法在 GPU 上的巅峰实现** | PhysX 5 已吸收其 GPU 管道用于流体/FEM |
+
+### 5.3 对游戏引擎的制约因素
+
+纯 GPU 物理引擎虽然在仿真领域取得了巨大成功，但主流 3A 游戏至今仍采用混合架构，原因如下：
+
+1. **Gameplay 逻辑深度耦合与 PCIe Readback 瓶颈**
+   - AI 仿真可以在 GPU 内连续跑数万步无需中断；但游戏中物理必须实时与 Gameplay 交互（例：开枪→射线检测→触发爆炸→AI 响应）。
+   - 每次查询/事件触发都需要跨越 PCIe 总线 **读回** 给 CPU，延迟和带宽限制反而导致卡顿。
+   - **根本解法**: 游戏逻辑本身（ECS 系统）也编译到 GPU 上执行，从而使游戏状态与物理状态双双驻留显存。
+
+2. **算力平衡**
+   - 现代 3A 游戏已将 GPU 压榨到极限（高分辨率、光线追踪、全局光照、DLSS）。
+   - 将物理计算塞入 GPU 会导致与渲染抢占算力；而现代 8 核 16 线程 CPU 往往有闲置核心可处理刚体物理。
+   - **本引擎的 JoltJobSystemAdapter** 正是利用闲置 CPU 算力的体现，平衡了整机负载。
+
+3. **确定性 (Determinism) 需求**
+   - 帧同步电竞游戏要求在相同输入下物理结果 **100% 按位一致 (Bit-exact)**。
+   - GPU 的原子操作顺序不确定性会导致浮点舍入误差漂移，这是当前 GPU 物理引擎难以突破的硬约束。
+
+### 5.4 对当前引擎架构的启示
+
+| 维度 | 当前架构 | 未来演进方向 |
+|------|----------|-------------|
+| **后端抽象** | `BackendType::Jolt5/PhysX5/Bullet3` CPU 后端枚举 | 扩展至 `BackendType::GPUCompute`，通过 Compute Shader 管线实现 GPU 物理 |
+| **约束求解器** | Jolt 原生 Gauss-Seidel (顺序迭代) | XPBD 约束求解替代，与当前 `FixedTimestepAccumulator` 兼容 |
+| **ECS 与物理同步** | `PhysicsSyncSystem` 三级同步 + PCIe Readback | ECS 系统整体迁移至 GPU Compute Shader，消除 Readback |
+| **碰撞事件管道** | `LockFreeEventQueue` (MPSC, Worker→Main) | 全 GPU 事件管线 + GPU→GPU 直接路由 |
+| **JobSystem** | `JoltJobSystemAdapter` (CPU 多线程) | `GPUJobSystem` (Compute Shader Dispatch) |
+
+### 5.5 路线图建议
+
+```
+Phase 1 (短期): 混合架构优化
+├── 延续当前 Jolt CPU 后端
+├── 引入 GPU Compute Shader 做大规模布料/粒子
+└── 通过 GPU 并行加速 Narrow Phase 碰撞检测
+
+Phase 2 (中期): XPBD 原型验证
+├── 基于 Compute Shader 实现 XPBD 约束求解器原型
+├── 与 Jolt CPU 后端并行运行，对比精度/性能
+└── 验证 `FixedTimestepAccumulator` 的兼容性
+
+Phase 3 (长期): GPU 原生物理管线
+├── 完整的 GPU Broad/Narrow/Constraint 管线
+├── ECS 系统编译至 GPU Compute Shader
+└── 可选 `BackendType::GPUCompute` 后端枚举
+```
+
+---
+
+## 六、下一步建议
 
 ### 短期
 1. `PhysicsSyncSystem::ProcessCollisionEvents` 中路由到 `CollisionListenerComponent`
 2. `JoltPhysicsBody::SetCollisionFilter` 调用 `BodyInterface::SetObjectLayer`
 3. `PhysicsComponent::Serialize` 完成 BodyDef 序列化
+4. **GPU Compute Shader 布料/粒子原型**: 在现有 Jolt CPU 后端之上，引入 Compute Shader 做大规模软体/粒子模拟，作为 GPU 物理的初探
 
 ### 中期
-4. `.physmat` 资产管线: yaml-cpp 反序列化 + JPH::PhysicsMaterial 缓存
-5. `GetStats` 完整实现 (手动统计 contacts)
-6. 角色控制器 → ECS CharacterControllerComponent 绑定
+5. `.physmat` 资产管线: yaml-cpp 反序列化 + JPH::PhysicsMaterial 缓存
+6. `GetStats` 完整实现 (手动统计 contacts)
+7. 角色控制器 → ECS CharacterControllerComponent 绑定
+8. **XPBD 约束求解器原型**: 基于 Compute Shader 实现 XPBD 约束求解，与 Jolt CPU 端并行跑，对比精度与性能
 
 ### 长期
-7. 统一 2D/3D Layer 系统
-8. PhysX 5 后端实现
-9. Lua/C# 脚本 OnCollisionEnter 桥接
+9. 统一 2D/3D Layer 系统
+10. PhysX 5 后端实现
+11. Lua/C# 脚本 OnCollisionEnter 桥接
+12. **纯 GPU 物理后端 (`BackendType::GPUCompute`)**: 完整的 GPU Broad/Narrow/Constraint 管线 + ECS 系统迁移至 Compute Shader
+13. **ECS→GPU 编译管线**: 探索将游戏逻辑 ECS 系统编译到 GPU 执行的可能性，消除 PCIe Readback 瓶颈
