@@ -35,12 +35,12 @@ struct GPUParticleData {
     float velocity[3];   // 速度 (xyz)
     float mass;          // 质量
     float color[4];      // 颜色 (rgba)
-    float padding[4];    // 填充至 80 bytes（确保 16 字节对齐）
+    float padding[4];    // 填充至 64 bytes（确保 16 字节对齐）
 };
 #pragma pack(pop)
 
-static_assert(sizeof(GPUParticleData) == 80,
-    "GPUParticleData must be 80 bytes for std430 alignment");
+static_assert(sizeof(GPUParticleData) == 64,
+    "GPUParticleData must be 64 bytes for std430 alignment");
 
 // ═══════════════════════════════════════════════════════════
 // GPU 物理引擎配置
