@@ -235,3 +235,7 @@ int RunGPUPysicsTestMain(int argc, char** argv) {
     s_Log.Info("GPU Physics Test Complete");
     return 0;
 }
+
+int main(int argc, char** argv) {
+    return RunGPUPysicsTestMain(argc, argv);
+}
