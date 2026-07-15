@@ -1,6 +1,6 @@
 /**
  * @file JoltDebugRenderer.cpp
- * @brief Jolt Physics Debug Renderer 实现 — v5.0 TLS 无锁版
+ * @brief Jolt Physics Debug Renderer 实现 — v5.0 TLS 无锁版 (适配 Jolt v5.5.0)
  *
  * v5.0 设计：
  *   - 16 个 PerThreadBuffer（每个 Worker 线程一个）
@@ -24,8 +24,6 @@ JoltDebugRenderer::JoltDebugRenderer(IPhysicsDebugDraw3D* draw)
 JoltDebugRenderer::~JoltDebugRenderer() = default;
 
 uint32 JoltDebugRenderer::GetThreadIndex() const {
-    // v5.0 安全修复: 使用原子计数器分配永不重复的索引, 避免 hash 碰撞
-    // 每个线程第一次调用时, fetch_add 原子分配一个唯一 ID
     static std::atomic<uint32_t> s_NextIndex{0};
     thread_local uint32_t tls_Index = s_NextIndex.fetch_add(1, std::memory_order_relaxed) % MAX_THREADS;
     return tls_Index;
@@ -40,9 +38,17 @@ Vec3 JoltDebugRenderer::ToVec3(JPH::Vec3Arg v) {
     return Vec3(v.GetX(), v.GetY(), v.GetZ());
 }
 
+// 在 Jolt v5.5.0 中，Vec3 到 Float3 的转换通过 ToFloat3() 方法完成
+static JPH::Float3 ToFloat3(const JPH::Vec3& v) {
+    JPH::Float3 result;
+    result.x = v.GetX();
+    result.y = v.GetY();
+    result.z = v.GetZ();
+    return result;
+}
+
 void JoltDebugRenderer::DrawLine(JPH::Vec3Arg inFrom, JPH::Vec3Arg inTo, JPH::ColorArg inColor) {
     if (!m_Draw) return;
-    // TLS: 无锁写入
     uint32 idx = GetThreadIndex();
     PerThreadBuffer& buf = m_ThreadBuffers[idx];
     buf.lines.push_back({ToVec3(inFrom), ToVec3(inTo), ToVec4(inColor)});
@@ -78,9 +84,11 @@ JPH::DebugRenderer::Batch* JoltDebugRenderer::CreateTriangleBatch(
     batch->triangles.reserve(inIndexCount / 3);
     for (int i = 0; i + 2 < inIndexCount; i += 3) {
         JPH::DebugRenderer::Triangle tri;
-        tri.mV[0] = inVertices[inIndices[i]].mPosition;
-        tri.mV[1] = inVertices[inIndices[i + 1]].mPosition;
-        tri.mV[2] = inVertices[inIndices[i + 2]].mPosition;
+        // v5.5.0: Triangle::mV 通过 Float3 存储，需要转换
+        tri.mV[0] = ToFloat3(inVertices[inIndices[i]].mPosition);
+        tri.mV[1] = ToFloat3(inVertices[inIndices[i + 1]].mPosition);
+        tri.mV[2] = ToFloat3(inVertices[inIndices[i + 2]].mPosition);
+        // v5.5.0: Triangle::mColor 是 Color 类型，Vertex::mColor 也是 Color
         tri.mColor = inVertices[inIndices[i]].mColor;
         batch->triangles.push_back(tri);
     }
@@ -99,13 +107,20 @@ void JoltDebugRenderer::DrawGeometry(JPH::RMat44Arg inModelMatrix,
     const BatchImpl* batch = static_cast<const BatchImpl*>(inGeometry.GetPtr());
 
     for (const auto& tri : batch->triangles) {
-        JPH::Vec3 v0 = inModelMatrix * tri.mV[0];
-        JPH::Vec3 v1 = inModelMatrix * tri.mV[1];
-        JPH::Vec3 v2 = inModelMatrix * tri.mV[2];
-        Vec4 color = inModelColor.IsValid() ? ToVec4(inModelColor) : ToVec4(tri.mColor);
-        buf.lines.push_back({ToVec3(v0), ToVec3(v1), color});
-        buf.lines.push_back({ToVec3(v1), ToVec3(v2), color});
-        buf.lines.push_back({ToVec3(v2), ToVec3(v0), color});
+        // v5.5.0: Triangle::mV 是 Float3[3]，需要先转 Vec3
+        JPH::Vec3 v0(tri.mV[0].x, tri.mV[0].y, tri.mV[0].z);
+        JPH::Vec3 v1(tri.mV[1].x, tri.mV[1].y, tri.mV[1].z);
+        JPH::Vec3 v2(tri.mV[2].x, tri.mV[2].y, tri.mV[2].z);
+        // v5.5.0: RMat44 * Vec3 通过乘法运算符重载完成
+        // 注意：RMat44 在 v5.5.0 中乘以 Vec3 返回 Vec3
+        JPH::Vec3 wv0 = JPH::Vec3(inModelMatrix * JPH::RVec3(v0));
+        JPH::Vec3 wv1 = JPH::Vec3(inModelMatrix * JPH::RVec3(v1));
+        JPH::Vec3 wv2 = JPH::Vec3(inModelMatrix * JPH::RVec3(v2));
+        // v5.5.0: Color 没有 IsValid() 方法，直接使用
+        Vec4 color = ToVec4(inModelColor);
+        buf.lines.push_back({ToVec3(wv0), ToVec3(wv1), color});
+        buf.lines.push_back({ToVec3(wv1), ToVec3(wv2), color});
+        buf.lines.push_back({ToVec3(wv2), ToVec3(wv0), color});
     }
 }
 
@@ -114,12 +129,12 @@ void JoltDebugRenderer::DrawText3D(JPH::Vec3Arg inPosition,
                                     JPH::ColorArg inColor, float)
 {
     if (!m_Draw) return;
+    // v5.5.0: std::string_view 可用
     std::string text(inString);
     m_Draw->DrawText3D(ToVec3(inPosition), text.c_str(), ToVec4(inColor));
 }
 
 void JoltDebugRenderer::Clear() {
-    // 清空所有线程的缓冲区（主线程调用，安全）
     for (auto& buf : m_ThreadBuffers) {
         buf.lines.clear();
     }
@@ -128,7 +143,6 @@ void JoltDebugRenderer::Clear() {
 void JoltDebugRenderer::Flush() {
     if (!m_Draw) return;
 
-    // 汇总所有线程的数据到 IPhysicsDebugDraw3D
     for (const auto& buf : m_ThreadBuffers) {
         for (const auto& line : buf.lines) {
             m_Draw->DrawLine(line.from, line.to, line.color);
