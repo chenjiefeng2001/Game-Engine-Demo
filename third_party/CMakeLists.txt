@@ -5,6 +5,8 @@
 add_library(glad2 STATIC glad/src/gl.c)
 target_include_directories(glad2 PUBLIC glad/include)
 target_compile_definitions(glad2 PUBLIC GLAD_GLAPI_EXPORT)
+# 将 .c 作为 C++ 编译，避免 MSVC PCH 或 CRT 冲突
+set_source_files_properties("${CMAKE_CURRENT_SOURCE_DIR}/glad/src/gl.c" PROPERTIES LANGUAGE CXX)
 
 # =============================================================================
 # glm — 数学库
