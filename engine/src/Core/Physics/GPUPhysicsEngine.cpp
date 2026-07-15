@@ -21,7 +21,9 @@
 #include <map>
 #include <algorithm>
 
-// OpenGL 头文件
+// OpenGL 头文件 — 需要实现宏以在 EngineCore 中导出全局 gl* 别名
+// glad2 是静态库，GPUPhysicsEngine 需要在此展开 OpenGL 别名符号
+#define GLAD_GL_IMPLEMENTATION
 #include <glad/gl.h>
 
 namespace Engine {
