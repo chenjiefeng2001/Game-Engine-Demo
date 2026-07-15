@@ -32,15 +32,16 @@ GPUPhysicsEngine::GPUPhysicsEngine() = default;
 GPUPhysicsEngine::~GPUPhysicsEngine() { Shutdown(); }
 
 bool GPUPhysicsEngine::Initialize(RHI::IRHIDevice* device, const GPUPhysicsConfig& config) {
-    if (!device) {
-        s_Log.Error("Initialize: device is null");
-        return false;
-    }
-
     if (m_Initialized) Shutdown();
 
     m_Device = device;
     m_Config = config;
+
+    if (!device) {
+        s_Log.Warn("Initialize: no RHI device - structural/validation mode only");
+        m_Initialized = true;
+        return true;
+    }
 
     // 1. 创建粒子 SSBO（使用 RHI Buffer）
     if (!CreateParticleBuffer()) {
