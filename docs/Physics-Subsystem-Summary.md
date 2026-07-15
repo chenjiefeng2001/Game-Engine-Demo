@@ -178,9 +178,77 @@ PhysicsSystemManager (统一管理器)
 
 ---
 
-## 五、纯 GPU 物理引擎架构前瞻
+## 五、纯 GPU 物理引擎 — MVP 实现与架构前瞻
 
-> **分析范围**: 当前引擎基于 CPU 物理后端（Jolt Physics / Box2D），本节探讨纯 GPU 物理管线的可行性、技术路径及对本引擎架构的潜在影响。
+> **分析范围**: 基于 Compute Shader 的球体离散元（DEM）MVP 实现，Zero-Copy 渲染验证
+
+### 5.0 MVP 实现概述
+
+基于你提供的设计方案，已在 `GPU_PHYSIC_SUBSYSTEM` 分支上实现了 GPU 物理引擎 MVP v1.0。
+
+#### 实现统计
+
+| 组件 | 文件 | 行数 | 说明 |
+|------|------|------|------|
+| **GPU 物理引擎头文件** | `engine/include/Engine/Core/Physics/GPUParticle.h` | ~150 | GPUParticleData / GPUPhysicsConfig / GPUPhysicsStats / GPUPhysicsEngine |
+| **GPU 物理引擎实现** | `engine/src/Core/Physics/GPUPhysicsEngine.cpp` | ~550 | SSBO 创建/Compute Shader 编译/球体网格生成/Update+Render |
+| **积分 Compute Shader** | `assets/shaders/gpu_physics_integrate.glsl` | ~90 | 半隐式欧拉积分 + 边界碰撞 + 阻尼 |
+| **碰撞 Compute Shader** | `assets/shaders/gpu_physics_collide.glsl` | ~130 | 共享内存优化的分块暴力碰撞 + 惩罚力 |
+| **渲染 Vertex Shader** | `assets/shaders/gpu_physics_render.vert` | ~50 | SSBO 直接绑定，InstanceID 索引粒子数据 |
+| **渲染 Fragment Shader** | `assets/shaders/gpu_physics_render.frag` | ~40 | 简单 Phong 光照可视化 |
+| **沙盒测试** | `sandbox/src/GPUPhysicsTest.cpp` | ~220 | 65536 粒子初始化和主循环 |
+
+#### 管线流程
+
+```
+每帧:
+  CPU: glUseProgram(integrate) → glDispatchCompute(groupCount, 1, 1)
+       ↓
+  屏障: glMemoryBarrier(GL_SHADER_STORAGE_BARRIER_BIT)
+       ↓
+  CPU: glUseProgram(collide) → glDispatchCompute(groupCount, 1, 1)
+       ↓
+  屏障: glMemoryBarrier(VERTEX_ATTRIB_ARRAY_BARRIER_BIT | SHADER_STORAGE_BARRIER_BIT)
+       ↓
+  CPU: glUseProgram(render) → glDrawElementsInstanced(..., particleCount)
+       ↓
+  GPU: Vertex Shader 通过 gl_InstanceID 索引 SSBO 中的粒子数据
+       → 零 CPU 介入，Zero-Copy 渲染
+```
+
+#### 验证清单
+
+通过此 MVP 可系统性验证以下引擎能力：
+
+| # | 验证点 | 验证方法 | 预期结果 |
+|---|--------|---------|---------|
+| 1 | Compute Shader 创建与编译 | 加载 2 个 `.glsl` 文件 → `glCompileShader` → `glLinkProgram` | 无编译错误 |
+| 2 | SSBO 分配与初始化 | `glBufferStorage` 分配 65536 × 80 bytes → `glBufferSubData` 上传初始数据 | 无 GL 错误 |
+| 3 | Compute Dispatch | `glDispatchCompute(256, 1, 1)` 覆盖所有粒子 | 每个粒子都被处理一次 |
+| 4 | Memory Barrier | 积分 pass 后的 `GL_SHADER_STORAGE_BARRIER_BIT` | 无读写竞争（无撕裂） |
+| 5 | Zero-Copy 渲染 | 渲染时绑定同一 SSBO，不执行 `glGetBufferSubData` | 无 PCIe 回读，GPU 内完成 |
+| 6 | 实例化渲染 | `glDrawElementsInstanced(GL_TRIANGLES, 128*3, ...)` | 所有粒子正确渲染 |
+| 7 | 物理正确性 | 观察粒子下落、弹跳、互相碰撞 | 无穿模、无异常飞出 |
+
+#### 测试指南
+
+```bash
+# 切换分支
+git checkout GPU_PHYSIC_SUBSYSTEM
+
+# 确保着色器文件存在
+ls assets/shaders/gpu_physics_*
+
+# 编译项目
+cmake --build build
+
+# 运行沙盒测试（GPUPhysicsTest 作为场景）
+./build/sandbox/Debug/sandbox.exe
+
+# 测试期间操作:
+# F1 — 切换统计显示
+# R  — 重置粒子位置
+```
 
 ### 5.1 为什么关注纯 GPU 物理？
 
