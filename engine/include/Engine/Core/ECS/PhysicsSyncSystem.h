@@ -97,12 +97,33 @@ private:
      */
     void ProcessCollisionEvents();
 
+    /**
+     * @brief v7.0: 碰撞事件路由到 CollisionListenerComponent
+     * 遍历所有 CollisionListenerComponent 匹配 BodyID 分发事件
+     */
+    void RouteCollisionEvents();
+
+    /**
+     * @brief v7.0: 注册 CharacterController 到同步系统
+     * @param entityId 实体 ID
+     * @param cct CharacterController 指针
+     */
+    void RegisterCharacterController(uint64 entityId, ICharacterController3D* cct);
+
+    /**
+     * @brief v7.0: 注销 CharacterController
+     */
+    void UnregisterCharacterController(uint64 entityId);
+
     EntityManager*    m_EntityManager = nullptr;
     IPhysicsWorld3D*  m_PhysicsWorld  = nullptr;
     FixedTimestepAccumulator m_Accumulator{1.0f / 60.0f};
 
     // v6.0: 已创建的关节映射 (EntityHandle.Index() → IJoint3D)
     std::unordered_map<uint64, std::shared_ptr<IJoint3D>> m_Joints;
+
+    // v7.0: CharacterController 映射 (entityId → controller)
+    std::unordered_map<uint64, ICharacterController3D*> m_CharacterControllers;
 };
 
 } // namespace Engine

@@ -79,6 +79,12 @@ target_include_directories(EngineCore
 
 )
 target_link_libraries(EngineCore PUBLIC glad2 glfw stb box2d OpenAL::OpenAL imgui spdlog::spdlog freetype imguizmo Jolt)
+
+# Jolt Physics: Release builds disable debug renderer for performance
+target_compile_definitions(EngineCore PRIVATE
+    $<$<NOT:$<CONFIG:Debug>>:JPH_DEBUG_RENDERER=0>
+    $<$<CONFIG:Debug>:JPH_DEBUG_RENDERER>
+)
 if(TARGET d3d12ma)
     target_link_libraries(EngineCore PUBLIC d3d12ma)
 endif()

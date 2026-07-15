@@ -23,7 +23,7 @@ namespace Engine {
 
 class JoltJoint3D final : public IJoint3D {
 public:
-    JoltJoint3D(JPH::TwoBodyConstraint* constraint, const JointDef3D& def);
+    JoltJoint3D(JPH::TwoBodyConstraint* constraint, JointType3D type);
     ~JoltJoint3D() override;
 
     JointType3D GetType() const override { return m_Type; }
@@ -45,6 +45,7 @@ public:
     IPhysicsBody3D* GetBodyB() const override { return m_BodyB; }
     void* GetNativeJoint() override { return m_Constraint; }
 
+    /** 获取原生 Jolt 约束指针 */
     JPH::TwoBodyConstraint* GetConstraint() const { return m_Constraint; }
 
 private:

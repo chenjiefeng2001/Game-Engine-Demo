@@ -19,6 +19,7 @@
 #include "Engine/Core/RHI/MathTypes.h"
 #include "Engine/Core/Physics/PhysicsLayers.h"
 #include "Engine/Core/Physics/IJoint3D.h"
+#include "Engine/Core/ECS/ECS.fwd.h"
 #include <cstdint>
 #include <functional>
 

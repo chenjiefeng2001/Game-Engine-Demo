@@ -45,6 +45,11 @@ struct alignas(8) EntityHandle {
         return EntityHandle{ (uint64(index)) | (uint64(generation) << 32) };
     }
 
+    /** 从 index 重建 EntityHandle（Generation 置 0，仅用于映射查找） */
+    static EntityHandle FromIndex(uint32 index) {
+        return EntityHandle{ uint64(index) };
+    }
+
     static const EntityHandle kNull;  // { 0 }
 };
 

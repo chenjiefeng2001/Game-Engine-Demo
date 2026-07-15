@@ -10,6 +10,7 @@
 #include "Engine/Core/Physics/IPhysicsWorld3D.h"
 #include <Jolt/Physics/Character/CharacterVirtual.h>
 #include <Jolt/Physics/Collision/Shape/CapsuleShape.h>
+#include <Jolt/Core/TempAllocator.h>
 
 namespace Engine {
 
@@ -27,8 +28,6 @@ bool JoltCharacterController3D::Init(const CharacterControllerDef& def, IPhysics
     m_Shape = new JPH::CapsuleShape(def.height * 0.5f, def.radius);
 
     // 2. 配置 JPH::CharacterVirtualSettings
-    // 注意：Jolt v5.5.0 的 CharacterVirtualSettings 没有 mFriction 字段
-    // 摩擦通过 PhysicsSystem 的 ContactListener 全局配置
     JPH::CharacterVirtualSettings settings;
     settings.mShape = m_Shape;
     settings.mMass = def.mass;
@@ -53,23 +52,28 @@ bool JoltCharacterController3D::Init(const CharacterControllerDef& def, IPhysics
 void JoltCharacterController3D::Move(const Vec3& velocity, float32 dt) {
     if (!m_Character) return;
 
-    // 应用水平速度
+    // v5.5.0: CharacterVirtual 的 ExtendedUpdate 签名:
+    // ExtendedUpdate(dt, gravity, settings, broadPhaseFilter, objectLayerFilter, bodyFilter, shapeFilter, allocator)
+    // 移除了 up 方向参数和 active contacts 参数
+    JPH::Vec3 gravity(0, -9.81f, 0);
+
+    // 设置速度
     JPH::Vec3 vel(velocity.x, m_VerticalVelocity, velocity.z);
     m_Character->SetLinearVelocity(vel);
 
-    // v5.5.0 的 ExtendedUpdate 使用嵌套结构体配置
-    // 与后期版本不同，v5.5.0 没有 mStickToFloor/mWalkStairs 快捷字段
-    // ExtendedUpdate 直接接收各个参数
+    // 获取临时分配器（从 PhysicsSystem 获取）
+    JPH::TempAllocatorImpl tempAllocator(16 * 1024 * 1024);
+
+    // v5.5.0: ExtendedUpdate 不接收 up 方向参数
     m_Character->ExtendedUpdate(
         dt,
-        m_Character->GetUp(),       // up direction
-        JPH::CharacterVirtual::ExtendedUpdateSettings(), // 默认设置
+        gravity,
+        JPH::CharacterVirtual::ExtendedUpdateSettings(),
         JPH::BroadPhaseLayerFilter(),
         JPH::ObjectLayerFilter(),
         JPH::BodyFilter(),
         JPH::ShapeFilter(),
-        *m_Character->GetActiveContacts(),
-        *JPH::TempAllocator::GetTempAllocator()
+        tempAllocator
     );
 
     // 重力

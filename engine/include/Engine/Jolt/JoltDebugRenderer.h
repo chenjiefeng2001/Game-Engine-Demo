@@ -3,24 +3,13 @@
 /**
  * @file JoltDebugRenderer.h
  * @brief Jolt Physics Debug Renderer — v5.0 TLS 无锁设计
- *
- * Jolt 在多个 Worker 线程并发调用 DrawLine/DrawTriangle。
- * v4.0 使用 std::mutex 保护单个缓冲区 → 锁竞争极其严重。
- * v5.0 改用 Thread-Local Storage (TLS)：
- *   - 每个线程拥有独立的 Line 缓冲区
- *   - 写入完全无锁，零竞争
- *   - Flush() 阶段在主线程汇总所有线程的数据并提交渲染
  */
 
-// Jolt.h 必须先于所有其他 Jolt 头文件包含，以确保
-// JPH_EXPORT_GCC_BUG_WORKAROUND 等宏在 Color.h 等头文件使用前被正确定义
 #include <Jolt/Jolt.h>
 #include <Jolt/Renderer/DebugRenderer.h>
 #include "Engine/Core/Physics/IPhysicsDebugDraw3D.h"
-#include "Engine/Core/JobSystem.h"
 #include <vector>
 #include <array>
-#include <thread>
 
 namespace Engine {
 
@@ -31,30 +20,26 @@ public:
     JoltDebugRenderer(IPhysicsDebugDraw3D* draw);
     ~JoltDebugRenderer() override;
 
-    // ── JPH::DebugRenderer 纯虚接口 ──
-    void DrawLine(JPH::Vec3Arg inFrom, JPH::Vec3Arg inTo, JPH::ColorArg inColor) override;
+    void DrawLine(JPH::RVec3Arg inFrom, JPH::RVec3Arg inTo, JPH::ColorArg inColor) override;
 
-    void DrawTriangle(JPH::Vec3Arg inV0, JPH::Vec3Arg inV1, JPH::Vec3Arg inV2,
-                      JPH::ColorArg inColor, ECullMode inCullMode) override;
+    void DrawTriangle(JPH::RVec3Arg inV0, JPH::RVec3Arg inV1, JPH::RVec3Arg inV2,
+                      JPH::ColorArg inColor, JPH::DebugRenderer::ECastShadow inCastShadow = JPH::DebugRenderer::ECastShadow::Off) override;
 
-    struct BatchImpl : public Batch {
-        std::vector<JPH::DebugRenderer::Triangle> triangles;
-    };
+    JPH::DebugRenderer::Batch CreateTriangleBatch(const Triangle* inTriangles, int inTriangleCount) override;
 
-    Batch* CreateTriangleBatch(const Triangle* inTriangles, int inTriangleCount) override;
-
-    Batch* CreateTriangleBatch(const Vertex* inVertices, int inVertexCount,
-                               const uint32* inIndices, int inIndexCount) override;
+    JPH::DebugRenderer::Batch CreateTriangleBatch(const Vertex* inVertices, int inVertexCount,
+                                                   const uint32* inIndices, int inIndexCount) override;
 
     void DrawGeometry(JPH::RMat44Arg inModelMatrix, const JPH::AABox& inWorldSpaceBounds,
                       float inLODScaleSq, JPH::ColorArg inModelColor,
-                      const BatchRef& inGeometry, ECullMode inCullMode,
-                      ECastShadow inCastShadow, EDrawMode inDrawMode) override;
+                      const JPH::DebugRenderer::GeometryRef& inGeometry,
+                      JPH::DebugRenderer::ECullMode inCullMode = JPH::DebugRenderer::ECullMode::CullBackFace,
+                      JPH::DebugRenderer::ECastShadow inCastShadow = JPH::DebugRenderer::ECastShadow::On,
+                      JPH::DebugRenderer::EDrawMode inDrawMode = JPH::DebugRenderer::EDrawMode::Solid) override;
 
-    void DrawText3D(JPH::Vec3Arg inPosition, const std::string_view& inString,
+    void DrawText3D(JPH::RVec3Arg inPosition, const std::string_view& inString,
                     JPH::ColorArg inColor, float inHeight) override;
 
-    // ── 每帧生命周期（主线程调用）──
     void Clear();
     void Flush();
 
@@ -66,6 +51,7 @@ private:
 
     static Vec4 ToVec4(JPH::ColorArg color);
     static Vec3 ToVec3(JPH::Vec3Arg v);
+    static Vec3 ToVec3FromRVec(JPH::RVec3Arg v);
     uint32 GetThreadIndex() const;
 
     IPhysicsDebugDraw3D* m_Draw;
