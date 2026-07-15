@@ -579,6 +579,7 @@ void JoltPhysicsWorld::DebugDraw() {
 
     m_DebugDraw->Clear();
 
+#ifdef JPH_DEBUG_RENDERER
     if (!m_DebugRenderer) {
         m_DebugRenderer = std::make_unique<JoltDebugRenderer>(m_DebugDraw);
     }
@@ -590,6 +591,7 @@ void JoltPhysicsWorld::DebugDraw() {
     drawSettings.mDrawCenterOfMassTransform = true;
 
     m_PhysicsSystem.DrawBodies(drawSettings, m_DebugRenderer.get());
+#endif
 
     m_DebugDraw->Flush();
 }

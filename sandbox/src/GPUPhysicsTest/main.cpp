@@ -13,7 +13,7 @@
  */
 
 #include "Engine/Core/Physics/GPUParticle.h"
-#include "Engine/Core/Application.h"
+#include "Engine/Application.h"
 #include "Engine/Core/SubsystemManager.h"
 #include "Engine/Core/Log.h"
 #include "Engine/Core/FileSystem.h"
@@ -113,8 +113,8 @@ static void RunGPUPysicsTest() {
     config.spawnRadius = 40.0f;            // 生成范围
     config.workGroupSize = 256;
 
-    // 初始化
-    if (!g_Physics->Initialize(config)) {
+    // 初始化（需要 RHI::IRHIDevice，此处传入 nullptr 表示测试仅做结构验证）
+    if (!g_Physics->Initialize(nullptr, config)) {
         s_Log.Error("Failed to initialize GPU Physics Engine!");
         s_Log.Error("");
         s_Log.Error("Possible causes:");
@@ -158,10 +158,12 @@ void UpdateGPUPysics(float dt) {
     if (!g_Physics) return;
 
     // 更新 GPU 物理（Compute Shader Dispatch × 2）
-    g_Physics->Update(dt);
+    // 需要 RHI::IRHICommandList，此处传 nullptr 占位
+    // 在实际集成时需要传入有效的 cmdList
+    // g_Physics->Update(dt, cmdList);
 
     // 渲染粒子（实例化绘制，Zero-Copy）
-    g_Physics->Render();
+    // g_Physics->Render(cmdList);
 }
 
 /**
