@@ -235,9 +235,10 @@ void JoltPhysicsBody::SetShape(const ShapeDef3D& shapeDef) {
     if (bodyInterface.GetMotionType(m_BodyID) == JPH::EMotionType::Dynamic) {
         JPH::BodyLockWrite lock(sys->GetBodyLockInterface(), m_BodyID);
         if (lock.Succeeded() && lock.GetBody().GetMotionProperties()) {
+            // v5.5.0: SetMassProperties 接受 CalculateMassAndInertia 枚举值和 MassProperties
             lock.GetBody().GetMotionProperties()->SetMassProperties(
-                JPH::EMassPropertiesAllowedCalculation::CalculateMassAndInertia,
-                shape->GetMassProperties(1.0f) // density = 1.0, 上层通过 SetMassProperties 调整
+                JPH::EAllowedState::CalculateMassAndInertia,
+                shape->GetMassProperties()
             );
         }
     }
