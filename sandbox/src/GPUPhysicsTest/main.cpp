@@ -61,22 +61,18 @@ static void PrintStats() {
     const auto& stats = g_Physics->GetStats();
     const auto& config = g_Physics->GetConfig();
 
-    printf("\n");
-    printf("╔══════════════════════════════════════════╗\n");
-    printf("║     GPU Physics Engine Status            ║\n");
-    printf("╠══════════════════════════════════════════╣\n");
-    printf("║  Total Particles : %-20u  ║\n", stats.totalParticles);
-    printf("║  Frame Count     : %-20lu  ║\n", stats.frameCount);
-    printf("║  Gravity         : (%.1f, %.1f, %.1f)    ║\n",
+    printf("--- GPU Physics Engine Status ---\n");
+    printf("  Total Particles : %u\n", stats.totalParticles);
+    printf("  Frame Count     : %llu\n", stats.frameCount);
+    printf("  Gravity         : (%.1f, %.1f, %.1f)\n",
            config.gravity[0], config.gravity[1], config.gravity[2]);
-    printf("║  Restitution     : %-20.2f  ║\n", config.restitution);
-    printf("║  Stiffness       : %-20.0f  ║\n", config.stiffness);
-    printf("║  Damping         : %-20.4f  ║\n", config.damping);
-    printf("║  Box             : (%.0f, %.0f, %.0f)     ║\n",
+    printf("  Restitution     : %.2f\n", config.restitution);
+    printf("  Stiffness       : %.0f\n", config.stiffness);
+    printf("  Damping         : %.4f\n", config.damping);
+    printf("  Box             : (%.0f, %.0f, %.0f)\n",
            config.boxMax[0] - config.boxMin[0],
            config.boxMax[1] - config.boxMin[1],
            config.boxMax[2] - config.boxMin[2]);
-    printf("╚══════════════════════════════════════════╝\n");
     printf("\n");
 }
 
@@ -120,17 +116,11 @@ static void RunGPUPysicsTest() {
     }
 
     s_Log.Info("");
-    s_Log.Info("╔════════════════════════════════════╗");
-    s_Log.Info("║  GPU Physics Engine is RUNNING!    ║");
-    s_Log.Info("║                                    ║");
-    s_Log.Info("║  %-6u particles on GPU             ║", config.particleCount);
-    s_Log.Info("║  2 Compute Passes per frame        ║");
-    s_Log.Info("║  Zero-Copy rendering (no CPU read) ║");
-    s_Log.Info("║                                    ║");
-    s_Log.Info("║  Press F1 to toggle stats          ║");
-    s_Log.Info("║  Press R  to reset particles       ║");
-    s_Log.Info("╚════════════════════════════════════╝");
-    s_Log.Info("");
+    s_Log.Info("--- GPU Physics Engine Configuration ---");
+    s_Log.Info("  Particles        : {} on GPU", config.particleCount);
+    s_Log.Info("  Compute Passes   : 2 per frame");
+    s_Log.Info("  Rendering        : Zero-Copy (no CPU read)");
+    s_Log.Info("  Press F1/F2/R    : toggle stats / reset particles");
 
     // 初始化时间统计
     g_LastFrameTime = std::chrono::steady_clock::now();
