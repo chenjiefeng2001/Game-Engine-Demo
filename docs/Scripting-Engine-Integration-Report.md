@@ -1,572 +1,801 @@
-# 工业级脚本引擎集成方案 — 可行性报告与实施蓝图
+# 工业级脚本引擎集成方案 v2 — 通用数据视图架构
 
-> **生成日期**: 2026-07-08  
+> **生成日期**: 2026-07-15 (v2 重构)  
 > **分析范围**: 语言选型、C-ABI 桥接设计、ECS 深度解耦、热重载架构、落地实施路线  
-> **当前项目状态**: C++20 ECS 架构 + Jolt Physics v4.0-v7.0 完成 + JobSystem + EventBus + FileWatcher
+> **当前项目状态**: C++20 ECS 架构 + Jolt Physics v4.0-v7.0 完成 + JobSystem + EventBus + FileWatcher + Vulkan/OpenGL 双后端
 
 ---
 
-## 一、当前项目脚本能力评估
+## 一、核心理念：从"语言绑定"到"数据协议"
 
-### 1.1 已有脚本基础设施
+### 1.1 旧思维 vs 新思维
 
-| 组件 | 状态 | 与脚本引擎的关联 |
-|------|------|----------------|
-| **ECS EntityManager** | v7.0 完整 | 脚本层操作的底层对象模型 |
-| **ComponentRemovedCallback** | 已实现 | 脚本实体的生命周期通知 |
-| **EventBus** | 已实现 | 脚本事件的 C++ 端路由 |
-| **FileWatcher** | 已实现 | 热重载的文件变更检测 |
-| **JobSystem** | 已实现 | 脚本 Update 的并行调度 |
-| **JsonSerializer** | 已实现 | 脚本状态的序列化底座 |
-| **PhysicsSyncSystem** | v7.0 完整 | 脚本层物理操作的三级同步 |
-| **TransformComponent (四元数)** | v4.0 完成 | 脚本层变换操作的基础 |
-| **ConsoleVariable** | 已实现 | 脚本调试变量的 C++ 端注册 |
+| 维度 | v1 方案（旧） | v2 方案（新） |
+|------|-------------|-------------|
+| **出发点** | "选哪种语言做脚本？" → **语言中心** | "如何让多语言共享数据？" → **数据中心** |
+| **集成方式** | 为每种语言写胶水代码（P/Invoke / FFI） | 定义统一数据契约，自动生成多语言绑定 |
+| **数据所有权** | 脚本实例持有数据，C++ 通过函数调用读写 | **C++ ECS 池持有数据**，脚本通过内存映射直读 |
+| **热重载策略** | 序列化→卸载→加载→反序列化（有拷贝开销） | **数据不动**，只替换逻辑执行体（零拷贝） |
+| **多语言支持** | 选一种（C#）深度绑定 | **WASM/C#/Lua/Python 平等**，共享同一数据层 |
+| **边界调用风格** | `Engine_Entity_SetPosition(id, x, y, z)` 逐个属性 | `get_component_ptr(id, type)` 返回指针，脚本直接操作内存 |
 
-**结论**: 项目已有**足够的基础设施**来承载工业级脚本引擎。ECS 和 JobSystem 已经是为"数据导向脚本"量身定制的运行时。
+### 1.2 新架构总览
 
-### 1.2 当前脚本能力缺陷
-
-| 缺陷 | 影响 | 根因 |
-|------|------|------|
-| 所有 Gameplay 逻辑必须用 C++ 写 | 迭代速度极慢，每改一行都要重编译 | 无脚本虚拟机 |
-| 无运行时调试 | 无法在运行时修改变量/逻辑 | 无 REPL 环境 |
-| 无热重载 | 引擎重启才能看到逻辑修改 | 无脚本域隔离 |
-| 无编辑器内脚本编辑 | 需要外部 IDE | 无 ScriptComponent |
+```
+┌─────────────────────────────────────────────────────────────────────────┐
+│                  引擎核心内存（ECS Component Pools）                      │
+│  ┌──────────┐  ┌──────────┐  ┌──────────┐  ┌──────────┐                │
+│  │Transform  │  │ RigidBody│  │Collider  │  │  ...     │  (POD 结构体)   │
+│  │ x,y,z,rot │  │ vx,vy,vz │  │ type,size│  │          │                │
+│  └──────────┘  └──────────┘  └──────────┘  └──────────┘                │
+└───────────────────────────┬─────────────────────────────────────────────┘
+                            │
+                            ▼
+┌─────────────────── 组件注册表 + 代码生成器 ───────────────────┐
+│  ComponentRegistry (元数据系统)                                │
+│  ├── 扫描 C++ 头文件 / 读取中立 DSL (JSON/YAML) 定义          │
+│  └── 自动生成各语言的"内存访问代理层"                           │
+│        ├── C++:   struct Transform { float x,y,z,rot; };       │
+│        ├── Rust:  #[repr(C)] struct Transform { ... }          │
+│        ├── C#:    [StructLayout(LayoutKind.Sequential)]         │
+│        ├── LuaJIT: ffi.cdef[[ struct Transform { ... } ]]      │
+│        └── Python: ctypes.Structure 定义                       │
+└────────────────────────────────────────────────────────────────┘
+                            │
+                            ▼
+┌─────────────── 极小化 C-ABI 层 (约 20 个函数) ───────────────┐
+│  不暴露"语义操作"（SetPosition），只暴露"内存访问"              │
+│  ├── void*  get_component_ptr(EntityID id, ComponentType type) │
+│  ├── EntityID* query_entities(ComponentMask mask, uint32_t* n) │
+│  ├── EntityID  create_entity()                                 │
+│  ├── void      destroy_entity(EntityID id)                     │
+│  └── (极少数工具函数) Engine_Log / Engine_Input / Engine_Time  │
+└────────────────────────────────────────────────────────────────┘
+                            │
+                            ▼
+┌────────────────── 脚本虚拟机层（可插拔后端） ─────────────────┐
+│                                                               │
+│  ┌──────────────┐  ┌──────────┐  ┌──────────┐  ┌──────────┐ │
+│  │   WASM VM    │  │ CoreCLR  │  │ LuaJIT   │  │ Python   │ │
+│  │ (Wasmtime)   │  │ (.NET 8) │  │ (ffi)    │  │ (ctypes) │ │
+│  │              │  │          │  │          │  │          │ │
+│  │ ● 沙盒隔离   │  │ ● JIT    │  │ ● 极速   │  │ ● AI     │ │
+│  │ ● 第三方 Mod │  │ ● 调试   │  │ ● 原型   │  │ ● 工具链 │ │
+│  │ ● 无 GC      │  │ ● 生态   │  │ ● 灵活   │  │ ● 生态   │ │
+│  └──────┬───────┘  └────┬─────┘  └────┬─────┘  └────┬─────┘ │
+│         │               │             │             │       │
+│          └──────────────┴─────────────┴─────────────┘        │
+│              统一通过 get_component_ptr 访问 ECS 内存         │
+└────────────────────────────────────────────────────────────────┘
+                            │
+                            ▼
+┌────────────── ScriptSystem（语言无关的调度器）──────────────┐
+│  LanguageRegistry (映射 "WASM/C#/Lua" → VM 后端)            │
+│  ScriptComponent { language, scriptName, scriptConfig }      │
+│  System Dispatcher                                          │
+│  ├── Step 1: 按语言分组 ScriptComponent                      │
+│  ├── Step 2: 对每组调用对应 VM 的 Execute(fn, chunk)         │
+│  └── Step 3: 异常隔离 + GC 步进                              │
+└─────────────────────────────────────────────────────────────┘
+```
 
 ---
 
-## 二、工业界脚本引擎选型分析
+## 二、设计决策深度分析
 
-### 2.1 候选方案全景对比
+### 2.1 为什么是"极小化 C-ABI"而不是"丰富 C-ABI"？
 
-| 维度 | **C# (.NET 8+ CoreCLR)** | **Luau (Roblox)** | **Lua 5.4 + sol2** | **Python (CPython)** | **WebAssembly (wasm3)** |
-|------|--------------------------|-------------------|-------------------|---------------------|------------------------|
-| **性能** | ⭐⭐⭐⭐⭐ JIT/AOT | ⭐⭐⭐⭐ Luau VM | ⭐⭐⭐ Lua VM | ⭐⭐ CPython | ⭐⭐⭐⭐ wasm |
-| **类型安全** | ⭐⭐⭐⭐⭐ 强类型 | ⭐⭐⭐⭐ 类型推导 | ⭐⭐ 弱类型 | ⭐⭐ 动态 | ⭐⭐⭐⭐⭐ 编译期 |
-| **工具链** | ⭐⭐⭐⭐⭐ VS/Rider | ⭐⭐⭐ Roblox Studio | ⭐⭐⭐ ZeroBrane | ⭐⭐⭐⭐⭐ VS/PyCharm | ⭐⭐⭐ 浏览器 DevTools |
-| **调试能力** | ⭐⭐⭐⭐⭐ 断点/步进/变量 | ⭐⭐⭐ 有限 | ⭐⭐ 基本 | ⭐⭐⭐⭐⭐ 完整 | ⭐⭐⭐ 源映射 |
-| **热重载** | ⭐⭐⭐ AppDomain/ALC | ⭐⭐⭐⭐⭐ 原生支持 | ⭐⭐⭐ 全局表替换 | ⭐⭐⭐ 模块重载 | ⭐⭐⭐⭐⭐ 模块替换 |
-| **GC 控制** | ⭐⭐⭐⭐⭐ GCMode/LatencyMode | ⭐⭐⭐ 暂停可控 | ⭐⭐ 不可控 | ⭐ | 无 GC |
-| **包管理** | ⭐⭐⭐⭐⭐ NuGet | ⭐⭐⭐⭐ Wally | ⭐⭐⭐ LuaRocks | ⭐⭐⭐⭐⭐ PyPI | 无 |
-| **C++ 互操作** | ⭐⭐⭐⭐ C-ABI P/Invoke | ⭐⭐⭐ C API | ⭐⭐⭐⭐ C API | ⭐⭐⭐ C API | ⭐⭐⭐⭐ WASM ABI |
-| **社群生态** | ⭐⭐⭐⭐⭐ 宇宙级 | ⭐⭐⭐⭐ Roblox | ⭐⭐⭐⭐⭐ 游戏界 | ⭐⭐⭐⭐⭐ AI/数据 | ⭐⭐⭐ 新兴 |
-| **二进制体积** | ⭐ 大 (~50MB runtime) | ⭐⭐⭐⭐⭐ (~500KB) | ⭐⭐⭐⭐⭐ (~300KB) | ⭐ (~30MB) | ⭐⭐⭐ (~2MB) |
-| **学习曲线** | ⭐⭐⭐⭐⭐ 通用技能 | ⭐⭐⭐⭐ Roblox 专精 | ⭐⭐⭐ 易上手 | ⭐⭐⭐⭐⭐ 通用 | ⭐⭐⭐ 须懂 LLVM |
+v1 方案设计了 80+ 个 C-ABI 函数（SetPosition/SetRotation/ApplyForce/Raycast...），每个函数都是"语义操作"。
 
-### 2.2 工业级引擎选型决策矩阵
+**问题**：如果有 20 种组件、每种 5 个操作，就是 100 个函数。每种语言都要绑定这 100 个函数。**胶水代码爆炸**。
 
-```
-决策权重 (1-5):
-  性能         = 5 (游戏引擎核心要求)
-  调试能力     = 5 (开发者体验核心)
-  热重载       = 5 (迭代速度核心)
-  GC 控制     = 4 (帧率稳定性)
-  工具链       = 4 (生产效率)
-  二进制体积   = 2 (现代项目不敏感)
-  学习曲线     = 2 (团队可培训)
-
-评分:
-  C# (.NET 8) =  5*5 + 5*5 + 3*5 + 5*4 + 5*4 + 2*2 + 2*2 = 25+25+15+20+20+4+4 = 113
-  Luau        =  4*5 + 3*5 + 5*5 + 3*4 + 3*4 + 5*2 + 4*2 = 20+15+25+12+12+10+8 = 102
-  Lua 5.4     =  3*5 + 2*5 + 3*5 + 1*4 + 3*4 + 5*2 + 3*2 = 15+10+15+4+12+10+6 = 72
-  Python      =  2*5 + 5*5 + 3*5 + 1*4 + 5*4 + 1*2 + 4*2 = 10+25+15+4+20+2+8 = 84
-  WebAssembly =  4*5 + 3*5 + 5*5 + 5*4 + 3*4 + 5*2 + 3*2 = 20+15+25+20+12+10+6 = 108
-```
-
-### 2.3 推荐方案
-
-**首选: C# (.NET 8+/CoreCLR)** — 评分 113，工业标准
-**次选: Luau** — 评分 102，轻量级场景
-
-| 决策依据 | 说明 |
-|---------|------|
-| **性能需求** | 项目中 Jolt Physics 已经用 JobSystem 做了多线程物理模拟，脚本层不应成为性能瓶颈。C# JIT 能达到原生 80% 性能，足够应对 Gameplay |
-| **现有基础设施匹配** | ECS EntityManager + SyncSystem 的架构与 C# 组件模型天然匹配。`ScriptComponent` 可以无缝融入 `PhysicsSyncSystem` 的 Update 流程 |
-| **调试体验** | 引擎编辑器 (`EditorDemo`) 已有一套面板框架，C# 的 VS/Rider 断点调试可以直接对接 |
-| **热重载路径** | .NET 的 AssemblyLoadContext 允许卸载并重新加载程序集，配合已有的 FileWatcher 可以实现无缝热替换 |
-| **GC 控制** | .NET 8 的 `System.Runtime.GCSettings.LatencyMode` + `GC.TryStartNoGCRegion` 可以精确控制 GC 暂停在 1ms 以内，避免帧率抖动 |
-
----
-
-## 三、核心架构：C-ABI Bridge (纯 C 桥接层)
-
-### 3.1 架构总览
-
-```
-┌─────────────────────────────────────────────────────────────────────┐
-│  Gameplay Code (C# / Luau)                                          │
-│  public class PlayerController : ScriptBehaviour {                  │
-│      void OnUpdate(float dt) {                                      │
-│          transform.Position += Vector3.Forward * speed * dt;         │
-│      }                                                              │
-│  }                                                                  │
-├─────────────────────────────────────────────────────────────────────┤
-│  Script Side Wrapper (C#/Luau)                                      │
-│  P/Invoke / FFI → Engine_Entity_SetPosition(entityID, x, y, z)     │
-├─────────────────────────────────────────────────────────────────────┤
-│  C-ABI Boundary — EXPORT "C" (engine_api.h)                        │
-│  Engine_Entity_SetPosition(uint64_t entityID, float x, float y,    │
-│                            float z) {                               │
-│      EntityManager::Get().GetComponent<TransformComponent>(entityID)│
-│          ->SetPosition(Vec3(x, y, z));                              │
-│  }                                                                  │
-├─────────────────────────────────────────────────────────────────────┤
-│  C++ Engine Core (当前项目)                                          │
-│  ECS EntityManager · TransformComponent · PhysicsSyncSystem        │
-│  JobSystem · BatchSetKinematicTargets · EventBus                   │
-└─────────────────────────────────────────────────────────────────────┘
-```
-
-### 3.2 C-ABI API 设计原则
-
-```
-原则 1: 全部 extern "C" 导出，关闭 Name Mangling
-   ✓ 语言无关 — C#/Lua/Rust/WASM 都能调用
-   ✓ ABI 稳定 — 不依赖编译器实现
-   ✓ 版本兼容 — 接口可扩展不破坏旧版本
-
-原则 2: 禁止 C++ 标准库类型穿越边界
-   ✗ void Engine_Func(std::vector<uint64_t> ids);  // 禁止！
-   ✓ void Engine_Func(uint64_t* ids, uint32_t count);  // 正确
-
-原则 3: 数据扁平化，避免对象引用
-   ✗ Entity* GetEntity(uint64_t id);  // 禁止！
-   ✓ uint64_t Engine_Entity_Create();  // 正确
-
-原则 4: 批量 API 优先
-   ✓ void Engine_Physics_BatchSetTransform(uint64_t* ids, float* positions, uint32_t count);
-```
-
-### 3.3 C-ABI API 分层设计
-
-#### 3.3.1 核心层 (Foundation API) — 必须实现
+**v2 解法**：只暴露 3 个核心内存访问函数——
 
 ```cpp
 extern "C" {
-
-// ── 虚拟机生命周期 ──
-bool Engine_Init(const char* scriptPath, uint32_t heapSizeMB);
-void Engine_Shutdown();
-
-// ── 实体操作 ──
-uint64_t Engine_Entity_Create();
-void     Engine_Entity_Destroy(uint64_t entityID);
-bool     Engine_Entity_IsAlive(uint64_t entityID);
-
-// ── Transform 操作 ──
-void Engine_Entity_SetPosition(uint64_t entityID, float x, float y, float z);
-void Engine_Entity_GetPosition(uint64_t entityID, float* outX, float* outY, float* outZ);
-void Engine_Entity_SetRotation(uint64_t entityID, float qx, float qy, float qz, float qw);
-void Engine_Entity_GetRotation(uint64_t entityID, float* outQX, float* outQY, float* outQZ, float* outQW);
-
-// ── 物理操作 ──
-void  Engine_Physics_SetLinearVelocity(uint64_t entityID, float x, float y, float z);
-void  Engine_Physics_ApplyForce(uint64_t entityID, float x, float y, float z);
-bool  Engine_Physics_Raycast(float ox, float oy, float oz, float dx, float dy, float dz,
-                              uint64_t* outEntityID, float* outPointX, float* outPointY, float* outPointZ);
-
-// ── 输入 ──
-bool Engine_Input_GetKey(uint32_t keyCode);
-void Engine_Input_GetMousePosition(float* outX, float* outY);
-
-// ── 日志 ──
-void Engine_Log_Info(const char* message);
-void Engine_Log_Warn(const char* message);
-void Engine_Log_Error(const char* message);
-
-// ── 时间 ──
-float Engine_Time_GetDeltaTime();
-float Engine_Time_GetTimeSinceStartup();
-
+    // ── 核心：内存访问 ──
+    void*  Engine_GetComponentPtr(uint64_t entityID, uint32_t componentType);
+    // 返回指向 ECS Component Pool 中对应实体数据的指针
+    // 脚本拿到指针后，直接按本地语言的 struct 布局读写内存
+    
+    // ── 查询 ──
+    uint64_t* Engine_QueryEntities(uint32_t* componentMask, uint32_t count, uint32_t* outCount);
+    // 返回匹配所有指定组件的实体 ID 数组
+    
+    // ── 实体生命周期 ──
+    uint64_t Engine_CreateEntity();
+    void     Engine_DestroyEntity(uint64_t id);
+    
+    // ── 工具（约 10 个） ──
+    bool   Engine_Input_GetKey(uint32_t keyCode);
+    void   Engine_Log(const char* msg);
+    float  Engine_Time_GetDeltaTime();
+    // ... 极少量的、无法通过内存访问表达的语义操作
 }
 ```
 
-#### 3.3.2 扩展层 (Extended API) — 按需实现
+**为什么这个就够了？**
+- `GetComponentPtr` + 预生成的 struct 定义 = 脚本可以直接 `ptr.x = 10`
+- 不再需要 `SetPosition`、`SetRotation`、`SetLinearVelocity`…… 脚本拿到指针自己赋值
+- 新加组件类型时，**不需要加任何 C-ABI 函数**，只需要更新组件注册表（代码生成）
+
+#### 对比
+
+| 场景 | v1（语义 API） | v2（内存视图 API） |
+|------|---------------|-------------------|
+| 移动实体位置 | 调用 `Engine_Entity_SetPosition(id, x, y, z)` | 取 `Transform*`，写 `ptr.x = x` |
+| 批量更新 1000 个实体 | 循环调用 1000 次 C-ABI（每次跨边界） | 一次查询拿到连续数组，内存直写 |
+| 新增 ComponentType | 加 5 个新的 C-ABI 函数 | 更新注册表，重新生成绑定代码 |
+| 性能损耗 | 每次 C-ABI 调用约 10-50ns | **零边界开销**（脚本直接读内存） |
+
+### 2.2 多语言如何共享数据？
+
+所有语言通过 `Engine_GetComponentPtr` 拿到的是**同一块物理内存**的指针（或 WASM 中的偏移量）。
 
 ```cpp
+// ── 引擎端（C++）──
+void* Engine_GetComponentPtr(uint64_t entityID, uint32_t componentType) {
+    auto& pool = ECS::GetComponentPool(componentType);
+    return pool.GetData(entityID);  // 返回指向池中 POD 结构体的指针
+}
+```
+
+```rust
+// ── WASM 端（Rust）──
+#[repr(C)]
+struct Transform {
+    x: f32, y: f32, z: f32,
+    rotation: f32,
+}
+
+fn on_update( entity_id: u64 ) {
+    // 通过导入函数获取指针（WASM 中为线性内存偏移量）
+    let ptr = engine_get_component_ptr(entity_id, COMPONENT_TRANSFORM);
+    let transform: &mut Transform = unsafe { &mut *(ptr as *mut Transform) };
+    transform.x += 1.0;  // 直接修改引擎 ECS 池中的数据！
+}
+```
+
+```csharp
+// ── C# 端 ──
+[StructLayout(LayoutKind.Sequential)]
+struct Transform {
+    public float x, y, z, rotation;
+}
+
+unsafe void OnUpdate(ulong entityID) {
+    IntPtr ptr = Engine_GetComponentPtr(entityID, ComponentType.Transform);
+    Transform* t = (Transform*)ptr.ToPointer();
+    t->x += 1.0f;  // 直接修改引擎 ECS 池中的数据！
+}
+```
+
+```lua
+-- ── LuaJIT 端 ──
+ffi.cdef[[
+    typedef struct { float x, y, z, rotation; } Transform;
+]]
+local Transform_ptr = ffi.typeof("Transform*")
+
+function on_update(entity_id)
+    local ptr = engine_get_component_ptr(entity_id, COMPONENT_TRANSFORM)
+    local t = ffi.cast(Transform_ptr, ptr)
+    t.x = t.x + 1.0  -- 直接修改引擎 ECS 池中的数据！
+end
+```
+
+**关键洞察**：所有语言最终操作的**是同一块物理内存**。C++ 修改了 Transform，WASM 下一帧读到最新值，无需序列化、无需同步。
+
+### 2.3 WASM 如何处理 32 位地址空间限制？
+
+WASM 运行在 32 位线性内存中，无法直接持有 64 位 C++ 指针。
+
+**解法：宿主内存映射（Memory Import）**
+
+```
+WASM 线性内存 (32位地址空间)
+┌─────────────────────────────────────┐
+│  WASM 代码 + 堆栈                   │
+├─────────────────────────────────────┤
+│  Mapped Region (由宿主预映射)        │
+│  ├── Transform[0..N]  ← 指向 C++ ECS│
+│  ├── RigidBody[0..M]  ← 指向 C++ ECS│
+│  └── Collider[0..K]   ← 指向 C++ ECS│
+└─────────────────────────────────────┘
+         ▲                    ▲
+         │  wasmtime::Memory   │ 共享同一块物理页
+         │  import             │
+         ▼                    ▼
+C++ ECS Component Pool (物理内存)
+┌─────────────────────────────────────┐
+│  Transform[0..N] (真实数据所在地)    │
+│  RigidBody[0..M]                    │
+└─────────────────────────────────────┘
+```
+
+**具体实现（Wasmtime C++ API）：**
+
+```cpp
+// 引擎初始化时
+void SetupWasmMemoryMapping() {
+    // 1. 创建 Wasmtime 引擎和存储
+    auto engine = wasmtime::Engine::New();
+    auto store = wasmtime::Store::New(engine);
+    
+    // 2. 创建 WASM 线性内存，大小 = ECS 池所需
+    auto memory_type = wasmtime::MemoryType::New({ .min = pages_needed });
+    auto wasm_memory = wasmtime::Memory::New(store, memory_type);
+    
+    // 3. 关键：将 ECS 组件池的内存物理页映射到 WASM 线性内存的对应区域
+    //    这不是 memcpy，而是页表级别的映射（零拷贝）
+    //    使用 platform-specific 的共享内存机制：
+    //    - Linux: mmap with MAP_SHARED
+    //    - Windows: CreateFileMapping + MapViewOfFile
+    MapECSComponentPoolToWasmMemory(
+        ecs.GetPoolPtr<Transform>(),
+        wasm_memory.Data(store) + TRANSFORM_OFFSET,
+        ecs.GetPoolSize<Transform>()
+    );
+    
+    // 4. 将 memory 作为 import 传递给 WASM 实例
+    auto instance = wasmtime::Instance::New(store, module, {wasm_memory});
+    
+    // 5. WASM 端的 Transform* 指针 = TRANSFORM_OFFSET + index * sizeof(Transform)
+    //    直接读写即可，物理上操作的就是 C++ ECS 池
+}
+```
+
+**没有 mmap 可用怎么办？**（如 Windows 上 wasmtime 的限制）
+
+后备方案：使用 **`memcpy` 同步窗口**（性能低于页映射，但实现简单）：
+
+```cpp
+// 每帧开始时：ECS → WASM 内存（一次批量拷贝）
+memcpy(wasm_memory + TRANSFORM_OFFSET, ecs.GetPoolPtr<Transform>(), pool_size);
+
+// WASM 执行所有脚本逻辑（读写本地拷贝）
+
+// 每帧结束时：WASM 内存 → ECS（一次批量拷贝回写）
+memcpy(ecs.GetPoolPtr<Transform>(), wasm_memory + TRANSFORM_OFFSET, pool_size);
+```
+
+对 10 万个 Transform（每个 16 字节）= 1.6MB 的单向拷贝，在 DDR5 上约 0.05ms，完全可以接受。相比每个实体调用一次 C-ABI 的 10-50ns × 100k = 1-5ms，**批量拷贝反而更快**。
+
+---
+
+## 三、组件注册表与代码生成
+
+### 3.1 组件定义（中立格式）
+
+```yaml
+# engine/scripts/component_defs/transform.yaml
+name: Transform
+namespace: Engine
+size: 16  # 4 floats × 4 bytes
+fields:
+  - name: x
+    type: float
+    offset: 0
+  - name: y
+    type: float
+    offset: 4
+  - name: z
+    type: float
+    offset: 8
+  - name: rotation
+    type: float
+    offset: 12
+```
+
+或者直接从 C++ 头文件解析（使用 Clang libTooling）：
+
+```cpp
+// engine/include/Engine/Core/ECS/Components.h
+#pragma once
+
+// @script_component
+struct Transform {
+    float x, y, z;
+    float rotation;
+};
+
+// @script_component
+struct RigidBody {
+    float vx, vy, vz;
+};
+
+// @script_component  
+struct Collider {
+    uint32_t type;  // 0=box, 1=sphere, 2=capsule
+    float radius;
+    float height;
+};
+```
+
+### 3.2 代码生成器
+
+```
+Clang LibTooling / 自定义 DSL 解析器
+         │
+         ▼
+  Component Definitions (中间表示)
+         │
+         ├──→ C++ Header Generator
+         │     └──→ engine/include/Engine/Core/ECS/Components.generated.h
+         │
+         ├──→ Rust Binding Generator  
+         │     └──→ scripts/wasm/src/components.generated.rs
+         │
+         ├──→ C# Binding Generator
+         │     └──→ scripts/csharp/Components.generated.cs
+         │
+         ├──→ LuaJIT FFI Generator
+         │     └──→ scripts/lua/components_generated.lua
+         │
+         ├──→ Python ctypes Generator
+         │     └──→ scripts/python/components_generated.py
+         │
+         └──→ Component Registry (C++)
+               └──→ engine/src/Core/ECS/ComponentRegistry.generated.cpp
+                     (包含每个组件的 typeID、size、offset 元数据)
+```
+
+**生成的 C# 代码示例：**
+
+```csharp
+// Components.generated.cs — 自动生成，手动勿改
+[StructLayout(LayoutKind.Sequential)]
+public struct Transform {
+    public float x;
+    public float y;
+    public float z;
+    public float rotation;
+}
+
+public static class ComponentType {
+    public const uint32 Transform = 0;
+    public const uint32 RigidBody = 1;
+    public const uint32 Collider  = 2;
+}
+
+public static class EngineAPI {
+    [DllImport("engine_core", CallingConvention = CallingConvention.Cdecl)]
+    public static extern unsafe void* Engine_GetComponentPtr(
+        ulong entityID, uint32 componentType);
+    
+    [DllImport("engine_core", CallingConvention = CallingConvention.Cdecl)]
+    public static extern unsafe ulong* Engine_QueryEntities(
+        uint32* componentMask, uint32 maskCount, out uint32 outCount);
+}
+```
+
+**生成的 Rust 代码示例：**
+
+```rust
+// components.generated.rs — 自动生成
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct Transform {
+    pub x: f32,
+    pub y: f32,
+    pub z: f32,
+    pub rotation: f32,
+}
+
+pub const COMPONENT_TRANSFORM: u32 = 0;
+pub const COMPONENT_RIGIDBODY: u32 = 1;
+
 extern "C" {
-
-// ── 物理高级操作 ──
-void  Engine_Physics_BatchSetTransform(uint64_t* ids, float* px, float* py, float* pz,
-                                        float* qx, float* qy, float* qz, float* qw,
-                                        uint32_t count);
-void  Engine_Physics_QuerySphere(float cx, float cy, float cz, float radius,
-                                  uint64_t* outIDs, uint32_t* outCount);
-void  Engine_Physics_CreateJoint(uint64_t entityA, uint64_t entityB, uint32_t jointType,
-                                  float* anchorA, float* anchorB);
-void  Engine_Physics_DestroyJoint(uint64_t jointID);
-
-// ── 角色控制器 ──
-void  Engine_Character_Move(uint64_t entityID, float vx, float vy, float vz, float dt);
-void  Engine_Character_Jump(uint64_t entityID, float force);
-bool  Engine_Character_IsGrounded(uint64_t entityID);
-
-// ── 音频 ──
-uint32_t Engine_Audio_PlayOneShot(const char* eventPath, float x, float y, float z);
-void     Engine_Audio_SetListener(float x, float y, float z, float fx, float fy, float fz);
-
-// ── 调试绘制 ──
-void Engine_Debug_DrawLine(float x1, float y1, float z1, float x2, float y2, float z2,
-                            float r, float g, float b, float a);
-void Engine_Debug_DrawText(float x, float y, float z, const char* text, float r, float g, float b);
-
+    pub fn Engine_GetComponentPtr(entity_id: u64, component_type: u32) -> *mut std::ffi::c_void;
+    pub fn Engine_QueryEntities(mask: *const u32, count: u32, out_count: *mut u32) -> *mut u64;
 }
 ```
 
 ---
 
-## 四、ECS 与脚本深度解耦：ScriptComponent 设计
+## 四、ScriptComponent 与 ScriptSystem（语言无关）
 
-### 4.1 C++ 端 ScriptComponent
+### 4.1 ScriptComponent
 
 ```cpp
 // engine/include/Engine/Core/ECS/ScriptComponent.h
 #pragma once
 
 #include "Engine/Types.h"
-#include <functional>
 #include <string>
 
 namespace Engine {
 
-// 脚本实例的生命周期状态
-enum class ScriptInstanceState : uint8 {
-    Created,    // 已创建但未初始化
-    Running,    // 正在运行 OnUpdate
-    Stopped,    // 已暂停
-    Error       // 脚本异常（不继续执行）
+enum class ScriptLanguage : uint8 {
+    WASM = 0,   // Rust/Zig → .wasm (沙盒, 第三方 Mod)
+    CSharp,     // C# → .NET DLL (高性能, 工具链完善)
+    Lua,        // LuaJIT (快速原型)
+    Python,     // CPython (AI/工具链集成)
+    COUNT
 };
 
-// 缓存函数指针结构（避免每帧查找）
-struct ScriptFunctionCache {
-    void* onUpdate    = nullptr;  // void(*)(void* instance, float dt)
-    void* onCreate    = nullptr;  // void(*)(void* instance)
-    void* onDestroy   = nullptr;  // void(*)(void* instance)
-    void* onCollision = nullptr;  // void(*)(void* instance, uint64_t otherEntityID)
+// 存储语言相关的执行上下文
+struct ScriptExecutionContext {
+    void* vmHandle       = nullptr;  // VM 内部句柄
+    void* functionTable  = nullptr;  // 缓存函数指针表
+    uint32 scriptVersion = 0;        // 热重载版本号
 };
 
 struct ScriptComponent {
-    // 配置
-    std::string scriptClassName;     // "PlayerController"
+    // ── 配置（由编辑设置）──
+    ScriptLanguage language = ScriptLanguage::CSharp;
+    std::string scriptName;      // "PlayerController" (类名 / 模块名)
+    std::string scriptPath;      // 文件路径 (用于 FileWatcher)
     
-    // 运行时状态
-    void* scriptInstance  = nullptr; // 脚本虚拟机内部对象句柄
-    ScriptInstanceState state = ScriptInstanceState::Created;
+    // ── 运行时状态 ──
+    ScriptExecutionContext context;
+    bool isPaused = false;
+    bool hasError  = false;
+    std::string errorMessage;
     
-    // 缓存函数指针（由 ScriptSystem 初始化时填充）
-    ScriptFunctionCache functions;
-    
-    // 序列化
-    void* serializedState = nullptr; // OnSerialize 输出的二进制数据
+    // ── 序列化（热重载支持）──
+    void* serializedState = nullptr;
     uint32 stateSize      = 0;
-    
-    // 热重载支持
-    uint32 scriptVersion  = 0;       // 脚本 DLL 的版本号，用于检测热重载
 };
 
 }
 ```
 
-### 4.2 C# 端基类 (API 给游戏开发者)
-
-```csharp
-// C# 端：提供给游戏开发者的基类
-public abstract class ScriptBehaviour {
-    internal ulong EntityID { get; set; }
-    
-    // ── 生命周期 ──
-    public virtual void OnCreate() { }
-    public virtual void OnUpdate(float dt) { }
-    public virtual void OnDestroy() { }
-    public virtual void OnCollisionEnter(ulong otherEntityID) { }
-    
-    // ── 便捷访问器 ──
-    public Transform transform => new Transform(EntityID);
-    public RigidBody rigidbody => new RigidBody(EntityID);
-    public CharacterController character => new CharacterController(EntityID);
-    
-    // ── 静态工具 ──
-    protected T GetComponent<T>() where T : Component, new() { ... }
-    protected T AddComponent<T>() where T : Component, new() { ... }
-    protected void Destroy(ulong entityID) { Engine_Entity_Destroy(entityID); }
-    
-    // ── 引擎 API 转发 ──
-    protected DebugDraw debug => DebugDraw.Instance;
-    protected Input input => Input.Instance;
-}
-```
-
-### 4.3 ScriptSystem — 脚本的 ECS System 化管理
+### 4.2 ScriptSystem（语言无关的调度器）
 
 ```cpp
-// engine/src/Core/ECS/ScriptSystem.cpp (新增)
+// engine/src/Core/ECS/ScriptSystem.cpp
 class ScriptSystem {
 public:
-    void Init(EntityManager* em, ScriptVM* vm);
-    void Update(float dt);
-    void OnEntityDestroyed(EntityHandle entity);
+    void Init(EntityManager* em) {
+        // 注册所有语言后端
+        m_LanguageRegistry.Register<WasmVM>(ScriptLanguage::WASM);
+        m_LanguageRegistry.Register<CoreCLRVM>(ScriptLanguage::CSharp);
+        m_LanguageRegistry.Register<LuaVM>(ScriptLanguage::Lua);
+        m_LanguageRegistry.Register<PythonVM>(ScriptLanguage::Python);
+    }
+    
+    void Update(float dt) {
+        // 1. 检查热重载（FileWatcher 触发）
+        CheckHotReloads();
+        
+        // 2. 按语言分组
+        auto groups = GroupByLanguage<ScriptComponent>(m_EntityManager);
+        
+        // 3. 对每种语言，批量执行
+        for (auto& [lang, entities] : groups) {
+            auto* vm = m_LanguageRegistry.Get(lang);
+            if (!vm) continue;
+            
+            // ── 关键：传递给 VM 的是 EntityID 数组 ──
+            // VM 内部通过 Engine_GetComponentPtr 批量读取/写入 ECS 内存
+            vm->ExecuteBatch(entities.data(), entities.size(), dt);
+            
+            // 4. GC 步进（对需要 GC 的语言）
+            vm->StepGC(1.0f);  // 预算 1ms
+        }
+    }
 
 private:
-    // 每帧执行脚本更新（JobSystem 并行）
-    void UpdateScripts(float dt);
-    
-    // 处理脚本异常（Try-Catch 包裹）
-    void SafeInvoke(ScriptComponent& script, void* funcPtr, void* instance, float dt);
-    
-    // GC 步进控制（防止 GC 引起帧率抖动）
-    void StepGarbageCollector(float maxMilliseconds);
-    
-    // 热重载处理
-    void CheckForHotReload();
-    void PerformHotReload();
-    
-    EntityManager* m_EntityManager = nullptr;
-    ScriptVM* m_ScriptVM = nullptr;
-    float m_GCTimeBudget = 1.0f;  // 每帧最多 1ms 用于 GC
-    bool m_HotReloadPending = false;
+    LanguageRegistry m_LanguageRegistry;
+    FileWatcher m_FileWatcher;
 };
 ```
 
-**ScriptSystem::Update 执行流程：**
-
-```
-ScriptSystem::Update(dt)
-  │
-  ├── 1. CheckForHotReload()
-  │     └── FileWatcher 检测到 Scripts.dll 变更
-  │         ├── 挂起所有脚本
-  │         ├── 遍历 ScriptComponent 序列化 state 到 m_SerializedState
-  │         ├── 卸载旧 AssemblyLoadContext
-  │         ├── 加载新 Scripts.dll
-  │         ├── 反序列化 state 到新实例
-  │         ├── 刷新函数指针缓存
-  │         └── 恢复脚本到 Running
-  │
-  ├── 2. UpdateScripts(dt)  // JobSystem::ParallelFor
-  │     └── 对每个 Running 状态的 ScriptComponent:
-  │           ├── SafeInvoke(functions.onUpdate, instance, dt)
-  │           │     ├── 调用脚本函数 (通过函数指针)
-  │           │     ├── 捕获异常 → state = Error
-  │           │     └── 记录错误信息到 Console
-  │           └── 更新 state 缓存
-  │
-  └── 3. StepGarbageCollector(m_GCTimeBudget)
-        └── GC.TryStartNoGCRegion(maxMilliseconds * 10_000)
-            ├── 执行 GC 收集
-            └── 结束后 EndNoGCRegion()
-```
-
----
-
-## 五、工业级杀手锏：完美热重载 (Hot-Reloading)
-
-### 5.1 传统热重载的三个死亡原因
-
-| 死亡原因 | 传统做法 | 我们的做法 |
-|---------|---------|-----------|
-| **数据丢失** | 数据存在脚本实例里 (MonoBehaviour.speed) | **数据存在 C++ ECS 组件里**，脚本只存逻辑和缓存状态 |
-| **引用悬挂** | 脚本卸载后 C++ 持有脚本对象的 dangling pointer | **ScriptComponent::scriptInstance 统一失效 + C-ABI 桥接层不传指针** |
-| **状态不一致** | 热重载发生在 Update 中间的任意时刻 | **ScriptSystem::Update 的显式检查点 + 域隔离（AssemblyLoadContext）** |
-
-### 5.2 热重载实现架构
-
-```
-热重载触发器: FileWatcher 检测 Scripts.dll 修改
-         │
-         ▼
-  ┌──────────────── 阶段 1: 挂起 ────────────────┐
-  │ ScriptSystem->SetPaused(true)                 │
-  │ 停止 OnUpdate 调用，等待当前帧完成             │
-  └───────────────────────────────────────────────┘
-         │
-         ▼
-  ┌──────────────── 阶段 2: 序列化状态 ───────────┐
-  │ foreach (entity in View<ScriptComponent>) {    │
-  │     Engine_Script_Serialize(instance, &buffer);│
-  │     comp->serializedState = buffer;            │
-  │     comp->scriptVersion = GetScriptVersion();  │
-  │ }                                              │
-  └───────────────────────────────────────────────┘
-         │
-         ▼
-  ┌──────────────── 阶段 3: 卸载旧域 ─────────────┐
-  │ m_ScriptVM->UnloadAssembly("Scripts.dll");     │
-  │ // .NET: 卸载 AssemblyLoadContext              │
-  │ // Luau: 关闭 Lua State，创建新 State         │
-  └───────────────────────────────────────────────┘
-         │
-         ▼
-  ┌──────────────── 阶段 4: 加载新域 ─────────────┐
-  │ m_ScriptVM->LoadAssembly("Scripts.dll");       │
-  │ .NET: 新 AssemblyLoadContext + Assembly.Load   │
-  └───────────────────────────────────────────────┘
-         │
-         ▼
-  ┌──────────────── 阶段 5: 恢复状态 ─────────────┐
-  │ foreach (entity in View<ScriptComponent>) {    │
-  │     void* newInstance = Engine_Script_Create(  │
-  │         comp->scriptClassName,                 │
-  │         comp->serializedState);                │
-  │     comp->scriptInstance = newInstance;        │
-  │     CacheFunctionPointers(comp);               │
-  │     SafeInvoke(comp, comp->functions.onCreate);│
-  │ }                                              │
-  └───────────────────────────────────────────────┘
-         │
-         ▼
-  ┌──────────────── 阶段 6: 恢复执行 ─────────────┐
-  │ ScriptSystem->SetPaused(false)                 │
-  │ // 玩家无感知，游戏继续运行                     │
-  └───────────────────────────────────────────────┘
-```
-
----
-
-## 六、GC 控制策略 (GC Pause Mitigation)
-
-### 6.1 .NET GC 控制 API
-
-```csharp
-// C# 端：在 ScriptSystem.Update 末尾调用
-public static class ScriptGC {
-    private static long m_BudgetTicks = 10_000; // 1ms = 10,000 ticks
-    
-    public static void Step(long maxTicks) {
-        m_BudgetTicks = maxTicks;
-        
-        // 方式 1: 尝试非阻塞式 GC (推荐)
-        if (System.Runtime.GCSettings.TryStartNoGCRegion(maxTicks * 100)) {
-            // 在这个区域内分配不会触发 GC
-            // 但如果超出预算，会自动触发阻塞式 GC
-            System.Runtime.GCSettings.EndNoGCRegion();
-        }
-        
-        // 方式 2: GC 让步式收集
-        // GC.Collect(2, GCCollectionMode.Optimized);
-    }
-}
-```
-
-### 6.2 C++ 端 GC 预算控制
+### 4.3 语言后端的统一接口
 
 ```cpp
-void ScriptSystem::StepGarbageCollector(float maxMilliseconds) {
-    if (!m_ScriptVM) return;
+// engine/include/Engine/Scripting/IScriptVM.h
+class IScriptVM {
+public:
+    virtual ~IScriptVM() = default;
     
-    // 转换到 .NET ticks (100ns 单位)
-    int64_t budgetTicks = static_cast<int64_t>(maxMilliseconds * 10'000);
+    // 生命周期
+    virtual bool Init(const std::string& scriptRoot) = 0;
+    virtual void Shutdown() = 0;
     
-    // 记录开始时间
-    uint64_t startCycles = __rdtsc();  // CPU cycle 级计时
+    // 执行
+    virtual void ExecuteBatch(EntityID* entities, uint32_t count, float dt) = 0;
     
-    // 调用 GC Step
-    m_ScriptVM->StepGC(budgetTicks);
+    // 热重载
+    virtual bool CheckForReload(const std::string& path) = 0;
+    virtual void Reload() = 0;
     
-    // 如果超预算，记录警告
-    uint64_t elapsedCycles = __rdtsc() - startCycles;
-    double elapsedMs = static_cast<double>(elapsedCycles) / m_CPUFreqMHz;
-    if (elapsedMs > maxMilliseconds * 1.5f) {
-        Log::Warn("[Script] GC exceeded budget: {:.2f}ms (budget {:.2f}ms)", 
-                  elapsedMs, maxMilliseconds);
-    }
-}
+    // GC 控制
+    virtual void StepGC(float maxMilliseconds) = 0;
+    
+    // 异常安全
+    virtual bool IsHealthy() const = 0;
+    virtual std::string GetLastError() const = 0;
+};
 ```
 
 ---
 
-## 七、落地实施路线图
+## 五、多语言热重载方案对比
 
-### 阶段 0: C-ABI 层定义 (3-5 天)
+### 5.1 核心原则
 
-| 任务 | 依赖 | 产出 |
-|------|------|------|
-| 设计 `engine_api.h` 完整 C-ABI 接口 | 无 | 约 80 个 extern "C" 函数 |
-| 实现 C-ABI 函数体 (转发到 ECS) | ECS EntityManager | 编译通过的 engine_api.c |
-| 编写 API 自动化测试 | 无 | 每个 C-ABI 函数的单元测试 |
+> **数据不动，逻辑替换。**
 
-### 阶段 1: 虚拟机宿主集成 (1 周)
+所有组件的 POD 数据始终在 C++ ECS 池中。热重载只替换"如何解释/处理这些数据"的逻辑。
 
-**选择 C# (CoreCLR) 路径:**
+### 5.2 各语言的具体差异
 
-| 任务 | 依赖 | 产出 |
-|------|------|------|
-| 集成 `coreclrhost.h` (微软官方宿主 API) | C-ABI 完成 | 从 C++ 启动 .NET 运行时 |
-| 实现 `ScriptVM` 类 (Load/Unload/Call) | CoreCLR 集成 | C++ ↔ .NET 双向调用 |
-| 编写 `scripts/ScriptBridge.cs` (P/Invoke 封装) | coreclrhost.h | C# 端可调用 Engine_Log_Info |
-| 实现 `ScriptInstance` (对象创建/释放) | ScriptVM | `new PlayerController()` 在 C# 端 |
-| 集成 1: FileWatcher 触发热重载 | FileWatcher 已有 | FileWatcher 检测 → 自动 Reload |
+| 语言 | 热重载触发 | 替换方式 | 数据恢复 | 状态序列化 |
+|------|-----------|---------|---------|-----------|
+| **WASM** | `.wasm` 文件变更 | 重新实例化 Module + 恢复 Memory Import | **零拷贝** — 数据在 C++ 池中，重新挂载即可 | 不需要 |
+| **C#** | `.dll` 文件变更 | 卸载旧 AssemblyLoadContext，加载新的 | 重新调用 `Engine_GetComponentPtr` 获取指针 | 脚本内部变量需要序列化 |
+| **LuaJIT** | `.lua` 文件变更 | 清除全局表，重新 `dofile` | 重新通过 FFI 获取 C 指针 | 全局变量存到 C++ 侧的 `ScriptComponent::serializedState` |
+| **Python** | `.py` 文件变更 | `importlib.reload()` | 同 Lua | 同 Lua |
 
-**选择 Luau 路径 (轻量备选):**
+### 5.3 WASM 热重载详解（最优路径）
 
-| 任务 | 依赖 | 产出 |
-|------|------|------|
-| 集成 Luau VM (lua luau 库) | 无 | 从 C++ 执行 .luau 文件 |
-| 实现 C-ABI → Luau FFI 绑定 | Luau VM | Luau 脚本可调用 Engine_Physics_Raycast |
-| 实现 ScriptVM 类 | Luau VM | LoadFile/Reload/CallFunction |
-| 集成 FileWatcher 热重载 | FileWatcher 已有 | .luau 文件修改后自动重新加载 |
+```
+触发: FileWatcher 检测到 scripts.wasm 修改
+  │
+  ├── Step 1: 暂停帧（标记 ScriptSystem::m_Paused = true）
+  │      └── 当前帧正在执行的 WASM 逻辑完成后不再调度新帧
+  │
+  ├── Step 2: 保留 ECS 数据（什么都不用做！）
+  │      └── Transform/RigidBody 等数据一直在 C++ 池里
+  │
+  ├── Step 3: 创建新 WASM 实例
+  │      ├── 编译新的 .wasm Module
+  │      ├── 创建新的 Instance，传入：
+  │      │     ├── 同一块 Memory（共享内存映射）
+  │      │     └── 同一组 Import Functions
+  │      └── 获取新的导出函数指针 (on_update, on_init)
+  │
+  ├── Step 4: 重新挂载
+  │      └── 遍历所有 ScriptComponent { language = WASM }：
+  │            ├── 用新实例的 functionTable 替换旧的
+  │            ├── 调用新脚本的 on_init(entityID)
+  │            └── 脚本通过 Engine_GetComponentPtr 读到的是旧数据！
+  │                （因为 ECS 池从未被清理）
+  │
+  └── Step 5: 恢复执行（ScriptSystem::m_Paused = false）
+         └── 下一帧开始，新逻辑运行在旧数据上，玩家无感知
+```
 
-### 阶段 2: ScriptComponent + ScriptSystem (3 天)
+**WASM 热重载核心优势**：不需要序列化、不需要 memcpy、不需要反序列化。数据始终在 ECS 池的一处，新旧脚本只是"看数据的视角"不同。
 
-| 任务 | 依赖 | 产出 |
-|------|------|------|
-| 定义 `ScriptComponent` (C++ 端) | 阶段 1 完成 | ECS 组件可挂载 |
-| 实现 `ScriptSystem` | ScriptComponent | 每帧遍历执行 OnUpdate |
-| 实现 GC 预算控制 | ScriptSystem | GC.TryStartNoGCRegion 封装 |
-| 实现 JobSystem 并行脚本更新 | ScriptSystem + JobSystem | ParallelFor 分片执行 |
-| 实现 SafeInvoke (异常隔离) | ScriptSystem | 单脚本崩溃不波及引擎 |
+### 5.4 C# 热重载详解（需要序列化的场景）
 
-### 阶段 3: 热重载 (3 天)
+C# 脚本可能在 `ScriptBehaviour` 子类中有私有字段（如 `private float m_Speed = 5.0f`）。这些字段不在 ECS 组件中，需要序列化。
 
-| 任务 | 依赖 | 产出 |
-|------|------|------|
-| 实现状态序列化/反序列化 | ScriptComponent | 脚本变量 ↔ JSON buffer |
-| 实现 AssemblyLoadContext 隔离 | ScriptVM | 旧 DLL 可安全卸载 |
-| 实现热重载管线 (6 阶段) | 上述全部 | 无缝热替换 |
-| 集成 ConsoleVariable | 热重载 | 运行时切换脚本版本 |
+```
+触发: FileWatcher 检测到 Scripts.dll 修改
+  │
+  ├── Step 1: 暂停
+  │
+  ├── Step 2: 序列化状态
+  │      └── 对每个 ScriptComponent { language = CSharp }：
+  │            ├── 调用 Engine_Script_Serialize(instance) → JSON buffer
+  │            ├── 存储到 comp.serializedState
+  │            └── 释放旧实例
+  │
+  ├── Step 3: 卸载旧 AssemblyLoadContext
+  │      └── .NET: alc.Unload() + 等待 GC 回收
+  │
+  ├── Step 4: 加载新 DLL
+  │      └── 新 AssemblyLoadContext → Assembly.Load("Scripts.dll")
+  │
+  ├── Step 5: 反序列化状态
+  │      └── 对每个 ScriptComponent：
+  │            ├── 创建新实例 (new PlayerController())
+  │            ├── 通过 Engine_GetComponentPtr 重新获取 Transform 指针
+  │            ├── 反序列化 JSON → 恢复私有字段
+  │            └── 调用 OnCreate()
+  │
+  └── Step 6: 恢复执行
+```
 
-### 阶段 4: 编辑器集成 (远期)
+### 5.5 三种热重载模式的选择
 
-| 任务 | 依赖 | 产出 |
-|------|------|------|
-| EditorDemo 中添加 ScriptAsset 浏览器 | Editor 框架 | 查看/打开 .cs 或 .luau 文件 |
-| EditorDemo 添加 ScriptComponent Inspector | InspectorPanel | 运行时查看脚本变量 |
-| 生成 `.sln` 解决方案文件 | 热重载 | VS 打开即可编译 |
-| 连接 ConsolePanel 到脚本日志 | ConsolePanel | 脚本 Log 显示在引擎控制台 |
+| 模式 | 延迟 | 数据安全性 | 适用语言 | 适用场景 |
+|------|------|-----------|---------|---------|
+| **零拷贝** | < 1ms | 最高（数据不动） | WASM | 核心 Gameplay 逻辑 |
+| **部分序列化** | 1-5ms | 高（ECS 数据不动，仅脚本字段序列化） | C# | 有状态脚本类 |
+| **完全序列化** | 5-50ms | 中（全部数据走序列化管道） | Lua/Python | 简单逻辑/工具脚本 |
 
 ---
 
-## 八、估算总工作量
+## 六、多语言共存策略
+
+### 6.1 语言选择指南
+
+| 语言 | 推荐用途 | 理由 |
+|------|---------|------|
+| **WASM (Rust/Zig)** | 核心 Gameplay、第三方 Mod、网络同步 | 沙盒安全、无 GC、确定性、原生性能 |
+| **C# (.NET 8)** | 编辑器工具、UI 逻辑、资产管线 | IDE 支持、NuGet 生态、强类型 |
+| **LuaJIT** | 快速原型、配置文件、Mod 脚本 | 极简语法、FFI 直接、零安装 |
+| **Python** | AI/ML 集成、工具链、测试脚本 | 数据科学生态、动态灵活 |
+
+### 6.2 混合使用示例
+
+```lua
+-- init_player.lua (Lua 快速原型)
+function on_create(entity_id)
+    -- 通过 FFI 直接操作 ECS 内存
+    local t = ffi.cast("Transform*", engine_get_component_ptr(entity_id, COMPONENT_TRANSFORM))
+    t.x = 0; t.y = 10; t.z = 0
+    
+    -- 调用 C# 实现的复杂逻辑
+    engine_invoke_csharp("InventorySystem", "GiveItem", entity_id, "sword", 1)
+end
+```
+
+```csharp
+// PlayerController.cs (C# 核心逻辑)
+public unsafe class PlayerController : ScriptBehaviour {
+    private float m_Speed = 5.0f;
+    private float m_Health = 100.0f;
+    
+    public override void OnUpdate(float dt) {
+        Transform* t = GetComponentPtr<Transform>();
+        RigidBody* r = GetComponentPtr<RigidBody>();
+        
+        if (Engine_Input_GetKey(KEY_W)) {
+            r->vz = m_Speed;  // 直接修改物理组件的速度
+        }
+        
+        // 调用 WASM 实现的伤害计算
+        float damage = Engine_InvokeWasm("DamageSystem", "Calculate", m_Health);
+        if (damage > 0) m_Health -= damage;
+    }
+}
+```
+
+### 6.3 跨语言调用
+
+```
+C# Script
+    │
+    ├── 直接调用: 通过 C-ABI (Engine_GetComponentPtr) → ECS 内存
+    │
+    └── 跨语言: ScriptSystem 内部路由
+          ├── 注册表: Map<function_name, {language, vm, entry_point}>
+          └── Engine_Invoke("DamageSystem.Calculate", args)
+                ├── 查找注册表 → WASM
+                ├── 切换到 WASM VM 执行
+                └── 返回结果
+```
+
+---
+
+## 七、架构师决策记录
+
+### 决策 1: 极小化 C-ABI + 内存视图（否定了"丰富 C-ABI"方案）
+
+**背景**: v1 方案设计了 80+ 语义 API，每个组件操作对应 N 个函数。  
+**决策**: 改为只暴露内存访问 API（`GetComponentPtr` + `QueryEntities`），加上极少量的工具函数。  
+**理由**: 
+- 新增组件不需要新增 C-ABI 函数
+- 所有语言通过 struct 布局直接读写内存，零边界开销
+- 批量操作天然高效（一次查询，连续内存读写）
+
+### 决策 2: 数据在 ECS 池，脚本只做逻辑（否定了"脚本持有数据"方案）
+
+**背景**: Unity/MonoBehaviour 模式中，数据在脚本实例里，热重载需要序列化。  
+**决策**: 所有运行时可变数据强制放在 C++ ECS 组件中，脚本只持有逻辑和缓存状态。  
+**理由**: 
+- 热重载时数据不动（ECS 池持久化），脚本替换零成本
+- 多语言共享数据无需同步（同一块物理内存）
+- Gameplay 逻辑可以无缝在 C++ 和脚本之间迁移
+
+### 决策 3: 代码生成代替手写绑定
+
+**背景**: 手写 P/Invoke、FFI 绑定容易出错、维护成本高。  
+**决策**: 基于 Clang LibTooling 或 YAML 定义，自动生成各语言的 struct 定义和绑定代码。  
+**理由**: 
+- 组件 字段变更时，所有语言的绑定自动更新
+- 消除 手写不对齐导致的内存错位 bug
+- 增加 新语言支持只需要加一个代码生成器后端
+
+### 决策 4: 多语言优先，不限制用户选择
+
+**背景**: v1 方案锁定 C#。  
+**决策**: 设计语言无关的 ScriptSystem，WASM/C#/Lua/Python 共享同一数据层。  
+**理由**: 
+- WASM 提供安全沙盒（第三方 Mod）
+- C# 提供完整 IDE 体验（内部核心逻辑）
+- Lua 提供快速原型（策划脚本）
+- Python 提供 AI/ML 集成（工具链）
+
+---
+
+## 八、落地实施路线图
+
+### 阶段 0: 基础设施（5 天）
+
+| 任务 | 工时 | 产出 |
+|------|------|------|
+| 实现 Component Registry（元数据系统） | 2天 | `ComponentRegistry` 运行时组件类型查询 |
+| 实现代码生成器（Clang libTooling / YAML 解析） | 2天 | 从 C++ 头文件生成多语言 binding |
+| 定义极小 C-ABI 层（`Engine_GetComponentPtr` + `Engine_QueryEntities` + 工具函数） | 1天 | `engine_api.h` (约 15-20 个函数) |
+
+### 阶段 1: WASM 后端（5 天）
+
+| 任务 | 工时 | 产出 |
+|------|------|------|
+| 集成 Wasmtime C++ SDK | 1天 | WASM VM 可加载执行 |
+| 实现 WASM Memory Import（ECS 池映射） | 1天 | WASM 脚本可直接读写 ECS 内存 |
+| 实现 C-ABI Import Functions（供 WASM 调用） | 1天 | WASM 可调用 `Engine_Log` / `Engine_Input_GetKey` |
+| 实现 WASM 脚本的 ExecuteBatch | 1天 | 批量执行 WASM System |
+| WASM 热重载（零拷贝模式） | 1天 | FileWatcher → 无缝替换 |
+
+### 阶段 2: C# 后端（5 天）
+
+| 任务 | 工时 | 产出 |
+|------|------|------|
+| 集成 CoreCLR 宿主 API | 2天 | C++ 启动 .NET 运行时 |
+| 实现 C# → C-ABI 的自动 P/Invoke 封装（代码生成器生成） | 1天 | C# 可直接调用 `Engine_GetComponentPtr` |
+| 实现 ExecuteBatch（C# unsafe 指针操作） | 1天 | C# 脚本每帧执行 OnUpdate |
+| C# 热重载（AssemblyLoadContext + 部分序列化） | 1天 | DLL 热替换 |
+
+### 阶段 3: ScriptSystem + ScriptComponent（3 天）
+
+| 任务 | 工时 | 产出 |
+|------|------|------|
+| 实现 `ScriptComponent`（语言无关版本） | 1天 | ECS 组件可挂载 |
+| 实现 `ScriptSystem`（按语言分组的调度器） | 1天 | 多语言脚本每帧执行 |
+| 实现 SafeInvoke 异常隔离 + GC 步进 | 1天 | 单脚本崩溃不波及引擎 |
+
+### 阶段 4: LuaJIT + Python 后端（额外 4 天）
+
+| 任务 | 工时 | 产出 |
+|------|------|------|
+| LuaJIT FFI 集成 | 1天 | Lua 通过 FFI 调用 `Engine_GetComponentPtr` |
+| Lua 热重载 | 1天 | dofile 重新加载 |
+| CPython 集成 | 1天 | Python ctypes 调用 C-ABI |
+| Python 热重载 | 1天 | importlib.reload() |
+
+### 阶段 5: 编辑器集成（5 天）
+
+| 任务 | 工时 | 产出 |
+|------|------|------|
+| ScriptComponent Inspector 面板 | 2天 | 选择语言 + 脚本文件 |
+| WASM/C#/Lua 脚本资产浏览器 | 1天 | 查看工程中的脚本文件 |
+| ConsolePanel 连接脚本日志 | 1天 | 脚本 Log 显示在引擎控制台 |
+| 代码生成集成到 CMake 构建 | 1天 | 构建时自动生成 binding 代码 |
+
+---
+
+## 九、工作量总览
 
 | 阶段 | 人天 | 关键交付 |
 |------|------|----------|
-| 阶段 0: C-ABI 层 | 5 | engine_api.h, 80+ extern C 函数 |
-| 阶段 1: CoreCLR 集成 | 7 | ScriptVM, C#↔C++ 双向调用 |
-| 阶段 2: ScriptSystem | 3 | ScriptComponent, Update 管线 |
-| 阶段 3: 热重载 | 3 | 6 阶段热替换管线 |
-| 阶段 4: 编辑器 | 5 | ScriptAsset, Inspector, Console |
-| **总计** | **~23 人天** | |
+| **阶段 0**: 基础设施 | 5天 | ComponentRegistry + 代码生成器 + 极小 C-ABI |
+| **阶段 1**: WASM 后端 | 5天 | WASM VM + 内存映射 + 零拷贝热重载 |
+| **阶段 2**: C# 后端 | 5天 | CoreCLR 宿主 + P/Invoke 自动生成 |
+| **阶段 3**: ScriptSystem | 3天 | 语言无关调度器 + 异常隔离 |
+| **阶段 4**: LuaJIT + Python | 4天 | 额外语言后端 |
+| **阶段 5**: 编辑器集成 | 5天 | Inspector + 资产浏览 + 构建管线 |
+| **总计** | **~27 人天** | （支持 4 种语言的全功能脚本系统） |
+
+### 最小可行产品（MVP）路径
+
+如果资源有限，可以先实现 阶段 0 + 阶段 1 + 阶段 3 = **13 天**，获得 **WASM-only** 但完整的脚本系统：
+
+```
+MVP: [阶段0] C-ABI + 代码生成 → [阶段1] WASM 后端 → [阶段3] ScriptSystem
+      └── 支持：Rust/Zig 编写游戏逻辑、零拷贝热重载、安全沙盒、ECS 内存直写
+```
+
+后续再依次添加 C#、Lua、Python 后端。
 
 ---
 
-## 九、风险和缓解措施
-
-| 风险 | 概率 | 影响 | 缓解措施 |
-|------|------|------|----------|
-| CoreCLR 宿主 API 不稳定 | 低 | 高 | 使用 .NET 8 LTS 版本，微软官方支持 |
-| 热重载时 AssemblyLoadContext 卸载不完全 | 中 | 中 | 所有脚本对象必须在 C++ 端显式释放，不能有 native→managed 反向引用 |
-| C-ABI 函数签名错误导致崩溃 | 中 | 高 | 自动生成 C-ABI 函数签名和 P/Invoke wrapper，避免手写不对齐 |
-| 脚本 GC 超出预算导致掉帧 | 低 | 中 | GC.TryStartNoGCRegion + __rdtsc 计时器强制中断 |
-| 调试能力不足 | 中 | 中 | 优先集成 VS/Rider 断点调试 (C#)，Luau 可考虑 Roblox Studio 桥接 |
-
----
-
-## 十、总结与推荐
+## 十、总结
 
 | 问题 | 答案 |
 |------|------|
-| **选哪种语言？** | **C# (.NET 8+ CoreCLR)** — 工业标准、强类型、工具链成熟、绩效可控 |
-| **架构核心是什么？** | **C-ABI Bridge** — 纯 C 扁平化 API，语言无关，ABI 稳定，无 Name Mangling |
-| **数据放哪里？** | **C++ ECS 组件** — 脚本只存逻辑和缓存函数指针，数据由 ECS 管理 |
-| **怎么热重载？** | **6 阶段管线** — 挂起→序列化→卸载→加载→反序列化→恢复 |
-| **GC 怎么控制？** | **预算分配** — 每帧 1ms 配额，`TryStartNoGCRegion` + `__rdtsc` 计时器 |
-| **成本多少？** | **~23 人天** — 含 C-ABI、虚拟机、ScriptSystem、热重载、编辑器 |
+| **架构核心是什么？** | **通用数据视图（Universal Data View）** — 不绑定具体语言，通过统一内存视图 + 极小 C-ABI 让多语言共享 ECS 数据 |
+| **C-ABI 有多少函数？** | **~15-20 个**（v1 的 80+ 缩减为 3 个核心 + 约 12 个工具函数），新加组件类型不需要新增 C-ABI 函数 |
+| **数据在哪里？** | **C++ ECS 组件池** — 脚本通过 `Engine_GetComponentPtr` 获取指针，直接读写内存 |
+| **怎么支持多语言？** | **代码生成器** — 从统一组件定义自动生成 C++/Rust/C#/Lua/Python 的 struct 和绑定代码 |
+| **怎么热重载？** | **数据不动，只换逻辑** — ECS 池持久化，WASM 零拷贝热重载，C# 部分序列化 |
+| **WASM 怎么处理 32 位地址？** | **宿主内存映射** — WASM 线性内存直接映射到 ECS 组件池物理内存，零拷贝 |
+| **MVP 需要多久？** | **13 天** — 阶段 0 + 阶段 1 + 阶段 3，获得 WASM-only 但完整的脚本系统 |
+| **全功能需要多久？** | **~27 人天** — 支持 WASM/C#/Lua/Python 四种语言 |
