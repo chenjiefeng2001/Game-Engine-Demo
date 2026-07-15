@@ -237,7 +237,7 @@ void JoltPhysicsBody::SetShape(const ShapeDef3D& shapeDef) {
         if (lock.Succeeded() && lock.GetBody().GetMotionProperties()) {
             // v5.5.0: SetMassProperties 接受 CalculateMassAndInertia 枚举值和 MassProperties
             lock.GetBody().GetMotionProperties()->SetMassProperties(
-                JPH::EAllowedState::CalculateMassAndInertia,
+                JPH::EAllowedDOFs::All,
                 shape->GetMassProperties()
             );
         }

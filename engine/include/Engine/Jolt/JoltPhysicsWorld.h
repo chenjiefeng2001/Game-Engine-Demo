@@ -112,6 +112,9 @@ public:
     /** 获取 Jolt PhysicsSystem 引用（供 PhysicsSyncSystem 用于 BodyLock） */
     JPH::PhysicsSystem& GetPhysicsSystem() { return m_PhysicsSystem; }
 
+    /** 获取碰撞事件队列引用（供 PhysicsSyncSystem 用于 RouteCollisionEvents） */
+    LockFreeEventQueue& GetEventQueue() { return m_EventQueue; }
+
 private:
     // ── Jolt 内部对象 ──
     JPH::TempAllocatorImpl*        m_TempAllocator   = nullptr;

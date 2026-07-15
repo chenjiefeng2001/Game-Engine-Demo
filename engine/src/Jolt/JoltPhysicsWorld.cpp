@@ -113,7 +113,7 @@ public:
         JPH::ContactSettings&) override
     {
         CollisionEvent evt;
-        evt.type = CollisionEvent::Begin;
+        evt.type = CollisionEvent::Type::Begin;
         evt.bodyIDA = bodyA.GetID().GetIndexAndSequenceNumber();
         evt.bodyIDB = bodyB.GetID().GetIndexAndSequenceNumber();
         evt.totalImpulse = manifold.mPenetrationDepth; // 近似
@@ -126,7 +126,7 @@ public:
         JPH::ContactSettings&) override
     {
         CollisionEvent evt;
-        evt.type = CollisionEvent::Persist;
+        evt.type = CollisionEvent::Type::Persist;
         evt.bodyIDA = bodyA.GetID().GetIndexAndSequenceNumber();
         evt.bodyIDB = bodyB.GetID().GetIndexAndSequenceNumber();
         evt.totalImpulse = manifold.mPenetrationDepth;
@@ -137,7 +137,7 @@ public:
     // v4.0: 从 SubShapeIDPair 安全提取 BodyID，不 touch Body
     void OnContactRemoved(const JPH::SubShapeIDPair& inPair) override {
         CollisionEvent evt;
-        evt.type = CollisionEvent::End;
+        evt.type = CollisionEvent::Type::End;
         evt.bodyIDA = inPair.GetBody1ID().GetIndexAndSequenceNumber();
         evt.bodyIDB = inPair.GetBody2ID().GetIndexAndSequenceNumber();
         m_EventQueue->Push(evt);
@@ -253,6 +253,7 @@ void JoltPhysicsWorld::Step(float32 dt, int32 collisionSteps) {
 void JoltPhysicsWorld::ProcessCollisionEvents() {
     CollisionEvent evt;
     while (m_EventQueue.Pop(evt)) {
+        using Type = CollisionEvent::Type;
         // 通过 BodyID 安全反查（Body 可能已被销毁）
         auto* bodyA = GetBodyByID(evt.bodyIDA);
         auto* bodyB = GetBodyByID(evt.bodyIDB);
@@ -266,13 +267,13 @@ void JoltPhysicsWorld::ProcessCollisionEvents() {
         data.bodyB = bodyB;
 
         switch (evt.type) {
-            case CollisionEvent::Begin:
+            case Type::Begin:
                 if (m_ContactBegin) m_ContactBegin(data);
                 break;
-            case CollisionEvent::End:
+            case Type::End:
                 if (m_ContactEnd) m_ContactEnd(data);
                 break;
-            case CollisionEvent::Persist: {
+            case Type::Persist: {
                 ContactPersistData3D persistData;
                 persistData.bodyA = bodyA;
                 persistData.bodyB = bodyB;
@@ -489,7 +490,7 @@ std::vector<IPhysicsBody3D*> JoltPhysicsWorld::QueryAABB(const Vec3& center, con
         }
 
         void Reset() override {
-            CollisionCollector::Reset();
+            JPH::CollisionCollector<JPH::BodyID, JPH::CollisionCollectorTraitsCollideShape>::Reset();
             mHits.clear();
         }
     };
@@ -515,18 +516,11 @@ std::vector<IPhysicsBody3D*> JoltPhysicsWorld::QuerySphere(
     JPH::RMat44 centerTransform = JPH::RMat44::sTranslation(
         JPH::RVec3(center.x, center.y, center.z));
 
-    struct SphereCollector : public JPH::CollisionCollector<
-        JPH::BodyID, JPH::CollisionCollectorTraitsCollideShape>
-    {
+    struct SphereCollector : public JPH::CollideShapeCollector {
         std::vector<JPH::BodyID> mHits;
 
-        void AddHit(const JPH::BodyID& inBodyID) override {
-            mHits.push_back(inBodyID);
-        }
-
-        void Reset() override {
-            JPH::CollisionCollector::Reset();
-            mHits.clear();
+        void AddHit(const JPH::CollideShapeResult& inResult) override {
+            mHits.push_back(inResult.mBodyID2);
         }
     };
 
@@ -593,7 +587,7 @@ void JoltPhysicsWorld::DebugDraw() {
     drawSettings.mDrawShape = true;
     drawSettings.mDrawShapeWireframe = true;
     drawSettings.mDrawBoundingBox = true;
-    drawSettings.mDrawCenterOfMass = true;
+    drawSettings.mDrawCenterOfMassTransform = true;
 
     m_PhysicsSystem.DrawBodies(drawSettings, m_DebugRenderer.get());
 
@@ -631,8 +625,8 @@ std::shared_ptr<IJoint3D> JoltPhysicsWorld::CreateJoint(const JointDef3D& def) {
             JPH::HingeConstraintSettings settings;
             settings.mPoint1 = JPH::RVec3(def.anchorPointA.x, def.anchorPointA.y, def.anchorPointA.z);
             settings.mPoint2 = JPH::RVec3(def.anchorPointB.x, def.anchorPointB.y, def.anchorPointB.z);
-            settings.mSliderAxis1 = JPH::Vec3(def.hingeAxis.x, def.hingeAxis.y, def.hingeAxis.z);
-            settings.mSliderAxis2 = JPH::Vec3(def.hingeAxis.x, def.hingeAxis.y, def.hingeAxis.z);
+            settings.mHingeAxis1 = JPH::Vec3(def.hingeAxis.x, def.hingeAxis.y, def.hingeAxis.z);
+            settings.mHingeAxis2 = JPH::Vec3(def.hingeAxis.x, def.hingeAxis.y, def.hingeAxis.z);
             if (def.limits.enableMin || def.limits.enableMax) {
                 settings.mLimitsMin = def.limits.min;
                 settings.mLimitsMax = def.limits.max;
@@ -676,8 +670,8 @@ std::shared_ptr<IJoint3D> JoltPhysicsWorld::CreateJoint(const JointDef3D& def) {
             settings.mPoint2 = JPH::RVec3(def.anchorPointB.x, def.anchorPointB.y, def.anchorPointB.z);
             settings.mMinDistance = 0.0f;
             settings.mMaxDistance = def.distance * 2.0f;
-            settings.mFrequency = def.spring.stiffness;
-            settings.mDamping = def.spring.damping;
+            settings.mLimitsSpringSettings.mFrequency = def.spring.stiffness;
+            settings.mLimitsSpringSettings.mDamping = def.spring.damping;
             constraint = static_cast<JPH::TwoBodyConstraint*>(settings.Create(bodyA, bodyB));
             break;
         }
@@ -696,17 +690,20 @@ std::shared_ptr<IJoint3D> JoltPhysicsWorld::CreateJoint(const JointDef3D& def) {
 
     // 配置马达
     if (def.enableMotor && (def.type == JointType3D::Hinge || def.type == JointType3D::Slider)) {
-        constraint->SetMotorState(JPH::EMotorState::Velocity);
         if (def.type == JointType3D::Hinge) {
-            static_cast<JPH::HingeConstraint*>(constraint)->SetTargetAngularVelocity(def.motorSpeed);
-            static_cast<JPH::HingeConstraint*>(constraint)->SetMaxMotorTorque(def.maxMotorTorque);
+            auto* hinge = static_cast<JPH::HingeConstraint*>(constraint);
+            hinge->SetMotorState(JPH::EMotorState::Velocity);
+            hinge->SetTargetAngularVelocity(def.motorSpeed);
+            hinge->GetMotorSettings().SetTorqueLimit(def.maxMotorTorque);
         } else {
-            static_cast<JPH::SliderConstraint*>(constraint)->SetTargetVelocity(def.motorSpeed);
-            static_cast<JPH::SliderConstraint*>(constraint)->SetMaxMotorForce(def.maxMotorTorque);
+            auto* slider = static_cast<JPH::SliderConstraint*>(constraint);
+            slider->SetMotorState(JPH::EMotorState::Velocity);
+            slider->SetTargetVelocity(def.motorSpeed);
+            slider->GetMotorSettings().SetForceLimit(def.maxMotorTorque);
         }
     }
 
-    return std::make_shared<JoltJoint3D>(constraint, def);
+    return std::make_shared<JoltJoint3D>(constraint, def.type);
 }
 
 void JoltPhysicsWorld::DestroyJoint(IJoint3D* joint) {

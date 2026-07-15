@@ -24,6 +24,12 @@ namespace Engine {
         virtual void  SetRotation(const Vec3& euler) = 0;
         virtual Vec3  GetRotation() const = 0;
 
+        /** 设置旋转（四元数，无万向锁） */
+        virtual void  SetRotationQuat(const Quat& q) = 0;
+
+        /** 获取旋转（四元数，无万向锁） */
+        virtual Quat  GetRotationQuat() const = 0;
+
         /** 直接获取 4×4 世界变换矩阵（用于渲染同步） */
         virtual Mat4  GetWorldMatrix() const = 0;
 

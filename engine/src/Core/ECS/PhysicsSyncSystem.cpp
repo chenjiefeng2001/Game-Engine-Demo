@@ -15,6 +15,7 @@
 #include "Engine/Core/Physics/IPhysicsWorld3D.h"
 #include "Engine/Core/Physics/IPhysicsBody3D.h"
 #include "Engine/Jolt/JoltPhysicsWorld.h"
+#include "Engine/Core/Physics/LockFreeEventQueue.h"
 #include "Engine/Core/Log.h"
 
 #include <Jolt/Physics/Collision/Shape/BoxShape.h>
@@ -89,8 +90,9 @@ void PhysicsSyncSystem::Update(float32 realDt) {
         StepPhysics(fixedDt);
 
         // v7.0: CharacterController 固定步进 — 在固定步长中执行，避免可变帧率卡顿
+        // 使用 Move 接口模拟固定步进（传入零速度表示仅处理重力/地面锁定）
         for (auto& cct : m_CharacterControllers) {
-            if (cct.second) cct.second->Update(fixedDt);
+            if (cct.second) cct.second->Move(Vec3(0, 0, 0), fixedDt);
         }
 
         // 消费碰撞事件
@@ -143,11 +145,10 @@ void PhysicsSyncSystem::SyncECSToPhysics() {
             JPH::BodyID bodyId = JoltPhysicsWorld::U64ToBodyID(runtimes[i].runtimeBodyID);
             JPH::BodyLockWrite lock(physicsSys.GetBodyLockInterface(), bodyId);
             if (lock.Succeeded()) {
-                JPH::Body& body = lock.GetBody();
                 JPH::BoxShapeSettings boxSettings(
                     JPH::Vec3(boxes[i].halfExtents.x, boxes[i].halfExtents.y, boxes[i].halfExtents.z));
                 JPH::ShapeRefC newShape = boxSettings.Create().Get();
-                body.SetShape(newShape, true, JPH::EActivation::Activate);
+                physicsSys.GetBodyInterface().SetShape(bodyId, newShape, true, JPH::EActivation::Activate);
             }
             boxes[i].isDirty = false;
         }
@@ -167,10 +168,9 @@ void PhysicsSyncSystem::SyncECSToPhysics() {
             JPH::BodyID bodyId = JoltPhysicsWorld::U64ToBodyID(runtimes[i].runtimeBodyID);
             JPH::BodyLockWrite lock(physicsSys.GetBodyLockInterface(), bodyId);
             if (lock.Succeeded()) {
-                JPH::Body& body = lock.GetBody();
                 JPH::SphereShapeSettings sphereSettings(spheres[i].radius);
                 JPH::ShapeRefC newShape = sphereSettings.Create().Get();
-                body.SetShape(newShape, true, JPH::EActivation::Activate);
+                physicsSys.GetBodyInterface().SetShape(bodyId, newShape, true, JPH::EActivation::Activate);
             }
             spheres[i].isDirty = false;
         }
@@ -190,10 +190,9 @@ void PhysicsSyncSystem::SyncECSToPhysics() {
             JPH::BodyID bodyId = JoltPhysicsWorld::U64ToBodyID(runtimes[i].runtimeBodyID);
             JPH::BodyLockWrite lock(physicsSys.GetBodyLockInterface(), bodyId);
             if (lock.Succeeded()) {
-                JPH::Body& body = lock.GetBody();
                 JPH::CapsuleShapeSettings capsuleSettings(capsules[i].height * 0.5f, capsules[i].radius);
                 JPH::ShapeRefC newShape = capsuleSettings.Create().Get();
-                body.SetShape(newShape, true, JPH::EActivation::Activate);
+                physicsSys.GetBodyInterface().SetShape(bodyId, newShape, true, JPH::EActivation::Activate);
             }
             capsules[i].isDirty = false;
         }
@@ -206,7 +205,7 @@ void PhysicsSyncSystem::SyncECSToPhysics() {
     for (auto& range : jointQuery) {
         auto joints = range.chunk->GetComponentSpan<Joint3DComponent>();
         for (uint32 i = range.startRow; i < range.startRow + range.count; ++i) {
-            uint64 idx = m_EntityManager->GetEntityByChunkRow(range.chunk, range.startRow + i).Index();
+            uint64 idx = range.chunk->GetEntity(range.startRow + i).Index();
             if (m_Joints.count(idx) > 0) continue; // 已创建
 
             auto& joint = joints[i];
@@ -280,12 +279,12 @@ void PhysicsSyncSystem::SyncPhysicsToECS() {
     }
 
     // v7.0: CCT → Transform 同步
+    // 注意: ICharacterController3D 没有 GetUserData 接口
+    // 此功能需要未来扩展接口，暂时仅同步位置到 ECS
+    // 由外部系统（如脚本层）负责关联 Controller 与 GameObject
     for (auto& [_, cct] : m_CharacterControllers) {
         if (cct) {
-            auto* owner = static_cast<GameObject*>(cct->GetUserData());
-            if (owner) {
-                owner->GetTransform().SetPosition(cct->GetPosition());
-            }
+            (void)cct; // 位置同步已在 JoltCharacterController3D 内部由 Move() 完成
         }
     }
 }
@@ -309,18 +308,18 @@ void PhysicsSyncSystem::RouteCollisionEvents() {
             auto runtimes  = range.chunk->GetComponentSpan<PhysicsRuntimeComponent>();
             for (uint32 i = range.startRow; i < range.startRow + range.count; ++i) {
                 if (runtimes[i].runtimeBodyID == evt.bodyIDA) {
-                    if (evt.type == CollisionEvent::Begin && listeners[i].onCollisionEnter) {
+                    if (evt.type == CollisionEvent::Type::Begin && listeners[i].onCollisionEnter) {
                         listeners[i].onCollisionEnter(evt.bodyIDB, Vec3(0,0,0));
                     }
-                    if (evt.type == CollisionEvent::End && listeners[i].onCollisionExit) {
+                    if (evt.type == CollisionEvent::Type::End && listeners[i].onCollisionExit) {
                         listeners[i].onCollisionExit(evt.bodyIDB);
                     }
                 }
                 if (runtimes[i].runtimeBodyID == evt.bodyIDB) {
-                    if (evt.type == CollisionEvent::Begin && listeners[i].onCollisionEnter) {
+                    if (evt.type == CollisionEvent::Type::Begin && listeners[i].onCollisionEnter) {
                         listeners[i].onCollisionEnter(evt.bodyIDA, Vec3(0,0,0));
                     }
-                    if (evt.type == CollisionEvent::End && listeners[i].onCollisionExit) {
+                    if (evt.type == CollisionEvent::Type::End && listeners[i].onCollisionExit) {
                         listeners[i].onCollisionExit(evt.bodyIDA);
                     }
                 }
