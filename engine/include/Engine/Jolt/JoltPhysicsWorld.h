@@ -19,9 +19,13 @@
 #include "Engine/Core/Physics/PhysicsLayers.h"
 #include "Engine/Core/Physics/LockFreeEventQueue.h"
 #include "Engine/Jolt/JoltJobSystemAdapter.h"
+
+// Jolt.h 必须先于所有其他 Jolt 头文件包含，确保宏正确定义
+#include <Jolt/Jolt.h>
+
+// 引擎 Jolt 包装器（必须在 Jolt.h 之后）
 #include "Engine/Jolt/JoltDebugRenderer.h"
 
-#include <Jolt/Jolt.h>
 #include <Jolt/Physics/PhysicsSystem.h>
 #include <Jolt/Physics/Collision/BroadPhase/BroadPhaseLayer.h>
 #include <Jolt/Physics/Collision/ObjectLayerPairFilterMask.h>
@@ -80,13 +84,6 @@ public:
     void* GetNativeWorld() override { return &m_PhysicsSystem; }
 
     // ── v4.0: 碰撞事件消费（主线程调用，在 Step 之后同步阶段之前） ──
-    /**
-     * @brief 消费碰撞事件队列，路由到注册的回调
-     *
-     * 必须在主线程调用（通常在 PhysicsSyncSystem::SyncPhysicsToECS 之前）。
-     * Worker 线程在 Jolt 回调中只 Push BodyID，不 touch Body。
-     * 此函数通过 GetBodyByID 安全反查 IPhysicsBody3D 指针。
-     */
     void ProcessCollisionEvents();
 
     // ── v4.0: Batch API（工业级批量变换操作） ──
