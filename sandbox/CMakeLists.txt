@@ -54,6 +54,8 @@ add_sandbox_executable(SpirVTest src/SpirVTest/SpirVTestApp.cpp)
 # Shaderc 编译链 — 由 EngineCore 通过 shaderc_wrapper 接口库自动链接。
 # ENGINE_HAS_SHADERC 定义通过 EngineCore 的 PUBLIC 接口传播至此。
 add_sandbox_executable(AssetBakery src/AssetBakery/main.cpp)
+add_sandbox_executable(GPUPhysicsTest src/GPUPhysicsTest.cpp)
+add_sandbox_executable(PhysicsBenchmark src/PhysicsBenchmark.cpp)
 
 # ==============================================================================
 # 2. 资源同步 Target — 将 assets 和 OpenAL32.dll 拷贝到每个输出子目录
