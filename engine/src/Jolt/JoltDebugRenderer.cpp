@@ -4,6 +4,8 @@
  */
 
 #include "Engine/Jolt/JoltDebugRenderer.h"
+
+#ifdef JPH_DEBUG_RENDERER
 #include <cstring>
 #include <algorithm>
 
@@ -60,8 +62,6 @@ JPH::DebugRenderer::Batch JoltDebugRenderer::CreateTriangleBatch(
 {
     (void)inTriangles;
     (void)inTriangleCount;
-    // v5.5.0: Batch = Ref<RefTargetVirtual>, RefTargetVirtual is abstract
-    // Return empty batch — DrawGeometry handles this gracefully
     return Batch();
 }
 
@@ -83,8 +83,6 @@ void JoltDebugRenderer::DrawGeometry(JPH::RMat44Arg inModelMatrix,
                                       JPH::DebugRenderer::ECullMode, JPH::DebugRenderer::ECastShadow, JPH::DebugRenderer::EDrawMode)
 {
     if (!m_Draw || !inGeometry) return;
-    // Simplification: Jolt built-in geometry not rendered in debug view
-    // The DrawLine/DrawTriangle calls from individual debug draw operations are captured
     (void)inModelMatrix;
     (void)inModelColor;
 }
@@ -114,3 +112,4 @@ void JoltDebugRenderer::Flush() {
 }
 
 } // namespace Engine
+#endif // JPH_DEBUG_RENDERER

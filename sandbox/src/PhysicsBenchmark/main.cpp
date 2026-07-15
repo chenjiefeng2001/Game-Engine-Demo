@@ -20,7 +20,7 @@
 
 #include "Engine/Core/Physics/GPUParticle.h"
 #include "Engine/Core/Log.h"
-#include "Engine/Core/Application.h"
+#include "Engine/Application.h"
 #include "Engine/Core/FileSystem.h"
 #include "Engine/Core/TaskGraph.h"
 #include "Engine/Core/JobSystem.h"
@@ -90,7 +90,10 @@ static void CPUSimulateParticles(CPUParticle* particles, uint32_t count,
     const float dt = config.dt;
     const float damping = config.damping;
     const float restitution = config.restitution;
-    const float stiffness = config.stiffness;
+    float stiffness = config.stiffness;
+    (void)particles;
+    (void)count;
+    (void)stiffness;
 
     // Pass 1: 半隐式欧拉积分 + 边界碰撞
     for (uint32_t i = 0; i < count; ++i) {
@@ -286,7 +289,7 @@ static void CPUSimulateParticlesParallel(CPUParticle* particles, uint32_t count,
                         if (dist < minDist) {
                             float overlap = minDist - dist;
                             float invDist = 1.0f / dist;
-                            float f = overlap * stiffness;
+                            float f = overlap * config.stiffness;
                             forceX[i].fetch_add(dx * invDist * f, std::memory_order_relaxed);
                             forceY[i].fetch_add(dy * invDist * f, std::memory_order_relaxed);
                             forceZ[i].fetch_add(dz * invDist * f, std::memory_order_relaxed);
@@ -427,7 +430,8 @@ static BenchmarkResult RunSingleBenchmark(uint32_t particleCount,
 
         for (uint32_t f = 0; f < frames; ++f) {
             // GPU Update 内部执行 2 个 Compute Pass（积分 + 碰撞）
-            gpuEngine->Update(0.016f);
+            // 注意：需要有效的 IRHICommandList，此处为占位
+            // gpuEngine->Update(0.016f, cmdList);
         }
 
         auto end = std::chrono::high_resolution_clock::now();
@@ -531,26 +535,8 @@ static void PrintSystemInfo(uint32_t threadCount) {
     printf("║  CPU Threads (config)  : %-20u  ║\n", threadCount);
     printf("║  CPU Threads (hardware): %-20u  ║\n", std::thread::hardware_concurrency());
 
-    // 检测是否支持 OpenGL 4.3+
-    const char* glVersion = reinterpret_cast<const char*>(glGetString(GL_VERSION));
-    const char* glRenderer = reinterpret_cast<const char*>(glGetString(GL_RENDERER));
-
-    printf("║  OpenGL Version        : %-20s  ║\n", glVersion ? glVersion : "N/A");
-    printf("║  GPU Renderer          : %-20s  ║\n", glRenderer ? glRenderer : "N/A");
-
-    // 检测 GL_ARB_compute_shader 或 OpenGL 4.3+
-    int computeShaders = 0;
-    glGetIntegerv(GL_MAX_COMPUTE_SHADER_INVOCATIONS, &computeShaders);
-    printf("║  Max Compute Invs      : %-20d  ║\n", computeShaders);
-
-    int ssboSize = 0;
-    glGetIntegerv(GL_MAX_SHADER_STORAGE_BLOCK_SIZE, &ssboSize);
-    printf("║  Max SSBO Size         : %-20d MB  ║\n", ssboSize / (1024*1024));
-
-    int workGroupSize[3] = {};
-    glGetIntegeri_v(GL_MAX_COMPUTE_WORK_GROUP_SIZE, 0, &workGroupSize[0]);
-    printf("║  Max Work Group Size   : %-20d  ║\n", workGroupSize[0]);
-
+    printf("║  GPU Device Info : via RHI backend            ║\n");
+    printf("║  (System info requires external init)         ║\n");
     printf("╚══════════════════════════════════════════════╝\n");
     printf("\n");
 }
@@ -614,23 +600,14 @@ int RunPhysicsBenchmark(int argc, char** argv) {
     gpuConfig.boxMax[1] = 120.0f;
     gpuConfig.boxMax[2] = 60.0f;
 
-    // 只有在 OpenGL 上下文存在时才初始化 GPU 引擎
-    const char* glVersion = reinterpret_cast<const char*>(glGetString(GL_VERSION));
-    if (glVersion) {
-        gpuEngine = new Engine::GPUPhysicsEngine();
-        if (!gpuEngine->Initialize(gpuConfig)) {
-            s_Log.Warn("GPU Physics Engine init failed - GPU benchmarks will be N/A");
-            delete gpuEngine;
-            gpuEngine = nullptr;
-        }
-    } else {
-        s_Log.Warn("No OpenGL context - GPU benchmarks will be N/A");
-    }
+    // GPU 引擎初始化需要有效的 RHI::IRHIDevice
+    // 在 Application 完整初始化后可用，此处仅占位
+    s_Log.Warn("GPU Physics Engine init requires RHI device - GPU benchmarks will be N/A");
+    gpuEngine = nullptr;
 
     // ── 打印系统信息 ──
-    if (glVersion) {
-        PrintSystemInfo(threadCount);
-    }
+    // 需要 Application 完全初始化以获取 GL 驱动信息
+    // 此处跳过，在完整集成时通过 RHI 设备获取
 
     // ── 运行所有量级的测试 ──
     std::vector<BenchmarkResult> results;
