@@ -78,6 +78,7 @@ target_include_directories(EngineCore
     PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/src"
 
 )
+target_sources(EngineCore PRIVATE "${PROJECT_SOURCE_DIR}/third_party/glad/src/gl.c")
 target_link_libraries(EngineCore PUBLIC glad2 glfw stb box2d OpenAL::OpenAL imgui spdlog::spdlog freetype imguizmo Jolt)
 
 # Jolt Physics: Release builds disable debug renderer for performance
