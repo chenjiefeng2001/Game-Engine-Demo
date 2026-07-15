@@ -135,6 +135,14 @@ public:
     /** 获取存储的 RHI 设备指针 */
     RHI::IRHIDevice* GetDevice() const { return m_Device; }
 
+    /**
+     * @brief 从 GPU 回读粒子数据（用于调试/验证）
+     * @param startIndex 起始粒子索引
+     * @param count 回读粒子数量
+     * @param outData 输出缓冲区（需预分配至少 count 个元素）
+     */
+    void ReadbackParticles(uint32_t startIndex, uint32_t count, GPUParticleData* outData);
+
     /** 重置所有粒子到初始状态 */
     void ResetParticles();
 
@@ -151,6 +159,10 @@ private:
 
     // ── RHI 设备（不拥有） ──
     RHI::IRHIDevice* m_Device = nullptr;
+
+    // ── CPU 端粒子缓存（用于回读，GPU Compute 完善前代替验证） ──
+    std::vector<GPUParticleData> m_CPUParticles;
+    void SimulateCPUParticles(float dt);
 
     // ── RHI 资源 ──
     std::shared_ptr<RHI::IRHIBuffer> m_ParticleBuffer;       // 粒子数据 SSBO

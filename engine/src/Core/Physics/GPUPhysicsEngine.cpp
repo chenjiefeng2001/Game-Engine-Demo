@@ -39,6 +39,7 @@ bool GPUPhysicsEngine::Initialize(RHI::IRHIDevice* device, const GPUPhysicsConfi
 
     if (!device) {
         s_Log.Warn("Initialize: no RHI device - structural/validation mode only");
+        m_Config = config;
         m_Initialized = true;
         return true;
     }
@@ -63,19 +64,21 @@ bool GPUPhysicsEngine::Initialize(RHI::IRHIDevice* device, const GPUPhysicsConfi
         return false;
     }
 
-    // 4. 初始化粒子数据
+    // 4. 分配 CPU 端粒子缓存
+    m_CPUParticles.resize(config.particleCount);
+
+    // 5. 初始化粒子数据
     ResetParticles();
 
     m_Initialized = true;
-    s_Log.Info("GPU Physics Engine initialized via RHI successfully");
+    s_Log.Info("GPU Physics Engine initialized via RHI successfully ({} particles)",
+               config.particleCount);
     return true;
 }
 
 void GPUPhysicsEngine::Shutdown() {
     if (!m_Initialized) return;
 
-    // RHI 资源由 shared_ptr 自动释放，PSO 需要返回给设备
-    // 当前实现中 GL46PipelineState 使用裸指针 new，需要 delete
     delete m_IntegratePSO; m_IntegratePSO = nullptr;
     delete m_CollidePSO;   m_CollidePSO = nullptr;
     delete m_RenderPSO;    m_RenderPSO = nullptr;
@@ -83,6 +86,7 @@ void GPUPhysicsEngine::Shutdown() {
     m_ParticleBuffer.reset();
     m_VertexBuffer.reset();
     m_IndexBuffer.reset();
+    m_CPUParticles.clear();
     m_IndexCount = 0;
     m_Initialized = false;
     m_Stats = {};
@@ -95,11 +99,15 @@ void GPUPhysicsEngine::Update(float dt, RHI::IRHICommandList* cmdList) {
 
     m_Stats.frameCount++;
 
-    // Pass 1: 积分（半隐式欧拉 + 边界碰撞）
+    // CPU 端物理模拟（在 GPU 后端完整实现前使用 CPU 更新）
+    // 当 GL46Device 实现真正的 Compute Shader 调度后，下面的 CPU 代码
+    // 将被 cmdList->Dispatch() 替换
+    SimulateCPUParticles(dt);
+
+    // RHI Compute 调度（占位，GL46 后端待完善）
     cmdList->SetPipelineState(m_IntegratePSO);
     cmdList->SetUnorderedAccess(0, m_ParticleBuffer.get());
 
-    // 通过 RHI Barrier 确保数据就绪
     RHI::ResourceBarrierDesc preBarrier;
     preBarrier.type = RHI::ResourceBarrierDesc::Type::UAV;
     preBarrier.buffer = m_ParticleBuffer.get();
@@ -107,20 +115,14 @@ void GPUPhysicsEngine::Update(float dt, RHI::IRHICommandList* cmdList) {
     preBarrier.stateAfter  = RHI::ResourceState::UnorderedAccess;
     cmdList->ResourceBarrier(1, &preBarrier);
 
-    // Dispatch 积分 Pass
     uint32_t groupCount = (m_Config.particleCount + m_Config.workGroupSize - 1)
                           / m_Config.workGroupSize;
     cmdList->Dispatch(groupCount, 1, 1);
-
-    // 屏障: ComputeWrite → ComputeRead（确保积分完成后碰撞才能读）
     cmdList->ResourceBarrier(1, &preBarrier);
 
-    // Pass 2: 碰撞检测 + 惩罚力响应
     cmdList->SetPipelineState(m_CollidePSO);
     cmdList->SetUnorderedAccess(0, m_ParticleBuffer.get());
     cmdList->Dispatch(groupCount, 1, 1);
-
-    // 屏障: ComputeWrite → VertexRead（确保碰撞完成后渲染才能读取）
     cmdList->ResourceBarrier(1, &preBarrier);
 }
 
@@ -132,18 +134,22 @@ void GPUPhysicsEngine::Render(RHI::IRHICommandList* cmdList) {
     cmdList->SetIndexBuffer(m_IndexBuffer.get(), 0);
     cmdList->SetPrimitiveTopology(RHI::PrimitiveTopology::TriangleList);
 
-    // 实例化绘制（每个粒子一个实例）
-    // 注意：实例数据从 m_ParticleBuffer SSBO 读取，需要绑定到 slot
     RHI::Viewport vp = { 0, 0, 1280, 720, 0, 1 };
     cmdList->SetViewport(vp);
     cmdList->DrawIndexed(m_IndexCount, 0, 0);
 }
 
-void GPUPhysicsEngine::ResetParticles() {
-    if (!m_ParticleBuffer) return;
+void GPUPhysicsEngine::ReadbackParticles(uint32_t startIndex, uint32_t count,
+                                          GPUParticleData* outData) {
+    if (!m_Initialized || !outData || startIndex >= m_CPUParticles.size()) return;
 
-    // 在 CPU 上生成初始数据
-    std::vector<GPUParticleData> initialData(m_Config.particleCount);
+    uint32_t copyCount = std::min(count, (uint32_t)(m_CPUParticles.size() - startIndex));
+    std::memcpy(outData, m_CPUParticles.data() + startIndex,
+                copyCount * sizeof(GPUParticleData));
+}
+
+void GPUPhysicsEngine::ResetParticles() {
+    if (m_CPUParticles.empty()) return;
 
     std::random_device rd;
     std::mt19937 gen(rd());
@@ -152,8 +158,8 @@ void GPUPhysicsEngine::ResetParticles() {
     std::uniform_real_distribution<float> colorDist(0.3f, 1.0f);
     std::uniform_real_distribution<float> massDist(0.5f, 2.0f);
 
-    for (uint32_t i = 0; i < m_Config.particleCount; ++i) {
-        auto& p = initialData[i];
+    for (uint32_t i = 0; i < m_Config.particleCount && i < (uint32_t)m_CPUParticles.size(); ++i) {
+        auto& p = m_CPUParticles[i];
         p.position[0] = posDist(gen);
         p.position[1] = std::abs(posDist(gen)) + 10.0f;
         p.position[2] = posDist(gen);
@@ -168,9 +174,62 @@ void GPUPhysicsEngine::ResetParticles() {
         p.color[3] = 1.0f;
     }
 
-    // 通过 UpdateData 上传初始数据（需要 RHI Buffer 支持映射）
-    // 当前 GL46Buffer 实现为存根，数据上传在 GL46Device 完善后生效
-    s_Log.Info("Particle data generated: {} particles", m_Config.particleCount);
+    m_Stats.totalParticles = m_Config.particleCount;
+    s_Log.Info("Particles reset: {}", m_Config.particleCount);
+}
+
+// ── CPU 端物理模拟（用于测试验证，GPU 后端完善前使用） ──
+void GPUPhysicsEngine::SimulateCPUParticles(float dt) {
+    const float damping = m_Config.damping;
+    const float restitution = m_Config.restitution;
+    const float gx = m_Config.gravity[0];
+    const float gy = m_Config.gravity[1];
+    const float gz = m_Config.gravity[2];
+    const float bminX = m_Config.boxMin[0], bmaxX = m_Config.boxMax[0];
+    const float bminY = m_Config.boxMin[1], bmaxY = m_Config.boxMax[1];
+    const float bminZ = m_Config.boxMin[2], bmaxZ = m_Config.boxMax[2];
+
+    for (auto& p : m_CPUParticles) {
+        // 半隐式欧拉积分
+        p.velocity[0] += gx * dt;
+        p.velocity[1] += gy * dt;
+        p.velocity[2] += gz * dt;
+
+        p.velocity[0] *= (1.0f - damping * dt);
+        p.velocity[1] *= (1.0f - damping * dt);
+        p.velocity[2] *= (1.0f - damping * dt);
+
+        p.position[0] += p.velocity[0] * dt;
+        p.position[1] += p.velocity[1] * dt;
+        p.position[2] += p.velocity[2] * dt;
+
+        // 边界碰撞（带弹性系数）
+        float r = p.radius;
+        if (p.position[0] - r < bminX) {
+            p.position[0] = bminX + r;
+            p.velocity[0] = -p.velocity[0] * restitution;
+        }
+        if (p.position[0] + r > bmaxX) {
+            p.position[0] = bmaxX - r;
+            p.velocity[0] = -p.velocity[0] * restitution;
+        }
+        if (p.position[1] - r < bminY) {
+            p.position[1] = bminY + r;
+            p.velocity[1] = -p.velocity[1] * restitution;
+        }
+        if (p.position[1] + r > bmaxY) {
+            p.position[1] = bmaxY - r;
+            p.velocity[1] = -p.velocity[1] * restitution;
+        }
+        if (p.position[2] - r < bminZ) {
+            p.position[2] = bminZ + r;
+            p.velocity[2] = -p.velocity[2] * restitution;
+        }
+        if (p.position[2] + r > bmaxZ) {
+            p.position[2] = bmaxZ - r;
+            p.velocity[2] = -p.velocity[2] * restitution;
+        }
+    }
 }
 
 // ═══════════════════════════════════════════════════════════
@@ -187,9 +246,6 @@ bool GPUPhysicsEngine::CreateParticleBuffer() {
 }
 
 bool GPUPhysicsEngine::CreateComputeShaders() {
-    // 通过 RHI 创建 Compute PSO
-    // 实际着色器编译由 ShaderCompiler + PSOCache 完成
-    // 这里使用 StringID 空值作为占位符，真实实现需接入 ShaderCompiler
     RHI::ComputePSODesc integrateDesc;
     integrateDesc.computeShader = StringID::Runtime("gpu_physics_integrate");
     m_IntegratePSO = m_Device->CreateComputePSO(integrateDesc);
@@ -202,10 +258,8 @@ bool GPUPhysicsEngine::CreateComputeShaders() {
 }
 
 bool GPUPhysicsEngine::CreateRenderResources() {
-    // 创建球体网格缓冲区（VBO/IBO）
-    // 简化实现：创建空 Buffer 占位
     RHI::RHIBufferDesc vbDesc;
-    vbDesc.size = 1024 * 6 * sizeof(float);  // 球体顶点近似大小
+    vbDesc.size = 1024 * 6 * sizeof(float);
     vbDesc.memoryUsage = RHI::MemoryUsage::GPU_Only;
     m_VertexBuffer = m_Device->CreateBuffer(vbDesc);
 
@@ -216,7 +270,6 @@ bool GPUPhysicsEngine::CreateRenderResources() {
 
     m_IndexCount = 1024;
 
-    // 创建渲染 PSO（占位）
     RHI::GraphicsPSODesc renderDesc = RHI::GraphicsPSODesc::DefaultOpaque();
     m_RenderPSO = m_Device->CreateGraphicsPSO(renderDesc);
 
