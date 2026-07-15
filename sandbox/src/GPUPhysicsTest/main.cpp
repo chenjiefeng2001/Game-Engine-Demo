@@ -1,102 +1,101 @@
 /**
  * @file GPUPhysicsTest.cpp
- * @brief GPU 物理引擎沙盒测试 — 验证 Compute Shader 物理 MVP
+ * @brief GPU 物理引擎沙盒测试 — 粒子位置回读 + 物理规律断言验证
  *
- * 测试目标：
- *   1. Compute Shader 创建与 Dispatch 正确性
- *   2. SSBO 在 Compute 与 Graphics 管线的共享（Zero-Copy）
- *   3. Memory Barrier 正确性（无撕裂/闪烁）
- *   4. 65536 粒子的实例化渲染性能
- *
- * 运行方式：
- *   作为 sandbox 中的测试场景启动，按 F1 显示 GPU 物理统计数据
+ * 验证目标：
+ *   1. 粒子数据能正确上传到 RHI Buffer
+ *   2. 重力作用下粒子 Y 坐标应随帧下降（物理规律断言）
+ *   3. 边界碰撞反弹：粒子应被限制在 box 范围内
+ *   4. 每帧统计粒子的平均位置/速度（验证 Compute 是否在运行）
  */
 
 #include "Engine/Core/Physics/GPUParticle.h"
-#include "Engine/Application.h"
-#include "Engine/Core/SubsystemManager.h"
+#include "Engine/Core/RHI/GL46AZDODevice.h"
+#include "Engine/Core/RHI/IRHIDevice.h"
+#include "Engine/Core/RHI/IRHICommandList.h"
 #include "Engine/Core/Log.h"
-#include "Engine/Core/FileSystem.h"
-#include "Engine/Core/IFile.h"
-#include "Engine/Core/Input.h"
-#include "Engine/Core/Config.h"
-#include "Engine/Core/IWindow.h"
-#include "Engine/Core/IGraphicsFactory.h"
-#include "Engine/Platform/GlfwWindow.h"
-
 #include <cstdio>
 #include <cmath>
-#include <chrono>
+#include <cstring>
 #include <vector>
-
-// ═══════════════════════════════════════════════════════════
-// GPU 物理沙盒测试
-// ═══════════════════════════════════════════════════════════
-//
-// 运行后你会看到 65536 个彩色球体从天而降，
-// 在虚拟盒子中弹跳并互相碰撞。
-//
-// 所有物理计算在 GPU Compute Shader 中完成，
-// 渲染直接读取 SSBO 做实例化绘制 (Zero-Copy)。
-//
-// 测试显卡建议：GTX 1060 或更高（OpenGL 4.3+ / Vulkan 1.1+）
-// ═══════════════════════════════════════════════════════════
+#include <memory>
+#include <random>
 
 static Engine::Logger s_Log("GPUPhysicsTest");
 
-// ── 全局测试状态 ──
-static Engine::GPUPhysicsEngine* g_Physics = nullptr;
-static bool g_ShowStats = true;
+static constexpr float DT = 1.0f / 60.0f;
+static constexpr int MAX_FRAMES = 120;
 
-// ── 时间统计 ──
-static std::chrono::steady_clock::time_point g_LastFrameTime;
-static float g_FrameTime = 0.016f;  // ~60 FPS
+static void ValidateParticles(const std::vector<Engine::GPUParticleData>& particles,
+                               int frame, float boxMinY, float boxMaxY)
+{
+    if (particles.empty()) return;
 
-/**
- * @brief 打印 GPU 物理引擎统计信息
- */
-static void PrintStats() {
-    if (!g_Physics) return;
+    double avgY = 0, avgVelY = 0, avgSpeed = 0;
+    int alive = 0;
+    for (const auto& p : particles) {
+        avgY += p.position[1];
+        avgVelY += p.velocity[1];
+        float vx = p.velocity[0], vy = p.velocity[1], vz = p.velocity[2];
+        avgSpeed += std::sqrt(vx*vx + vy*vy + vz*vz);
+        // 检查边界约束：位置不应超出 box 范围（由于 Restitution，允许边界接触）
+        if (p.position[1] > boxMinY - 0.01f && p.position[1] < boxMaxY + 0.01f)
+            ++alive;
+    }
+    size_t n = particles.size();
+    avgY /= n;
+    avgVelY /= n;
+    avgSpeed /= n;
 
-    const auto& stats = g_Physics->GetStats();
-    const auto& config = g_Physics->GetConfig();
+    // 打印粒子状态摘要（首粒位置 + 总体统计）
+    printf("  Frame %d | First particle pos=(%.2f, %.2f, %.2f) vel=(%.2f, %.2f, %.2f)\n",
+           frame,
+           particles[0].position[0], particles[0].position[1], particles[0].position[2],
+           particles[0].velocity[0], particles[0].velocity[1], particles[0].velocity[2]);
+    printf("  Avg Y=%.2f Avg VelY=%.2f Avg Speed=%.2f InBounds=%d/%zu\n",
+           avgY, avgVelY, avgSpeed, alive, n);
 
-    printf("--- GPU Physics Engine Status ---\n");
-    printf("  Total Particles : %u\n", stats.totalParticles);
-    printf("  Frame Count     : %llu\n", stats.frameCount);
-    printf("  Gravity         : (%.1f, %.1f, %.1f)\n",
-           config.gravity[0], config.gravity[1], config.gravity[2]);
-    printf("  Restitution     : %.2f\n", config.restitution);
-    printf("  Stiffness       : %.0f\n", config.stiffness);
-    printf("  Damping         : %.4f\n", config.damping);
-    printf("  Box             : (%.0f, %.0f, %.0f)\n",
-           config.boxMax[0] - config.boxMin[0],
-           config.boxMax[1] - config.boxMin[1],
-           config.boxMax[2] - config.boxMin[2]);
-    printf("\n");
+    // 物理规律断言
+    if (frame == MAX_FRAMES - 1) {
+        // 运行 120 帧后，受重力影响的粒子平均 Y 应显著下降
+        // 初始 avgY ≈ 10~50（spawnRadius=40，abs(pos)+10），
+        // 经过 120 帧 * 9.8 重力，期望 avgY 显著降低
+        if (avgY > 10.0f) {
+            s_Log.Warn("Particles appear to not be falling - gravity may not be applied");
+        } else {
+            s_Log.Info("Physics VERIFIED: Particles falling under gravity (avg Y=%.2f)", avgY);
+        }
+        // 边界约束：至少 90% 粒子应在 box 范围内
+        if (alive < n * 0.9f) {
+            s_Log.Warn("Boundary violations detected: {}/{} particles outside box", n - alive, n);
+        } else {
+            s_Log.Info("Boundary constraint VERIFIED: {}/{} in bounds", alive, n);
+        }
+    }
 }
 
-/**
- * @brief 初始化 GPU 物理引擎并启动测试
- */
-static void RunGPUPysicsTest() {
+int main(int, char**) {
     s_Log.Info("========================================");
-    s_Log.Info(" GPU Physics Engine MVP Test");
+    s_Log.Info(" GPU Physics Engine - Readback + Validation");
     s_Log.Info("========================================");
-    s_Log.Info("");
 
-    // 创建 GPU 物理引擎实例
-    g_Physics = new Engine::GPUPhysicsEngine();
+    // 1. 初始化 GL46 设备
+    auto device = std::make_unique<Engine::RHI::GL46Device>();
+    if (!device->Initialize(nullptr, 1, 1)) {
+        s_Log.Error("GL46Device init failed");
+        return 1;
+    }
+    s_Log.Info("Device: {}", device->GetDeviceName());
 
-    // 配置参数
+    // 2. 初始化 GPU 物理引擎
     Engine::GPUPhysicsConfig config;
-    config.particleCount = 65536;          // 65536 粒子
+    config.particleCount = 65536;
     config.gravity[0] = 0.0f;
-    config.gravity[1] = -9.8f;             // 重力
+    config.gravity[1] = -9.8f;
     config.gravity[2] = 0.0f;
-    config.restitution = 0.7f;             // 边界反弹系数
-    config.stiffness = 500.0f;             // 粒子间碰撞刚度
-    config.damping = 0.01f;                // 空气阻尼
+    config.restitution = 0.7f;
+    config.stiffness = 500.0f;
+    config.damping = 0.01f;
     config.boxMin[0] = -60.0f;
     config.boxMin[1] = 0.0f;
     config.boxMin[2] = -60.0f;
@@ -104,104 +103,61 @@ static void RunGPUPysicsTest() {
     config.boxMax[1] = 120.0f;
     config.boxMax[2] = 60.0f;
     config.spawnVelocity[0] = 0.0f;
-    config.spawnVelocity[1] = 10.0f;       // 初始向上速度
+    config.spawnVelocity[1] = 10.0f;
     config.spawnVelocity[2] = 0.0f;
-    config.spawnRadius = 40.0f;            // 生成范围
+    config.spawnRadius = 40.0f;
     config.workGroupSize = 256;
 
-    // 初始化（需要 RHI::IRHIDevice，传入 nullptr 表示无后端纯结构验证）
-    if (!g_Physics->Initialize(nullptr, config)) {
-        s_Log.Warn("GPU Physics Engine init (no RHI device) - structural test only");
-        // 即使无 RHI 设备，引擎对象依然有效（空壳），可以输出配置信息
+    auto physics = std::make_unique<Engine::GPUPhysicsEngine>();
+    if (!physics->Initialize(device.get(), config)) {
+        s_Log.Error("GPUPhysicsEngine init failed");
+        return 1;
     }
+    s_Log.Info("Engine init OK: {} particles", config.particleCount);
 
-    s_Log.Info("");
-    s_Log.Info("--- GPU Physics Engine Configuration ---");
-    s_Log.Info("  Particles        : {} on GPU", config.particleCount);
-    s_Log.Info("  Compute Passes   : 2 per frame");
-    s_Log.Info("  Rendering        : Zero-Copy (no CPU read)");
-    s_Log.Info("  Press F1/F2/R    : toggle stats / reset particles");
+    // 3. 模拟主循环
+    printf("\n--- Running {} frames ---\n\n", MAX_FRAMES);
+    for (int frame = 0; frame < MAX_FRAMES; ++frame) {
+        auto cmdList = device->CreateCommandList(Engine::RHI::CommandListType::Direct);
+        if (!cmdList) break;
 
-    // 初始化时间统计
-    g_LastFrameTime = std::chrono::steady_clock::now();
+        cmdList->Begin();
+        physics->Update(DT, cmdList.get());
+        cmdList->End();
 
-    // 打印初始统计信息
-    PrintStats();
-}
+        auto* queue = device->GetQueue(Engine::RHI::QueueType::Graphics);
+        if (queue) {
+            Engine::RHI::IRHICommandList* lists[] = { cmdList.get() };
+            queue->ExecuteCommandLists(1, lists);
+            queue->WaitIdle();
+        }
 
-/**
- * @brief 每帧更新 GPU 物理模拟
- * @param dt 时间步长
- */
-void UpdateGPUPysics(float dt) {
-    if (!g_Physics) return;
-
-    // 更新 GPU 物理（Compute Shader Dispatch × 2）
-    // 需要 RHI::IRHICommandList，此处传 nullptr 占位
-    // 在实际集成时需要传入有效的 cmdList
-    // g_Physics->Update(dt, cmdList);
-
-    // 渲染粒子（实例化绘制，Zero-Copy）
-    // g_Physics->Render(cmdList);
-}
-
-/**
- * @brief 处理键盘输入
- */
-static void HandleInput() {
-    auto* input = Engine::Input::Get();
-    if (!input) return;
-
-    // F1: 切换统计显示
-    if (input->IsKeyPressed(Engine::KeyCode::F1)) {
-        g_ShowStats = !g_ShowStats;
-        if (g_ShowStats) PrintStats();
-    }
-
-    // R: 重置粒子
-    if (input->IsKeyPressed(Engine::KeyCode::R)) {
-        if (g_Physics) {
-            s_Log.Info("Resetting particles...");
-            g_Physics->ResetParticles();
+        // 每隔 30 帧回读粒子数据并验证
+        if (frame % 30 == 0 || frame == MAX_FRAMES - 1) {
+            // SSBO 回读前 16 个粒子
+            std::vector<Engine::GPUParticleData> readback(16);
+            physics->ReadbackParticles(0, 16, readback.data());
+            ValidateParticles(readback, frame,
+                              config.boxMin[1], config.boxMax[1]);
         }
     }
-}
 
-/**
- * @brief 测试入口点（从 sandbox main 调用）
- */
-int RunGPUPysicsTestMain(int argc, char** argv) {
-    (void)argc; (void)argv;
+    // 4. 最终回读更多样本做统计分析
+    printf("\n--- Final Readback (first 256 particles) ---\n");
+    std::vector<Engine::GPUParticleData> finalSample(256);
+    physics->ReadbackParticles(0, 256, finalSample.data());
+    double finalAvgY = 0;
+    for (auto& p : finalSample) finalAvgY += p.position[1];
+    finalAvgY /= finalSample.size();
+    printf("  Final avg particle Y: %.2f\n", finalAvgY);
 
-    s_Log.Info("GPU Physics Test Starting...");
+    if (finalAvgY < 10.0f) {
+        s_Log.Info("SUCCESS: Physics simulation running correctly (avg Y=%.2f < 10)", finalAvgY);
+    } else {
+        s_Log.Warn("Physics may not be computing: avg Y=%.2f (expect < 10 after gravity)", finalAvgY);
+    }
 
-    // 初始化引擎子系统
-    // 注意：Application + SubsystemManager 需要在外部初始化
-    // 此处仅做 GPU 物理引擎的独立验证
-
-    RunGPUPysicsTest();
-
-    // 输出引擎状态说明
-    s_Log.Info("");
-    s_Log.Info("GPU Physics Engine: {}", g_Physics && g_Physics->IsValid() ? "ACTIVE" : "INITIALIZED (no RHI device)");
-    s_Log.Info("Particle count: {}", g_Physics ? g_Physics->GetParticleCount() : 0);
-    PrintStats();
-
-    // 无需主循环 — 测试仅验证构建和初始化链的正确性
-    // 实际 Compute 调度需要在 Application 初始化完整的 RHI 设备后运行
-    s_Log.Info("");
-    s_Log.Info("NOTE: To run actual GPU compute, initialize with a valid RHI::IRHIDevice");
-    s_Log.Info("      e.g. auto device = std::make_unique<RHI::GL46Device>();");
-    s_Log.Info("      Then pass device.get() to GPUPhysicsEngine::Initialize()");
-
-    // 清理
-    delete g_Physics;
-    g_Physics = nullptr;
-
-    s_Log.Info("GPU Physics Test Complete");
+    physics->Shutdown();
+    s_Log.Info("Test complete");
     return 0;
-}
-
-int main(int argc, char** argv) {
-    return RunGPUPysicsTestMain(argc, argv);
 }
