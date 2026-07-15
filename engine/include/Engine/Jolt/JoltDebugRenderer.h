@@ -12,6 +12,9 @@
  *   - Flush() 阶段在主线程汇总所有线程的数据并提交渲染
  */
 
+// Jolt.h 必须先于所有其他 Jolt 头文件包含，以确保
+// JPH_EXPORT_GCC_BUG_WORKAROUND 等宏在 Color.h 等头文件使用前被正确定义
+#include <Jolt/Jolt.h>
 #include <Jolt/Renderer/DebugRenderer.h>
 #include "Engine/Core/Physics/IPhysicsDebugDraw3D.h"
 #include "Engine/Core/JobSystem.h"
