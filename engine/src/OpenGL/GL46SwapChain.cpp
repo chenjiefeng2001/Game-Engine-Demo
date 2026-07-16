@@ -1,6 +1,8 @@
 /**
  * @file GL46SwapChain.cpp
- * @brief GL46 交换链 + 队列 + Buffer 析构（存根）
+ * @brief GL46 交换链 + 队列实现
+ *
+ * 注意：GL46Buffer 析构现在在 GL46Device.cpp 中
  */
 
 #include "Engine/Core/RHI/GL46AZDODevice.h"
@@ -8,15 +10,8 @@
 namespace Engine {
 namespace RHI {
 
-GL46Buffer::~GL46Buffer() {
-    if (m_GLBuffer) {
-        // TODO: 通过 GladGLContext 调用 glDeleteBuffers
-        m_GLBuffer = 0;
-    }
-}
-
-uint64_t GL46Buffer::GetSize() const noexcept { return m_Size; }
-const GPUAllocation& GL46Buffer::GetAllocation() const noexcept { return m_Allocation; }
+// GL46Buffer 的析构在 GL46Device.cpp 中实现
+// 此文件仅包含无冲突的函数
 
 uint32_t GL46Texture::GetWidth() const noexcept { return 0; }
 uint32_t GL46Texture::GetHeight() const noexcept { return 0; }
@@ -30,11 +25,17 @@ uint32_t GL46SwapChain::GetBufferCount() const { return 1; }
 
 void GL46Queue::ExecuteCommandLists(uint32 count, IRHICommandList** lists) {
     for (uint32_t i = 0; i < count; ++i) {
-        static_cast<GL46CommandList*>(lists[i])->ExecuteOnMainThread();
+        auto* cmd = static_cast<GL46CommandList*>(lists[i]);
+        cmd->ExecuteOnMainThread();
     }
+    // Dispatch 等 GL 命令已由 CommandList 方法直接执行。
+    // ExecuteCommandLists 后需要确保 GPU 可见性
 }
 
-void GL46Queue::WaitIdle() {}
+void GL46Queue::WaitIdle() {
+    // 等待由调用方通过 GL46Device::WaitIdle() 或 glFinish 处理
+}
+
 QueueType GL46Queue::GetType() const noexcept { return QueueType::Graphics; }
 
 } // namespace RHI
