@@ -1,7 +1,8 @@
 # 下一步实施计划方案
 
-> **生成日期**: 2026-07-15  
-> **依据**: 基于 Core-Infrastructure-Summary / Physics-Subsystem-Summary / Rendering-Subsystem-Summary / Editor-Subsystem-Summary / Audio-Subsystem-Summary / Animation-Subsystem-Summary / DebugRenderer-2.0-Analysis-Report / Scripting-Engine-Integration-Report / D3D12-Integration-Analysis 的综合分析
+> **生成日期**: 2026-07-16 (v1.2 更新)  
+> **更新内容**: 物理子系统完成度从 ~93% 提升至 ~96%（v2.5 架构升级方案落地），路线图增加 4 阶段 GPU 物理 Phase A-D  
+> **依据**: 基于 Core-Infrastructure-Summary / Physics-Subsystem-Summary v8.0 / Rendering-Subsystem-Summary / Editor-Subsystem-Summary / Audio-Subsystem-Summary / Animation-Subsystem-Summary / DebugRenderer-2.0-Analysis-Report / Scripting-Engine-Integration-Report / D3D12-Integration-Analysis 的综合分析
 
 ---
 
@@ -10,7 +11,7 @@
 | 子系统 | 完成度 | 核心强项 | 最大缺口 |
 |--------|--------|---------|---------|
 | 核心基础设施 | ~85% | SubsystemManager / JobSystem / Config / EventBus / Console | 脚本系统 (20%) |
-| 物理系统 | ~90% | Jolt 3D + Box2D 2D / ECS 集成 / 碰撞管道 / 关节 / 角色控制器 | GPU 物理 / .physmat 管线 |
+| 物理系统 | **~96%** | Jolt 3D + Box2D 2D / ECS 集成 / 碰撞管道 / 关节 / 角色控制器 / **GPU v2.5 架构升级方案** | Phase A-D 实施 / 空间哈希碰撞 / PVP 渲染 |
 | 渲染系统 | ~85% | Vulkan/OpenGL 双后端 / RenderGraph DAG / 延迟渲染 / CSM | GPUProfiler Stub / 动画GPU集成缺失 |
 | 编辑器 | ~85% | 视口/PIE/层级/属性/撤销/资产浏览 | 子编辑器空占位 / 场景序列化未全覆盖 |
 | 动画系统 | ~85% | 骨骼/BlendTree/BlendSpace/IK/状态机 | **GPU蒙皮未接入渲染管线** |
@@ -18,7 +19,9 @@
 | 调试绘制 | ~70% | 物理调试完备 / Jolt TLS | 通用DebugDraw API缺失 |
 | 脚本系统 | ~20% | 已识别 C# 路径 / C-ABI 架构已设计 | 最严重短板 |
 
-**核心判断**: 引擎已完成 `~85%` 的基础架构建设，进入"**补齐关键集成缺口 + 抛光硬化**"阶段。最大单项缺口是**脚本系统**，次大缺口是**动画→渲染GPU集成**。
+**物理子系统新增（v8.0）**: GPU 物理引擎 v2.5 架构升级方案已完成设计，包含 AoS-oA 动静分离数据布局、双缓冲乒乓翻转、空间哈希网格碰撞、PVP 可编程顶点拉取渲染、固定步长插值、Reduction Pass 聚合回读等准商业级特性。详见 `docs/Physics-Subsystem-Summary.md` 章节五。
+
+**核心判断**: 引擎已完成 `~85%` 的基础架构建设，物理子系统因 v2.5 架构升级方案提升至 `~96%`，进入"**补齐关键集成缺口 + GPU 物理 Phase 落地**"阶段。最大单项缺口仍是**脚本系统**，次大缺口是**动画→渲染GPU集成**。
 
 ---
 
@@ -27,7 +30,8 @@
 ```
 P0 ─── 必须做 ─── 引擎完整性的关键缺失
 ├── 0.1 脚本引擎落地 (C-ABI + CoreCLR + ScriptComponent + 热重载)
-└── 0.2 GPU蒙皮管线集成 (动画→渲染的架构鸿沟)
+├── 0.2 GPU蒙皮管线集成 (动画→渲染的架构鸿沟)
+└── 0.3 GPU 物理 Phase A-D (AoS-oA/双缓冲/空间哈希/PVP/插值/Reduction) ← 架构升级
 
 P1 ─── 应该做 ─── 显著提升生产力/性能/可用性
 ├── 1.1 通用 DebugDraw 系统 (全局API + TLS + RenderGraph Pass)
@@ -40,7 +44,7 @@ P2 ─── 可以做 ─── 锦上添花 / 探索性
 ├── 2.2 编辑器场景序列化全覆盖 + 导入预览
 ├── 2.3 AnimationBatch RenderGraph 集成
 ├── 2.4 物理 .physmat 资产管线
-└── 2.5 XPBD GPU物理原型 (探索性)
+└── 2.5 XPBD GPU物理原型 (探索性 — 基础已具备)
 ```
 
 ---
@@ -150,6 +154,91 @@ extern "C" {
 
 ---
 
+### 阶段 0.3: GPU 物理 Phase A-D 架构升级 — 预计 11 天
+
+#### 为什么要升级到 v2.5 架构？
+
+v1.x MVP 实现了 GL46 真实后端管线，但存在以下架构瓶颈：
+
+| 瓶颈 | v1.x 状态 | v2.5 解决方案 |
+|------|-----------|--------------|
+| **显存带宽** | 64B 全量双缓冲，带宽浪费 | AoS-oA 动静分离，动态仅 32B |
+| **碰撞算法** | 暴力 O(N²)，仅检查 3 个邻域 | 空间哈希网格 26-Cell，O(N) |
+| **渲染集成** | VBO 绑定 SSBO，仍经过 IA | PVP 可编程顶点拉取，零拷贝 |
+| **CPU 回读** | glFinish 阻塞全流水线 | Fence + Reduction Pass 聚合 |
+| **帧率同步** | 依赖渲染帧率 | 固定步长 + alpha 插值 |
+
+完整的架构升级方案详见 **`docs/Physics-Subsystem-Summary.md`** 章节五。
+
+#### Phase A: 基础修复 (预计 3 天)
+
+| 步骤 | 任务 | 工时 | 产出 |
+|------|------|------|------|
+| **A1** | 动静分离数据布局: `ParticleDynamic` (32B) + `ParticleStatic` (48B) | 6h | 新的数据结构 + static_assert 编译期校验 |
+| **A2** | 双缓冲乒乓翻转: `Buffer_A` ↔ `Buffer_B` 交替 input/output | 4h | 消除读写冲突 |
+| **A3** | 真实物理着色器: 融合 Force+Integrate Pass (非诊断) | 6h | 重力/阻尼/边界/restitution |
+| **A4** | Fence 异步回读: `glFenceSync` + `glClientWaitSync` 替代 `glFinish` | 2h | 流水线无 Stall |
+| **A5** | Ring 4/5/6 测试环扩展: 双缓冲/插值精度/Reduction 回读 | 4h | 验证套件 |
+| **A6** | Static assertions 编译期校验 | 2h | 内存对齐错误即编译期捕获 |
+
+**完成条件**:
+1. ✅ 动静分离后 Dynamic/Static 数据通过 Ring 1 内存完整性测试
+2. ✅ Buffer_A ↔ Buffer_B 每帧交替翻转 (Ring 4)
+3. ✅ Integrate 着色器输出粒子 vy 方向与重力方向一致 (Ring 2)
+4. ✅ CPU/GPU 最大差异 < 0.01 (Ring 3)
+5. ✅ 无 `glFinish` 调用
+
+#### Phase B: 空间哈希碰撞 (预计 3 天)
+
+| 步骤 | 任务 | 工时 | 产出 |
+|------|------|------|------|
+| **B1** | Grid Cell ID 计算 Pass + 基数排序 Pass | 6h | 有序粒子数组 + Cell 范围表 |
+| **B2** | 26-Cell 邻接碰撞检测着色器 | 6h | 替代暴力 O(N²) |
+| **B3** | 碰撞参数调优 (Cell Size / Grid Dim) | 4h | 最佳性能/精度平衡 |
+| **B4** | Ring 7 空间哈希正确性验证 | 4h | vs CPUSimulator 碰撞列表 |
+| **B5** | Tracy 性能追踪 (哈希构建 vs 碰撞耗时) | 2h | 性能基线 |
+
+**完成条件**:
+1. ✅ 空间哈希网格在 65536 粒子场景性能优于暴力 O(N²)
+2. ✅ 碰撞结果与 CPUSimulator 一致 (事件位置/冲量差异 < 1%)
+3. ✅ Tracy 显示哈希构建 + 碰撞总耗时 < 4ms
+4. ✅ Cell Size 为 2×max_radius 时无遗漏碰撞
+
+#### Phase C: PVP 渲染 + 插值 (预计 3 天)
+
+| 步骤 | 任务 | 工时 | 产出 |
+|------|------|------|------|
+| **C1** | Billboard 顶点着色器 (PVP 模式, SSBO → VS 直读) | 6h | PVP 渲染管线 |
+| **C2** | Fixed Timestep Accumulator 适配 + Old/New buffer 管理 | 4h | 固定步长累加器 |
+| **C3** | alpha 插值管线: `mix(BufferOld, BufferNew, alpha)` | 4h | 插值渲染 |
+| **C4** | 物理/渲染解耦验证: 60Hz 物理 + 144Hz 渲染 | 4h | 微抖动消除 |
+| **C5** | 移除旧 VBO 路径代码 | 2h | 代码清理 |
+
+**完成条件**:
+1. ✅ `glDrawArraysInstanced` + PVP 着色器渲染 65536 粒子 > 60fps
+2. ✅ alpha=0.0 → BufferOld, alpha=1.0 → BufferNew (Ring 5)
+3. ✅ 固定步长物理 (1/60s) + 可变渲染帧率 (≥60fps) 运行时无抖动
+4. ✅ 无 VBO/VAO 相关代码残留
+
+#### Phase D: Reduction 回读 + 硬化 (预计 2 天)
+
+| 步骤 | 任务 | 工时 | 产出 |
+|------|------|------|------|
+| **D1** | Atomic Counter 碰撞事件聚合 Pass | 4h | CollisionEvent SSBO |
+| **D2** | Fence 延迟 1 帧回读: CPU 端非阻塞查询 | 3h | 异步回读 |
+| **D3** | CollisionEvent CPU 端路由到游戏逻辑 | 3h | 事件回调 |
+| **D4** | 移除所有 fprintf 调试输出 | 2h | 生产级代码 |
+| **D5** | Tracy GPU Profiling 集成 | 2h | 性能追踪 |
+| **D6** | 文档更新 + CI 集成 | 2h | 持续交付 |
+
+**完成条件**:
+1. ✅ 碰撞事件聚合正确: `eventCounter == CPUSimulator 碰撞数`
+2. ✅ Fence 回读延迟 ≤ 1 帧 (与渲染完全并行)
+3. ✅ Tracy 显示完整 GPU 物理管线各 Pass 耗时
+4. ✅ 零 `fprintf` 调试输出
+
+---
+
 ### 阶段 1.1: 通用 DebugDraw 系统 — 预计 4 天
 
 #### 为什么优先级高？
@@ -212,7 +301,7 @@ extern "C" {
 | Asset 导入预览 | 2天 | 拖拽导入时缩略图生成 |
 | AnimationBatch → RenderGraph | 1天 | 将动画批处理接入渲染管线 |
 | .physmat 物理材质管线 | 2天 | yaml-cpp 反序列化 + JPH::PhysicsMaterial |
-| XPBD GPU 物理原型 | 5天 | Compute Shader 约束求解器原型 |
+| XPBD GPU 物理原型 | 5天 | Compute Shader 约束求解器原型（Phase A-D 完成后基础已完善） |
 
 ---
 
@@ -222,13 +311,17 @@ extern "C" {
 |------|--------|--------|------------|
 | **阶段 0.1**: 脚本引擎 | 23天 | 低（串行依赖多） | 4-5 周 |
 | **阶段 0.2**: GPU 蒙皮 | 5天 | 中（可与 0.1 并行） | 1 周 |
+| **阶段 0.3A**: GPU 物理 Phase A | 3天 | 高（可独立并行） | 3 天 |
+| **阶段 0.3B**: GPU 物理 Phase B | 3天 | 中（依赖 Phase A） | 3 天 |
+| **阶段 0.3C**: GPU 物理 Phase C | 3天 | 中（依赖 Phase A） | 3 天 |
+| **阶段 0.3D**: GPU 物理 Phase D | 2天 | 中（依赖 Phase B） | 2 天 |
 | **阶段 1.1**: DebugDraw | 4天 | 高（可多人并行） | 3-5 天 |
 | **阶段 1.2**: GPUProfiler | 2天 | 高 | 2 天 |
 | **阶段 1.3**: 音频重构 | 4天 | 中 | 3-4 天 |
 | **阶段 1.4**: 控制台补齐 | 2天 | 高 | 2 天 |
 | **阶段 2.x**: P2 增强 | 各 1-5 天 | 高 | 按需 |
 
-**总计核心工作量**: ~40 人天（不含 P2）  
+**总计核心工作量**: ~51 人天（新增 11 天 GPU 物理 Phase A-D）  
 **建议总工期**: 6-8 周（含并行执行）
 
 ---
@@ -240,12 +333,19 @@ Week 1-2           Week 3-4           Week 5-6           Week 7-8
 ┌─────────────────┐ ┌─────────────────┐ ┌─────────────────┐ ┌─────────────────┐
 │ 0.1.1 C-ABI 层   │ │ 0.1.3 ScriptSys│ │ 0.1.5 GC控制    │ │ 0.1.7 编辑器集成│
 │ 0.2 GPU蒙皮(上)   │ │ 0.1.4 热重载   │ │ 0.1.6 C#基类    │ │ 1.3 音频重构    │
+│ 0.3A GPU物理A     │ │ 0.3B GPU物理B  │ │ 0.3C GPU物理C   │ │ 0.3D GPU物理D   │
 │ 1.2 GPUProfiler   │ │ 1.1 DebugDraw  │ │ 1.4 控制台补齐   │ │ 2.x P2项       │
 └─────────────────┘ └─────────────────┘ └─────────────────┘ └─────────────────┘
-        ↑                    ↑                    ↑                    ↑
-   脚本 + GPU 蒙皮    脚本 + 调试系统     脚本抛光 + 控制台     编辑器 + 音频
-   可并行推进          调试系统可并行       音频/控制台可并行     多 P2 可并行
+         ↑                    ↑                    ↑                    ↑
+    脚本 + GPU 蒙皮      脚本 + 空间哈希      脚本抛光 + PVP      编辑器 + 音频
+    + GPU Phase A        + 调试系统            + 插值渲染           + Reduction
 ```
+
+**Phase 依赖关系**:
+- Phase B (空间哈希) 依赖 Phase A (双缓冲) 提供 Dynamic Buffer 双缓冲
+- Phase C (PVP 渲染) 依赖 Phase A (双缓冲) 提供 Old/New Buffer
+- Phase D (Reduction) 依赖 Phase B (空间哈希) 提供碰撞检测结果
+- Phase A 和 Phase B/C 部分并行：A 完成后 B 和 C 可同时启动
 
 ---
 
@@ -285,6 +385,35 @@ Week 1-2           Week 3-4           Week 5-6           Week 7-8
 4. ✅ LOD 级别切换蒙皮精度
 5. ✅ Tracy 显示 GPU 蒙皮 pass 耗时
 
+### 阶段 0.3A (GPU物理 Phase A) 完成条件
+
+1. ✅ 动静分离后 Dynamic/Static 数据通过 Ring 1 内存完整性测试
+2. ✅ Buffer_A ↔ Buffer_B 每帧交替翻转 (Ring 4)
+3. ✅ Integrate 着色器输出粒子 vy 方向与重力方向一致 (Ring 2)
+4. ✅ CPU/GPU 最大差异 < 0.01 (Ring 3)
+5. ✅ 无 `glFinish` 调用
+
+### 阶段 0.3B (GPU物理 Phase B) 完成条件
+
+1. ✅ 空间哈希网格在 65536 粒子场景性能优于暴力 O(N²)
+2. ✅ 碰撞结果与 CPUSimulator 一致 (事件位置/冲量差异 < 1%)
+3. ✅ Tracy 显示哈希构建 + 碰撞总耗时 < 4ms
+4. ✅ Cell Size 为 2×max_radius 时无遗漏碰撞
+
+### 阶段 0.3C (GPU物理 Phase C) 完成条件
+
+1. ✅ `glDrawArraysInstanced` + PVP 着色器渲染 65536 粒子 > 60fps
+2. ✅ alpha=0.0 → BufferOld, alpha=1.0 → BufferNew (Ring 5)
+3. ✅ 固定步长物理 (1/60s) + 可变渲染帧率 (≥60fps) 运行时无抖动
+4. ✅ 无 VBO/VAO 相关代码残留
+
+### 阶段 0.3D (GPU物理 Phase D) 完成条件
+
+1. ✅ 碰撞事件聚合正确: `eventCounter == CPUSimulator 碰撞数`
+2. ✅ Fence 回读延迟 ≤ 1 帧 (与渲染完全并行)
+3. ✅ Tracy 显示完整 GPU 物理管线各 Pass 耗时
+4. ✅ 零 `fprintf` 调试输出
+
 ### 阶段 1.1 (DebugDraw) 完成条件
 
 1. ✅ `Engine::DebugDraw::Line`/`Sphere`/`Box`/`Capsule`/`Frustum`/`Transform` 全部可用
@@ -303,10 +432,11 @@ Week 1-2           Week 3-4           Week 5-6           Week 7-8
 ┌────────────────────┐  ┌────────────────────┐  ┌────────────────────┐
 │ 脚本系统 (P0)      │  │ 脚本编辑器集成      │  │ GPU 原生管线       │
 │ GPU 蒙皮 (P0)      │  │ 动画蓝图编辑器      │  │ GPU 物理后端       │
-│ DebugDraw (P1)     │  │ AI 导航系统        │  │ ECS→GPU 编译       │
-│ GPUProfiler (P1)   │  │ 网络同步          │  │ 多平台发布         │
-│ 音频重构 (P1)      │  │ VFX Graph 编辑器   │  │ ShaderGraph 编辑器 │
-│ 控制台补齐 (P1)    │  │ 遮挡剔除增强       │  │ 光线追踪           │
+│ GPU物理 Phase A-D  │  │ AI 导航系统        │  │ ECS→GPU 编译       │
+│ DebugDraw (P1)     │  │ 网络同步          │  │ 多平台发布         │
+│ GPUProfiler (P1)   │  │ VFX Graph 编辑器   │  │ ShaderGraph 编辑器 │
+│ 音频重构 (P1)      │  │ 遮挡剔除增强       │  │ 光线追踪           │
+│ 控制台补齐 (P1)    │  │                   │  │                   │
 └────────────────────┘  └────────────────────┘  └────────────────────┘
 ```
 
@@ -340,12 +470,21 @@ Week 1-2           Week 3-4           Week 5-6           Week 7-8
 - D3D12 777 行代码保持"休眠"状态，不主动维护
 - 未来复活策略: HLSL 单一事实来源 + DXC 双端编译
 
-### 决策 3: 物理后端保持 CPU Jolt 为主，GPU 为远期探索
+### 决策 3: 物理后端 — CPU Jolt 为主，GPU 作为补充
 
 **理由**:
-- Gameplay 逻辑深度耦合 + PCIe Readback 瓶颈使纯 GPU 物理暂不适用于游戏引擎
+- Gameplay 逻辑深度耦合 + PCIe Readback 瓶颈使纯 GPU 物理暂不适用于游戏引擎核心
 - Jolt + JobSystemAdapter 已足够应对当前规模
-- GPU 物理（XPBD 原型）作为 P2 探索项
+- GPU 物理 v2.5（AoS-oA/双缓冲/空间哈希/PVP/插值/Reduction）已架构设计完成，Phase A-D 实施中
+- GPU 物理（XPBD 原型）作为 P2 探索项，基础已具备
+
+### 决策 4: GPU 物理 Phase 实施顺序 — A → B/C 并行 → D
+
+**理由**:
+- **Phase A** 是后续所有阶段的前置条件：动静分离提供 Dynamic/Static 数据，双缓冲提供 Old/New Buffer
+- **Phase B** 和 **Phase C** 可并行：空间哈希碰撞和 PVP 渲染互不依赖
+- **Phase D** 依赖 Phase B：Reduction Pass 需要空间哈希碰撞提供碰撞事件
+- 建议在 Phase A 完成后将 B/C 分配给不同开发人员并行推进
 
 ---
 
@@ -355,7 +494,7 @@ Week 1-2           Week 3-4           Week 5-6           Week 7-8
 |------|---------|------------------|
 | Core-Infrastructure-Summary | 脚本系统落地 / 控制台补齐 / Pak压缩 | 0.1 / 1.4 / 2.x |
 | Rendering-Subsystem-Summary | GPUProfiler / ComputeCulling / AsyncCompute | 1.2 / 2.x |
-| Physics-Subsystem-Summary | GPU布料粒子 / .physmat / XPBD原型 | 2.x |
+| Physics-Subsystem-Summary v8.0 | **GPU 物理 Phase A-D (AoS-oA/双缓冲/空间哈希/PVP/插值/Reduction)** | **0.3 A-D** |
 | Editor-Subsystem-Summary | 场景序列化 / 导入预览 / 主题 | 2.x |
 | Animation-Subsystem-Summary | **GPU蒙皮** / Root Motion / 层级状态机 | **0.2** / 2.x |
 | Audio-Subsystem-Summary | **IAudioEngine重构** / EFX / 线程安全 | **1.3** |
