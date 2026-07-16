@@ -63,7 +63,17 @@ if(MSVC)
     endif()
 endif()
 
+# ── 测试框架选项 ──
+option(ENABLE_TESTS "Build test suite" OFF)
+option(ENABLE_COVERAGE "Enable code coverage" OFF)
+
 # 包含三个子模块
 add_subdirectory(third_party)
 add_subdirectory(engine)
 add_subdirectory(sandbox)
+
+# ── 测试套件 ──
+if(ENABLE_TESTS)
+    enable_testing()
+    add_subdirectory(tests)
+endif()
