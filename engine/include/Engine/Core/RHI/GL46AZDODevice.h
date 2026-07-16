@@ -19,10 +19,22 @@
 
 #include "Engine/Core/RHI/IRHIDevice.h"
 #include "Engine/Core/RHI/IRHICommandList.h"
+#include "Engine/Core/RHI/PSODesc.h"
+#include "Engine/Core/StringID.h"
 #include <memory>
+#include <glad/gl.h>   // GladGLContext, PFN*PROC
+#include <string>
+#include <vector>
+#include <unordered_map>
 
 namespace Engine {
 namespace RHI {
+
+    // ══════════════════════════════════════════════════════
+    // 前向声明
+    // ══════════════════════════════════════════════════════
+    struct GL46ComputeProgram;
+    class GL46ComputePipelineState;
 
     // ══════════════════════════════════════════════════════
     // GL46 AZDO Device
@@ -41,6 +53,11 @@ namespace RHI {
         GL46Device();
         ~GL46Device() override;
 
+        bool Initialize(void* windowHandle, uint32_t width, uint32_t height) override;
+
+        /** 用已有的 GladGLContext 初始化（不用创建窗口） */
+        bool InitializeWithGLContext(GladGLContext* glContext, uint32_t width, uint32_t height);
+
         std::shared_ptr<IRHIBuffer> CreateBuffer(const RHIBufferDesc& desc) override;
         std::shared_ptr<IRHITexture> CreateTexture(const TextureDesc& desc) override;
         IRHIPipelineState* CreateGraphicsPSO(const GraphicsPSODesc& desc) override;
@@ -51,23 +68,31 @@ namespace RHI {
         void WaitIdle() override;
         const char* GetDeviceName() const override;
 
-        bool Initialize(void* windowHandle, uint32_t width, uint32_t height);
+        /** 获取 GladGLContext 引用 */
+        GladGLContext& GetGL() const { return *m_GL; }
+
+        /** 获取计算着色器程序 */
+        GL46ComputeProgram* GetComputeProgram(uint64_t nameHash) const;
 
     private:
         struct Impl;
         std::unique_ptr<Impl> m_Impl;
+        GladGLContext* m_GL = nullptr;
+        bool m_OwnsContext = false;
+        bool m_IsStub = true;
+        std::string m_DeviceName;
+
+        std::unordered_map<uint64_t, GL46ComputeProgram> m_ComputePrograms;
+
+        // 内部：编译计算着色器
+        bool CompileComputeShaders();
+
         void Shutdown();
     };
 
     // ══════════════════════════════════════════════════════
     // GL46 Buffer — Persistent Mapping
     // ══════════════════════════════════════════════════════
-    /**
-     * @brief GL46 持久映射缓冲
-     *
-     * 创建时使用 glNamedBufferStorage + GL_MAP_PERSISTENT_BIT
-     * 返回的 mappedPtr 与 Vulkan vkMapMemory 语义完全一致。
-     */
     class GL46Buffer final : public IRHIBuffer {
     public:
         GL46Buffer() = default;
@@ -75,6 +100,7 @@ namespace RHI {
 
         uint64_t GetSize() const noexcept override;
         const GPUAllocation& GetAllocation() const noexcept override;
+        void* GetMappedPtr() const noexcept override { return m_MappedPtr; }
 
         // GL46 专有
         uint32_t GetGLHandle() const noexcept { return m_GLBuffer; }
@@ -91,15 +117,24 @@ namespace RHI {
     };
 
     // ══════════════════════════════════════════════════════
+    // GL46ComputeProgram — 计算着色器封装
+    // ══════════════════════════════════════════════════════
+    struct GL46ComputeProgram {
+        uint32_t program = 0;
+        uint64_t nameHash = 0;
+    };
+
+    // ══════════════════════════════════════════════════════
+    // GL46 Compute Pipeline State
+    // ══════════════════════════════════════════════════════
+    class GL46ComputePipelineState final : public IRHIPipelineState {
+    public:
+        GL46ComputeProgram* program = nullptr;
+    };
+
+    // ══════════════════════════════════════════════════════
     // GL46 Command List — 命令镜像模式
     // ══════════════════════════════════════════════════════
-    /**
-     * @brief GL46 命令列表 — 录制 GL 命令到内存，主线程执行
-     *
-     * 由于 OpenGL 上下文是线程绑定的，工作线程不能直接调用 GL 函数。
-     * 此 CommandList 在工作线程录制命令（记录参数到内部缓冲），
-     * 主线程调用 Execute() 时真实执行 GL 调用。
-     */
     class GL46CommandList final : public IRHICommandList {
     public:
         GL46CommandList();
@@ -122,18 +157,21 @@ namespace RHI {
         void SetShaderResource(uint32 set, uint32 binding, IRHITexture* texture) override;
         void Dispatch(uint32_t groupX, uint32_t groupY, uint32_t groupZ) override;
         void SetUnorderedAccess(uint32 slot, IRHIBuffer* buffer) override;
+        void SetComputeFloat(const char* name, float value) override;
+        void SetComputeVec3(const char* name, float x, float y, float z) override;
+        void SetComputeInt(const char* name, int32_t value) override;
         CommandListType GetType() const noexcept override;
 
         // ── 命令镜像专用 ──
         /** 在主线程执行所有录制的命令 */
+        void SetGLContext(GladGLContext* gl) { m_GL = gl; }
         void ExecuteOnMainThread();
-
-        /** 获取录制的命令数量 */
         uint32_t GetRecordedCommandCount() const noexcept;
 
     private:
         struct Impl;
         std::unique_ptr<Impl> m_Impl;
+        GladGLContext* m_GL = nullptr;
     };
 
     // ══════════════════════════════════════════════════════
@@ -165,9 +203,13 @@ namespace RHI {
 
     class GL46Queue final : public IRHICommandQueue {
     public:
+        explicit GL46Queue(GladGLContext* gl) : m_GL(gl) {}
+
         void ExecuteCommandLists(uint32 count, IRHICommandList** lists) override;
         void WaitIdle() override;
         QueueType GetType() const noexcept override;
+    private:
+        GladGLContext* m_GL = nullptr;
     };
 
 } // namespace RHI

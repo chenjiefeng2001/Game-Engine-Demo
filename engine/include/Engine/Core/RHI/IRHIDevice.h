@@ -81,6 +81,8 @@ namespace RHI {
         virtual ~IRHIBuffer() = default;
         virtual uint64_t  GetSize() const noexcept = 0;
         virtual const GPUAllocation& GetAllocation() const noexcept = 0;
+        /** 获取持久映射指针（如无映射返回 nullptr） */
+        virtual void* GetMappedPtr() const noexcept { return nullptr; }
     };
 
     class IRHITexture {

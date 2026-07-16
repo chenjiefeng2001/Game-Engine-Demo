@@ -142,6 +142,27 @@ namespace RHI {
          */
         virtual void SetUnorderedAccess(uint32 slot, IRHIBuffer* buffer) = 0;
 
+        // ── Compute Shader Uniforms ──
+
+        /**
+         * @brief 设置计算着色器的 float uniform
+         * @param name   uniform 名称
+         * @param value  float 值
+         */
+        virtual void SetComputeFloat(const char* name, float value) { (void)name; (void)value; }
+
+        /**
+         * @brief 设置计算着色器的 vec3 uniform
+         */
+        virtual void SetComputeVec3(const char* name, float x, float y, float z) {
+            (void)name; (void)x; (void)y; (void)z;
+        }
+
+        /**
+         * @brief 设置计算着色器的 int/uint uniform
+         */
+        virtual void SetComputeInt(const char* name, int32_t value) { (void)name; (void)value; }
+
         // ── 描述符绑定 ──
 
         /**
