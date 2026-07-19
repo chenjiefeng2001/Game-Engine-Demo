@@ -26,7 +26,9 @@ layout(std430, binding = 0) buffer ParticleBuffer {
 };
 
 // ── Uniform 参数 ──
-uniform float u_DeltaTime;
+// 注意：uniform 名称必须与引擎 GPUPhysicsEngine::Update() 中的命名一致
+// 引擎使用 u_Dt（与 GL46ComputeShaders.inl 中的内联着色器匹配）
+uniform float u_Dt;
 uniform vec3  u_Gravity;
 uniform vec3  u_BoxMin;
 uniform vec3  u_BoxMax;
@@ -42,12 +44,12 @@ void main() {
     // ── 半隐式欧拉积分 ──
     // v(t+Δt) = v(t) + a * Δt
     // x(t+Δt) = x(t) + v(t+Δt) * Δt
-    p.velocity += u_Gravity * u_DeltaTime;
+    p.velocity += u_Gravity * u_Dt;
     
     // 速度阻尼（空气阻力）
-    p.velocity *= (1.0 - u_Damping * u_DeltaTime);
+    p.velocity *= (1.0 - u_Damping * u_Dt);
     
-    p.position += p.velocity * u_DeltaTime;
+    p.position += p.velocity * u_Dt;
 
     // ── 边界碰撞处理（带能量损耗） ──
     // X 轴边界

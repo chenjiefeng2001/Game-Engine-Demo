@@ -27,6 +27,14 @@ static Logger s_Log("GL46Device");
 
 struct GL46Device::Impl { bool initialized{false}; };
 
+// ── GL_KHR_debug 对象标签辅助函数 ──
+// 方便在 Nsight Graphics 中直接识别 GPU 对象
+static void SetGLObjectLabel(GladGLContext& gl, GLenum identifier, GLuint name, const char* label) {
+    if (gl.ObjectLabel) {
+        gl.ObjectLabel(identifier, name, -1, label);
+    }
+}
+
 static constexpr uint64_t HashString64(const char* str) noexcept {
     uint64_t h = 0xCBF29CE484222325ull;
     while (*str) { h ^= (uint8_t)*str++; h *= 0x100000001B3ull; }
@@ -122,6 +130,8 @@ bool GL46Device::CompileComputeShaders() {
         if (!prog.program) return false;
         prog.nameHash = HashString64(name);
         m_ComputePrograms[prog.nameHash] = std::move(prog);
+        // Nsight 标签：在 GPU 调试器中直接显示 "CS_Integrate"
+        SetGLObjectLabel(*m_GL, GL_PROGRAM, prog.program, "CS_Integrate");
         s_Log.Info("Compute program '{}' compiled", name);
     }
     { // gpu_physics_collide
@@ -133,6 +143,8 @@ bool GL46Device::CompileComputeShaders() {
         if (!prog.program) return false;
         prog.nameHash = HashString64(name);
         m_ComputePrograms[prog.nameHash] = std::move(prog);
+        // Nsight 标签：在 GPU 调试器中直接显示 "CS_Collide"
+        SetGLObjectLabel(*m_GL, GL_PROGRAM, prog.program, "CS_Collide");
         s_Log.Info("Compute program '{}' compiled", name);
     }
     return true;
@@ -189,6 +201,17 @@ std::shared_ptr<IRHIBuffer> GL46Device::CreateBuffer(const RHIBufferDesc& desc) 
             } else { buffer->m_Persistent = false; }
         }
         buffer->m_GLBuffer = glBuf;
+        // Nsight 标签：在 GPU 调试器中直接识别缓冲区用途
+        // 根据 memoryUsage 打上有意义的标签
+        const char* bufLabel = "GPUBuffer";
+        switch (u) {
+            case MemoryUsage::GPU_Only:  bufLabel = "GPUBuffer_GPUOnly"; break;
+            case MemoryUsage::CPU_To_GPU: bufLabel = "GPUBuffer_Upload"; break;
+            case MemoryUsage::GPU_To_CPU: bufLabel = "GPUBuffer_Readback"; break;
+            case MemoryUsage::CPU_Only:  bufLabel = "GPUBuffer_CPUOnly"; break;
+        }
+        SetGLObjectLabel(gl, GL_BUFFER, glBuf, bufLabel);
+
         if (!initData && !buffer->m_MappedPtr) {
             std::vector<uint8_t> zero(bufSize, 0);
             gl.NamedBufferSubData(glBuf, 0, (GLsizeiptr)bufSize, zero.data());
