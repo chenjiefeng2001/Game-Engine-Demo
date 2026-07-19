@@ -61,6 +61,16 @@ void GPUPhysicsEngine::Shutdown() {
 
 void GPUPhysicsEngine::Update(float dt, RHI::IRHICommandList* cmdList) {
     if (!m_Initialized || !cmdList) return;
+
+    // 验证 PSO 有效性 — 如果 PSO 为 null（通常是 hash 不匹配），
+    // SetPipelineState 会静默失败，导致 dispatch 无效果
+    if (!m_IntegratePSO || !m_CollidePSO) {
+        s_Log.Warn("Update skipped: PSO(s) not valid (integrate=0x{:x}, collide=0x{:x})",
+                   reinterpret_cast<uintptr_t>(m_IntegratePSO),
+                   reinterpret_cast<uintptr_t>(m_CollidePSO));
+        return;
+    }
+
     m_Stats.frameCount++;
 
     uint32_t groupCount = (m_Config.particleCount + m_Config.workGroupSize - 1)
@@ -75,6 +85,8 @@ void GPUPhysicsEngine::Update(float dt, RHI::IRHICommandList* cmdList) {
     cmdList->SetComputeVec3("u_Gravity", m_Config.gravity[0], m_Config.gravity[1], m_Config.gravity[2]);
     cmdList->SetComputeFloat("u_Restitution", m_Config.restitution);
     cmdList->SetComputeFloat("u_Damping", m_Config.damping);
+    cmdList->SetComputeVec3("u_BoxMin", m_Config.boxMin[0], m_Config.boxMin[1], m_Config.boxMin[2]);
+    cmdList->SetComputeVec3("u_BoxMax", m_Config.boxMax[0], m_Config.boxMax[1], m_Config.boxMax[2]);
     cmdList->SetComputeInt("u_ParticleCount", (int32_t)m_Config.particleCount);
 
     // UAV 屏障 → Dispatch → UAV 屏障

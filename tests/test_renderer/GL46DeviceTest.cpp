@@ -12,13 +12,13 @@
 #include <gtest/gtest.h>
 #include "Engine/Core/RHI/GL46AZDODevice.h"
 #include "Engine/Core/RHI/IRHICommandList.h"
+#include "Engine/Core/RHI/RHITypes.h"
 #include <GLFW/glfw3.h>
 #include <memory>
 #include <cstring>
+#include <cstdio>
 
 using namespace Engine::RHI;
-
-static Engine::Logger s_Log("GL46DeviceTest");
 
 class GL46DeviceTest : public ::testing::Test {
 protected:
@@ -34,14 +34,15 @@ protected:
 
         s_Device = std::make_unique<GL46Device>();
         if (!s_Device->Initialize(nullptr, 1, 1)) {
-            s_Log.Warn("GL46Device init failed");
+            std::printf("  [WARN] GL46Device init failed\n");
             s_Device.reset();
         }
     }
 
     static void TearDownTestSuite() {
-        if (s_Device) { s_Device->Shutdown(); s_Device.reset(); }
-        if (s_Window) { glfwDestroyWindow(s_Window); }
+        // GL46Device::Shutdown() 是 private，依赖 unique_ptr 析构自动清理
+        s_Device.reset();
+        if (s_Window) { glfwDestroyWindow(s_Window); s_Window = nullptr; }
         glfwTerminate();
     }
 
@@ -60,7 +61,7 @@ TEST_F(GL46DeviceTest, DeviceName) {
     const char* name = s_Device->GetDeviceName();
     EXPECT_NE(name, nullptr);
     EXPECT_GT(std::strlen(name), 0);
-    s_Log.Info("GPU: {}", name);
+    std::printf("  [INFO] GPU: %s\n", name);
 }
 
 TEST_F(GL46DeviceTest, CreateBuffer) {
@@ -94,12 +95,12 @@ TEST_F(GL46DeviceTest, BufferPersistentMapping) {
 }
 
 TEST_F(GL46DeviceTest, CreateCommandList) {
-    auto cmdList = s_Device->CreateCommandList();
+    auto cmdList = s_Device->CreateCommandList(CommandListType::Direct);
     ASSERT_NE(cmdList, nullptr);
 }
 
 TEST_F(GL46DeviceTest, CreateAndDispatchComputeShader) {
-    auto cmdList = s_Device->CreateCommandList();
+    auto cmdList = s_Device->CreateCommandList(CommandListType::Direct);
     ASSERT_NE(cmdList, nullptr);
 
     // 创建 SSBO
