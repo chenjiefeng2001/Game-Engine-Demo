@@ -67,9 +67,12 @@ private:
     // ── Console 状态 ──
     char                        m_CmdBuf[256] = {};
     std::vector<std::string>    m_Scrollback;
+    char                        m_AssetSearch[128] = {};
+    int                         m_AssetFilter = 0;  // 0=All 1=Texture 2=Script
 
     void AppendLog(const std::string& line);
     void DrawConsolePanel();
+    void DrawAssetBrowser();
     void DrawHierarchyPanel();
     void DrawInspectorPanel();
     void SaveScene();

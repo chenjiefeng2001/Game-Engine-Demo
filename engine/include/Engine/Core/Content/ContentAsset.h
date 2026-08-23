@@ -63,6 +63,14 @@ namespace Engine::Content {
         void Clear() { m_ByGuid.clear(); m_ByPath.clear(); }
         size_t Count() const { return m_ByGuid.size(); }
 
+        /// 遍历所有资产条目（Asset Browser 用）
+        std::vector<AssetEntry> GetAllEntries() const {
+            std::vector<AssetEntry> result;
+            result.reserve(m_ByGuid.size());
+            for (const auto& [hex, e] : m_ByGuid) result.push_back(e);
+            return result;
+        }
+
         // ── Phase B: 清单持久化（跨会话身份稳定）──
         bool SaveManifest(const std::string& filePath) const;
         bool LoadManifest(const std::string& filePath);   // 损坏 → false + 保持空表

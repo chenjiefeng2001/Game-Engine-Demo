@@ -269,6 +269,62 @@ void ScriptSandboxApp::DrawConsolePanel() {
     ImGui::End();
 }
 
+// ── M3-A: Asset Browser ──
+
+void ScriptSandboxApp::DrawAssetBrowser() {
+    ImGui::SetNextWindowSize(ImVec2(360, 320), ImGuiCond_FirstUseEver);
+    ImGui::Begin("Asset Browser");
+
+    // Toolbar: search + type filter
+    ImGui::InputText("##search", m_AssetSearch, sizeof(m_AssetSearch));
+    ImGui::SameLine();
+    const char* filters[] = { "All", "Texture", "Script" };
+    for (int i = 0; i < 3; ++i) {
+        if (i > 0) ImGui::SameLine();
+        if (ImGui::Button(filters[i])) m_AssetFilter = i;
+    }
+    ImGui::Separator();
+
+    // Asset list with search + filter
+    auto entries = m_Registry.GetAllEntries();
+    std::string search(m_AssetSearch);
+    int shown = 0;
+
+    for (auto& e : entries) {
+        bool match = search.empty() || e.path.find(search) != std::string::npos;
+        bool typeOK = (m_AssetFilter == 0) ||
+                      (m_AssetFilter == 1 && e.type == Content::AssetType::Texture) ||
+                      (m_AssetFilter == 2 && e.type == Content::AssetType::Script);
+        if (!match || !typeOK) continue;
+        ++shown;
+
+        ImGui::PushID(static_cast<int>(e.guid.low));
+        const char* icon = (e.type == Content::AssetType::Texture) ? "[T]" : "[S]";
+        if (ImGui::Selectable(icon, false, ImGuiSelectableFlags_AllowDoubleClick)) {
+            if (ImGui::IsMouseDoubleClicked(0)) {
+                if (m_Selected && m_Bindings.count(m_Selected)) {
+                    if (e.type == Content::AssetType::Texture)
+                        m_Bindings[m_Selected].spriteGuid = e.guid;
+                    else
+                        m_Bindings[m_Selected].scriptGuid = e.guid;
+                    AppendLog("[browser] assigned " + e.path +
+                              " -> entity " + std::to_string(m_Selected));
+                }
+            }
+        }
+        ImGui::SameLine();
+        ImGui::TextDisabled("%s", e.path.c_str());
+        ImGui::PopID();
+    }
+
+    if (shown == 0) ImGui::TextDisabled("(no matching assets)");
+    ImGui::Separator();
+    const char* filterName = (m_AssetFilter == 0) ? "All" :
+                             (m_AssetFilter == 1) ? "Texture" : "Script";
+    ImGui::TextDisabled("%d assets | filter: %s", shown, filterName);
+    ImGui::End();
+}
+
 void ScriptSandboxApp::OnImGui() {
     DrawHierarchyPanel();
     DrawInspectorPanel();
@@ -281,9 +337,10 @@ void ScriptSandboxApp::OnImGui() {
     ImGui::Text("WASD move | F5 reload | Restart restores saved scene");
     ImGui::End();
 
+    DrawAssetBrowser();
     DrawConsolePanel();
 
-    // ── M005: Runtime HUD（Engine.ui.text 的可见消费端）──
+    // ── M005: Runtime HUD ──
     {
         const char* hud = Scripting::ScriptAPI::GetHudText();
         if (hud && hud[0]) {
