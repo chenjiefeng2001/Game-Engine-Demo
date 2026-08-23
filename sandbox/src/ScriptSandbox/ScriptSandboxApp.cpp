@@ -11,6 +11,8 @@
 
 #include <cstdio>
 #include <filesystem>
+#include <fstream>
+#include <cstring>
 
 namespace Engine::Sandbox {
 
@@ -302,4 +304,56 @@ void ScriptSandboxApp::OnImGui() {
     }
 }
 
+
+// ── M4-B: Script Editor MVP ──
+
+void ScriptSandboxApp::DrawScriptEditor() {
+    if (!m_ScriptPath.empty()) {
+        // Panel is open
+    }
+    ImGui::SetNextWindowSize(ImVec2(640, 480), ImGuiCond_FirstUseEver);
+    ImGui::Begin("Script Editor", nullptr);
+
+    // Path display
+    ImGui::Text("%s%s", m_ScriptPath.c_str(), m_ScriptDirty ? " *" : "");
+    ImGui::Separator();
+
+    // Editable script content
+    ImGuiInputTextFlags flags = ImGuiInputTextFlags_AllowTabInput;
+    bool edited = ImGui::InputTextMultiline(
+        "##script_src", m_ScriptBuf, sizeof(m_ScriptBuf),
+        ImVec2(-1, -ImGui::GetFrameHeightWithSpacing() * 2), flags);
+    if (edited) m_ScriptDirty = true;
+
+    // Buttons
+    if (ImGui::Button("Save")) {
+        std::ofstream f(m_ScriptPath, std::ios::binary | std::ios::trunc);
+        f.write(m_ScriptBuf, strlen(m_ScriptBuf));
+        f.close();
+        m_ScriptDirty = false;
+        AppendLog("[editor] saved: " + m_ScriptPath);
+    }
+    ImGui::SameLine();
+    if (ImGui::Button("Save & Reload")) {
+        std::ofstream f(m_ScriptPath, std::ios::binary | std::ios::trunc);
+        f.write(m_ScriptBuf, strlen(m_ScriptBuf));
+        f.close();
+        m_ScriptDirty = false;
+        if (m_Player.Reload())
+            AppendLog("[editor] saved + reloaded OK");
+        else
+            AppendLog("[editor] reload FAILED: " + m_Player.GetEngine()->GetLastError().message);
+    }
+
+    // Error display
+    ImGui::Separator();
+    const auto& lastErr = m_Player.GetEngine()->GetLastError();
+    if (!lastErr.message.empty()) {
+        ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 0.3f, 0.3f, 1.0f));
+        ImGui::TextWrapped("Error: %s", lastErr.message.c_str());
+        ImGui::PopStyleColor();
+    }
+
+    ImGui::End();
+}
 } // namespace Engine::Sandbox
