@@ -272,3 +272,75 @@ TEST(RLCycle, DuplicateExplicitGuid_Rejected) {
     auto g = reg.Import("a.png", AssetType::Texture);
     EXPECT_FALSE(reg.RegisterExplicit(g, "b.png", AssetType::Texture));
 }
+// === Texture Resource Golden Path (M2-B) ===
+// Chain: PNG -> Import -> GUID -> ResolvePath -> SpriteComponent -> Renderer
+
+TEST(TextureGoldenPath, T1_Import_IdentityStable) {
+    ContentRegistry reg;
+    auto g1 = reg.Import("assets/textures/test.png", AssetType::Texture);
+    auto g2 = reg.Import("assets/textures/test.png", AssetType::Texture);
+    ASSERT_TRUE(g1 == g2);
+    EXPECT_FALSE(g1.IsNull());
+}
+
+TEST(TextureGoldenPath, T2_GuidResolves_ToRegisteredPath) {
+    ContentRegistry reg;
+    auto guid = reg.Import("assets/textures/test.png", AssetType::Texture);
+    std::string path = reg.ResolvePath(guid);
+    EXPECT_EQ(path, "assets/textures/test.png");
+}
+
+TEST(TextureGoldenPath, T3_Reload_PreservesGuid) {
+    std::string manifest = kDir + "/tex_manifest.json";
+    ContentRegistry regA;
+    auto guidA = regA.Import("assets/textures/test.png", AssetType::Texture);
+    ASSERT_TRUE(regA.SaveManifest(manifest));
+
+    ContentRegistry regB;
+    ASSERT_TRUE(regB.LoadManifest(manifest));
+    EXPECT_EQ(regB.ResolvePath(guidA), "assets/textures/test.png");
+
+    auto guidB = regB.Import("assets/textures/test.png", AssetType::Texture);
+    EXPECT_TRUE(guidA == guidB);
+}
+
+TEST(TextureGoldenPath, T4_SceneSpriteGuid_RoundTrip) {
+    ContentRegistry reg;
+    auto texG = reg.Import("assets/textures/test.png", AssetType::Texture);
+
+    SceneSnapshot snap;
+    SerializedEntity e; e.name = "TexturedCube";
+    e.spriteGuid = texG; e.px = 1.0f;
+    snap.entities.push_back(e);
+
+    ASSERT_TRUE(SaveSnapshotToFile(snap, kDir + "/tex_rt.scene"));
+
+    SceneSnapshot loaded; std::string err;
+    ASSERT_TRUE(LoadSnapshotFromFile(kDir + "/tex_rt.scene", loaded, err)) << err;
+
+    ASSERT_EQ(loaded.entities.size(), 1u);
+    EXPECT_TRUE(loaded.entities[0].spriteGuid == texG);
+    EXPECT_EQ(loaded.entities[0].name, "TexturedCube");
+}
+
+TEST(TextureGoldenPath, T5_MissingTextureGuid_CleanFailure) {
+    ContentRegistry reg;
+    auto fakeGuid = ResourceGUID::Create();
+
+    SceneSnapshot snap;
+    SerializedEntity e; e.name = "BrokenSprite"; e.spriteGuid = fakeGuid;
+    snap.entities.push_back(e);
+
+    Engine::Scene scene;
+    OpenGLGraphicsFactory gfxF;
+    Engine::TextureManager tm(gfxF);
+    Scripting::GameplayAPI::Reset();
+    Scripting::GameplayAPI::SetScene(&scene);
+    auto r = InstantiateScene(snap, scene, tm, reg);
+
+    EXPECT_TRUE(r.ok);
+    EXPECT_EQ(scene.GetObjectCount(), 1u);
+    ASSERT_EQ(r.warnings.size(), 1u);
+    EXPECT_NE(r.warnings[0].find("missing"), std::string::npos);
+    Scripting::GameplayAPI::Reset();
+}
