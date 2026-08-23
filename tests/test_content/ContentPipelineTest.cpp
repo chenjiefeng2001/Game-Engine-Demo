@@ -245,3 +245,30 @@ TEST(GameplayAPIV2, M001_EntityFind_ByName) {
 }
 
 // M005 verified separately in test_scripting.exe (see ScriptingMVPTest.cpp)
+
+// ── Resource Lifecycle v1: GUID resolution contract tests ──
+
+TEST(RLCycle, Import_IdempotentByPath) {
+    ContentRegistry reg;
+    auto g1 = reg.Import("test.png", AssetType::Texture);
+    auto g2 = reg.Import("test.png", AssetType::Texture);
+    ASSERT_TRUE(g1 == g2);
+}
+
+TEST(RLCycle, Resolve_KnownGuid_ReturnsPath) {
+    ContentRegistry reg;
+    auto guid = reg.Import("assets/textures/test.png", AssetType::Texture);
+    EXPECT_EQ(reg.ResolvePath(guid), "assets/textures/test.png");
+}
+
+TEST(RLCycle, Resolve_UnknownGuid_ReturnsEmpty) {
+    ContentRegistry reg;
+    auto missing = ResourceGUID::Create();
+    EXPECT_TRUE(reg.ResolvePath(missing).empty());
+}
+
+TEST(RLCycle, DuplicateExplicitGuid_Rejected) {
+    ContentRegistry reg;
+    auto g = reg.Import("a.png", AssetType::Texture);
+    EXPECT_FALSE(reg.RegisterExplicit(g, "b.png", AssetType::Texture));
+}

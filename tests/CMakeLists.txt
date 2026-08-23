@@ -71,7 +71,8 @@ add_executable(test_scripting
 )
 target_link_libraries(test_scripting PRIVATE ${COMMON_LIBS})
 add_executable(test_content
-    test_content/ContentPipelineTest.cpp)
+    test_content/ContentPipelineTest.cpp
+)
 target_link_libraries(test_content PRIVATE ${COMMON_LIBS} GTest::gtest_main)
 add_test(NAME test_content COMMAND test_content)
 add_test(NAME test_scripting COMMAND test_scripting)
