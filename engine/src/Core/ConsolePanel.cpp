@@ -7,6 +7,8 @@
 #include <ctime>
 #include <cstring>
 #include <regex>
+#include <spdlog/spdlog.h>
+#include <spdlog/sinks/base_sink.h>
 
 namespace Engine {
 
@@ -127,6 +129,34 @@ namespace Engine {
 
     void ConsolePanel::OnImGui() {
         if (!m_Visible) return;
+
+        // ── G2: 首次调用时向引擎 Logger 注册桥接 sink（推模式，无类型冲突）──
+        static bool s_BridgeRegistered = false;
+        if (!s_BridgeRegistered) {
+            s_BridgeRegistered = true;
+            auto logger = spdlog::default_logger();
+            if (logger) {
+                class PanelBridgeSink final : public spdlog::sinks::base_sink<std::mutex> {
+                protected:
+                    void sink_it_(const spdlog::details::log_msg& msg) override {
+                        int lvl = 0;
+                        if (msg.level >= spdlog::level::warn) lvl = 1;
+                        if (msg.level >= spdlog::level::err)  lvl = 2;
+                        spdlog::memory_buf_t fmt;
+                        formatter_->format(msg, fmt);
+                        std::string text(fmt.data(), fmt.size());
+                        // 去掉尾部换行
+                        while (!text.empty() && (text.back() == '\n' || text.back() == '\r'))
+                            text.pop_back();
+                        ConsoleLogSink::Write(text, lvl, "Engine");
+                    }
+                    void flush_() override {}
+                };
+                auto sink = std::make_shared<PanelBridgeSink>();
+                sink->set_level(spdlog::level::trace);
+                logger->sinks().push_back(sink);
+            }
+        }
 
         ImGui::SetNextWindowSize(ImVec2(640, 300), ImGuiCond_FirstUseEver);
         ImGui::SetNextWindowSizeConstraints(ImVec2(320, 150), ImVec2(FLT_MAX, FLT_MAX));
