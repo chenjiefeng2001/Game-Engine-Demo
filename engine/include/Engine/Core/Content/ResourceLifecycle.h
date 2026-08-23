@@ -80,6 +80,18 @@ namespace Engine::Content {
         bool IsCached(const ResourceGUID& guid) const;
         std::string GetResolvedPath(const ResourceGUID& guid) const;
 
+        // ── D2-5 Telemetry（Console 可查询）──
+        struct Telemetry {
+            uint32_t acquireCalls = 0;
+            uint32_t cacheHits    = 0;
+            uint32_t misses       = 0;   ///< GUID not found in registry
+            uint32_t loadFailures = 0;   ///< path resolved but load failed
+            uint32_t releases     = 0;
+            uint32_t cachedCount  = 0;
+        };
+        Telemetry GetTelemetry() const;
+        void ResetTelemetry();
+
     private:
         AcquireResult AcquireRaw(const ResourceGUID& guid, size_t typeHash);
         ContentRegistry& m_Registry;
