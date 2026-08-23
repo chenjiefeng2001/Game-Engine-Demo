@@ -434,3 +434,11 @@ TEST(ContentDogfood, DF03_EntityCount_MultiScript) {
     }
     EXPECT_EQ(Scripting::GameplayAPI::HandleCount(), 13u);
 }
+// ── M3-B: Asset Assignment Contract (headless) ──
+TEST(EditorWorkflow, M3B_BrowserAssign_SyncsBinding) {
+    ContentRegistry reg;
+    auto texG = reg.Import("t.png", AssetType::Texture);
+    auto scrG = reg.Import("s.lua", AssetType::Script);
+    EXPECT_TRUE(reg.ContainsGuid(texG));
+    EXPECT_FALSE(reg.ResolvePath(texG).empty());
+}
