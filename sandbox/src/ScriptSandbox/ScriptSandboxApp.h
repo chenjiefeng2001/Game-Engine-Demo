@@ -2,34 +2,41 @@
 
 /**
  * @file ScriptSandboxApp.h
- * @brief Editor Workflow v1.1 — Milestone 4 DX
+ * @brief Scripting v1 产品验收沙盒 —— 最小真实使用场景
  *
- * ⚠️ 本头文件不包含任何 nlohmann/content 头文件。
- *    所有 Content 类型通过 pimpl (EditorState) 隔离在 .cpp 中。
- *    这解决了 MSVC ASAN 下 nlohmann ↔ spdlog/fmt 的宏冲突。
+ * 验收链路（全部成立即 Sandbox 通过）：
+ *   1. GLFW Input → GLFWScriptInputProvider → Engine.input.* → player.lua
+ *      → Engine.entity/transform → 真实 GameObject 位移 → Renderer 可见
+ *   2. F5 热重载 player.lua：_PERSIST 句柄存活，Player 继续响应
+ *   3. ImGui Console → ScriptInstance::Execute() 直驱引擎；错误进滚动区
+ *
+ * 范围红线（Scripting v1 冻结原则）：场景仅 Player+Cube；
+ * 无 Physics/Audio/Animation/序列化/ECS/反射/自动补全/调试器。
  */
 
 #include <Engine/Application.h>
+#include <Engine/Core/Input.h>
 #include <Engine/Core/InputManager.h>
 #include <Engine/Core/Scene/Scene.h>
 #include <Engine/Core/Renderer/SpriteBatch.h>
 #include <Engine/Core/Renderer/OrthographicCamera.h>
 #include <Engine/Core/RenderResources/TextureManager.h>
+#include <Engine/Core/Content/ContentAsset.h>
+#include <Engine/Core/Content/SceneSerializerV1.h>
 #include <Engine/Scripting/ScriptInstance.h>
+#include "GLFWScriptInputProvider.h"
 
 #include <imgui.h>
 #include <memory>
 #include <string>
 #include <vector>
-
-namespace Engine { class TextureManager; }
+#include <unordered_map>
 
 namespace Engine::Sandbox {
 
 class ScriptSandboxApp : public Application {
 public:
     explicit ScriptSandboxApp(IGraphicsFactory& factory);
-    ~ScriptSandboxApp() override;
 
 protected:
     void OnStartup() override;
@@ -38,20 +45,41 @@ protected:
     void OnImGui() override;
 
 private:
-    struct EditorState;
-    std::unique_ptr<EditorState> m_Ed;
+    // ── 基础设施 ──
+    InputManager                m_InputManager;
+    OrthographicCamera          m_Camera{ -8.f, 8.f, -4.5f, 4.5f };
+    std::shared_ptr<ISpriteBatch> m_Batch;
+    std::shared_ptr<Shader>     m_BatchShader;
+    std::shared_ptr<Texture>    m_Tex;
+    TextureManager              m_TexMgr;
 
-    InputManager       m_InputMgr;
-    OrthographicCamera m_Camera{ -8.f, 8.f, -4.5f, 4.5f };
-    std::shared_ptr<class ISpriteBatch> m_Batch;
-    std::shared_ptr<class Shader>       m_Shader;
-    std::shared_ptr<class Texture>      m_Tex;
-    std::unique_ptr<TextureManager>     m_TexMgr;
+    // ── Gameplay 链路 ──
+    Scene                       m_Scene;
+    Scripting::ScriptInstance   m_Player;
 
-    Scene              m_Scene;
-    Scripting::ScriptInstance m_Player;
+    // ── Editor Workflow v1（Ring13）──
+    uint32_t                    m_Selected = 0;
+    Content::ContentRegistry    m_Registry;
+    std::unordered_map<uint32_t, Content::EntityContentBinding> m_Bindings;
+    static constexpr const char* kScenePath    = "sandbox_scene.json";
+    static constexpr const char* kManifestPath = "sandbox_manifest.json";
+
+    // ── Console 状态 ──
+    char                        m_CmdBuf[256] = {};
+    std::vector<std::string>    m_Scrollback;
+
+    // ── M4-B: Script Editor ──
+    char                        m_ScriptBuf[16384] = {};
+    bool                        m_ScriptDirty = false;
+    std::string                 m_ScriptPath;
 
     void AppendLog(const std::string& line);
+    void DrawConsolePanel();
+    void DrawHierarchyPanel();
+    void DrawInspectorPanel();
+    void DrawScriptEditor();
+    void SaveScene();
+    void LoadScene();
 };
 
 } // namespace Engine::Sandbox

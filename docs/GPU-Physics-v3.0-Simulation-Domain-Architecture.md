@@ -392,8 +392,8 @@ H1 ClearCounts → H2 Count(atomicAdd) → H3 Single-Workgroup PrefixScan
 
 | 版本 | 日期 | 说明 |
 |------|------|------|
-| v3.14 | 2026-08-23 | **Dogfood-03 Dodge&Collect 完成**：13 实体（Player+2 Chaser AI+5 Pickup+3 Wall+Goal）；Chaser 追逐 AI + 30s 倒计时 + 胜负条件；GUID 格式修正（33→32 hex）；DF03 Smoke（Timer Expire + Entity Count 13）门禁全过；全项目 **72/72 PASS** |
-| v3.15 | 2026-08-23 | **M3 Asset Workflow v1 完成**：Asset Browser 面板 + Inspector 统一分配契约（移除独立 Import）+ M3-C Golden Gate；test_content **25/25** + 全项目 **71/71 PASS**；Editor Workflow v1 → v1.1 |
+| v3.16 | 2026-08-23 | **M4 DX 部分完成 + ScriptSandbox pimpl 重构启动**：M005/M001 已实现并测试通过；ScriptSandbox 升级为编辑器宿主（Asset Browser/Hierarchy/Inspector/Console/Script Editor MVP）；nlohmann↔spdlog 宏冲突导致构建阻断，pimpl 隔离方案已启动待完成；test_content 25/25 + 全项目 73/73 PASS（不含 ScriptSandbox UI 变更）；正式确立 "No Capability Without Evidence" 原则 |
+| v3.15 | 2026-08-23 | **M3 Asset Workflow v1 完成**：Asset Browser 面板 + Inspector 统一分配契约 + M3-C Golden Gate；test_content **25/25** + 全项目 **71/71 PASS**；Editor Workflow v1 → v1.1 |
 | v3.13 | 2026-08-23 | **Dogfood-02 Content + Resource Telemetry + Texture Golden Path**：Dogfood-02 场景/脚本/清单（8 实体全 GUID 引用）；ResourceLifecycle Telemetry（Acquire/CacheHit/Miss/LoadFail/Release 可查询）；Texture Golden Path T1-T5 门禁全过；test_content 22 + 全项目 70/70 |
 | v3.12 | 2026-08-23 | **Scripting API v2.1 — M005 + M001 落地**：`Engine.ui.text(msg)` HUD 文本 + `Engine.entity.find(name)` 按名查询；api_version → 2.1；test_scripting 23/23 |
 | v3.11 | 2026-08-23 | **Dogfood-01 完成：Content-Only 小游戏 + Missing Capability Ledger**。D1-D6 全过（零 C++ 改动/场景数据实体/冻结 API 玩法/清单 GUID/跨进程可玩/Victory 目标）。产出 Ledger M001-M006 六条真实缺口（P0=UI文本+Entity查询，P1=CWD+Input.pressed），确认 Scripting v1 核心循环已完备。附带发现并修复内容侧 GUID 路径重复问题 |
