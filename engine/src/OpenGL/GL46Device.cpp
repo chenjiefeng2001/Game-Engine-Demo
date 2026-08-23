@@ -14,7 +14,7 @@
 #include "Engine/Core/RHI/GPUAllocation.h"
 #include "Engine/Core/RHI/MemoryTypes.h"
 #include "Engine/Core/Log.h"
-#include "GL46ComputeShaders.inl"
+#include "GL46ShaderSources.g.h"   // GENERATED — assets/shaders/*.comp.glsl 嵌入（Phase 1 单一真理源）
 #include <cstdio>
 #include <cstring>
 #include <sstream>
@@ -121,31 +121,39 @@ bool GL46Device::InitializeWithGLContext(GladGLContext* glContext, uint32_t widt
 }
 
 bool GL46Device::CompileComputeShaders() {
-    { // gpu_physics_integrate
+    // 表驱动注册：新增 compute 着色器只需
+    //   1) assets/shaders/<name>.comp.glsl 放置源文件（单一真理源）
+    //   2) 在此表追加 { 注册名, Nsight 标签 }
+    struct ComputeProgDesc { const char* name; const char* nsightLabel; };
+    static constexpr ComputeProgDesc kComputeProgs[] = {
+        { "gpu_physics_integrate",        "CS_Integrate"        },
+        { "gpu_physics_collide",          "CS_Collide"          },
+        { "gpu_physics_hash_clear",       "CS_HashClear"        },
+        { "gpu_physics_hash_build",       "CS_HashBuild"        },
+        { "gpu_physics_hash_scan",        "CS_HashScan"         },
+        { "gpu_physics_hash_scatter",     "CS_HashScatter"      },
+        { "gpu_physics_collide_spatial",  "CS_CollideSpatial"   },
+    };
+
+    for (const auto& desc : kComputeProgs) {
+        const auto* entry = ShaderSources::Find(desc.name);
+        if (!entry) {
+            s_Log.Error("Shader source '{}' missing from GL46ShaderSources.g.h "
+                        "(regenerate via tools/embed_shaders.cmake)", desc.name);
+            return false;
+        }
+
         GL46ComputeProgram prog;
-        const char* name = "gpu_physics_integrate";
-        uint32 cs = CompileGLShader(*m_GL, GL_COMPUTE_SHADER, s_IntegrateCS);
+        const std::string source(entry->source);
+        uint32 cs = CompileGLShader(*m_GL, GL_COMPUTE_SHADER, source.c_str());
         if (!cs) return false;
         prog.program = LinkComputeProgram(*m_GL, cs); m_GL->DeleteShader(cs);
         if (!prog.program) return false;
-        prog.nameHash = HashString64(name);
+        prog.nameHash = HashString64(desc.name);
         m_ComputePrograms[prog.nameHash] = std::move(prog);
-        // Nsight 标签：在 GPU 调试器中直接显示 "CS_Integrate"
-        SetGLObjectLabel(*m_GL, GL_PROGRAM, prog.program, "CS_Integrate");
-        s_Log.Info("Compute program '{}' compiled", name);
-    }
-    { // gpu_physics_collide
-        GL46ComputeProgram prog;
-        const char* name = "gpu_physics_collide";
-        uint32 cs = CompileGLShader(*m_GL, GL_COMPUTE_SHADER, s_CollideCS);
-        if (!cs) return false;
-        prog.program = LinkComputeProgram(*m_GL, cs); m_GL->DeleteShader(cs);
-        if (!prog.program) return false;
-        prog.nameHash = HashString64(name);
-        m_ComputePrograms[prog.nameHash] = std::move(prog);
-        // Nsight 标签：在 GPU 调试器中直接显示 "CS_Collide"
-        SetGLObjectLabel(*m_GL, GL_PROGRAM, prog.program, "CS_Collide");
-        s_Log.Info("Compute program '{}' compiled", name);
+        // Nsight 标签：在 GPU 调试器中直接显示（如 "CS_Integrate"）
+        SetGLObjectLabel(*m_GL, GL_PROGRAM, prog.program, desc.nsightLabel);
+        s_Log.Info("Compute program '{}' compiled (md5-tracked embedded source)", desc.name);
     }
     return true;
 }

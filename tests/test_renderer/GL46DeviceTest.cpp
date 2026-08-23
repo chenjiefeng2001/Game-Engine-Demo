@@ -14,10 +14,12 @@
 #include "Engine/Core/RHI/IRHICommandList.h"
 #include "Engine/Core/RHI/RHITypes.h"
 #include <GLFW/glfw3.h>
+#include <Engine/Core/StringID.h>
 #include <memory>
 #include <cstring>
 #include <cstdio>
 
+using namespace Engine;
 using namespace Engine::RHI;
 
 class GL46DeviceTest : public ::testing::Test {
@@ -71,7 +73,7 @@ TEST_F(GL46DeviceTest, CreateBuffer) {
 
     auto buffer = s_Device->CreateBuffer(desc);
     ASSERT_NE(buffer, nullptr);
-    EXPECT_EQ(buffer->GetDesc().size, 1024);
+    EXPECT_EQ(buffer->GetSize(), 1024);   // IRHIBuffer 契约接口（GetDesc 已移除）
 }
 
 TEST_F(GL46DeviceTest, BufferPersistentMapping) {

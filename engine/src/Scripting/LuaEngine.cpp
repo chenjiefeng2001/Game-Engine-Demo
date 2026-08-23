@@ -24,6 +24,7 @@ extern "C" {
 #include <fstream>
 #include <sstream>
 #include <chrono>
+#include <cstdio>
 
 namespace Engine { namespace Scripting {
 
@@ -41,7 +42,7 @@ namespace Engine { namespace Scripting {
             return 0;
         }
 
-        int LuaError(lua_State* L) {
+        int LuaErrorCFunc(lua_State* L) {
             std::string msg = lua_tostring(L, 1);
             s_Log.Error("[Lua] {}", msg);
             return 0;
@@ -66,8 +67,10 @@ namespace Engine { namespace Scripting {
         if (!m_State) { s_Log.Error("Failed to create Lua state"); return false; }
         lua_atpanic(m_State, PanicHandler);
         luaL_openlibs(m_State);
-        SetupBaseAPI();
-        s_Log.Info("Lua engine initialized");
+        SetupBaseAPI();          // 内部按沙箱状态统一执行剥离
+        s_Log.Info("Lua engine initialized (sandbox={}, budget={})",
+                   m_SandboxEnabled ? "on" : "off",
+                   m_InstructionBudget > 0 ? std::to_string(m_InstructionBudget) : "unlimited");
         return true;
     }
 
@@ -102,7 +105,7 @@ namespace Engine { namespace Scripting {
         if (!m_State) { m_LastError.message = "Lua engine not initialized"; return false; }
         if (!std::filesystem::exists(filePath)) {
             m_LastError.message = "File not found: " + filePath;
-            s_Log.Error(m_LastError.message); return false;
+            s_Log.Error("{}", m_LastError.message); return false;
         }
         int result = luaL_loadfile(m_State, filePath.c_str());
         if (result != LUA_OK) {
@@ -127,9 +130,11 @@ namespace Engine { namespace Scripting {
 
     bool LuaEngine::RunBuffer(const std::string& name, const char* buffer, size_t size) {
         if (!m_State) return false;
+        const bool budgeted = EnterBudget();
         int result = luaL_loadbuffer(m_State, buffer, size, name.c_str());
-        if (result != LUA_OK) { m_LastError.message = lua_tostring(m_State, -1); lua_pop(m_State, 1); return false; }
+        if (result != LUA_OK) { m_LastError.message = lua_tostring(m_State, -1); lua_pop(m_State, 1); if (budgeted) ExitBudget(); return false; }
         result = lua_pcall(m_State, 0, LUA_MULTRET, 0);
+        if (budgeted) ExitBudget();
         if (result != LUA_OK) { m_LastError.message = lua_tostring(m_State, -1); lua_pop(m_State, 1); return false; }
         return true;
     }
@@ -137,7 +142,29 @@ namespace Engine { namespace Scripting {
     bool LuaEngine::CallFunctionVoid(const std::string& name) {
         lua_getglobal(m_State, name.c_str());
         if (!lua_isfunction(m_State, -1)) { lua_pop(m_State, 1); return false; }
-        if (lua_pcall(m_State, 0, 0, 0) != LUA_OK) { lua_pop(m_State, 1); return false; }
+        const bool budgeted = EnterBudget();
+        const bool ok = lua_pcall(m_State, 0, 0, 0) == LUA_OK;
+        if (budgeted) ExitBudget();
+        if (!ok) { m_LastError.message = lua_tostring(m_State, -1) ? lua_tostring(m_State, -1) : "(error object)"; lua_pop(m_State, 1); return false; }
+        return true;
+    }
+
+    bool LuaEngine::HasFunction(const std::string& name) const {
+        if (!m_State) return false;
+        lua_getglobal(m_State, name.c_str());
+        const bool ok = lua_isfunction(m_State, -1);
+        lua_pop(m_State, 1);
+        return ok;
+    }
+
+    bool LuaEngine::CallFunctionVoidWithArg(const std::string& name, double arg) {
+        lua_getglobal(m_State, name.c_str());
+        if (!lua_isfunction(m_State, -1)) { lua_pop(m_State, 1); return false; }
+        lua_pushnumber(m_State, arg);
+        const bool budgeted = EnterBudget();
+        const bool ok = lua_pcall(m_State, 1, 0, 0) == LUA_OK;
+        if (budgeted) ExitBudget();
+        if (!ok) { m_LastError.message = lua_tostring(m_State, -1) ? lua_tostring(m_State, -1) : "(error object)"; lua_pop(m_State, 1); return false; }
         return true;
     }
 
@@ -145,7 +172,10 @@ namespace Engine { namespace Scripting {
         lua_getglobal(m_State, name.c_str());
         if (!lua_isfunction(m_State, -1)) { lua_pop(m_State, 1); return 0; }
         lua_pushinteger(m_State, arg1);
-        if (lua_pcall(m_State, 1, 1, 0) != LUA_OK) { lua_pop(m_State, 1); return 0; }
+        const bool budgetedI = EnterBudget();
+        const bool okI = lua_pcall(m_State, 1, 1, 0) == LUA_OK;
+        if (budgetedI) ExitBudget();
+        if (!okI) { lua_pop(m_State, 1); return 0; }
         int result = (int)lua_tointeger(m_State, -1); lua_pop(m_State, 1); return result;
     }
 
@@ -153,7 +183,10 @@ namespace Engine { namespace Scripting {
         lua_getglobal(m_State, name.c_str());
         if (!lua_isfunction(m_State, -1)) { lua_pop(m_State, 1); return 0.0; }
         lua_pushnumber(m_State, arg1);
-        if (lua_pcall(m_State, 1, 1, 0) != LUA_OK) { lua_pop(m_State, 1); return 0.0; }
+        const bool budgetedD = EnterBudget();
+        const bool okD = lua_pcall(m_State, 1, 1, 0) == LUA_OK;
+        if (budgetedD) ExitBudget();
+        if (!okD) { lua_pop(m_State, 1); return 0.0; }
         double result = lua_tonumber(m_State, -1); lua_pop(m_State, 1); return result;
     }
 
@@ -161,7 +194,10 @@ namespace Engine { namespace Scripting {
         lua_getglobal(m_State, name.c_str());
         if (!lua_isfunction(m_State, -1)) { lua_pop(m_State, 1); return ""; }
         lua_pushstring(m_State, arg1.c_str());
-        if (lua_pcall(m_State, 1, 1, 0) != LUA_OK) { lua_pop(m_State, 1); return ""; }
+        const bool budgeted = EnterBudget();
+        const bool ok = lua_pcall(m_State, 1, 1, 0) == LUA_OK;
+        if (budgeted) ExitBudget();
+        if (!ok) { lua_pop(m_State, 1); return ""; }
         const char* r = lua_tostring(m_State, -1);
         std::string s(r ? r : ""); lua_pop(m_State, 1); return s;
     }
@@ -218,14 +254,94 @@ namespace Engine { namespace Scripting {
     bool LuaEngine::ReloadScript(const std::string& filePath) { return RunFile(filePath); }
     void LuaEngine::SetAllowedAPIs(const std::vector<std::string>& apis) { (void)apis; }
 
+    // ══════════════════════════════════════════════════════
+    // S5 错误隔离：沙箱 + 指令预算
+    // ══════════════════════════════════════════════════════
+
+    void LuaEngine::ApplySandbox() {
+        if (!m_State) return;
+        // 整库移除：io（文件系统）、package（模块加载链）
+        lua_pushnil(m_State); lua_setglobal(m_State, "io");
+        lua_pushnil(m_State); lua_setglobal(m_State, "package");
+        // 全局加载器移除
+        for (const char* g : { "dofile", "loadfile", "require" }) {
+            lua_pushnil(m_State);
+            lua_setglobal(m_State, g);
+        }
+        // os 库保留 time/clock/date（游戏脚本常用），剥离危险函数
+        if (lua_getglobal(m_State, "os") == LUA_TTABLE) {
+            for (const char* f : { "execute", "remove", "rename", "exit",
+                                   "tmpname", "getenv", "setlocale" }) {
+                lua_pushstring(m_State, f);
+                lua_pushnil(m_State);
+                lua_settable(m_State, -3);
+            }
+        }
+        lua_pop(m_State, 1);
+    }
+
+    void LuaEngine::CountHook(lua_State* L, lua_Debug* /*ar*/) {
+        // 通过 pcall 可捕获的错误解除执行 —— 引擎侧零影响
+        luaL_error(L, "instruction budget exceeded (possible infinite loop)");
+    }
+
+    bool LuaEngine::EnterBudget() {
+        if (!m_State || m_InstructionBudget == 0) return false;
+        const int count = static_cast<int>(
+            m_InstructionBudget > static_cast<uint64_t>(INT_MAX)
+                ? INT_MAX : m_InstructionBudget);
+        lua_sethook(m_State, CountHook, LUA_MASKCOUNT, count);
+        return true;
+    }
+
+    void LuaEngine::ExitBudget() {
+        if (m_State) lua_sethook(m_State, nullptr, 0, 0);
+    }
+
+    void LuaEngine::SetInstructionBudget(uint64_t instructions) {
+        m_InstructionBudget = instructions;
+    }
+
+    void LuaEngine::ResetGlobalState() {
+        if (!m_State) return;
+        std::vector<int> keyRefs;
+
+        // Phase A: 快照全部全局键到注册表引用（不在遍历中修改 _G）
+        lua_rawgeti(m_State, LUA_REGISTRYINDEX, LUA_RIDX_GLOBALS);
+        lua_pushnil(m_State);
+        while (lua_next(m_State, -2)) {
+            lua_pop(m_State, 1);                              // 弹 value，留 key
+            lua_pushvalue(m_State, -1);                       // 复制 key —— 保留迭代所需原件
+            keyRefs.push_back(luaL_ref(m_State, LUA_REGISTRYINDEX));
+        }
+        lua_pop(m_State, 1);                                  // 弹 _G
+
+        // Phase B: 逐键置 nil（此时无活跃遍历）
+        lua_rawgeti(m_State, LUA_REGISTRYINDEX, LUA_RIDX_GLOBALS);   // 压 _G（栈底基准）
+        for (const int ref : keyRefs) {
+            lua_rawgeti(m_State, LUA_REGISTRYINDEX, ref);            // [G, key]
+            lua_pushnil(m_State);                                    // [G, key, nil]
+            lua_settable(m_State, -3);                               // G[key]=nil
+            luaL_unref(m_State, LUA_REGISTRYINDEX, ref);
+        }
+        lua_pop(m_State, 1);                                         // 弹 _G
+        SetupBaseAPI();
+    }
+
     int LuaEngine::PanicHandler(lua_State* L) {
         s_Log.Error("Lua panic: {}", lua_tostring(L, -1) ? lua_tostring(L, -1) : "(unknown)");
         return 0;
     }
 
     void LuaEngine::SetupBaseAPI() {
+        // ── 恢复安全基础库子集（纯计算函数，无 OS 能力）──
+        lua_pushcfunction(m_State, luaopen_base);
+        lua_pushliteral(m_State, LUA_GNAME);                 // "_G"
+        lua_call(m_State, 1, 0);
+
+        // ── 引擎注入 API ──
         lua_register(m_State, "print", LuaPrint);
-        lua_register(m_State, "error", LuaError);
+        lua_register(m_State, "log_error", LuaErrorCFunc);
         SetGlobal("ENGINE_VERSION", 1.0);
         RunString(R"(
             function clamp(v, mn, mx)
@@ -235,6 +351,9 @@ namespace Engine { namespace Scripting {
             end
             function lerp(a, b, t) return a + (b - a) * t end
         )");
+
+        // ── 沙箱策略统一收口 ──
+        if (m_SandboxEnabled) ApplySandbox();
     }
 
     void LuaEngine::CheckStack(int slots) const { if (m_State) lua_checkstack(m_State, slots); }

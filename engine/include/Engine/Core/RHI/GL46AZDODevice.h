@@ -162,6 +162,12 @@ namespace RHI {
         void SetComputeInt(const char* name, int32_t value) override;
         CommandListType GetType() const noexcept override;
 
+        // ── GPU 时间戳（Phase 0 Benchmark Baseline）──
+        /** GL 立即模式下在录制点直接插入 glQueryCounter(GL_TIMESTAMP) */
+        uint32_t WriteTimestamp() override;
+        bool ResolveTimestampSpan(uint32 beginIdx, uint32 endIdx, double& outMs) override;
+        void ResetTimestamps() override;
+
         // ── 命令镜像专用 ──
         /** 在主线程执行所有录制的命令 */
         void SetGLContext(GladGLContext* gl) { m_GL = gl; }

@@ -43,9 +43,26 @@ struct CachedUniform {
 struct GL46CommandList::Impl {
     bool isRecording{false};
     GL46ComputePipelineState* currentComputePSO{nullptr};
-    uint32_t ssboBinding{0};
-    uint32_t ssboHandle{0};
+
+    // ── SSBO 多绑定（Phase 2 Ping-Pong：binding0=src, binding1=dst；
+    //    Phase 4 Spatial Hash：collide_spatial 使用到 binding5）──
+    static constexpr uint32_t kMaxSSBOBindings = 8;
+    struct SSBOSlot {
+        uint32_t binding = 0;
+        uint32_t handle  = 0;
+        bool     set     = false;
+    };
+    SSBOSlot ssbo[kMaxSSBOBindings];
+
     std::vector<CachedUniform> pendingUniforms;
+
+    // ── GPU 时间戳查询环（Phase 0 Benchmark Baseline）──
+    // 模式复用 OpenGLContext::InitGPUQueries 的已验证实现：
+    // glGenQueries 池 + glQueryCounter(GL_TIMESTAMP) + glGetQueryObjectui64v 解析
+    static constexpr uint32_t kMaxTimestamps = 512;
+    GLuint queryPool[kMaxTimestamps] = {};
+    uint32_t tsCount = 0;
+    bool poolReady = false;
 };
 
 GL46CommandList::GL46CommandList() : m_Impl(std::make_unique<Impl>()) {}
@@ -54,8 +71,7 @@ GL46CommandList::~GL46CommandList() = default;
 void GL46CommandList::Begin() {
     m_Impl->isRecording = true;
     m_Impl->currentComputePSO = nullptr;
-    m_Impl->ssboBinding = 0;
-    m_Impl->ssboHandle = 0;
+    for (auto& s : m_Impl->ssbo) s = {};
     m_Impl->pendingUniforms.clear();
 }
 
@@ -67,8 +83,7 @@ void GL46CommandList::End() {
 
 void GL46CommandList::Reset() {
     m_Impl->currentComputePSO = nullptr;
-    m_Impl->ssboBinding = 0;
-    m_Impl->ssboHandle = 0;
+    for (auto& s : m_Impl->ssbo) s = {};
     m_Impl->pendingUniforms.clear();
 }
 
@@ -79,7 +94,7 @@ void GL46CommandList::SetPipelineState(IRHIPipelineState* pso) {
     auto* computePSO = dynamic_cast<GL46ComputePipelineState*>(pso);
     if (computePSO && computePSO->program && computePSO->program->program) {
         m_Impl->currentComputePSO = computePSO;
-        m_Impl->ssboHandle = 0;
+        for (auto& s : m_Impl->ssbo) s.set = false;
         m_Impl->pendingUniforms.clear();
         m_GL->UseProgram(computePSO->program->program);
     }
@@ -132,11 +147,15 @@ void GL46CommandList::Dispatch(uint32_t groupX, uint32_t groupY, uint32_t groupZ
     // Step 1: Activate target program
     gl.UseProgram(program);
 
-    // Step 2: Bind SSBO
-    if (m_Impl->ssboHandle != 0)
-        gl.BindBufferBase(GL_SHADER_STORAGE_BUFFER, m_Impl->ssboBinding, m_Impl->ssboHandle);
-    else
-        s_Log.Warn("Dispatch: ssboHandle=0");
+    // Step 2: Bind SSBO（多绑定支持 —— Phase 2 Ping-Pong: binding0=src, binding1=dst）
+    bool anyBound = false;
+    for (const auto& s : m_Impl->ssbo) {
+        if (!s.set || s.handle == 0) continue;
+        gl.BindBufferBase(GL_SHADER_STORAGE_BUFFER, s.binding, s.handle);
+        anyBound = true;
+    }
+    if (!anyBound)
+        s_Log.Warn("Dispatch: no SSBO bound");
 
     // Step 3: Apply uniform via glUniform* (traditional approach)
     // glProgramUniform* (DSA) had issues with uint uniform types on NVIDIA drivers.
@@ -172,10 +191,17 @@ void GL46CommandList::SetUnorderedAccess(uint32 slot, IRHIBuffer* buffer) {
     auto* gl46Buf = dynamic_cast<GL46Buffer*>(buffer);
     if (!gl46Buf) return;
 
-    m_Impl->ssboBinding = slot;
-    m_Impl->ssboHandle = gl46Buf->GetGLHandle();
+    if (slot >= Impl::kMaxSSBOBindings) {
+        s_Log.Warn("SetUnorderedAccess: slot {} exceeds kMaxSSBOBindings", slot);
+        return;
+    }
 
-    m_GL->BindBufferBase(GL_SHADER_STORAGE_BUFFER, slot, m_Impl->ssboHandle);
+    auto& s = m_Impl->ssbo[slot];
+    s.binding = slot;
+    s.handle  = gl46Buf->GetGLHandle();
+    s.set     = true;
+
+    m_GL->BindBufferBase(GL_SHADER_STORAGE_BUFFER, slot, s.handle);
 }
 
 // SetCompute* use glProgramUniform* (DSA) - no glUseProgram required
@@ -259,6 +285,54 @@ void GL46CommandList::SetComputeInt(const char* name, int32_t value) {
 }
 
 CommandListType GL46CommandList::GetType() const noexcept { return CommandListType::Direct; }
+
+// ══════════════════════════════════════════════════════════
+// GPU 时间戳（Phase 0 Benchmark Baseline）
+// GL 立即模式执行 ⇒ 录制点即 GPU 时间线插入点
+// ══════════════════════════════════════════════════════════
+
+uint32_t GL46CommandList::WriteTimestamp() {
+    if (!m_GL || !m_Impl->isRecording) return kInvalidTimestamp;
+
+    if (!m_Impl->poolReady) {
+        m_GL->GenQueries(Impl::kMaxTimestamps, m_Impl->queryPool);
+        m_Impl->poolReady = true;
+    }
+    if (m_Impl->tsCount >= Impl::kMaxTimestamps) {
+        static bool warned = false;
+        if (!warned) {
+            s_Log.Warn("WriteTimestamp: pool exhausted ({}), call ResetTimestamps after resolve",
+                       Impl::kMaxTimestamps);
+            warned = true;
+        }
+        return kInvalidTimestamp;
+    }
+
+    const uint32_t idx = m_Impl->tsCount++;
+    m_GL->QueryCounter(m_Impl->queryPool[idx], GL_TIMESTAMP);
+    return idx;
+}
+
+bool GL46CommandList::ResolveTimestampSpan(uint32 beginIdx, uint32 endIdx, double& outMs) {
+    if (!m_GL || !m_Impl->poolReady) return false;
+    if (beginIdx >= m_Impl->tsCount || endIdx >= m_Impl->tsCount || beginIdx > endIdx) return false;
+
+    GLuint64 startNs = 0, endNs = 0;
+    m_GL->GetQueryObjectui64v(m_Impl->queryPool[beginIdx], GL_QUERY_RESULT, &startNs);
+    if (endIdx > beginIdx)
+        m_GL->GetQueryObjectui64v(m_Impl->queryPool[endIdx], GL_QUERY_RESULT, &endNs);
+    else
+        endNs = startNs;
+
+    outMs = static_cast<double>(endNs - startNs) / 1.0e6;
+    return true;
+}
+
+void GL46CommandList::ResetTimestamps() {
+    // 查询对象复用语义：WaitIdle 后所有查询已完成，直接回卷计数即可。
+    // glQueryCounter 对已 signal 的查询对象重新写入是合法操作。
+    if (m_Impl->poolReady) m_Impl->tsCount = 0;
+}
 
 void GL46CommandList::ExecuteOnMainThread() {}
 uint32_t GL46CommandList::GetRecordedCommandCount() const noexcept { return m_Impl->isRecording ? 1 : 0; }

@@ -185,6 +185,33 @@ namespace RHI {
         virtual void SetShaderResource(uint32 set, uint32 binding,
                                        IRHITexture* texture) = 0;
 
+        // ── GPU 时间戳（Phase 0 Benchmark Baseline，见 docs/GPU-Physics-v3.0）──
+
+        /// 无效时间戳槽位索引
+        static constexpr uint32_t kInvalidTimestamp = 0xFFFFFFFFu;
+
+        /**
+         * @brief 在命令流当前位置记录一个 GPU 时间戳
+         * @return 槽位索引（供 ResolveTimestampSpan 使用）；后端不支持或未在录制期返回 kInvalidTimestamp
+         */
+        virtual uint32_t WriteTimestamp() { return kInvalidTimestamp; }
+
+        /**
+         * @brief 解析 [beginIdx, endIdx] 两时间戳之间的 GPU 耗时
+         * @note  必须在 GPU 完成对应命令之后调用（WaitIdle 或 fence 已 signal）
+         * @return false 表示后端不支持或槽位无效
+         */
+        virtual bool ResolveTimestampSpan(uint32 beginIdx, uint32 endIdx, double& outMs) {
+            (void)beginIdx; (void)endIdx; (void)outMs;
+            return false;
+        }
+
+        /**
+         * @brief 重置时间戳环（复用查询对象，不释放资源）
+         * @note  必须在 GPU 完成所有已记录时间戳之后调用
+         */
+        virtual void ResetTimestamps() {}
+
         // ── 查询 ──
 
         /** 获取命令列表类型（Direct / Bundle / Compute / Transfer） */
