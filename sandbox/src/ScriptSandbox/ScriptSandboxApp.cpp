@@ -282,6 +282,26 @@ void ScriptSandboxApp::OnImGui() {
     ImGui::End();
 
     DrawConsolePanel();
+
+    // ── M005: Runtime HUD（Engine.ui.text 的可见消费端）──
+    {
+        const char* hud = Scripting::ScriptAPI::GetHudText();
+        if (hud && hud[0]) {
+            ImVec2 disp = ImGui::GetIO().DisplaySize;
+            ImVec2 ts = ImGui::CalcTextSize(hud);
+            ImGui::SetNextWindowPos(
+                ImVec2((disp.x - ts.x) * 0.5f, disp.y * 0.08f));
+            ImGui::SetNextWindowBgAlpha(0.6f);
+            ImGui::Begin("##runtime_hud", nullptr,
+                ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoInputs |
+                ImGuiWindowFlags_NoNav | ImGuiWindowFlags_AlwaysAutoResize);
+            ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.2f, 1.0f, 0.3f, 1.0f));
+            ImGui::TextUnformatted(hud);
+            ImGui::PopStyleColor();
+            ImGui::End();
+            Scripting::ScriptAPI::ClearHudText();
+        }
+    }
 }
 
 } // namespace Engine::Sandbox
