@@ -156,24 +156,22 @@ void ScriptSandboxApp::DrawInspectorPanel() {
     ImGui::Separator();
     ImGui::Text("Sprite GUID: %s",
                 b.spriteGuid.IsNull() ? "<none>" : b.spriteGuid.ToHex().c_str());
+    if (!b.spriteGuid.IsNull()) {
+        std::string sp = m_Registry.ResolvePath(b.spriteGuid);
+        ImGui::Text("  resolved: %s", sp.empty() ? "<missing>" : sp.c_str());
+    }
+    if (ImGui::Button("Clear Sprite")) b.spriteGuid = ResourceGUID{};
+
     ImGui::Text("Script GUID: %s",
                 b.scriptGuid.IsNull() ? "<none>" : b.scriptGuid.ToHex().c_str());
-
-    static char texPath[192] = "assets/textures/test.png";
-    ImGui::InputText("Sprite asset", texPath, sizeof(texPath));
-    ImGui::SameLine();
-    if (ImGui::Button("Assign##tex")) {
-        b.spriteGuid = m_Registry.Import(texPath, Content::AssetType::Texture);
-        AppendLog("[inspector] sprite assigned: " + std::string(texPath));
+    if (!b.scriptGuid.IsNull()) {
+        std::string sp = m_Registry.ResolvePath(b.scriptGuid);
+        ImGui::Text("  resolved: %s", sp.empty() ? "<missing>" : sp.c_str());
     }
+    if (ImGui::Button("Clear Script")) b.scriptGuid = ResourceGUID{};
 
-    static char scrPath[192] = "assets/scripts/sandbox_player.lua";
-    ImGui::InputText("Script asset", scrPath, sizeof(scrPath));
-    ImGui::SameLine();
-    if (ImGui::Button("Assign##scr")) {
-        b.scriptGuid = m_Registry.Import(scrPath, Content::AssetType::Script);
-        AppendLog("[inspector] script assigned: " + std::string(scrPath));
-    }
+    ImGui::Separator();
+    ImGui::TextDisabled("Assign via Asset Browser (double-click)");
 
     ImGui::End();
 }
