@@ -1,0 +1,3 @@
+ParticleCount,CPUSingle_ms,CPUMulti_ms,GPU_ms,GPU_Integrate_ms,GPU_Barrier01_ms,GPU_Collide_ms,GPU_Upload_us,CPUSingle_FPS,CPUMulti_FPS,GPU_FPS,Speedup_Multi,Speedup_GPU,Collision
+4096,0.020,3.690,3.659,0.058,0.0015,4.116,17.4,49019.6,271.0,273.3,0.01,0.01,No
+65536,0.385,3.600,121.165,10.328,0.0015,118.170,698.5,2597.1,277.8,8.3,0.11,0.00,No

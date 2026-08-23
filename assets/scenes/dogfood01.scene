@@ -1,0 +1,16 @@
+{
+  "format": "engine.scene",
+  "version": 1,
+  "entities": [
+    { "name": "Player",   "position": [0.0, 0.0, 0.0],
+      "script": "d001a7c3f2b84e619c05a3b7d8e90f12" },
+    { "name": "Obstacle1", "position": [-2.0, 0.0, -2.0],
+      "sprite": "c3d4e5f60718293a4b5c6d7e8f90a1b2" },
+    { "name": "Obstacle2", "position": [2.0, 0.0, -3.0],
+      "sprite": "c3d4e5f60718293a4b5c6d7e8f90a1b2" },
+    { "name": "Obstacle3", "position": [-3.5, 0.0, -4.5],
+      "sprite": "c3d4e5f60718293a4b5c6d7e8f90a1b2" },
+    { "name": "Goal",      "position": [0.0, 0.0, -6.0],
+      "sprite": "c3d4e5f60718293a4b5c6d7e8f90a1b2" }
+  ]
+}

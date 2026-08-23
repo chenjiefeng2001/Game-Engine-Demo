@@ -56,6 +56,9 @@ add_sandbox_executable(SpirVTest src/SpirVTest/SpirVTestApp.cpp)
 add_sandbox_executable(AssetBakery src/AssetBakery/main.cpp)
 add_sandbox_executable(GPUPhysicsTest src/GPUPhysicsTest/main.cpp)
 add_sandbox_executable(PhysicsBenchmark src/PhysicsBenchmark/main.cpp)
+add_sandbox_executable(ScriptSandbox
+    src/ScriptSandbox/main.cpp
+    src/ScriptSandbox/ScriptSandboxApp.cpp)
 
 # ==============================================================================
 # 2. 资源同步 Target — 将 assets 和 OpenAL32.dll 拷贝到每个输出子目录
@@ -65,6 +68,7 @@ set(SANDBOX_TARGETS
     TextureManagerTest PhysicsTest AudioTest ImGuiDemo
     CollisionAudioTest ImGuiTest AudioPhysicsSandbox SerializationTest MarioDemo EditorDemo
     SystemTest _3DTest ComplexSceneTest AnimationTest AnimationDemo AudioSystemTest ECSTest BackendTest RHI3DTest RenderTest RHIDemo SpirVTest AssetBakery
+    ScriptSandbox
 )
 
 add_custom_target(SyncSandboxResources ALL

@@ -80,3 +80,10 @@ third_party/**/*.vcxproj.filters
 third_party/**/*.sln
 
 third_party/fontawesome
+
+content_scratch/
+script_gameplay_scratch/
+script_mvp_scratch/
+logs/
+*.scene
+*.manifest.json

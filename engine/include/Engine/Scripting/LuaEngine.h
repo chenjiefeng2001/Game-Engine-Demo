@@ -40,6 +40,7 @@
 
 // Lua 头文件（项目需包含 Lua 源码路径）
 struct lua_State;
+struct lua_Debug;
 
 namespace Engine { namespace Scripting {
 
@@ -115,6 +116,12 @@ namespace Engine { namespace Scripting {
         /** 调用无返回值的 Lua 函数 */
         bool CallFunctionVoid(const std::string& name);
 
+        /** 调用带单个数值参数、无返回值的 Lua 函数（生命周期回调 OnUpdate(dt) 等） */
+        bool CallFunctionVoidWithArg(const std::string& name, double arg);
+
+        /** 全局环境中是否存在该函数（生命周期回调按需调用） */
+        bool HasFunction(const std::string& name) const;
+
         /** 调用返回整数的 Lua 函数 */
         int CallFunctionInt(const std::string& name, int arg1 = 0);
 
@@ -157,12 +164,29 @@ namespace Engine { namespace Scripting {
         void SetWatchInterval(float interval) { m_WatchInterval = interval; }
 
         // ── 沙箱 ──
-        /** 启用沙箱（禁止 OS 调用、文件写入等危险操作） */
-        void EnableSandbox(bool enable) { m_SandboxEnabled = enable; }
+        /** 启用沙箱（Init 前设置则 Init 时生效；已初始化时立即剥离危险全局） */
+        void EnableSandbox(bool enable) {
+            m_SandboxEnabled = enable;
+        }
         bool IsSandboxEnabled() const { return m_SandboxEnabled; }
 
         /** 限制脚本可访问的 API */
         void SetAllowedAPIs(const std::vector<std::string>& apis);
+
+        // ── S4 热重载支撑 ──
+        /// 清空全局环境（含 Engine.* 等全部注册物），随后恢复基础环境；
+        /// 调用方（如 ScriptInstance::Reload）须重新执行 ScriptAPI::RegisterAll
+        void ResetGlobalState();
+
+        // ── 执行预算（S5 错误隔离：防脚本死循环）──
+        /**
+         * @brief 设置单次调用的 VM 指令预算
+         * @param instructions 每次 pcall 允许的最大 VM 指令数；0 = 不限制
+         *        超限时通过 debug hook 抛出 Lua 错误，由 pcall 捕获 —— 引擎不受影响
+         * @note  必须在 Init 之后调用
+         */
+        void SetInstructionBudget(uint64_t instructions);
+        uint64_t GetInstructionBudget() const { return m_InstructionBudget; }
 
         // ── 调试 ──
         /** 获取栈顶错误信息 */
@@ -182,6 +206,13 @@ namespace Engine { namespace Scripting {
         void CheckStack(int slots) const;
         bool LoadLuaLibrary(const std::string& path, const std::string& name);
 
+        // ── S5 隔离设施 ──
+        void ApplySandbox();                      ///< 剥离危险全局（os.execute/io/require...）
+        static void CountHook(lua_State* L, lua_Debug* ar);  ///< 指令预算超限钩子
+        bool EnterBudget();                       ///< pcall 前挂 hook
+        void ExitBudget();                        ///< pcall 后摘 hook
+
+
         // Lua 状态
         lua_State* m_State = nullptr;
 
@@ -195,6 +226,9 @@ namespace Engine { namespace Scripting {
 
         // 沙箱
         bool m_SandboxEnabled = false;
+
+        // 执行预算
+        uint64_t m_InstructionBudget = 0;   ///< 0 = 不限制
 
         // 错误
         mutable LuaError m_LastError;

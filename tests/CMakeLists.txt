@@ -56,6 +56,7 @@ add_test(NAME test_job COMMAND test_job)
 # ── L2: 无头 GPU 测试 ──
 add_executable(test_renderer
     test_renderer/GL46DeviceTest.cpp
+    test_renderer/RenderGraphSG6Test.cpp
     main.cpp
 )
 target_link_libraries(test_renderer PRIVATE ${COMMON_LIBS} glfw)
@@ -64,9 +65,15 @@ add_test(NAME test_renderer COMMAND test_renderer)
 # ── L2: 脚本 C-ABI 绑定测试 ──
 add_executable(test_scripting
     test_scripting/CABIBindingTest.cpp
+    test_scripting/ScriptingMVPTest.cpp
+    test_scripting/ScriptingGameplayTest.cpp
     main.cpp
 )
 target_link_libraries(test_scripting PRIVATE ${COMMON_LIBS})
+add_executable(test_content
+    test_content/ContentPipelineTest.cpp)
+target_link_libraries(test_content PRIVATE ${COMMON_LIBS} GTest::gtest_main)
+add_test(NAME test_content COMMAND test_content)
 add_test(NAME test_scripting COMMAND test_scripting)
 
 # ── L3: E2E 引擎生命周期测试 ──

@@ -11,6 +11,7 @@ file(GLOB ENGINE_SOURCES CONFIGURE_DEPENDS
     src/Core/Physics/*.cpp
     src/Core/RenderResources/*.cpp
     src/Core/Resources/*.cpp
+    src/Core/Content/*.cpp
     src/Core/Renderer/*.cpp
     src/Core/RHI/*.cpp
     src/Core/Scene/*.cpp
@@ -70,6 +71,23 @@ add_library(EngineCore STATIC
     ${ENGINE_SOURCES}
     ${ENGINE_HEADERS}
 )
+
+# ── Shader 单一真理源嵌入（v3.0 Phase 1）──
+# assets/shaders/*.comp.glsl 为唯一来源；修改着色器后重新构建即生效。
+# 生成器为纯 CMake 脚本，零外部依赖；fail-fast 不静默回退。
+set(GL46_SHADER_DIR      "${PROJECT_SOURCE_DIR}/assets/shaders")
+set(GL46_SHADER_GEN_HDR  "${CMAKE_CURRENT_SOURCE_DIR}/src/OpenGL/GL46ShaderSources.g.h")
+file(GLOB GL46_SHADER_DEPS "${GL46_SHADER_DIR}/*.comp.glsl")
+add_custom_command(
+    OUTPUT "${GL46_SHADER_GEN_HDR}"
+    COMMAND ${CMAKE_COMMAND}
+            -DSHADER_DIR=${GL46_SHADER_DIR}
+            -DOUT_FILE=${GL46_SHADER_GEN_HDR}
+            -P ${PROJECT_SOURCE_DIR}/tools/embed_shaders.cmake
+    DEPENDS ${GL46_SHADER_DEPS} "${PROJECT_SOURCE_DIR}/tools/embed_shaders.cmake"
+    COMMENT "Embedding compute shaders -> GL46ShaderSources.g.h"
+    VERBATIM)
+target_sources(EngineCore PRIVATE "${GL46_SHADER_GEN_HDR}")
 
 target_include_directories(EngineCore
     PUBLIC
@@ -194,14 +212,14 @@ else()
     message(WARNING "Shaderc lib not found — GLSL→SPIR-V compilation disabled")
 endif()
 
-# ── Lua 脚本支持（可选） ──
-# 如需启用 Lua 脚本功能，请将 Lua 源码放入 third_party/lua/
-# 并取消下方注释
-# if(EXISTS "${PROJECT_SOURCE_DIR}/third_party/lua/src/lua.h")
-#     add_library(lua STATIC ...)
-#     target_include_directories(lua PUBLIC third_party/lua/src)
-#     target_link_libraries(EngineCore PUBLIC lua)
-#     target_compile_definitions(EngineCore PRIVATE ENGINE_ENABLE_LUA)
-# endif()
+# ── Lua 脚本支持（Scripting 主线 S1：唯一运行时 = Lua 5.4）──
+if(EXISTS "${PROJECT_SOURCE_DIR}/third_party/lua/src/lua.h")
+    file(GLOB LUA_SOURCES "${PROJECT_SOURCE_DIR}/third_party/lua/src/*.c")
+    list(FILTER LUA_SOURCES EXCLUDE REGEX "lua\\.c$|luac\\.c$")
+    add_library(lua STATIC ${LUA_SOURCES})
+    target_include_directories(lua PUBLIC "${PROJECT_SOURCE_DIR}/third_party/lua/src")
+    target_link_libraries(EngineCore PUBLIC lua)
+    target_compile_definitions(EngineCore PRIVATE ENGINE_ENABLE_LUA)
+endif()
 
 # source_group(TREE ${CMAKE_CURRENT_SOURCE_DIR} FILES ${ENGINE_SOURCES} ${ENGINE_HEADERS})
