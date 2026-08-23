@@ -392,7 +392,8 @@ H1 ClearCounts → H2 Count(atomicAdd) → H3 Single-Workgroup PrefixScan
 
 | 版本 | 日期 | 说明 |
 |------|------|------|
-| v3.12 | 2026-08-23 | **Scripting API v2.1 — M005 + M001 落地**：`Engine.ui.text(msg)` + `Engine.entity.find(name)`；api_version → 2.1；全项目四套件 61 测试全绿 |
+| v3.13 | 2026-08-23 | **Dogfood-02 Content + Resource Telemetry + Texture Golden Path**：Dogfood-02 场景/脚本/清单（8 实体全 GUID 引用）；ResourceLifecycle Telemetry（Acquire/CacheHit/Miss/LoadFail/Release 可查询）；Texture Golden Path T1-T5 门禁全过；test_content 22 + 全项目 70/70 |
+| v3.12 | 2026-08-23 | **Scripting API v2.1 — M005 + M001 落地**：`Engine.ui.text(msg)` HUD 文本 + `Engine.entity.find(name)` 按名查询；api_version → 2.1；test_scripting 23/23 |
 | v3.11 | 2026-08-23 | **Dogfood-01 完成：Content-Only 小游戏 + Missing Capability Ledger**。D1-D6 全过（零 C++ 改动/场景数据实体/冻结 API 玩法/清单 GUID/跨进程可玩/Victory 目标）。产出 Ledger M001-M006 六条真实缺口（P0=UI文本+Entity查询，P1=CWD+Input.pressed），确认 Scripting v1 核心循环已完备。附带发现并修复内容侧 GUID 路径重复问题 |
 | v3.10 | 2026-08-23 | **Editor Workflow v1 完成 + Restart-Play GOLDEN GATE PASS（真·跨进程）+ Editor Workflow v1 FREEZE**：ScriptSandbox 升级为编辑器宿主（Hierarchy/Inspector/Save/Load/Console 四面板）；HandleAdopt 领养机制；test_content 13/13；全项目四套件 61 测试全绿 |
 | v3.9 | 2026-08-23 | **Content Pipeline 垂直切片完成（Ring8-12+R14-lite，11/11 PASS）**：ContentRegistry（GUID 身份/幂等导入/冲突拒绝/清单持久化）+ SceneSerializerV1（快照模型/语义等价 round-trip/对抗性失败契约）；附带修复 test_renderer 既有损坏与 ASan DLL 部署问题 |
