@@ -68,16 +68,21 @@ private:
     char                        m_CmdBuf[256] = {};
     std::vector<std::string>    m_Scrollback;
 
-    // ── M4-B: Script Editor ──
+    // ── M4: Asset Browser + Script Editor ──
+    char                        m_AssetSearch[128] = {};
+    int                         m_AssetFilter = 0;
+    bool                        m_ScriptPanelOpen = false;
     char                        m_ScriptBuf[16384] = {};
     bool                        m_ScriptDirty = false;
     std::string                 m_ScriptPath;
 
     void AppendLog(const std::string& line);
     void DrawConsolePanel();
+    void DrawAssetBrowser();
     void DrawHierarchyPanel();
     void DrawInspectorPanel();
     void DrawScriptEditor();
+    void OpenScriptEditor(const std::string& path);
     void SaveScene();
     void LoadScene();
 };

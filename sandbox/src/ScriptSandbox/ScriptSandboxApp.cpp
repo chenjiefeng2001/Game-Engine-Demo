@@ -8,6 +8,7 @@
 #include <Engine/Scripting/ScriptAPI.h>
 #include <Engine/Scripting/GameplayAPI.h>
 #include <Engine/Core/Log.h>
+#include <Engine/Platform/FileDialog.h>
 
 #include <cstdio>
 #include <filesystem>
@@ -18,6 +19,33 @@ namespace Engine::Sandbox {
 
 // 输入适配器生命周期与 App 相同（进程级持有）
 static std::unique_ptr<Scripting::GameplayAPI::IScriptInputProvider> g_inputOwner;
+
+// ═══ EditorState（pimpl 完整定义——仅 .cpp 可见，隔离 nlohmann↔spdlog）═══
+
+struct ScriptSandboxApp::EditorState {
+    // Ring13 editor
+    uint32_t selected = 0;
+    std::unique_ptr<Content::ContentRegistry> registry;
+    std::unordered_map<uint32_t, Content::EntityContentBinding> bindings;
+    static constexpr const char* sceneFile = "sandbox_scene.json";
+    static constexpr const char* manifestFile = "sandbox_manifest.json";
+    bool sceneLoaded = false;
+
+    // M4-B script editor
+    char  scriptBuf[16384] = {};
+    bool  scriptDirty = false;
+    std::string scriptPath;
+    bool  scriptPanelOpen = false;
+
+    // Asset Browser
+    char assetSearch[128] = {};
+    int assetFilter = 0;
+
+    void AppendLog(const std::string& line) {
+        scrollback.push_back(line);
+        if (scrollback.size() > 256) scrollback.erase(scrollback.begin());
+    }
+};
 
 ScriptSandboxApp::ScriptSandboxApp(IGraphicsFactory& factory)
     : Application(factory), m_TexMgr(factory) {}
@@ -239,6 +267,60 @@ void ScriptSandboxApp::LoadScene() {
 
 // ── Console ─────────────────────────────────────────────
 
+// ── M3-A/M4-C: Asset Browser ──
+
+void ScriptSandboxApp::DrawAssetBrowser() {
+    ImGui::Begin("Asset Browser");
+
+    // Toolbar
+    ImGui::InputText("##search", m_AssetSearch, sizeof(m_AssetSearch));
+    ImGui::SameLine();
+    const char* fl[] = {"All","Texture","Script"};
+    for (int i = 0; i < 3; ++i) {
+        if (i > 0) ImGui::SameLine();
+        if (ImGui::Button(fl[i])) m_AssetFilter = i;
+    }
+    ImGui::SameLine();
+    if (ImGui::Button("Import...")) {
+        auto path = FileDialog::OpenFile(
+            "Textures (*.png)\0*.png\0Scripts (*.lua)\0*.lua\0All\0*.*\0");
+        if (!path.empty()) {
+            auto type = (path.size() > 4 && path.substr(path.size()-4) == ".lua")
+                ? Content::AssetType::Script : Content::AssetType::Texture;
+            m_Registry.Import(path, type);
+            AppendLog("[import] " + path);
+        }
+    }
+    ImGui::Separator();
+
+    // Asset list
+    auto entries = m_Registry.GetAllEntries();
+    std::string q(m_AssetSearch);
+    int shown = 0;
+    for (auto& e : entries) {
+        bool ok = q.empty() || e.path.find(q) != std::string::npos;
+        bool tok = (m_AssetFilter == 0) ||
+                   (m_AssetFilter == 1 && e.type == Content::AssetType::Texture) ||
+                   (m_AssetFilter == 2 && e.type == Content::AssetType::Script);
+        if (!ok || !tok) continue;
+        ++shown;
+        ImGui::PushID(static_cast<int>(e.guid.low));
+        if (ImGui::Selectable(e.path.c_str(), false,
+                              ImGuiSelectableFlags_AllowDoubleClick)) {
+            if (ImGui::IsMouseDoubleClicked(0)) {
+                if (e.type == Content::AssetType::Script &&
+                    e.path.size() > 4) {
+                    OpenScriptEditor(e.path);
+                }
+            }
+        }
+        ImGui::PopID();
+    }
+
+    ImGui::Separator();
+    ImGui::TextDisabled("%d assets shown", shown);
+    ImGui::End();
+}
 void ScriptSandboxApp::DrawConsolePanel() {
     ImGui::SetNextWindowSize(ImVec2(520, 280), ImGuiCond_FirstUseEver);
     ImGui::Begin("Script Console");
@@ -282,6 +364,7 @@ void ScriptSandboxApp::OnImGui() {
     ImGui::End();
 
     DrawConsolePanel();
+    DrawAssetBrowser();
 
     // ── M005: Runtime HUD（Engine.ui.text 的可见消费端）──
     {
@@ -306,6 +389,19 @@ void ScriptSandboxApp::OnImGui() {
 
 
 // ── M4-B: Script Editor MVP ──
+
+void ScriptSandboxApp::OpenScriptEditor(const std::string& path) {
+    m_Ed->scriptPath = path;
+    std::ifstream f(path, std::ios::binary);
+    if (!f.is_open()) return;
+    std::string content((std::istreambuf_iterator<char>(f)),
+                         std::istreambuf_iterator<char>());
+    size_t copyLen = content.size() < sizeof(m_Ed->scriptBuf)-1 ? content.size() : sizeof(m_Ed->scriptBuf)-1;
+    memcpy(m_Ed->scriptBuf, content.c_str(), copyLen);
+    m_Ed->scriptBuf[copyLen] = 0;
+    m_Ed->scriptDirty = false;
+    m_Ed->scriptPanelOpen = true;
+}
 
 void ScriptSandboxApp::DrawScriptEditor() {
     if (!m_ScriptPath.empty()) {
