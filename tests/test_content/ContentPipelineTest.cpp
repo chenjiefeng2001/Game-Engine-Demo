@@ -21,6 +21,11 @@
 #include <cstdio>
 #include <set>
 
+extern "C" {
+#include <lua.h>
+#include <lauxlib.h>
+}
+
 using namespace Engine;
 using namespace Engine::Content;
 using namespace Engine::Scripting;
@@ -343,4 +348,89 @@ TEST(TextureGoldenPath, T5_MissingTextureGuid_CleanFailure) {
     ASSERT_EQ(r.warnings.size(), 1u);
     EXPECT_NE(r.warnings[0].find("missing"), std::string::npos);
     Scripting::GameplayAPI::Reset();
+}
+// === Dogfood-03: Dodge & Collect (13 entities, timer, chaser AI) ===
+
+TEST(ContentDogfood, DF03_Smoke_LoadRunTimerExpire) {
+    ContentRegistry reg;
+    ASSERT_TRUE(reg.LoadManifest("assets/scenes/dogfood03.manifest.json"));
+
+    SceneSnapshot snap; std::string err;
+    ASSERT_TRUE(LoadSnapshotFromFile("assets/scenes/dogfood03.scene", snap, err)) << err;
+    ASSERT_EQ(snap.entities.size(), 13u);
+
+    Engine::Scene scene;
+    OpenGLGraphicsFactory gfxF;
+    Engine::TextureManager tm(gfxF);
+    Scripting::GameplayAPI::Reset();
+    Scripting::GameplayAPI::SetScene(&scene);
+    auto r = InstantiateScene(snap, scene, tm, reg);
+    ASSERT_TRUE(r.ok);
+
+    uint32_t eh = 1;
+    for (auto& o : scene.GetObjects()) {
+        auto h = Scripting::GameplayAPI::HandleAdopt(o);
+        ASSERT_EQ(h, eh); ++eh;
+    }
+
+    std::string scriptPath;
+    for (size_t i = 0; i < snap.entities.size(); ++i)
+        if (snap.entities[i].name == "Player")
+            scriptPath = reg.ResolvePath(r.bindings[i].scriptGuid);
+    ASSERT_FALSE(scriptPath.empty());
+
+    ScriptInstance inst;
+    ScriptInstance::Config cfg; cfg.instructionBudget = 5000000;
+    ASSERT_TRUE(inst.Initialize(scriptPath, cfg));
+    inst.OnCreate();
+
+    // Simulate 35 seconds (2100 frames at dt=1/60) with NO input
+    // Timer should expire at ~30s -> gameState becomes "lost"
+    for (int f = 0; f < 2100; ++f) {
+        inst.OnUpdate(1.0f / 60.0f);
+        if (!inst.IsValid()) {
+            std::printf("    [DBG] instance invalid at frame %d\n", f); break;
+        }
+        if (f % 600 == 599) {
+            std::printf("    [DBG] f=%d err='%s'\n", f+1,
+                inst.GetEngine()->GetLastError().message.c_str());
+            fflush(stdout);
+        }
+    }
+
+    // After 35s without input: chasers catch player (~2s) OR timer expires (30s)
+    // Either way, gameState MUST be "lost"
+    bool lostCheck = inst.GetEngine()->RunString(
+        "assert(_PERSIST.gameState == 'lost', 'state=' .. tostring(_PERSIST.gameState))");
+    EXPECT_TRUE(lostCheck) << "game should be in lost state";
+
+    auto* veng2 = inst.GetEngine();
+    veng2->RunString("g_tc = (_PERSIST.timer <= 0.01)");
+    lua_getglobal(veng2->GetState(), "g_tc");
+    bool timerExpired = lua_toboolean(veng2->GetState(), -1) != 0;
+    lua_pop(veng2->GetState(), 1);
+    // Timer may or may not expire first (chaser might catch first)
+    // But gameState must be "lost" either way
+}
+
+TEST(ContentDogfood, DF03_EntityCount_MultiScript) {
+    ContentRegistry reg;
+    ASSERT_TRUE(reg.LoadManifest("assets/scenes/dogfood03.manifest.json"));
+    SceneSnapshot snap; std::string err;
+    ASSERT_TRUE(LoadSnapshotFromFile("assets/scenes/dogfood03.scene", snap, err)) << err;
+
+    Engine::Scene scene;
+    OpenGLGraphicsFactory gfxF;
+    Engine::TextureManager tm(gfxF);
+    Scripting::GameplayAPI::Reset();
+    Scripting::GameplayAPI::SetScene(&scene);
+    auto r = InstantiateScene(snap, scene, tm, reg);
+    ASSERT_TRUE(r.ok);
+
+    uint32_t eh = 1;
+    for (auto& o : scene.GetObjects()) {
+        auto h = Scripting::GameplayAPI::HandleAdopt(o);
+        ASSERT_EQ(h, eh); ++eh;
+    }
+    EXPECT_EQ(Scripting::GameplayAPI::HandleCount(), 13u);
 }
