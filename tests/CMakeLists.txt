@@ -75,6 +75,7 @@ add_executable(test_content
 )
 target_link_libraries(test_content PRIVATE ${COMMON_LIBS} GTest::gtest_main)
 add_test(NAME test_content COMMAND test_content)
+
 add_test(NAME test_scripting COMMAND test_scripting)
 
 # ── L3: E2E 引擎生命周期测试 ──
