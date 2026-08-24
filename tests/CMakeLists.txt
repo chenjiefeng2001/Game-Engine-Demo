@@ -75,6 +75,7 @@ add_executable(test_content
     test_content/Dogfood05Test.cpp
     test_content/Dogfood06Test.cpp
     test_content/Dogfood07Test.cpp
+    test_content/Dogfood08Test.cpp
     test_content/ResourceLifecycleTest.cpp
     test_content/DXGoldenGateTest.cpp
 )

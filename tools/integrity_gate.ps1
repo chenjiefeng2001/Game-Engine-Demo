@@ -124,7 +124,8 @@ $evidenceRows = @(
     "DF04|test_content|DXGoldenGate.Full_Workflow_EmptyProject_To_PlayableGame",
     "DF05|test_content|Dogfood05.LoadAndRun",
     "DF06|test_content|Dogfood06.LoadAndRun",
-    "DF07|test_content|Dogfood07.LoadRunRestart"
+    "DF07|test_content|Dogfood07.LoadRunRestart",
+    "DF08|test_content|Dogfood08.*"
 )
 
 $i3ok = $true
@@ -153,7 +154,7 @@ foreach ($row in $evidenceRows) {
 foreach ($df in ($dfStatus.Keys | Sort-Object)) {
     if ($dfStatus[$df]) { Write-Host "  ok    $df (evidence executable and passing)" }
 }
-if ($i3ok) { Write-Host "I3 PASS: DF01-DF07 all backed by executed tests" }
+if ($i3ok) { Write-Host "I3 PASS: DF01-DF08 all backed by executed tests" }
 
 # ============================================================
 # Result
