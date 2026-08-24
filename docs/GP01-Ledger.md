@@ -49,6 +49,76 @@ Level:               # 当前到达的晋升级别
 
 ---
 
+## GP-DX 条目区（GP1-D Editor Workflow，2026-08-25 起）
+
+> 证据来源：`tests/test_gp01/GP01EditorWorkflowTest.cpp` 四契约
+> （commit `222af42`，基线 121/121）。七元组口径见
+> `docs/GP01-D-Editor-Workflow-Plan.md` §2。
+
+### GP-DX-001
+```text
+Title:               跨工程上下文切换无自动恢复
+Category:            Workflow / Editor Context
+Severity:            LOW（真实编辑器单场景不触发）
+Game Context:        GP1-D RenameSafety：冷启验证工程 B 后返回工程 A 继续编辑
+Observed Problem:    GameplayAPI 全局场景/输入绑定被新 ctx 的 BeginFresh 抢占，
+                     返回原工程后 HandleSpawn 静默落入他场景 —— 需手动三连
+                     Reset/SetScene/SetInputProvider 重绑。
+Current API Attempt: 手动三连重绑（可行但易忘；无"当前工程"概念）。
+Why Current API Is Insufficient: 多工程并行时无自动恢复语义。
+Workaround:          显式重绑三行（测试内已固化）。
+Frequency:           每次多工程切换（headless 测试 / 未来多窗口）。
+Production Cost:     单场景编辑器 = 0；多工程 = 每次切换 3 行 + 遗忘风险。
+Cross-Game Evidence: 无（DX02 同家族信号：全局绑定需手动维护）。
+Decision:            OBSERVE —— 真实编辑器出现多场景/多窗口工作流时复核。
+Level:               L0
+```
+
+### GP-DX-002
+```text
+Title:               重名实体按名选择静默错选（DX05 二次复现）
+Category:            Editor / Entity Identity
+Severity:            MEDIUM
+Game Context:        GP1-D 同名探针：连续创建两只 "Crate" 并分别摆位/贴图
+Observed Problem:    创建流程内按名定位命中首个同名旧实体 —— 第二只的
+                     set_position/SetTexture 静默落到第一只身上；
+                     存储层无损（索引对齐，双条目独立落盘），歧义纯在
+                     选择层。测试改用插入索引定位绕开。
+Current API Attempt: Scene::FindObject(name)（首中语义）/ 按名 idx 映射。
+Why Current API Is Insufficient: name 是查询便利而非持久身份（GUID 才是），
+                     重名时一切按名操作无二义性保证。
+Workaround:          插入索引定位（创建流）；或保证命名唯一（纪律）。
+Frequency:           每次重名实体的选择/绑定/查找。
+Production Cost:     存储零损失；选择层每次重名即隐患，静默难排查。
+Cross-Game Evidence: DX05（DF04 原始记录：SaveScene 绑定按名对齐歧义）
+                     —— 两局同信号成立。
+Decision:            OBSERVE → L1（跨阶段复现达成）。仍不引入 Entity UUID
+                     UX；晋升阈值 = 出现一次因重名导致的真实内容事故。
+Level:               L0→L1
+```
+
+### DL-01 / DL-02 判决（GP1-D 正面实测）
+
+| 项 | 判决 | 证据 |
+|----|------|------|
+| DL-01 活场景契约 | **CONFIRMED**：CaptureScene 存运行时位置（精确=teleport 落点），非 authored 值；漂移经 Save→冷启原样穿越 | IterationLoops It.2/It.3 断言 |
+| DL-02 绑定表依赖 | **CONFIRMED**：mid-session 新增实体未经绑定表同步，保存后 sprite/script GUID 静默置 Null；同步 push 后全程存活 | IterationLoops It.2 双向断言 |
+
+编辑器 Save 语义因此完全可解释：**Save = 当前活场景定格快照**
+（含运行漂移），不是 authored 状态回滚。开发者心智模型 =
+"PristineSave 先于战斗"；成本可控，暂无晋升动作。
+
+### Dogfood04 DX 台账复核（DX02/03/05/07）
+
+| 编号 | 复核结果 | 处置 |
+|------|----------|------|
+| DX02 输入手动绑定 | 不变 —— 仅 headless 相关（编辑器宿主自动绑定）；GP-DX-001 为其多工程延伸 | 维持 |
+| DX03 导入新资产 | Import API 幂等自然（GoldenPath G2 直通）；文件对话框属 UI 层缺失，headless 无摩擦 | 维持 |
+| DX05 同名歧义 | **二次复现**（存储安全、选择层静默错选）→ 见 GP-DX-002 | L1 |
+| DX07 Import-before-attach | 本阶段未构造反序场景，未复核 | 留待 GP1-E |
+
+---
+
 ## 条目区
 
 ### GP-010
@@ -270,6 +340,8 @@ Level:               L0→L2 已记录（缺口确凿），晋升等成本证据
 
 | 编号 | Title | Category | Severity | Level | Decision |
 |------|-------|----------|----------|-------|----------|
+| GP-DX-002 | 重名实体按名选择静默错选（DX05 二次复现） | Editor/Identity | MEDIUM | L1 | OBSERVE（真实内容事故才晋升） |
+| GP-DX-001 | 跨工程上下文切换无自动恢复 | Workflow/Editor Context | LOW | L0 | OBSERVE（多场景工作流出现时复核） |
 | GP-010 | Collision Event 再评价（手写圆碰撞规模成本） | Collision | — | L0 | DEFER 维持（结论性：晋升条件未出现） |
 | GP-009 | 注册表/浏览器经济性（33 资产实测） | Content/Asset | LOW | L0 | OBSERVE（GP1-D 编辑器侧复核） |
 | GP-008 | 场景作者成本（敌人条目 5→0 实测） | Content/Scene | — | L0 | 结案（无摩擦，成本下降） |
