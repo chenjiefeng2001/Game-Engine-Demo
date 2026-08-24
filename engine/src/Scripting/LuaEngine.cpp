@@ -339,7 +339,29 @@ namespace Engine { namespace Scripting {
         lua_pushliteral(m_State, LUA_GNAME);                 // "_G"
         lua_call(m_State, 1, 0);
 
-        // ── 引擎注入 API ──
+        // ── 恢复安全标准库（VS01 缺陷修复 F1）──
+        // Init 走 luaL_openlibs 全量；而 ResetGlobalState 清空全部全局后
+        // 若只回 base，string/math/table 永久丢失 → 热重载脚本首次调用
+        // math/string 即运行时错误。此处按 Init 等价集合重开，
+        // 随后 ApplySandbox 按既定策略剥离 io/package/os 危险项。
+        // 注意：luaopen_* 仅【返回】模块表、不写全局 —— 必须经
+        // luaL_requiref 完成 _G[name] 与 package.loaded 双注册，
+        // 否则 Reload 路径（无 openlibs）下标准库全局恒为 nil。
+        struct StdLibEntry { const char* name; lua_CFunction open; };
+        const StdLibEntry kSafeLibs[] = {
+            { "string",    luaopen_string    },
+            { "table",     luaopen_table     },
+            { "math",      luaopen_math      },
+            { "utf8",      luaopen_utf8      },
+            { "coroutine", luaopen_coroutine },
+            { "os",        luaopen_os        },
+        };
+        for (const StdLibEntry& lib : kSafeLibs) {
+            luaL_requiref(m_State, lib.name, lib.open, 1);   // _G[name] + _LOADED[name]
+            lua_pop(m_State, 1);                             // 弹出模块表
+        }
+
+        // 注册 引擎注册 API 入口
         lua_register(m_State, "print", LuaPrint);
         lua_register(m_State, "log_error", LuaErrorCFunc);
         SetGlobal("ENGINE_VERSION", 1.0);
@@ -352,7 +374,7 @@ namespace Engine { namespace Scripting {
             function lerp(a, b, t) return a + (b - a) * t end
         )");
 
-        // ── 沙箱策略统一收口 ──
+        // 沙箱策略统一收口
         if (m_SandboxEnabled) ApplySandbox();
     }
 

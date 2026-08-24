@@ -1,0 +1,10 @@
+{
+  "format": "engine.scene",
+  "version": 1,
+  "entities": [
+    { "name": "Director",      "position": [0.0, 0.0, 0.0],
+      "script": "c1000000000000000000000000000001" },
+    { "name": "StartPad",      "position": [0.0, 0.0, -3.0],
+      "sprite": "a8000000000000000000000000000008" }
+  ]
+}
