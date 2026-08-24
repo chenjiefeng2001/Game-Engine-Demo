@@ -73,7 +73,10 @@ target_link_libraries(test_scripting PRIVATE ${COMMON_LIBS})
 add_executable(test_content
     test_content/ContentPipelineTest.cpp
     test_content/Dogfood05Test.cpp
+    test_content/Dogfood06Test.cpp
     test_content/Dogfood07Test.cpp
+    test_content/ResourceLifecycleTest.cpp
+    test_content/DXGoldenGateTest.cpp
 )
 target_link_libraries(test_content PRIVATE ${COMMON_LIBS} GTest::gtest_main)
 add_test(NAME test_content COMMAND test_content)

@@ -9,7 +9,7 @@
 --   全部歼灭后到达 GoalZone → WIN
 --   玩家 HP 归零 → LOSE
 --
-── 本脚本的目的是压力测试 Editor 生产效率：
+-- ── 本脚本的目的是压力测试 Editor 生产效率：
 --   15 实体的管理是否顺畅？
 --   哪些操作开始令人痛苦？
 --   哪些 API 缺失导致绕路？
@@ -57,6 +57,7 @@ _PERSIST.attackCooldown = 0
 
 local SPEED      = 6.0
 local PL_R       = 0.45
+local WALL_R     = 0.60
 local ENEMY_TYPES = {
     ["Enemy_Grunt1"]  = { r=0.50, spd=2.0, hp=1 },
     ["Enemy_Grunt2"]  = { r=0.50, spd=2.0, hp=1 },
@@ -130,11 +131,10 @@ function OnUpdate(dt)
                 e.hp = e.hp - 1
                 _PERSIST.attackCooldown = 0.5
                 if e.hp <= 0 then
-                    -- 销毁敌人
-                    Scripting::GameplayAPI::HandleDestroy(e.handle)
-                    m_Ed_bindings_remove(e.handle)
+                    -- 销毁敌人（Engine.entity.destroy 由 C-ABI 暴露）
+                    Engine.entity.destroy(e.handle)
                     _PERSIST.enemiesKilled = _PERSIST.enemiesKilled + 1
-                    AppendLog("[combat] destroyed: " .. tostring(e.name))
+                    Engine.log.info("[combat] destroyed: " .. tostring(e.name))
                 end
                 break  -- 每次攻击只打一个目标
             end
@@ -179,7 +179,4 @@ function OnUpdate(dt)
     Engine.ui.text("HP:"..hpStr.." | ENEMIES:"..tostring(remaining).."/"..tostring(_PERSIST.totalEnemies).." | TIME:"..tStr.."s")
 end
 
--- 辅助函数：从绑定表中移除已销毁实体
-function m_Ed_bindings_remove(h)
-    -- v1 简化：不做实际移除，仅标记
-end
+

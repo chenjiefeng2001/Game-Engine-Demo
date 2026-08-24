@@ -37,13 +37,13 @@ TEST(EngineE2ETest, JobSystemDispatchBeforeShutdown) {
     JobSystem::Init(2);
     auto* js = JobSystem::Get();
 
-    std::atomic<int32> counter{0};
+    std::atomic<int> counter{0};
     for (int i = 0; i < 100; ++i) {
-        js->Dispatch([&counter]() {
+        js->Schedule([&counter](uint32) {
             counter.fetch_add(1, std::memory_order_relaxed);
         });
     }
-    js->Wait(nullptr);
+    js->WaitAll();
     EXPECT_EQ(counter.load(), 100);
 
     JobSystem::Shutdown();
@@ -102,12 +102,12 @@ TEST(EngineE2ETest, LoggerAndJobSystemCoexist) {
         JobSystem::Init(0);
         s_Log.Info("Logger works with JobSystem active");
 
-        std::atomic<int32> counter{0};
+        std::atomic<int> counter{0};
         auto* js = JobSystem::Get();
-        js->Dispatch([&counter]() {
+        auto h = js->Schedule([&counter](uint32) {
             counter.fetch_add(1, std::memory_order_relaxed);
         });
-        js->Wait(nullptr);
+        js->Wait(h);
         EXPECT_EQ(counter.load(), 1);
 
         JobSystem::Shutdown();

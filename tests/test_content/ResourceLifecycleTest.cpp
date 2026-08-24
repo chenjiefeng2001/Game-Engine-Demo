@@ -35,6 +35,12 @@ TEST(RLCycle, Resolve_UnknownGuid_ReturnsEmpty) {
     EXPECT_TRUE(reg.ResolvePath(missing).empty());
 }
 
+TEST(RLCycle, DuplicateExplicitGuid_Rejected) {
+    ContentRegistry reg;
+    auto g = reg.Import("a.png", AssetType::Texture);
+    EXPECT_FALSE(reg.RegisterExplicit(g, "b.png", AssetType::Texture));
+}
+
 // ── Lifecycle error contracts ──
 
 class RLLifecycle : public ::testing::Test {
@@ -49,7 +55,7 @@ protected:
 TEST_F(RLLifecycle, NullGuid_ProducesError) {
     // We can't easily create ResourceLifecycle without ResourceManager,
     // but we CAN test the ContentRegistry resolve path directly.
-    auto result_guid = ResourceGUID::Null();
+    auto result_guid = ResourceGUID::Null;
     EXPECT_TRUE(reg_->ResolvePath(result_guid).empty());
 }
 
