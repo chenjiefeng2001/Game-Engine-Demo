@@ -15,7 +15,13 @@
 | 阶段 | 日期 | 产出 | 备注 |
 |------|------|------|------|
 | DAY 0 | 2026-08-24 | 章程/Ledger/报告建档 | GP-P1 启动 |
-| GP1-A | 进行中 | 项目骨架 + test_gp01 契约测试 | |
+| GP1-A | 2026-08-24 | assets/gp01 骨架（8 tex＋game.lua＋Main.scene）＋ test_gp01×3 | 验收：Play→Save→Restart→Load→可玩 ✅；GP-001 登记 |
+
+GP1-A 实录：
+- 场景决策：**单场景起步**（章程 §5 授权）——Result.scene 等真实需求出现再建；
+- 资产：纹理复用 VS01 占位图重命名（占位美术不阻塞玩法验证）；
+- 契约摩擦：规划的多脚本布局不可表达 → GP-001（OBSERVE，见 Ledger）；
+- 测试：test_gp01 新目标（3 契约测试），基线 100→103，Gate I1/I2/I3 GREEN。
 
 ## 3. Content Produced
 
