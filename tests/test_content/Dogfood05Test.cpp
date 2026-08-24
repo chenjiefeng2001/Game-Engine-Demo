@@ -8,11 +8,13 @@
 #include "Engine/Core/Content/SceneSerializerV1.h"
 #include "Engine/Core/Scene/Scene.h"
 #include "Engine/Core/Resources/ResourceGUID.h"
+#include "Engine/Core/RenderResources/TextureManager.h"
 
 #include "Engine/Scripting/LuaEngine.h"
 #include "Engine/Scripting/GameplayAPI.h"
 #include "Engine/Scripting/ScriptAPI.h"
 #include "Engine/Scripting/ScriptInstance.h"
+#include "Engine/OpenGL/OpenGLGraphicsFactory.h"
 
 #include <cmath>
 #include <cstdio>
