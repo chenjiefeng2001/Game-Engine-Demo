@@ -89,6 +89,8 @@ add_test(NAME test_scripting COMMAND test_scripting)
 # ── L4: Game Production 契约测试（GP-P1，见 docs/GP-P1-Charter.md §11）──
 add_executable(test_gp01
     test_gp01/GP01Test.cpp
+    test_gp01/GP01CombatTest.cpp
+    test_gp01/GP01SaveLoadTest.cpp
 )
 target_link_libraries(test_gp01 PRIVATE ${COMMON_LIBS} GTest::gtest_main)
 add_test(NAME test_gp01 COMMAND test_gp01)

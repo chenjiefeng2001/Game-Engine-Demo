@@ -1,106 +1,19 @@
 /**
  * @file GP01Test.cpp
- * @brief Game Production Phase 1 — GP01 生产契约测试
+ * @brief Game Production Phase 1 — GP01 生产契约测试（bootstrap + 数据模型）
  *
  * 测试对象不是引擎功能，而是"游戏生产契约"（docs/GP-P1-Charter.md §11）：
- *   GP1-A 验收：空场景 → Player → Play → Save → Restart → Load → 正常运行
- *
- * 与 VS01 的区别：VS01 验证引擎能力单向跑通；本文件随生产阶段逐个点亮，
- * 持续守护"开发者可迭代"的产品契约。
+ *   GP1-A：空场景 → Player → Play → Save → Restart → Load → 正常运行
+ *   GP1-B：ENEMY_TYPES 数据模型 / 多类型实例 / 实例状态独立性
  */
 
-#include <gtest/gtest.h>
-#include "Engine/Core/Content/ContentAsset.h"
-#include "Engine/Core/Content/SceneSerializerV1.h"
-#include "Engine/Core/Scene/Scene.h"
-#include "Engine/Core/Resources/ResourceGUID.h"
-#include "Engine/Core/RenderResources/TextureManager.h"
-
-#include "Engine/Scripting/GameplayAPI.h"
-#include "Engine/Scripting/LuaEngine.h"
-#include "Engine/Scripting/ScriptInstance.h"
-#include "Engine/OpenGL/OpenGLGraphicsFactory.h"
-
-#include <cmath>
-#include <cstdio>
-#include <filesystem>
-#include <fstream>
-#include <map>
-#include <sstream>
+#include "GP01Harness.h"
 
 using namespace Engine;
-using namespace Engine::Content;
-using namespace Engine::Scripting;
-
-namespace {
-
-    struct TestInput : public GameplayAPI::IScriptInputProvider {
-        std::map<std::string, bool> keys;
-        bool IsKeyDown(const char* k) override {
-            auto it = keys.find(k);
-            return it != keys.end() && it->second;
-        }
-        void Press(const char* k) { keys[k] = true; }
-        void Clear()              { keys.clear(); }
-    };
-
-    const std::string kGpDir    = "assets/gp01";
-    const std::string kScratch  = "gp01_scratch";
-
-    struct Ctx {
-        ContentRegistry       reg;
-        OpenGLGraphicsFactory gfxF;
-        TextureManager        tm{gfxF};
-        Scene                 scene;
-        ScriptInstance        inst;
-        TestInput             input;
-        std::vector<EntityContentBinding> bindings;
-        std::unordered_map<std::string, size_t> idx;
-
-        void BeginFresh(const char* manifestPath) {
-            inst.Shutdown();
-            GameplayAPI::Reset();
-            scene = Scene{};
-            GameplayAPI::SetScene(&scene);
-            GameplayAPI::SetInputProvider(&input);
-            if (manifestPath)
-                ASSERT_TRUE(reg.LoadManifest(manifestPath));
-        }
-        void LoadAndBind(const std::string& scenePath) {
-            SceneSnapshot snap; std::string err;
-            EXPECT_TRUE(LoadSnapshotFromFile(scenePath, snap, err)) << err;
-            auto r = InstantiateScene(snap, scene, tm, reg);
-            EXPECT_TRUE(r.ok);
-            bindings = r.bindings;
-            idx.clear();
-            uint32_t h = 1;
-            for (auto& o : scene.GetObjects()) {
-                EXPECT_EQ(GameplayAPI::HandleAdopt(o), h); ++h;
-                idx[o->GetName()] = idx.size();
-            }
-        }
-        std::string DirectorPath() const {
-            return reg.ResolvePath(bindings[0].scriptGuid);
-        }
-        Vec3 Pos(const char* name) {
-            return scene.GetObjects()[idx.at(name)]->GetTransform().GetPosition();
-        }
-        double Num(const char* global) {
-            return inst.GetEngine()->GetGlobalDouble(global, -1e9);
-        }
-        void Run(int frames) {
-            for (int f = 0; f < frames; ++f) {
-                inst.OnUpdate(1.0f / 60.0f);
-                ASSERT_TRUE(inst.IsValid()) << "frame " << f;
-            }
-        }
-    };
-
-} // namespace
+using namespace gp01;
 
 // ════════════════════════════════════════════════════════════
-// GP1-A · 生产契约：干净注册表 → Import 清单 → GUID → 场景实例化
-// （对应章程 §12 Content：全部资产经 ContentRegistry，无路径泄漏）
+// GP1-A · 干净注册表 → Import 清单 → GUID → 场景实例化
 // ════════════════════════════════════════════════════════════
 TEST(GP01, Load) {
     Ctx c;
@@ -113,7 +26,7 @@ TEST(GP01, Load) {
         EXPECT_FALSE(c.reg.ResolvePath(e.guid).empty()); // GUID 全程可解析
 
     c.LoadAndBind(kGpDir + "/Main.scene");
-    ASSERT_EQ(c.idx.size(), 6u);                         // Director+Player+4 Wall
+    ASSERT_EQ(c.idx.size(), 11u);              // Director+Player+4 Wall+5 Enemy
     EXPECT_NE(c.idx.count("Player"), 0u);
     EXPECT_TRUE(c.inst.Initialize(c.DirectorPath(),
                                   ScriptInstance::Config{}));
@@ -123,7 +36,7 @@ TEST(GP01, Load) {
 }
 
 // ════════════════════════════════════════════════════════════
-// GP1-A · 生产契约：Player 可操控（按住位移 ≈ SPEED·t，松开停止）
+// GP1-A · Player 可操控（位移 ≈ SPEED·t / 松手停止 / 边界不可穿出）
 // ════════════════════════════════════════════════════════════
 TEST(GP01, PlayerMovement) {
     Ctx c;
@@ -156,8 +69,89 @@ TEST(GP01, PlayerMovement) {
 }
 
 // ════════════════════════════════════════════════════════════
-// GP1-A · 主验收：Play → Save → 冷启等价 → Load → 继续正常运行
-// （状态连续性由宿主中介 _PERSIST —— 冻结 API 无 scene-carry）
+// GP1-B1 · ENEMY_TYPES 数据表契约
+// （三种类型存在、属性正确、实例 HP 独立、数据表不被实例污染）
+// ════════════════════════════════════════════════════════════
+TEST(GP01, EnemyTypes) {
+    Ctx c;
+    c.BeginFresh((kGpDir + "/manifest.json").c_str());
+    c.LoadAndBind(kGpDir + "/Main.scene");
+    ASSERT_TRUE(c.inst.Initialize(c.DirectorPath(),
+                                  ScriptInstance::Config{}));
+    c.inst.OnCreate();
+
+    // 类型存在 + 属性正确（数据表全局暴露 = 模块契约）
+    ASSERT_TRUE(c.inst.Execute(
+        "_g_chk = {} "
+        "local function chk(k, hp, spd, dmg, val) "
+        "  local v = ENEMY_TYPES[k] "
+        "  if not v then _G['chk_' .. k] = 'missing' return end "
+        "  _G['chk_' .. k] = (v.hp == hp and v.speed == spd and "
+        "                     v.damage == dmg and v.value == val) "
+        "                    and 'ok' or 'mismatch' end "
+        "chk('grunt', 3, 1.0, 1, 20) "
+        "chk('tank', 8, 0.45, 2, 50) "
+        "chk('scout', 2, 1.6, 1, 15)"));
+    EXPECT_EQ(c.Str("chk_grunt"), "ok");
+    EXPECT_EQ(c.Str("chk_tank"), "ok");
+    EXPECT_EQ(c.Str("chk_scout"), "ok");
+
+    // 实例独立性：打 grunt1 两刀 → grunt2 与数据表均不受污染
+    TeleportNear(c, "E_Grunt1", 0.95f);
+    c.input.Press("J");
+    c.Run(40);                                           // 两击（cd 0.35s）
+    c.input.Clear();
+    Snap s = c.Snapshot();
+    ASSERT_NE(s.enemies.count("E_Grunt1"), 0);
+    EXPECT_EQ(s.enemies["E_Grunt1"].first, 1);           // 3 − 2
+    EXPECT_EQ(s.enemies["E_Grunt2"].first, 3);           // 兄弟实例不受影响
+
+    ASSERT_TRUE(c.inst.Execute(
+        "_g_tpl_ok = (ENEMY_TYPES.grunt.hp == 3 and "
+        "             ENEMY_TYPES.grunt.maxHp == 3) "
+        "            and 'pure' or 'polluted'"));
+    EXPECT_EQ(c.Str("_g_tpl_ok"), "pure")                // 数据表未被实例污染
+        << "instance damage leaked into type table";
+}
+
+// ════════════════════════════════════════════════════════════
+// GP1-B1 · 多类型实例生成契约（Grunt×2 / Tank×1 / Scout×2 手写场景 JSON）
+// —— M003 观察样本：不引入 Prefab 时的真实生产成本
+// ════════════════════════════════════════════════════════════
+TEST(GP01, EnemySpawn) {
+    Ctx c;
+    c.BeginFresh((kGpDir + "/manifest.json").c_str());
+    c.LoadAndBind(kGpDir + "/Main.scene");
+    ASSERT_EQ(c.idx.size(), 11u);
+    ASSERT_TRUE(c.inst.Initialize(c.DirectorPath(),
+                                  ScriptInstance::Config{}));
+    c.inst.OnCreate();
+    Snap s = c.Snapshot();
+    ASSERT_EQ(s.enemies.size(), 5u);
+
+    // 各类型初始 HP = maxHp，数量正确
+    EXPECT_EQ(s.enemies["E_Grunt1"].first, 3);
+    EXPECT_EQ(s.enemies["E_Grunt2"].first, 3);
+    EXPECT_EQ(s.enemies["E_Tank1"].first, 8);
+    EXPECT_EQ(s.enemies["E_Scout1"].first, 2);
+    EXPECT_EQ(s.enemies["E_Scout2"].first, 2);
+
+    // 精灵绑定按类型区分（GUID 契约）
+    auto spriteOf = [&](const char* n) {
+        return c.bindings[c.idx.at(n)].spriteGuid;
+    };
+    EXPECT_EQ(spriteOf("E_Grunt1"), spriteOf("E_Grunt2"));   // 同型同精灵
+    EXPECT_NE(spriteOf("E_Grunt1"), spriteOf("E_Tank1"));    // 异型异精灵
+    EXPECT_NE(spriteOf("E_Grunt1"), spriteOf("E_Scout1"));
+    EXPECT_NE(spriteOf("E_Tank1"), spriteOf("E_Scout1"));
+
+    // 场景内位置互不重叠（手写坐标的最低质量要求）
+    for (const char* n : Roster())
+        EXPECT_LT(std::hypot(c.Pos(n).x, c.Pos(n).z), 20.0);
+}
+
+// ════════════════════════════════════════════════════════════
+// GP1-A · Play → Save → 冷启等价 → Load → 继续正常运行
 // ════════════════════════════════════════════════════════════
 TEST(GP01, SaveRestartLoad) {
     std::filesystem::remove_all(kScratch);
@@ -177,20 +171,20 @@ TEST(GP01, SaveRestartLoad) {
     // ── Save：活场景捕获落盘 ──
     std::filesystem::create_directories(kScratch);
     SceneSnapshot live = CaptureScene(c.scene, c.bindings);
-    ASSERT_EQ(live.entities.size(), 6u);
+    ASSERT_EQ(live.entities.size(), 11u);
     ASSERT_TRUE(SaveSnapshotToFile(live, kScratch + "/main_saved.scene"));
     ASSERT_TRUE(c.reg.SaveManifest(kScratch + "/manifest.json"));
     c.inst.GetEngine()->RunString("_g_score = _PERSIST.score");
 
-    // ── Restart：全新进程等价（新注册表/新场景/新实例）──
+    // ── Restart：全新进程等价 ──
     Ctx b;
     b.BeginFresh((kScratch + "/manifest.json").c_str());
     ASSERT_EQ(b.reg.Count(), 9u);
     b.LoadAndBind(kScratch + "/main_saved.scene");
-    ASSERT_EQ(b.idx.size(), 6u);
+    ASSERT_EQ(b.idx.size(), 11u);
     ASSERT_TRUE(b.inst.Initialize(b.DirectorPath(),
                                   ScriptInstance::Config{}));
-    // 宿主把存档中的持续状态交还新实例（真实存档系统的职责边界）
+    // 宿主把存档中的持续状态交还新实例（真实存档系统职责边界）
     ASSERT_TRUE(b.inst.Execute(std::string("_PERSIST.score = ") +
                                std::to_string((int)c.Num("_g_score"))));
     b.inst.OnCreate();
