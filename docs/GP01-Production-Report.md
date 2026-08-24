@@ -17,6 +17,7 @@
 | DAY 0 | 2026-08-24 | 章程/Ledger/报告建档 | GP-P1 启动 |
 | GP1-A | 2026-08-24 | assets/gp01 骨架（8 tex＋game.lua＋Main.scene）＋ test_gp01×3 | 验收：Play→Save→Restart→Load→可玩 ✅；GP-001 登记 |
 | GP1-B | 2026-08-24 | 核心战斗循环（三型敌/AI/战斗/胜负/状态存续）＋ test_gp01×13 | 验收全项 ✅；GP-003~006 裁定；基线 113，Gate GREEN |
+| GP1-C | 2026-08-25 | Content Scale：动态生成（32 体/5 波/瘦场景 0 敌条目/33 资产）＋ test_gp01×17 | 验收全项 ✅；GP-006 复核收敛、GP-007/008 结案；四能力门全 DEFER/OBSERVE；基线 117，Gate GREEN（详见 `docs/GP01-C-Content-Scale-Plan.md` §8） |
 
 GP1-B 实录（详见 `docs/GP01-B-CoreGameplay.md`）：
 - 敌人差异全部由 `ENEMY_TYPES` 数据表驱动，零引擎组件；

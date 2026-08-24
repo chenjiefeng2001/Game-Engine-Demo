@@ -90,6 +90,7 @@ add_test(NAME test_scripting COMMAND test_scripting)
 add_executable(test_gp01
     test_gp01/GP01Test.cpp
     test_gp01/GP01CombatTest.cpp
+    test_gp01/GP01ContentScaleTest.cpp
     test_gp01/GP01SaveLoadTest.cpp
 )
 target_link_libraries(test_gp01 PRIVATE ${COMMON_LIBS} GTest::gtest_main)

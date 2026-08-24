@@ -1,9 +1,9 @@
 /**
  * @file GP01SaveLoadTest.cpp
- * @brief GP1-B5/B6 — 战斗状态穿越 Save→Kill→Restart→Load 链路 + 完整生产链 Golden
+ * @brief GP1-C — 战斗状态穿越 Save→Restart→Load + 完整生产链 Golden
  *
- * 验证对象：SceneSerializerV1(位置/实体) ＋ _PERSIST 宿主中介(游戏状态，
- * 编码格式归 game.lua 所有) 能否完整恢复真实 gameplay state。
+ * 存档 = 静态布局场景文件 ＋ 游戏自有 blob（敌人账簿/波次/计数）。
+ * 读档后幸存者按存档坐标重铸，亡者保持墓碑。
  */
 
 #include "GP01Harness.h"
@@ -12,171 +12,132 @@ using namespace gp01;
 
 namespace {
 
-    void NewFight(Ctx& c) {
-        c.BeginFresh((kGpDir + "/manifest.json").c_str());
-        c.LoadAndBind(kGpDir + "/Main.scene");
-        ASSERT_TRUE(c.inst.Initialize(c.DirectorPath(),
-                                      ScriptInstance::Config{}));
-        c.inst.OnCreate();
+    // 用动态构造的条件探测（死者 find 全 nil）
+    inline void c_inst_probe_dead(Ctx& b, const std::string& cond) {
+        ASSERT_TRUE(b.inst.Execute("_g_dead_ok = (" + cond +
+                                   ") and 'ok' or 'bad'"));
+        EXPECT_EQ(b.Str("_g_dead_ok"), "ok");
     }
 
-    // 打出"中间战局"：双 scout 已死、grunt1 掉 1 血、score=30
-    // （确定性脚本：scout 主动扑向静止玩家）
-    void SetupMidFight(Ctx& c) {
-        NewFight(c);
-        bool s1 = false, s2 = false;
-        c.input.Press("J");
-        for (int f = 0; f < 900 && !(s1 && s2); ++f) {
-            c.inst.OnUpdate(1.0f / 60.0f);
-            EXPECT_TRUE(c.inst.IsValid());
-            Snap s = c.Snapshot();
-            s1 = s1 || !s.enemies["E_Scout1"].second;
-            s2 = s2 || !s.enemies["E_Scout2"].second;
-        }
-        c.input.Clear();
-        EXPECT_TRUE(s1 && s2);
+    // 打出"中间战局"：wave1(5G) 杀 2、软化 1、补给 hp=13（blob 输出参）
+    inline void SetupMidFight(Ctx& c, const std::string& tag,
+                              std::string& blobOut) {
+        StartRun(c);
+        PristineSave(c, tag);                            // 布局先行（无敌人态）
+        EXPECT_TRUE(WaitForWave(c, 1, 5));
+        KillUntilDestroyed(c, 2);
         c.Run(30);                                       // 攻击冷却归零
-        // 剧本化补给：站桩杀敌必被咬（真实战斗代价）；为后续"继续打到
-        // 胜利"留出确定性余量。Console 注入 = 合法调试动作（VS01 先例）
-        EXPECT_TRUE(c.inst.Execute("_PERSIST.hp = 13"));
-        TeleportNear(c, "E_Grunt1", 0.95f);
+
+        Snap s = c.Snapshot();
+        std::string target;
+        for (auto& kv : s.enemies)
+            if (kv.second.alive) { target = kv.first; break; }
+        EXPECT_FALSE(target.empty());
+        TeleportNear(c, target, 0.95f);
         c.input.Press("J");
         c.Run(1);
         c.input.Clear();
-        Snap s = c.Snapshot();
-        EXPECT_EQ(s.score, 30);
-        EXPECT_GT(s.hp, 6);                              // 站桩输出允许被咬
-        EXPECT_EQ(s.enemies["E_Grunt1"].first, 2);
-    }
 
-    // 经 RunString 取编码串（与 Ctx::Snapshot 一致，这里需要原始串）
-    std::string EncodeOf(Ctx& c) {
-        c.inst.GetEngine()->RunString("_g_snap = GameStateEncode()");
-        return c.Str("_g_snap");
-    }
+        // 剧本化补给（Console 注入 = 合法调试动作，VS01 先例）
+        ASSERT_TRUE(c.inst.Execute("_PERSIST.hp = 13"));
 
-    void SaveTo(Ctx& c, const std::string& tag) {
-        std::filesystem::create_directories(kScratch);
-        SceneSnapshot live = CaptureScene(c.scene, c.bindings);
-        ASSERT_TRUE(SaveSnapshotToFile(
-            live, kScratch + "/" + tag + ".scene"));
-        ASSERT_TRUE(c.reg.SaveManifest(kScratch + "/" + tag + "_manifest.json"));
-    }
-
-    // 冷启等价上下文：新注册表 + 存档场景 + 宿主回灌状态
-    void ColdLoad(Ctx& b, const std::string& sceneFile,
-                  const std::string& manifestFile,
-                  const std::string& persistBlob) {
-        b.BeginFresh(manifestFile.c_str());
-        b.LoadAndBind(sceneFile);
-        ASSERT_EQ(b.idx.size(), 11u);
-        ASSERT_TRUE(b.inst.Initialize(b.DirectorPath(),
-                                      ScriptInstance::Config{}));
-        if (!persistBlob.empty())
-            ASSERT_TRUE(b.inst.Execute("GameStateRestore('" +
-                                       persistBlob + "')"));
-        b.inst.OnCreate();
-    }
-
-    // 持续作战至胜利（调用方持有 J）；DBG 版本打印轨迹
-    bool DriveVictory(Ctx& c, int maxFrames, bool dbg = false) {
-        auto nav = CombatNav(c);
-        for (int f = 0; f < maxFrames; ++f) {
-            nav(f);
-            c.inst.OnUpdate(1.0f / 60.0f);
-            EXPECT_TRUE(c.inst.IsValid());
-            if (!c.inst.IsValid()) return false;
-            Snap s = c.Snapshot();
-            if (dbg && f % 120 == 0)
-                std::printf("    [dbg] f=%d hp=%d score=%d state=%s\n",
-                            f, s.hp, s.score, s.state.c_str());
-            if (s.state == "victory") return true;
-            if (s.state == "lost") return false;
-        }
-        return false;
+        Snap s2 = c.Snapshot();
+        EXPECT_EQ(s2.score, 40);
+        EXPECT_EQ(s2.destroyed, 2);
+        EXPECT_GT(s2.hp, 6);
+        EXPECT_EQ(s2.enemies[target].hp, 2);
+        blobOut = c.Blob();
     }
 }
 
 // ════════════════════════════════════════════════════════════
-// GP1-B5 · 战斗中存档：内容契约（谁死了、掉血多少、多少分，全部落盘）
+// 战斗中存档：内容契约（账簿/波次/计数/掉血 全部落盘）
 // ════════════════════════════════════════════════════════════
 TEST(GP01, SaveCombatState) {
     std::filesystem::remove_all(kScratch);
     Ctx c;
-    SetupMidFight(c);
+    std::string blob;
+    SetupMidFight(c, "midsave", blob);
 
     Snap s = c.Snapshot();
-    EXPECT_EQ(s.score, 30);
-    EXPECT_GT(s.hp, 6);                                   // 允许战斗中被咬
-    EXPECT_FALSE(s.enemies["E_Scout1"].second);
-    EXPECT_FALSE(s.enemies["E_Scout2"].second);
-    EXPECT_EQ(s.enemies["E_Grunt1"].first, 2);
-    EXPECT_TRUE(s.enemies["E_Tank1"].second);
+    EXPECT_EQ(s.score, 40);
+    EXPECT_EQ(s.wave, 1);
+    EXPECT_EQ(s.spawned, 5);
+    EXPECT_EQ(s.destroyed, 2);
+    int alive = s.AliveCount();
+    EXPECT_EQ(alive, 3);
 
-    SaveTo(c, "midfight");                                // 场景+清单落盘
-    EXPECT_FALSE(EncodeOf(c).empty());
+    PristineSave(c, "midsave");                          // 幂等重写布局
+    EXPECT_FALSE(c.Blob().empty());
 }
 
 // ════════════════════════════════════════════════════════════
-// GP1-B5 · 冷启动恢复：Score/HP/敌我状态全等，死者仍死，可继续打到胜利
+// 冷启动恢复：blob 全等、死者仍死、幸存者原坐标、续战至 victory
 // ════════════════════════════════════════════════════════════
 TEST(GP01, RestartCombatState) {
     std::filesystem::remove_all(kScratch);
     Ctx a;
-    SetupMidFight(a);
-    SaveTo(a, "restart");
-    const std::string blobA = EncodeOf(a);
+    std::string blobA;
+    SetupMidFight(a, "restart", blobA);
 
-    // ── Kill process → Restart ──
     Ctx b;
-    ColdLoad(b, kScratch + "/restart.scene",
-             kScratch + "/restart_manifest.json", blobA);
+    ColdStart(b, "restart", blobA);
 
-    // 状态全等（含死者仍死、掉血保留）
-    const std::string blobB = EncodeOf(b);
-    EXPECT_EQ(blobB, blobA) << "state drifted across restart";
+    EXPECT_EQ(b.Blob(), blobA) << "state drifted across restart";
 
-    // 读档后重定位（正常玩家动作）：站桩存档点周围是敌群集结区，
-    // 原地恢复会立即承伤 —— 移动到远离集结区的角落再继续
-    EXPECT_TRUE(b.inst.Execute(
-        "local h=Engine.entity.find('Player'); "
-        "Engine.transform.set_position(h, 6, 0, -9)"));
+    // 死者仍死（已销毁，find 失效）—— 死者集合从存档账簿推导
+    Snap pa = ParseSnap(blobA);
+    {
+        std::string cond;
+        for (auto& kv : pa.enemies) {
+            if (kv.second.alive) continue;
+            if (!cond.empty()) cond += " and ";
+            cond += "Engine.entity.find('" + kv.first + "') == nil";
+        }
+        c_inst_probe_dead(b, cond);
+    }
+    Snap rb = b.Snapshot();
+    EXPECT_EQ(rb.AliveCount(), 3);
 
-    // 尸体不会复活：静置 120 帧
-    b.Run(120);
-    Snap s = b.Snapshot();
-    EXPECT_FALSE(s.enemies["E_Scout1"].second);
-    EXPECT_FALSE(s.enemies["E_Scout2"].second);
-    EXPECT_EQ(s.enemies["E_Scout1"].first, 0);
-    EXPECT_EQ(s.score, 30);
+    // 幸存者恢复追击
+    double moved = 0.0;
+    {
+        Snap x0 = b.Snapshot();
+        for (int f = 0; f < 60; ++f) b.inst.OnUpdate(1.0f / 60.0f);
+        Snap x1 = b.Snapshot();
+        for (auto& kv : x1.enemies) {
+            if (!kv.second.alive) continue;
+            moved = std::max(moved, static_cast<double>(std::hypot(
+                kv.second.x - x0.enemies[kv.first].x,
+                kv.second.z - x0.enemies[kv.first].z)));
+        }
+    }
+    EXPECT_GT(moved, 0.2) << "survivors frozen after load";
 
-    // 活敌恢复追击（位置开始变化）
-    Vec3 t0 = b.Pos("E_Tank1");
-    b.Run(60);
-    EXPECT_GT(std::hypot(b.Pos("E_Tank1").x - t0.x,
-                         b.Pos("E_Tank1").z - t0.z), 0.2)
-        << "alive enemy frozen after load";
-
-    // 继续游戏直至胜利 —— 分数在恢复基础上累计到 120
+    // 截断后续波 → 清场 → victory；分数在恢复基础上精确累计
+    ASSERT_TRUE(b.inst.Execute("WAVES = {}"));
     b.input.Press("J");
-    ASSERT_TRUE(DriveVictory(b, 5400, true)) << "state="
-                                              << b.Snapshot().state;
-    b.input.Clear();
-    EXPECT_EQ(b.Snapshot().score, 120);
+    std::string endState = DriveBattle(b, 7200);
+    ASSERT_EQ(endState, "victory") << "ended in " << endState;
+
+    Snap fin = b.Snapshot();
+    EXPECT_EQ(fin.score, 100);                           // 40(pre) + 60(post)
+    EXPECT_EQ(fin.destroyed, 5);
 }
 
 // ════════════════════════════════════════════════════════════
-// GP1-B6 · Game Production Evidence Test：
-//   冷启 → 载入 → 移动 → 战斗 → 中场存档 → 冷启 → 全等 → 继续 → Victory
+// B6/C10 Game Production Evidence Test：
+// 冷启 → 瘦场景载入 → 宽限内移动 → wave1 战斗 → 中场存档 →
+// 冷启全等 → 续战 → victory
 // ════════════════════════════════════════════════════════════
 TEST(GP01, CoreGameplay) {
     std::filesystem::remove_all(kScratch);
 
-    // ── Cold Start → Load Main.scene ──
     Ctx c;
-    NewFight(c);
+    StartRun(c);
+    PristineSave(c, "golden");                           // 布局先行
 
-    // ── Player movement ──
+    // 宽限期内移动（前 2s 无敌情）
     Vec3 p0 = c.Pos("Player");
     c.input.Press("W");
     c.Run(45);
@@ -184,38 +145,29 @@ TEST(GP01, CoreGameplay) {
     EXPECT_GT(std::hypot(c.Pos("Player").x - p0.x,
                          c.Pos("Player").z - p0.z), 2.5);
 
-    // ── Combat：击杀首只 scout ──
-    bool s1 = false;
-    c.input.Press("J");
-    for (int f = 0; f < 900 && !s1; ++f) {
-        c.inst.OnUpdate(1.0f / 60.0f);
-        ASSERT_TRUE(c.inst.IsValid());
-        s1 = !c.Snapshot().enemies["E_Scout1"].second;
-    }
-    c.input.Clear();
-    ASSERT_TRUE(s1);
+    // wave1 到达并击杀首只
+    ASSERT_TRUE(WaitForWave(c, 1, 5));
+    KillUntilDestroyed(c, 1);
+    Snap mid = c.Snapshot();
+    EXPECT_EQ(mid.score, 20);
+    EXPECT_EQ(mid.destroyed, 1);
 
-    // ── Mid-fight Save ──
-    SaveTo(c, "golden");
-    const std::string blob = EncodeOf(c);
+    const std::string blob = c.Blob();                   // Save（状态半场）
 
-    // ── Process restart → Load → State equality ──
     Ctx b;
-    ColdLoad(b, kScratch + "/golden.scene",
-             kScratch + "/golden_manifest.json", blob);
-    EXPECT_EQ(EncodeOf(b), blob);
+    ColdStart(b, "golden", blob);
+    EXPECT_EQ(b.Blob(), blob);
 
-    // ── 继续游戏 → Victory ──
+    // 截断后续波 → 清场 → victory → 总分恒等 Σ已生成分值
+    ASSERT_TRUE(b.inst.Execute("WAVES = {}"));
     b.input.Press("J");
-    ASSERT_TRUE(DriveVictory(b, 7200)) << "state=" << b.Snapshot().state;
-    b.input.Clear();
+    std::string endState = DriveBattle(b, 7200);
+    ASSERT_EQ(endState, "victory") << "ended in " << endState;
 
     Snap fin = b.Snapshot();
-    EXPECT_EQ(fin.score, 120);                    // 胜利时全场清空：Σ value 恒定
+    EXPECT_EQ(fin.score, 100);                           // 20 + 4×20
     EXPECT_GT(fin.hp, 0);
-    for (auto& kv : fin.enemies)
-        EXPECT_FALSE(kv.second.second) << kv.first << " survived";
 
-    std::printf("    [GP01] B6 golden: cold->load->move->combat->save"
-                "->restart->equal->continue->victory OK\n");
+    std::printf("    [GP01] golden: cold->lean load->move->wave combat"
+                "->save->restart->equal->continue->victory OK\n");
 }
