@@ -14,10 +14,10 @@
 | test_scripting | 23 | VERIFIED | Scripting API v2.1 C-ABI/MVP/Gameplay |
 | test_physics | 16 | VERIFIED | GPU Physics v1.x CPU/GPU ring |
 | test_renderer | 9 | VERIFIED | GL46Device + RenderGraph SG6 隔离验证 |
-| test_content | 38 | VERIFIED | Content Pipeline v1 + Resource Lifecycle + Editor Workflow + DF05/06/07 + DX Golden Gate |
+| test_content | 42 | VERIFIED | Content Pipeline v1 + Resource Lifecycle + Editor Workflow + DF05/06/07 + DX Golden Gate + VS01 |
 | test_job | 4 | VERIFIED | JobSystem 压力 |
 | test_e2e | 6 | VERIFIED | 引擎启动生命周期 |
-| **合计** | **96** | | |
+| **合计** | **100** | | |
 
 ## Excluded 目标（记录原因，不计入基线）
 
@@ -39,6 +39,7 @@
 | DF05 | Arena Survival | test_content : `Dogfood05.LoadAndRun` |
 | DF06 | Multi-type Combat | test_content : `Dogfood06.LoadAndRun` |
 | DF07 | Tower Defense + Restart round-trip | test_content : `Dogfood07.LoadRunRestart` |
+| VS01 | Vertical Slice 01 产品现实门（menu→arena→boss 全流程） | test_content : `VS01.*` ＋ `VS01Debug.MinimalReloadRepro`（F1 回归守卫） |
 
 ## 2026-08-24 整改记录（Evidence Integrity Gate 建立时发现）
 

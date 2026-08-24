@@ -1,0 +1,19 @@
+{
+  "version": 1,
+  "assets": [
+    { "guid": "a1000000000000000000000000000001", "path": "assets/vs01/tex/player.png",       "type": "Texture" },
+    { "guid": "a2000000000000000000000000000002", "path": "assets/vs01/tex/chaser.png",       "type": "Texture" },
+    { "guid": "a3000000000000000000000000000003", "path": "assets/vs01/tex/brute.png",        "type": "Texture" },
+    { "guid": "a4000000000000000000000000000004", "path": "assets/vs01/tex/sentry.png",       "type": "Texture" },
+    { "guid": "a5000000000000000000000000000005", "path": "assets/vs01/tex/swarm.png",        "type": "Texture" },
+    { "guid": "a6000000000000000000000000000006", "path": "assets/vs01/tex/pickup_hp.png",    "type": "Texture" },
+    { "guid": "a7000000000000000000000000000007", "path": "assets/vs01/tex/pickup_score.png", "type": "Texture" },
+    { "guid": "a8000000000000000000000000000008", "path": "assets/vs01/tex/gate.png",         "type": "Texture" },
+    { "guid": "b1000000000000000000000000000001", "path": "assets/vs01/tex/boss.png",         "type": "Texture" },
+    { "guid": "b2000000000000000000000000000002", "path": "assets/vs01/tex/pillar.png",       "type": "Texture" },
+    { "guid": "b3000000000000000000000000000003", "path": "assets/vs01/tex/floor.png",        "type": "Texture" },
+    { "guid": "c1000000000000000000000000000001", "path": "assets/vs01/menu_director.lua",    "type": "Script" },
+    { "guid": "c2000000000000000000000000000002", "path": "assets/vs01/arena_director.lua",   "type": "Script" },
+    { "guid": "c3000000000000000000000000000003", "path": "assets/vs01/boss_director.lua",    "type": "Script" }
+  ]
+}
