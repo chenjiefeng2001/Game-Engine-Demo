@@ -15,14 +15,11 @@
 // spdlog chain second
 #include <Engine/Core/Resources/ResourceManager.h>
 #include <Engine/Core/RenderResources/Texture.h>
-#include <Engine/Core/Renderer/SpriteBatch.h>
-#include <Engine/Core/Renderer/OrthographicCamera.h>
 #include <Engine/Core/Log.h>
 #include <Engine/Scripting/LuaEngine.h>
 #include <Engine/Scripting/ScriptAPI.h>
 #include <Engine/Scripting/GameplayAPI.h>
 #include <Engine/Platform/FileDialog.h>
-#include "GLFWScriptInputProvider.h"
 
 #include <imgui.h>
 #include <cstdio>
@@ -37,8 +34,6 @@ extern "C" {
 }
 
 namespace Engine::Sandbox {
-
-static std::unique_ptr<GLFWScriptInputProvider> g_inputOwner;
 
 // ============ EditorState (pimpl definition - only visible in this TU) ============
 
@@ -86,7 +81,7 @@ void ScriptSandboxApp::AppendLog(const std::string& s) { m_Ed->Log(s); }
 void ScriptSandboxApp::OnStartup() {
     m_InputMgr.Init(&GetWindow());
     if (!g_inputOwner)
-        g_inputOwner = std::make_unique<GLFWScriptInputProvider>();
+        g_inputOwner = std::make_unique<Scripting::GameplayAPI::IScriptInputProvider>();
     Scripting::GameplayAPI::SetInputProvider(g_inputOwner.get());
 
     if (m_Ed->registry->LoadManifest(m_Ed->manifestFile))
@@ -96,7 +91,7 @@ void ScriptSandboxApp::OnStartup() {
 
     auto* ctx = GetWindow().GetContext();
     m_Batch = m_Factory.CreateSpriteBatch(*ctx);
-    m_Shader = m_Factory.CreateShader(
+    m_BatchShader = m_Factory.CreateShader(
         "assets/shaders/sprite_batch.vert", "assets/shaders/sprite_batch.frag");
     m_Tex = m_TexMgr->Load("assets/textures/test.png");
 
@@ -130,12 +125,12 @@ void ScriptSandboxApp::OnUpdate(float32 dt) {
 void ScriptSandboxApp::OnRender() {
     auto* ctx = GetWindow().GetContext();
     ctx->ClearColor(0.08f, 0.09f, 0.12f, 1.f);
-    m_Shader->Bind();
-    m_Shader->SetMat4("u_ViewProjection", m_Camera.GetViewProjectionMatrixPtr());
+    m_BatchShader->Bind();
+    m_BatchShader->SetMat4("u_ViewProjection", m_Camera.GetViewProjectionMatrixPtr());
     m_Batch->Begin(m_Tex);
 
     float px=2.f, py=0.f;
-    { float dx,dy,dz; Scripting::GameplayAPI::HandleGetPosition(1,dx,dy,dz); px=dx; py=dy; }
+    Scripting::GameplayAPI::HandleGetPosition(1, px, py);
 
     {   SpriteData c; c.transform.x=-3.f; c.transform.y=0.f;
         c.transform.scaleX=.8f; c.transform.scaleY=.8f; c.colorB=1.f;
@@ -191,9 +186,9 @@ void ScriptSandboxApp::DrawInspectorPanel() {
 
     ImGui::Separator();
     ImGui::Text("Sprite: %s", b.spriteGuid.IsNull()?"<none>":
-               m_Ed->registry->ResolvePath(b.spriteGuid).c_str());
+               m_Ed->registry.ResolvePath(b.spriteGuid).c_str());
     ImGui::Text("Script: %s", b.scriptGuid.IsNull()?"<none>":
-               m_Ed->registry->ResolvePath(b.scriptGuid).c_str());
+               m_Ed->registry.ResolvePath(b.scriptGuid).c_str());
     if(ImGui::Button("Clear Assets")){
         b.spriteGuid=ResourceGUID{};b.scriptGuid=ResourceGUID{};
     }
@@ -218,12 +213,12 @@ void ScriptSandboxApp::DrawAssetBrowser() {
     ImGui::SameLine();
 
     if(ImGui::Button("Import...")){
-        auto path = FileDialog::OpenFile(
+        auto path = Platform::FileDialog::OpenFile(
             "Textures (*.png)\0*.png\0Scripts (*.lua)\0*.lua\0All\0*.*\0");
         if(!path.empty()){
             auto type=(path.size()>4&&path.substr(path.size()-4)==".lua")
                 ?Content::AssetType::Script:Content::AssetType::Texture;
-            m_Ed->registry->Import(path,type);
+            m_Ed->registry.Import(path,type);
             AppendLog("[import] "+path);
         }
     }
@@ -312,13 +307,7 @@ void ScriptSandboxApp::DrawHudOverlay() {
 
 // ============ OnImGui ============
 
-void ScriptSandboxApp::DrawConsolePanel() {
-    ImGui::Begin("Console");
-    ImGui::Text("api=%.1f entities=%u sel=%u",
-        Scripting::ScriptAPI::GetApiVersion(),
-        Scripting::GameplayAPI::HandleCount(),m_Ed->selected);
-    ImGui::Separator();
-    ImGui::BeginChild("#log",ImVec2(0,-ImGui::GetFrameHeightWithSpacing()),false,                          ImGuiWindowFlags_HorizontalScrollbar);    for(auto&l:m_Ed->scrollback)ImGui::TextUnformatted(l.c_str());    if(ImGui::GetScrollY()>=ImGui::GetScrollMaxY())ImGui::SetScrollHereY(1.f);    ImGui::EndChild();    bool exec=ImGui::InputText("##cmd",m_Ed->cmdBuf,sizeof(m_Ed->cmdBuf),                                 ImGuiInputTextFlags_EnterReturnsTrue);    ImGui::SameLine();    exec|=ImGui::Button("Run");    if(exec&&m_Ed->cmdBuf[0]){        AppendLog("> "+std::string(m_Ed->cmdBuf));        if(m_Player.Execute(m_Ed->cmdBuf))AppendLog("[ok]");        else AppendLog("[err] "+m_Player.GetEngine()->GetLastError().message);        m_Ed->cmdBuf[0]=0;    }    ImGui::End();}void ScriptSandboxApp::OnImGui() {
+void ScriptSandboxApp::OnImGui() {
     DrawHierarchyPanel();
     DrawInspectorPanel();
 
