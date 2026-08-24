@@ -1,88 +1,79 @@
 /**
  * @file GP01Test.cpp
- * @brief Game Production Phase 1 — GP01 生产契约测试（bootstrap + 数据模型）
+ * @brief GP01 生产契约测试（bootstrap + 数据模型 + 波次编成）
  *
- * 测试对象不是引擎功能，而是"游戏生产契约"（docs/GP-P1-Charter.md §11）：
- *   GP1-A：空场景 → Player → Play → Save → Restart → Load → 正常运行
- *   GP1-B：ENEMY_TYPES 数据模型 / 多类型实例 / 实例状态独立性
+ * GP1-C 版本：场景瘦身为 Player/Walls/Pads/Director（10 实体），
+ * 敌人全部运行时生成；注册表扩至 33 资产。
  */
 
 #include "GP01Harness.h"
 
-using namespace Engine;
 using namespace gp01;
 
 // ════════════════════════════════════════════════════════════
-// GP1-A · 干净注册表 → Import 清单 → GUID → 场景实例化
+// 生产契约：33 资产 100% 解析；瘦场景实例化；导演存活
 // ════════════════════════════════════════════════════════════
 TEST(GP01, Load) {
     Ctx c;
-    ASSERT_EQ(c.reg.Count(), 0u);                        // 空注册表起步
+    ASSERT_EQ(c.reg.Count(), 0u);
     ASSERT_EQ(c.scene.GetObjectCount(), 0u);
 
     c.BeginFresh((kGpDir + "/manifest.json").c_str());
-    ASSERT_EQ(c.reg.Count(), 9u);                        // 8 tex + 1 script
-    for (const auto& e : c.reg.GetAllEntries())
-        EXPECT_FALSE(c.reg.ResolvePath(e.guid).empty()); // GUID 全程可解析
+    ASSERT_EQ(c.reg.Count(), 33u);                       // 32 tex + 1 script
+    int textures = 0, scripts = 0;
+    for (const auto& e : c.reg.GetAllEntries()) {
+        EXPECT_FALSE(c.reg.ResolvePath(e.guid).empty());
+        if (e.type == AssetType::Texture) ++textures;
+        if (e.type == AssetType::Script)  ++scripts;
+    }
+    EXPECT_EQ(textures, 32);
+    EXPECT_EQ(scripts, 1);
 
     c.LoadAndBind(kGpDir + "/Main.scene");
-    ASSERT_EQ(c.idx.size(), 11u);              // Director+Player+4 Wall+5 Enemy
-    EXPECT_NE(c.idx.count("Player"), 0u);
+    ASSERT_EQ(c.idx.size(), 10u);              // Director+Player+4 Pad+4 Wall
+    for (const char* p : {"Pad_N", "Pad_S", "Pad_W", "Pad_E"})
+        EXPECT_NE(c.idx.count(p), 0u) << p << " missing";
     EXPECT_TRUE(c.inst.Initialize(c.DirectorPath(),
                                   ScriptInstance::Config{}));
     c.inst.OnCreate();
     c.Run(30);
-    SUCCEED() << "[GP01] Main.scene loaded and director alive";
+    SUCCEED() << "[GP01] lean scene + 33-asset registry OK";
 }
 
 // ════════════════════════════════════════════════════════════
-// GP1-A · Player 可操控（位移 ≈ SPEED·t / 松手停止 / 边界不可穿出）
+// Player 可操控（宽限期内静场：位移/停止/边界）
 // ════════════════════════════════════════════════════════════
 TEST(GP01, PlayerMovement) {
     Ctx c;
-    c.BeginFresh((kGpDir + "/manifest.json").c_str());
-    c.LoadAndBind(kGpDir + "/Main.scene");
-    ASSERT_TRUE(c.inst.Initialize(c.DirectorPath(),
-                                  ScriptInstance::Config{}));
-    c.inst.OnCreate();
+    StartRun(c);
+    FreezeWaves(c);
 
     Vec3 a = c.Pos("Player");
-    c.input.Press("W");                                  // 向北（-z）
+    c.input.Press("W");
     c.Run(60);
     c.input.Clear();
     Vec3 b = c.Pos("Player");
-    const double moved = std::hypot(b.x - a.x, b.z - a.z);
-    EXPECT_GT(moved, 3.5)                                // 4.0 × 1s
-        << "moved=" << moved;
+    EXPECT_GT(std::hypot(b.x - a.x, b.z - a.z), 3.5);
 
-    c.Run(30);                                           // 松开后应停止
+    c.Run(30);
     Vec3 d = c.Pos("Player");
-    EXPECT_LT(std::hypot(d.x - b.x, d.z - b.z), 0.05)
-        << "player kept moving after input released";
+    EXPECT_LT(std::hypot(d.x - b.x, d.z - b.z), 0.05);
 
-    // 边界契约：向南通到底被 Wall_S 挡住，不得穿出
     c.input.Press("S");
     c.Run(600);
     c.input.Clear();
-    Vec3 s = c.Pos("Player");
-    EXPECT_LT(s.z, 6.0) << "escaped through south wall";
+    EXPECT_LT(c.Pos("Player").z, 6.0) << "escaped through south wall";
 }
 
 // ════════════════════════════════════════════════════════════
-// GP1-B1 · ENEMY_TYPES 数据表契约
-// （三种类型存在、属性正确、实例 HP 独立、数据表不被实例污染）
+// ENEMY_TYPES 数据表契约（四型含 boss；实例独立；模板不被污染）
 // ════════════════════════════════════════════════════════════
 TEST(GP01, EnemyTypes) {
     Ctx c;
-    c.BeginFresh((kGpDir + "/manifest.json").c_str());
-    c.LoadAndBind(kGpDir + "/Main.scene");
-    ASSERT_TRUE(c.inst.Initialize(c.DirectorPath(),
-                                  ScriptInstance::Config{}));
-    c.inst.OnCreate();
+    StartRun(c);
+    FreezeWaves(c);
 
-    // 类型存在 + 属性正确（数据表全局暴露 = 模块契约）
     ASSERT_TRUE(c.inst.Execute(
-        "_g_chk = {} "
         "local function chk(k, hp, spd, dmg, val) "
         "  local v = ENEMY_TYPES[k] "
         "  if not v then _G['chk_' .. k] = 'missing' return end "
@@ -91,115 +82,91 @@ TEST(GP01, EnemyTypes) {
         "                    and 'ok' or 'mismatch' end "
         "chk('grunt', 3, 1.0, 1, 20) "
         "chk('tank', 8, 0.45, 2, 50) "
-        "chk('scout', 2, 1.6, 1, 15)"));
+        "chk('scout', 2, 1.6, 1, 15) "
+        "chk('boss', 16, 0.5, 3, 100)"));
     EXPECT_EQ(c.Str("chk_grunt"), "ok");
     EXPECT_EQ(c.Str("chk_tank"), "ok");
     EXPECT_EQ(c.Str("chk_scout"), "ok");
+    EXPECT_EQ(c.Str("chk_boss"), "ok");
 
-    // 实例独立性：打 grunt1 两刀 → grunt2 与数据表均不受污染
-    TeleportNear(c, "E_Grunt1", 0.95f);
+    // 实例独立性：生成两只 grunt，打其一 → 另一只与模板均不受污染
+    std::string a = SpawnOne(c, "grunt");
+    std::string b = SpawnOne(c, "grunt");
+    ASSERT_FALSE(a.empty());
+    ASSERT_FALSE(b.empty());
+    TeleportNear(c, a, 0.95f);
     c.input.Press("J");
-    c.Run(40);                                           // 两击（cd 0.35s）
+    c.Run(40);
     c.input.Clear();
+
     Snap s = c.Snapshot();
-    ASSERT_NE(s.enemies.count("E_Grunt1"), 0);
-    EXPECT_EQ(s.enemies["E_Grunt1"].first, 1);           // 3 − 2
-    EXPECT_EQ(s.enemies["E_Grunt2"].first, 3);           // 兄弟实例不受影响
+    ASSERT_NE(s.enemies.count(a), 0u);
+    ASSERT_NE(s.enemies.count(b), 0u);
+    EXPECT_EQ(s.enemies[a].hp, 1);
+    EXPECT_EQ(s.enemies[b].hp, 3);
 
     ASSERT_TRUE(c.inst.Execute(
         "_g_tpl_ok = (ENEMY_TYPES.grunt.hp == 3 and "
         "             ENEMY_TYPES.grunt.maxHp == 3) "
         "            and 'pure' or 'polluted'"));
-    EXPECT_EQ(c.Str("_g_tpl_ok"), "pure")                // 数据表未被实例污染
+    EXPECT_EQ(c.Str("_g_tpl_ok"), "pure")
         << "instance damage leaked into type table";
 }
 
 // ════════════════════════════════════════════════════════════
-// GP1-B1 · 多类型实例生成契约（Grunt×2 / Tank×1 / Scout×2 手写场景 JSON）
-// —— M003 观察样本：不引入 Prefab 时的真实生产成本
+// 波次编成数据契约：五波 32 体 = 19 grunt / 6 tank / 7 scout（GP1-C 规格书）
 // ════════════════════════════════════════════════════════════
-TEST(GP01, EnemySpawn) {
+TEST(GP01, WaveTableSpec) {
     Ctx c;
-    c.BeginFresh((kGpDir + "/manifest.json").c_str());
-    c.LoadAndBind(kGpDir + "/Main.scene");
-    ASSERT_EQ(c.idx.size(), 11u);
-    ASSERT_TRUE(c.inst.Initialize(c.DirectorPath(),
-                                  ScriptInstance::Config{}));
-    c.inst.OnCreate();
-    Snap s = c.Snapshot();
-    ASSERT_EQ(s.enemies.size(), 5u);
+    StartRun(c);
 
-    // 各类型初始 HP = maxHp，数量正确
-    EXPECT_EQ(s.enemies["E_Grunt1"].first, 3);
-    EXPECT_EQ(s.enemies["E_Grunt2"].first, 3);
-    EXPECT_EQ(s.enemies["E_Tank1"].first, 8);
-    EXPECT_EQ(s.enemies["E_Scout1"].first, 2);
-    EXPECT_EQ(s.enemies["E_Scout2"].first, 2);
-
-    // 精灵绑定按类型区分（GUID 契约）
-    auto spriteOf = [&](const char* n) {
-        return c.bindings[c.idx.at(n)].spriteGuid;
-    };
-    EXPECT_EQ(spriteOf("E_Grunt1"), spriteOf("E_Grunt2"));   // 同型同精灵
-    EXPECT_NE(spriteOf("E_Grunt1"), spriteOf("E_Tank1"));    // 异型异精灵
-    EXPECT_NE(spriteOf("E_Grunt1"), spriteOf("E_Scout1"));
-    EXPECT_NE(spriteOf("E_Tank1"), spriteOf("E_Scout1"));
-
-    // 场景内位置互不重叠（手写坐标的最低质量要求）
-    for (const char* n : Roster())
-        EXPECT_LT(std::hypot(c.Pos(n).x, c.Pos(n).z), 20.0);
+    ASSERT_TRUE(c.inst.Execute(
+        "_g_tally_grunt = 0 _g_tally_tank = 0 _g_tally_scout = 0 "
+        "_g_waves_n = #WAVES "
+        "for _, w in ipairs(WAVES) do "
+        "  for _, tn in ipairs(w) do "
+        "    if tn == 'grunt' then _g_tally_grunt = _g_tally_grunt + 1 end "
+        "    if tn == 'tank'  then _g_tally_tank  = _g_tally_tank + 1 end "
+        "    if tn == 'scout' then _g_tally_scout = _g_tally_scout + 1 end "
+        "  end end"));
+    EXPECT_EQ((int)c.Num("_g_waves_n"), 5);
+    EXPECT_EQ((int)c.Num("_g_tally_grunt"), 19);
+    EXPECT_EQ((int)c.Num("_g_tally_tank"), 6);
+    EXPECT_EQ((int)c.Num("_g_tally_scout"), 7);
+    EXPECT_EQ((int)c.Num("_g_tally_grunt") + (int)c.Num("_g_tally_tank") +
+              (int)c.Num("_g_tally_scout"), 32);
 }
 
 // ════════════════════════════════════════════════════════════
-// GP1-A · Play → Save → 冷启等价 → Load → 继续正常运行
+// Play → 布局落盘 → 冷启 → blob 回灌 → 继续正常运行
 // ════════════════════════════════════════════════════════════
 TEST(GP01, SaveRestartLoad) {
     std::filesystem::remove_all(kScratch);
-
-    // ── Play ──
     Ctx c;
-    c.BeginFresh((kGpDir + "/manifest.json").c_str());
-    c.LoadAndBind(kGpDir + "/Main.scene");
-    ASSERT_TRUE(c.inst.Initialize(c.DirectorPath(),
-                                  ScriptInstance::Config{}));
-    c.inst.OnCreate();
+    StartRun(c);
+    FreezeWaves(c);
+
     c.input.Press("D");
     c.Run(45);
     c.input.Clear();
-    ASSERT_TRUE(c.inst.Execute("_PERSIST.score = 77"));   // 玩出一点状态
+    ASSERT_TRUE(c.inst.Execute("_PERSIST.score = 77"));
 
-    // ── Save：活场景捕获落盘 ──
-    std::filesystem::create_directories(kScratch);
-    SceneSnapshot live = CaptureScene(c.scene, c.bindings);
-    ASSERT_EQ(live.entities.size(), 11u);
-    ASSERT_TRUE(SaveSnapshotToFile(live, kScratch + "/main_saved.scene"));
-    ASSERT_TRUE(c.reg.SaveManifest(kScratch + "/manifest.json"));
-    c.inst.GetEngine()->RunString("_g_score = _PERSIST.score");
+    PristineSave(c, "sr");
+    const std::string blob = c.Blob();
 
-    // ── Restart：全新进程等价 ──
     Ctx b;
-    b.BeginFresh((kScratch + "/manifest.json").c_str());
-    ASSERT_EQ(b.reg.Count(), 9u);
-    b.LoadAndBind(kScratch + "/main_saved.scene");
-    ASSERT_EQ(b.idx.size(), 11u);
-    ASSERT_TRUE(b.inst.Initialize(b.DirectorPath(),
-                                  ScriptInstance::Config{}));
-    // 宿主把存档中的持续状态交还新实例（真实存档系统职责边界）
-    ASSERT_TRUE(b.inst.Execute(std::string("_PERSIST.score = ") +
-                               std::to_string((int)c.Num("_g_score"))));
-    b.inst.OnCreate();
-
-    // ── Load 后继续正常游玩 ──
+    ColdStart(b, "sr", blob);
+    ASSERT_EQ(b.reg.Count(), 33u);
     b.inst.GetEngine()->RunString("_g_score = _PERSIST.score");
-    EXPECT_EQ((int)b.Num("_g_score"), 77);               // 状态跨冷启存活
+    EXPECT_EQ((int)b.Num("_g_score"), 77);
+
     Vec3 a = b.Pos("Player");
-    b.input.Press("A");                                  // 换方向仍可控
+    b.input.Press("A");
     b.Run(60);
     b.input.Clear();
-    Vec3 e = b.Pos("Player");
-    EXPECT_GT(std::hypot(e.x - a.x, e.z - a.z), 3.5)
+    EXPECT_GT(std::hypot(b.Pos("Player").x - a.x,
+                         b.Pos("Player").z - a.z), 3.5)
         << "player not controllable after cold-start load";
 
-    std::printf("    [GP01] GP1-A acceptance: play -> save -> restart "
-                "-> load -> playable OK\n");
+    std::printf("    [GP01] layout-scene + state-blob cold start OK\n");
 }

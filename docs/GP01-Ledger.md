@@ -51,6 +51,89 @@ Level:               # 当前到达的晋升级别
 
 ## 条目区
 
+### GP-010
+```text
+Title:               Collision Event 再评价（手写圆碰撞的规模成本）
+Category:            Collision
+Severity:            —（验证通过，非摩擦）
+Game Context:        GP1-C 33 实体同场：墙推挤/敌人接触伤害/攻击范围判定
+                     三处碰撞逻辑（game.lua，dist() 圆检查合计 ~20 行）。
+Observed Problem:    无阻塞。32 体每帧 ~32 次距离计算 + 4 墙推出，
+                     无 instruction 预算压力；碰撞代码占 game.lua ~6%。
+Current API Attempt: Lua 手写圆碰撞（章程指定的故意测试项，非 workaround）。
+Why Current API Is Insufficient: 不成立 —— 晋升条件（instruction budget
+                     逼近上限或碰撞代码占比失控）均未出现。
+Workaround:          —
+Frequency:           每帧。
+Production Cost:     新增一类碰撞 ≈ +5~8 行（圆参数 + 响应分支），线性可控。
+Cross-Game Evidence: VS01 同模式（接触伤害/拾取均为圆检查）—— 两局同信号
+                     且均无摩擦。
+Decision:            DEFER 维持。复核条件：实体数 × 碰撞对帧成本进入
+                     profiling 可见量级，或碰撞形状需求超出圆的表达范围。
+Level:               L0（结论性证据条目）
+```
+
+### GP-009
+```text
+Title:               资产规模增长下的注册表/浏览器经济性
+Category:            Content / Asset Workflow
+Severity:            LOW（前瞻）
+Game Context:        GP1-C 注册表已从 9 资产扩至 33（UI/FX/变体纹理）。
+Observed Problem:    实测：33 资产下无检索/区分摩擦 —— 前缀命名约定
+                     （ui_/fx_/proj_/prop_/banner_…）在清单与 ResolvePath
+                     层面足够定位；headless 契约测试不经过浏览器点击流。
+Current API Attempt: ContentRegistry 清单 + GUID（冻结契约内）。
+Why Current API Is Insufficient: 暂无证据。
+Workaround:          命名约定（前缀分类）。
+Frequency:           每次资产入库。
+Production Cost:     低（+1 清单行/资产）。
+Cross-Game Evidence: 无。
+Decision:            OBSERVE 维持 —— 编辑器点击流证据留待 GP1-D。
+Level:               L0
+```
+
+### GP-008
+```text
+Title:               场景作者成本（30+ 实体时代的 JSON 经济性）
+Category:            Content / Scene Authoring
+Severity:            —（验证通过，结论性条目）
+Game Context:        GP1-C 动态生成落地后实测：Main.scene 敌人条目 5 → 0，
+                     场景仅剩 10 个布局对象（Player/Walls×4/Pads×4/Director），
+                     运行时实体 ≥20 全部经 Engine.entity.spawn 产生。
+Observed Problem:    不成立 —— 净效应为作者成本下降：场景行数减少，
+                     运行时复杂度转移到 Lua 波次表（每敌边际 = +1 token）。
+Current API Attempt: entity.spawn（冻结 API v2.1 内），引擎零改动。
+Why Current API Is Insufficient: 不成立。
+Workaround:          —
+Frequency:           每次内容扩充。
+Production Cost:     每敌边际 ≈ 1 token（任务 A 实测：+1 波次表项、0 场景行）。
+Cross-Game Evidence: VS01（5 敌手写）→ GP01-C（0 条目）两局对比成立。
+Decision:            结案（无摩擦）。静态摆场 vs 动态生成的选择权留给游戏作者，
+                     引擎两种均已支持。
+Level:               L0（结论性）
+```
+
+### GP-007
+```text
+Title:               内容重复率（波次编成中的结构性重复）
+Category:            Content / Duplication
+Severity:            —（验证通过，结论性条目）
+Game Context:        GP1-C 五波编成共 32 个敌人 token（19G/6T/7S），
+                     WAVES = { {...}, ... } 纯数据表。
+Observed Problem:    不成立 —— "机械堆叠"正是编成的自然形态；
+                     类型差异由 ENEMY_TYPES 数据表承载，波次差异由 token
+                     序列承载，两层正交，无需"编成模板"抽象。
+Current API Attempt: WAVES 纯数据表（Lua 内表达）。
+Why Current API Is Insufficient: 不成立。
+Workaround:          —
+Frequency:           每波设计。
+Production Cost:     每敌边际 1 token；新增类型 = +1 ENEMY_TYPES 行
+                     +1 纹理资产 +1 清单行。
+Cross-Game Evidence: 无。
+Decision:            结案（无摩擦）。
+Level:               L0（结论性）
+```
+
 ### GP-006
 ```text
 Title:               敌人查询依赖固定名册
@@ -67,10 +150,15 @@ Frequency:           每帧（攻击选 target + 导航）。
 Production Cost:     当前 5 实体可接受；随实体数线性上升。
 Cross-Game Evidence: VS01 同模式（固定 5 敌名册）—— 两局同信号，但触发条件
                      （动态 Spawn）尚未出现。
-Decision:            OBSERVE —— GP1-C Spawn 落地时自动复核；
-                     若确认断裂，走最小 API 提案（如 entity.find_all/tag），
-                     不直接跳 ECS。
-Level:               L0（前瞻登记）
+Decision:            OBSERVE —— GP1-C Spawn 实验已完成复核（见下）：
+                     账簿由 game.lua 自维护（Materialize 单点登记 +
+                     E_NNN 计数器），生成点成本 ~10 行、存档编解码
+                     各一段（Encode/Restore 合计 ~50 行），随持久化字段
+                     线性增长且完全可控。17 项契约测试（含 ≥20 体动态
+                     生成、波间存档冷启全等）全绿 —— 未出现"无法合理
+                     表达"。find_all/tag 无晋升证据，DEFER 维持；
+                     若未来敌人生成点多源化（多脚本各自记账）再复核。
+Level:               L0→L1（已复现测量，缺口未成立）
 ```
 
 ### GP-005
@@ -182,15 +270,26 @@ Level:               L0→L2 已记录（缺口确凿），晋升等成本证据
 
 | 编号 | Title | Category | Severity | Level | Decision |
 |------|-------|----------|----------|-------|----------|
-| GP-006 | 敌人查询依赖固定名册 | Query | MEDIUM(前瞻) | L0 | OBSERVE（GP1-C 复核） |
-| GP-005 | M003 Prefab 再评价（手写 5 实体成本） | Workflow | LOW | L0 | DEFERRED 维持 |
+| GP-010 | Collision Event 再评价（手写圆碰撞规模成本） | Collision | — | L0 | DEFER 维持（结论性：晋升条件未出现） |
+| GP-009 | 注册表/浏览器经济性（33 资产实测） | Content/Asset | LOW | L0 | OBSERVE（GP1-D 编辑器侧复核） |
+| GP-008 | 场景作者成本（敌人条目 5→0 实测） | Content/Scene | — | L0 | 结案（无摩擦，成本下降） |
+| GP-007 | 内容重复率（波次编成数据表） | Content/Dup | — | L0 | 结案（无摩擦） |
+| GP-006 | 敌人查询依赖固定名册（Spawn 后复核） | Query | MEDIUM→收敛 | L1 | DEFER 维持（账簿自维护成本可控） |
+| GP-005 | M003 Prefab 再评价（手写 5 实体成本） | Workflow | LOW | L0 | DEFERRED 维持（数据表已消除结构重复传播需求） |
 | GP-004 | M002 再评价（战斗状态存续方案成立） | Serialization | — | L0 | DEFERRED 维持 |
 | GP-003 | M004 再评价（is_down 边沿语义够用） | Input | — | L0 | DEFERRED 维持 |
 | GP-002 | GP1-B 基线锁定声明 | Process | — | L0 | OBSERVE |
 | GP-001 | 玩法代码多文件组织不可表达 | Workflow | LOW | L2(记录) | OBSERVE |
 
-### GP-001 增补（GP1-B 后）
+### GP-006 增补（GP1-C 实验记录）
 
-game.lua 增长至 ~200 行（数据表+AI+战斗+状态机+存档编解码），仍单文件可维护。
-分区手段：全局 `ENEMY_TYPES` 数据契约 + local 函数分组。晋升阈值继续观察：
-预计 ~400 行或职责互相干扰时复核。
+动态生成 ≥20 体 + 五波推进 + 波间存档冷启全等，全部经 Lua 自维护账簿
+完成（test_gp01 17/17）。测量结论：账簿成本 = 生成点 ~10 行 +
+编解码 ~50 行，一次结构修改（改 ENEMY_TYPES 表）天然传播全实例 ——
+该性质同时关闭了 M003 Prefab 的晋升触发条件。
+
+### GP-001 增补（GP1-C 后）
+
+game.lua 增长至 313 行（+波次机器/生成账簿/存档 v3），仍单文件可维护
+（分区：ENEMY_TYPES/WAVES 数据契约 → Materialize/Spawn → Encode/Restore
+→ AI/战斗 → 状态机）。晋升阈值维持 ~400 行或职责互相干扰时复核。
