@@ -1,0 +1,14 @@
+﻿{
+  "version": 1,
+  "assets": [
+    { "guid": "d1000000000000000000000000000001", "path": "assets/gp01/tex/player.png", "type": "Texture" },
+    { "guid": "d1000000000000000000000000000002", "path": "assets/gp01/tex/grunt.png",  "type": "Texture" },
+    { "guid": "d1000000000000000000000000000003", "path": "assets/gp01/tex/tank.png",   "type": "Texture" },
+    { "guid": "d1000000000000000000000000000004", "path": "assets/gp01/tex/scout.png",  "type": "Texture" },
+    { "guid": "d1000000000000000000000000000005", "path": "assets/gp01/tex/pickup.png", "type": "Texture" },
+    { "guid": "d1000000000000000000000000000006", "path": "assets/gp01/tex/goal.png",   "type": "Texture" },
+    { "guid": "d1000000000000000000000000000007", "path": "assets/gp01/tex/wall.png",   "type": "Texture" },
+    { "guid": "d1000000000000000000000000000008", "path": "assets/gp01/tex/arena.png",  "type": "Texture" },
+    { "guid": "d2000000000000000000000000000001", "path": "assets/gp01/game.lua",       "type": "Script" }
+  ]
+}

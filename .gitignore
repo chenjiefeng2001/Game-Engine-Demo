@@ -91,4 +91,5 @@ dx_golden_scratch/
 df08_scratch/
 df09_scratch/
 vs01_scratch/
+gp01_scratch/
 !assets/vs01/**/*.scene

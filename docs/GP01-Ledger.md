@@ -51,10 +51,32 @@ Level:               # 当前到达的晋升级别
 
 ## 条目区
 
-（暂无条目 —— GP1-A 阶段尚未开始记录。首个条目编号预留 GP-001。）
+### GP-001
+```text
+Title:               玩法代码多文件组织不可表达
+Category:            Workflow / Scripting
+Severity:            LOW（当前规模）
+Game Context:        GP1-A 项目骨架搭建，章程 §6 规划 player/enemy/combat/
+                     game/pickup 五个脚本模块
+Observed Problem:    沙箱移除 dofile/loadfile/require（LuaEngine.cpp 沙箱
+                     清单），场景仅支持单一 Director 脚本绑定；玩法代码只能
+                     单文件增长。
+Current API Attempt: 章程规划的多文件布局；RunFile 为宿主侧能力，Lua 内无
+                     include 手段。
+Why Current API Is Insufficient: 无 —— 当前单文件仍然合理（VS01 arena
+                     导演 199 行可维护）。
+Workaround:          每场景单文件导演；模块化靠 Lua 内 local 表分区注释。
+Frequency:           每次"想拆文件"时（结构性，非每帧）。
+Production Cost:     随玩法规模线性上升；预计 GP1-B 加入三种敌人 AI 后开始
+                     显现。
+Cross-Game Evidence: VS01（同类约束下同样被迫单文件）—— 已构成两局同信号，
+                     但尚无生产成本证据支撑晋升。
+Decision:            OBSERVE
+Level:               L0→L2 已记录（缺口确凿），晋升等成本证据
+```
 
 ### 裁定汇总表
 
 | 编号 | Title | Category | Severity | Level | Decision |
 |------|-------|----------|----------|-------|----------|
-| — | — | — | — | — | — |
+| GP-001 | 玩法代码多文件组织不可表达 | Workflow | LOW | L2(记录) | OBSERVE |

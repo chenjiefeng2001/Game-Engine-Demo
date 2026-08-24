@@ -17,7 +17,8 @@
 | test_content | 42 | VERIFIED | Content Pipeline v1 + Resource Lifecycle + Editor Workflow + DF05/06/07 + DX Golden Gate + VS01 |
 | test_job | 4 | VERIFIED | JobSystem 压力 |
 | test_e2e | 6 | VERIFIED | 引擎启动生命周期 |
-| **合计** | **100** | | |
+| test_gp01 | 3 | VERIFIED | Game Production GP-P1 · GP01 生产契约（GP1-A） |
+| **合计** | **103** | | |
 
 ## Excluded 目标（记录原因，不计入基线）
 
@@ -40,6 +41,7 @@
 | DF06 | Multi-type Combat | test_content : `Dogfood06.LoadAndRun` |
 | DF07 | Tower Defense + Restart round-trip | test_content : `Dogfood07.LoadRunRestart` |
 | VS01 | Vertical Slice 01 产品现实门（menu→arena→boss 全流程） | test_content : `VS01.*` ＋ `VS01Debug.MinimalReloadRepro`（F1 回归守卫） |
+| GP01 | Game Production Phase 1 生产契约（GP-P1 章程 §11，随阶段逐个点亮） | test_gp01 : `GP01.*` |
 
 ## 2026-08-24 整改记录（Evidence Integrity Gate 建立时发现）
 
