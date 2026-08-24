@@ -87,3 +87,4 @@ script_mvp_scratch/
 logs/
 *.scene
 *.manifest.json
+dx_golden_scratch/
