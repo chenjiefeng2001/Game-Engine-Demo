@@ -1,4 +1,4 @@
-# Evidence Baseline — 权威测试计数基准
+﻿# Evidence Baseline — 权威测试计数基准
 
 > 建立日期：2026-08-24 · 维护纪律：**本文件中的数字必须与实际 gtest discovery 一致**
 > 由 `tools/integrity_gate.ps1` 强制校验（I2 门禁）
@@ -17,8 +17,8 @@
 | test_content | 42 | VERIFIED | Content Pipeline v1 + Resource Lifecycle + Editor Workflow + DF05/06/07 + DX Golden Gate + VS01 |
 | test_job | 4 | VERIFIED | JobSystem 压力 |
 | test_e2e | 6 | VERIFIED | 引擎启动生命周期 |
-| test_gp01 | 17 | VERIFIED | Game Production GP-P1 · GP01 生产契约（GP1-A/B/C） |
-| **合计** | **117** | | |
+| test_gp01 | 21 | VERIFIED | Game Production GP-P1 · GP01 生产契约（GP1-A/B/C/D） |
+| **合计** | **121** | | |
 
 ## Excluded 目标（记录原因，不计入基线）
 
