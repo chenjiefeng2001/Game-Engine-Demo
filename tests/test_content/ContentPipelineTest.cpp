@@ -442,3 +442,6 @@ TEST(EditorWorkflow, M3B_BrowserAssign_SyncsBinding) {
     EXPECT_TRUE(reg.ContainsGuid(texG));
     EXPECT_FALSE(reg.ResolvePath(texG).empty());
 }
+
+// === Dogfood-05: Arena Survival (13 entities, chaser AI, state machine) ===
+
