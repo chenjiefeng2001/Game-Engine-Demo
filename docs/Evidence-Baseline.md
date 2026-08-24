@@ -14,10 +14,10 @@
 | test_scripting | 23 | VERIFIED | Scripting API v2.1 C-ABI/MVP/Gameplay |
 | test_physics | 16 | VERIFIED | GPU Physics v1.x CPU/GPU ring |
 | test_renderer | 9 | VERIFIED | GL46Device + RenderGraph SG6 隔离验证 |
-| test_content | 33 | VERIFIED | Content Pipeline v1 + Resource Lifecycle + Editor Workflow + DF05/06/07 + DX Golden Gate |
+| test_content | 36 | VERIFIED | Content Pipeline v1 + Resource Lifecycle + Editor Workflow + DF05/06/07 + DX Golden Gate |
 | test_job | 4 | VERIFIED | JobSystem 压力 |
 | test_e2e | 6 | VERIFIED | 引擎启动生命周期 |
-| **合计** | **91** | | |
+| **合计** | **94** | | |
 
 ## Excluded 目标（记录原因，不计入基线）
 
