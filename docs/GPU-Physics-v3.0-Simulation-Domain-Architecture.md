@@ -392,7 +392,8 @@ H1 ClearCounts → H2 Count(atomicAdd) → H3 Single-Workgroup PrefixScan
 
 | 版本 | 日期 | 说明 |
 |------|------|------|
-| v3.18 | 2026-08-23 | **Dogfood-05 Arena Survival 完成**：13 实体（Player+5 Chaser+3 Pickup+4 Wall）+ 状态机 + 追逐 AI + 计时器；Lua 脚本修复 `goto`/`continue` 语法问题后全部通过；全项目 **73/73 PASS**。Dogfood-05 验证了多实体追逐 AI 在冻结 API 下稳定运行，未暴露新的 P0 缺口 |
+| v3.20 | 2026-08-24 | **Dogfood-07 Tower Defense Lite 完成（可维护性维度）**：10 实体 + 11 个脚本调参常量 + 手动 spawnTimer；三类成本（重复代码/数据表达/事件查询）均有信号但未达 P0 阈值，全部 deferred 维持；新增 DX09 Timer/Scheduler 观察；**修复测试基建缺陷**——Dogfood05Test.cpp 此前从未编译，现 DF05+DF07 独立测试入列，全项目 **75/75 PASS** |
+| v3.19 | 2026-08-23 | **Dogfood-06 Production Efficiency Test 完成**：15 实体多类型敌人（Grunt/Tank/Scout/Boss/Minion）+ 近战攻击系统 + HP 机制 + 击退 + 攻击冷却；全项目 **73/73 PASS**。验证了冻结 API 在复杂战斗场景下的稳定性；未暴露新的 P0 缺口 |
 | v3.17 | 2026-08-23 | **M4 Developer Experience v1 FREEZE**：DX Golden Gate 五道门禁全过（空场景/导入驱动/Save+Reload 行为变更/错误隔离/跨进程恢复）；ScriptSandbox 升级为编辑器宿主（Hierarchy+Inspector+AssetBrowser+Console+HUD overlay）；正式声明 M006/M004/M002/M003 deferred |
 | v3.16 | 2026-08-23 | **M4 DX 部分完成 + ScriptSandbox pimpl 重构启动**：M005/M001 已实现并测试通过；ScriptSandbox 升级为编辑器宿主；nlohmann↔spdlog 宏冲突导致构建阻断，pimpl 隔离方案已启动待完成；正式确立 "No Capability Without Evidence" 原则 |
 | v3.11 | 2026-08-23 | **Dogfood-01 完成：Content-Only 小游戏 + Missing Capability Ledger**。D1-D6 全过（零 C++ 改动/场景数据实体/冻结 API 玩法/清单 GUID/跨进程可玩/Victory 目标）。产出 Ledger M001-M006 六条真实缺口（P0=UI文本+Entity查询，P1=CWD+Input.pressed），确认 Scripting v1 核心循环已完备。附带发现并修复内容侧 GUID 路径重复问题 |
