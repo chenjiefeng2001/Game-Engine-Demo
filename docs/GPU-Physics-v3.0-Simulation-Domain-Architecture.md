@@ -392,6 +392,7 @@ H1 ClearCounts → H2 Count(atomicAdd) → H3 Single-Workgroup PrefixScan
 
 | 版本 | 日期 | 说明 |
 |------|------|------|
+| v3.23 | 2026-08-24 | **DF09 Multi-Scene / Reference Integrity 完成**：八道门禁 R1-R8 一次通过（共享资产 GUID 稳定 / Unregister+RegisterExplicit 重命名原语且场景文件字节级不变 / 持久层零路径泄漏 / 双场景独立 Save / 跨进程恢复 / 失败局部化+warning 点名实体 / 三方身份一致 / rename 后无 GUID 漂移）；DL-02 确认为 Editor 实现细节未随规模爆炸；M5 维持不启动，下一步为 Vertical Slice；全项目 **96/96** + Gate I1(21)+I2+I3 全绿 |
 | v3.22 | 2026-08-24 | **DF08 Long-session DX 完成**：Golden Scenario 全序列 headless 化（Clean Start→Import→分配→Play→脚本热改+Reload→场景中途变更→Capture/Save→冷启动→Load→二次修改→幂等回写）；核心数据丢失探针 S2/X3 钉死 CaptureScene 活场景契约；发现 DL-02（mid-session 新增实体 binding 依赖编辑器维护表，Editor Workflow 观察项）；Undo/Redo 弱信号入账不启动；全项目 **94/94** + Gate I1(20)+I2+I3(DF01-08) 全绿 |
 | v3.21 | 2026-08-24 | **Evidence Integrity Gate 建立（I1/I2/I3 全绿）**：审计发现 7 项证据链缺陷并全部整改——M4 DXGoldenGateTest 从未编译（冻结声明不可复现，已修复后首次真实 PASS）、DF06 无测试且其 Lua 脚本从未被执行过、test_e2e/test_job 对漂移 JobSystem API 编写等；新建 tools/integrity_gate.ps1 常驻门禁 + docs/Evidence-Baseline.md 权威基线；权威计数 **91/91**（新增 test_job 4 + test_e2e 6），test_core/test_ecs 显式排除登记 |
 | v3.20 | 2026-08-24 | **Dogfood-07 Tower Defense Lite 完成（可维护性维度）**：10 实体 + 11 个脚本调参常量 + 手动 spawnTimer；三类成本（重复代码/数据表达/事件查询）均有信号但未达 P0 阈值，全部 deferred 维持；新增 DX09 Timer/Scheduler 观察；**修复测试基建缺陷**——Dogfood05Test.cpp 此前从未编译，现 DF05+DF07 独立测试入列，全项目 **75/75 PASS** |
