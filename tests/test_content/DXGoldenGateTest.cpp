@@ -19,11 +19,14 @@
 #include "Engine/Core/Scene/Scene.h"
 #include "Engine/Core/Resources/ResourceGUID.h"
 #include "Engine/Core/Resources/ResourceManager.h"
+#include "Engine/Core/RenderResources/TextureManager.h"
 
 #include "Engine/Scripting/LuaEngine.h"
 #include "Engine/Scripting/GameplayAPI.h"
 #include "Engine/Scripting/ScriptAPI.h"
 #include "Engine/Scripting/ScriptInstance.h"
+
+#include "Engine/OpenGL/OpenGLGraphicsFactory.h"
 
 #include <nlohmann/json.hpp>
 #include <filesystem>
@@ -44,8 +47,15 @@ namespace {
     }
     std::string DP(const std::string& name) { return kDir + "/" + name; }
 
+    // Path helpers used by the gate tests
+    std::string DX_P(const std::string& name)  { return kDir + "/" + name; }
+    std::string DX_SP(const std::string& name) { return kDir + "/" + name; }
+    std::string DX_SF() { return "game.lua"; }
+    std::string DX_MP() { return kDir + "/manifest.json"; }
+    std::string DX_SS() { return kDir + "/golden.scene"; }
+
     // 模拟 Asset Browser 的 Import 动作（用户选择文件后自动调用）
-    ResourceGuid SimulateImport(ContentRegistry& reg,
+    ResourceGUID SimulateImport(ContentRegistry& reg,
                                 const std::string& path, AssetType type) {
         return reg.Import(path, type);   // 幂等：同路径返回既有 GUID
     }
@@ -102,7 +112,8 @@ TEST(DXGoldenGate, Full_Workflow_EmptyProject_To_PlayableGame) {
     // ════════════════════════════════════════════
 
     Scripting::GameplayAPI::Reset();
-    Scripting::GameplayAPI::SetScene(nullptr);   // placeholder, not used here
+    Engine::Scene gateScene;   // HandleSpawn requires a bound scene
+    Scripting::GameplayAPI::SetScene(&gateScene);
 
     Scripting::GameplayAPI::HandleSpawn("Player");
 
@@ -199,6 +210,7 @@ TEST(DXGoldenGate, Full_Workflow_EmptyProject_To_PlayableGame) {
 
 TEST(DXGoldenGate, R13_ProcessA_BuildAndSave) {
     std::filesystem::remove_all(kDir);
+    std::filesystem::create_directories(kDir);
 
     ContentRegistry reg;
     auto texG  = reg.Import("assets/textures/test.png", AssetType::Texture);

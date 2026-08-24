@@ -392,6 +392,7 @@ H1 ClearCounts → H2 Count(atomicAdd) → H3 Single-Workgroup PrefixScan
 
 | 版本 | 日期 | 说明 |
 |------|------|------|
+| v3.21 | 2026-08-24 | **Evidence Integrity Gate 建立（I1/I2/I3 全绿）**：审计发现 7 项证据链缺陷并全部整改——M4 DXGoldenGateTest 从未编译（冻结声明不可复现，已修复后首次真实 PASS）、DF06 无测试且其 Lua 脚本从未被执行过、test_e2e/test_job 对漂移 JobSystem API 编写等；新建 tools/integrity_gate.ps1 常驻门禁 + docs/Evidence-Baseline.md 权威基线；权威计数 **91/91**（新增 test_job 4 + test_e2e 6），test_core/test_ecs 显式排除登记 |
 | v3.20 | 2026-08-24 | **Dogfood-07 Tower Defense Lite 完成（可维护性维度）**：10 实体 + 11 个脚本调参常量 + 手动 spawnTimer；三类成本（重复代码/数据表达/事件查询）均有信号但未达 P0 阈值，全部 deferred 维持；新增 DX09 Timer/Scheduler 观察；**修复测试基建缺陷**——Dogfood05Test.cpp 此前从未编译，现 DF05+DF07 独立测试入列，全项目 **75/75 PASS** |
 | v3.19 | 2026-08-23 | **Dogfood-06 Production Efficiency Test 完成**：15 实体多类型敌人（Grunt/Tank/Scout/Boss/Minion）+ 近战攻击系统 + HP 机制 + 击退 + 攻击冷却；全项目 **73/73 PASS**。验证了冻结 API 在复杂战斗场景下的稳定性；未暴露新的 P0 缺口 |
 | v3.17 | 2026-08-23 | **M4 Developer Experience v1 FREEZE**：DX Golden Gate 五道门禁全过（空场景/导入驱动/Save+Reload 行为变更/错误隔离/跨进程恢复）；ScriptSandbox 升级为编辑器宿主（Hierarchy+Inspector+AssetBrowser+Console+HUD overlay）；正式声明 M006/M004/M002/M003 deferred |

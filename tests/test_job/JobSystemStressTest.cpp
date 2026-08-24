@@ -33,12 +33,12 @@ TEST_F(JobSystemTest, Dispatch1000Tasks) {
     std::atomic<int32> counter{0};
 
     for (int i = 0; i < kTaskCount; ++i) {
-        js->Dispatch([&counter]() {
+        js->Schedule([&counter](uint32) {
             counter.fetch_add(1, std::memory_order_relaxed);
         });
     }
 
-    js->Wait(nullptr); // 等待所有任务
+    js->WaitAll();
     EXPECT_EQ(counter.load(), kTaskCount);
 }
 
@@ -77,11 +77,11 @@ TEST_F(JobSystemTest, NoDeadlockWithMultipleDispatches) {
     for (int batch = 0; batch < 10; ++batch) {
         std::atomic<int32> counter{0};
         for (int j = 0; j < 100; ++j) {
-            js->Dispatch([&counter]() {
+            js->Schedule([&counter](uint32) {
                 counter.fetch_add(1, std::memory_order_relaxed);
             });
         }
-        js->Wait(nullptr);
+        js->WaitAll();
         EXPECT_EQ(counter.load(), 100);
     }
 }

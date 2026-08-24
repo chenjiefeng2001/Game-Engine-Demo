@@ -1,0 +1,15 @@
+{
+  "assets": [
+    {
+      "guid": "56619b062c9944e4bfb88ad0156487f4",
+      "path": "assets/textures/test.png",
+      "type": "Texture"
+    },
+    {
+      "guid": "d728474953d14f99b986a9da7746b9e2",
+      "path": "dx_golden_scratch/game.lua",
+      "type": "Script"
+    }
+  ],
+  "version": 1
+}
