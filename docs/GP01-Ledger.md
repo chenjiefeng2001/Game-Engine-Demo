@@ -302,6 +302,21 @@ Decision:            FIX NOW —— 5 码位经 cmap 复验替换（70/70 PASS�
                      合规，作为后续约束记录。
 Level:               L1（机器比对静态复现 + 构建级验证）
 ```
+
+### GP-DX-011 增补（P1-c 第一批，2026-08-26）
+
+Toolbar 摘除手术 + Reset Layout 实装（审计报告 §8）：
+
+- OBS-T1 闭环：W/E/R 全局键拦截随 Toolbar 死控件簇一并删除，Play 态
+  WASD 冲突源消除；
+- 摘除裁决依据：桥接 = 为摆设扩 API 面；ViewportPanel 浮层已是 gizmo
+  单一真相源（GP-DX-007"虚假可供性"纪律同脉）；
+- 附带发现并修复：View>Reset Layout 自 P0 起 DEAD（Init 期信号被读后
+  丢弃）—— 删吞信号行 + DockBuilder 四区规范布局实装；
+- 连带死代码出清：DrawGizmo 第二套实现、InitDockingLayout 孤儿声明、
+  Toolbar Reset 双入口。
+
+gate ALL GREEN 122/122；EditorDemo 冒烟两轮通过。P1-c 余项见审计 §8 尾注。
 ### Dogfood04 DX 台账复核（DX02/03/05/07）
 
 | 编号 | 复核结果 | 处置 |
