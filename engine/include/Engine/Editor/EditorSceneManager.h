@@ -72,7 +72,9 @@ namespace Engine {
         bool IsEditing() const { return m_State == EditorState::Edit; }
 
         /** 切换到 Play 模式（克隆编辑器场景 → 启动运行时） */
-        void Play();
+        /// 进入 PIE 播放。返回 false = 未启动（无场景/克隆失败/已在播放），
+        /// 调用方（Toolbar）据实反映状态（GP1-DX S1 非乐观化）
+        bool Play();
 
         /** 切换到 Stop 模式（销毁运行时 → 恢复编辑器状态） */
         void Stop();

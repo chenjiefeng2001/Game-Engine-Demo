@@ -1,5 +1,4 @@
 #include "Engine/ConsoleCommandRegistry.h"
-#include "Engine/ConsoleLog.h"
 #include "Engine/ConsoleVariable.h"
 #include "Engine/MemoryTracker.h"
 #include "Engine/Profiler.h"
@@ -199,31 +198,26 @@ void ConsoleCommandRegistry::RegisterBuiltins() {
 
     Register({
         "clear",
-        "清空控制台历史日志",
+        "清空控制台历史日志（由 ConsolePanel 面板处理）",
         "clear",
         [](const std::vector<std::string>&, std::string& out) {
-            ConsoleLog::Instance().Clear();
-            out = "Console cleared.";
+            // GP1-DX S4a：ConsoleLog 环形缓冲已删除；面板输入行本地拦截
+            // clear/cls 并清自身缓冲，此注册表版本仅为程序化调用兜底
+            out = "^3no-op:^7 console clearing is handled by the Console panel "
+                  "(its Clear button, or typing 'clear' in the panel input)";
         }
     });
 
     Register({
         "con_log",
-        "设置/查看控制台日志文件路径",
-        "con_log [path|off]",
+        "查看引擎文件日志位置（持久化由 spdlog rotating sink 承担）",
+        "con_log",
         [](const std::vector<std::string>& args, std::string& out) {
-            if (args.size() < 2) {
-                auto& log = ConsoleLog::Instance();
-                out = "Console log: " + (log.GetLogPath().empty() ? "^3(not set)^7" : log.GetLogPath());
-                return;
-            }
-            if (args[1] == "off") {
-                ConsoleLog::Instance().SetLogPath("");
-                out = "Console log disabled.";
-            } else {
-                ConsoleLog::Instance().SetLogPath(args[1]);
-                out = "Console log set to: " + args[1];
-            }
+            (void)args;
+            // GP1-DX S4a：原 SetLogPath 从无落盘实现（虚假功能）；
+            // 文件日志由 Log::Init 的 rotating_file_sink 固定承担
+            out = "^3file log:^7 logs/engine.log (rotating, 5MB x3, "
+                  "configured at engine init)";
         }
     });
 

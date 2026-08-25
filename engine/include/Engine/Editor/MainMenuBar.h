@@ -79,6 +79,10 @@ namespace Engine {
         void SetPauseCallback(PauseCallback cb)   { m_PauseCallback = std::move(cb); }
         void SetStepCallback(StepCallback cb)     { m_StepCallback = std::move(cb); }
 
+        /// 外部播放接管（GP1-DX S1 双 PIE 合一）：Scene 菜单隐藏 Pause/Step
+        /// （引擎内置 PIE 专属能力），Play/Stop 由宿主重接线到内容管线
+        void SetExternalPlaybackMode(bool v) { m_IsExternalPlayback = v; }
+
         // ── ImGui Demo 窗口 ──
         using ToggleDemoCallback = std::function<void()>;
         void SetToggleDemoCallback(ToggleDemoCallback cb) { m_ToggleDemoCallback = std::move(cb); }
@@ -111,6 +115,9 @@ namespace Engine {
 
         // ── 布局重置信号 ──
         bool m_ResetLayoutRequested = false;
+
+        // ── 外部播放接管模式（GP1-DX S1）──
+        bool m_IsExternalPlayback = false;
 
         // ── About 弹窗请求（菜单子窗口与根窗口 ID 域不同，
         //    OpenPopup 必须延迟到 EndMenu 之后的同一作用域调用）──

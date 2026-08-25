@@ -45,11 +45,17 @@ class GP01ProductionSession {
 public:
     /// onSceneReplaced：工程加载/Play/Stop 导致活动场景指针更换时回调
     /// （宿主用它重新接线 Hierarchy / SceneManager / Viewer / m_Scene）。
+    /// onPlayStateChanged：Play 成功进入运行态=true，Stop 回到编辑态=false
+    /// （宿主用它同步工具栏播放状态 —— S1 非乐观化的状态回写通道）。
     void Init(EngineEditor* editor,
               std::function<void(std::shared_ptr<Scene>)> onSceneReplaced) {
         m_Editor = editor;
         m_OnSceneReplaced = std::move(onSceneReplaced);
         m_Input = std::make_unique<Sandbox::GLFWScriptInputProvider>();
+    }
+
+    void SetPlayStateCallback(std::function<void(bool)> cb) {
+        m_OnPlayStateChanged = std::move(cb);
     }
 
     // ── 工程 ──────────────────────────────────────────────
@@ -78,10 +84,16 @@ public:
         m_Bindings = r.bindings;
         m_ScenePath = scenePath;
         m_ManifestPath = manifestPath;
-        Stop();                                   // 清掉可能残留的运行态
+
+        // R7 修复：先无回调拆卸运行态残留，再绑定 GameplayAPI 到新编辑态
+        // （旧实现 Stop() 内的 Reset 会清掉上方刚设置的编辑态场景绑定）
+        TeardownRuntime();
+        Scripting::GameplayAPI::Reset();
+        Scripting::GameplayAPI::SetScene(scene.get());
+
         Log::Info("[GP01] project loaded: {} objects, {} assets",
                   scene->GetObjectCount(), m_Reg.Count());
-        if (m_OnSceneReplaced) m_OnSceneReplaced(m_EditScene);
+        if (m_OnSceneReplaced) m_OnSceneReplaced(m_EditScene);   // 单次广播
         return true;
     }
 
@@ -138,21 +150,35 @@ public:
         m_Runtime = rt;
         m_Playing = true;
         Log::Info("[GP01] PLAY ({})", director);
+        if (m_OnPlayStateChanged) m_OnPlayStateChanged(true);
         if (m_OnSceneReplaced) m_OnSceneReplaced(m_Runtime);
         return true;
     }
 
+    // R7 修复：仅在确有运行态时停止；场景回切广播只发一次
     void Stop() {
-        if (m_Playing) {
-            m_Inst.OnDestroy();
-            m_Inst.Shutdown();
-            Scripting::GameplayAPI::Reset();
-            m_Playing = false;
-            m_Runtime.reset();
-            Log::Info("[GP01] STOP -> edit state restored");
+        if (!m_Playing) {
+            Log::Warn("[GP01] stop ignored (not playing)");
+            return;
         }
+        TeardownRuntime();
+        Log::Info("[GP01] STOP -> edit state restored");
         if (m_EditScene && m_OnSceneReplaced) m_OnSceneReplaced(m_EditScene);
     }
+
+private:
+    /// 运行态拆卸（无任何回调）：供 Stop 与 LoadProject 复用
+    void TeardownRuntime() {
+        if (!m_Playing) return;
+        m_Inst.OnDestroy();
+        m_Inst.Shutdown();
+        Scripting::GameplayAPI::Reset();
+        m_Playing = false;
+        m_Runtime.reset();
+        if (m_OnPlayStateChanged) m_OnPlayStateChanged(false);
+    }
+
+public:
 
     void Tick(float dt) {
         static bool f5Prev = false;
@@ -356,6 +382,7 @@ private:
 
     EngineEditor* m_Editor = nullptr;
     std::function<void(std::shared_ptr<Scene>)> m_OnSceneReplaced;
+    std::function<void(bool)> m_OnPlayStateChanged;
 
     std::string m_ScenePath = "(none)";
     std::string m_ManifestPath = "(none)";

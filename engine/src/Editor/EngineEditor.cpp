@@ -14,6 +14,7 @@
 #include "Engine/InspectorPanel.h"
 #include "Engine/ConsolePanel.h"
 #include "Engine/PerformanceWindow.h"
+#include "Engine/Editor/UndoSystem.h"
 #include "Engine/Core/GameObject/GameObject.h"
 #include "Engine/Core/IWindow.h"
 #include "Engine/Core/IRenderContext.h"
@@ -50,6 +51,47 @@ namespace Engine {
                 OnSelectionChanged(obj);
             });
         }
+    }
+
+    void EngineEditor::RegisterInspector(InspectorPanel* panel) {
+        m_Inspector = panel;
+        if (panel) {
+            // S4b 记录端接线：Inspector 属性修改经帧首快照对比生成
+            // PropertyChangeCommand（Transform/Name 域），进入全局撤销栈
+            panel->SetUndoCallback([panel](GameObject* obj) {
+                if (obj) panel->FlushUndoFromSnapshot(obj);
+            });
+        }
+    }
+
+    void EngineEditor::SetExternalPlayback(std::function<bool()> play,
+                                           std::function<void()> stop) {
+        m_ExternalPlay = std::move(play);
+        m_ExternalStop = std::move(stop);
+
+        auto menuPlayFn = [this]() {
+            const bool ok = m_ExternalPlay ? m_ExternalPlay() : m_SceneManager.Play();
+            if (!ok) ENGINE_LOG_WARN("Editor", "[PIE] play not started (refused or failed)");
+        };
+        auto menuStopFn = [this]() {
+            if (m_ExternalStop) m_ExternalStop(); else m_SceneManager.Stop();
+        };
+
+        m_MenuBar.SetPlayCallback(menuPlayFn);
+        m_MenuBar.SetStopCallback(menuStopFn);
+        m_MenuBar.SetPauseCallback({});
+        m_MenuBar.SetStepCallback({});
+        m_MenuBar.SetExternalPlaybackMode(true);
+
+        // 工具栏走非乐观 PlayAction：以真实返回值置位
+        m_Toolbar.SetPlayCallback([this]() -> bool {
+            return m_ExternalPlay ? m_ExternalPlay() : m_SceneManager.Play();
+        });
+        m_Toolbar.SetStopCallback(menuStopFn);
+        m_Toolbar.SetPauseCallback({});
+        m_Toolbar.SetStepCallback({});
+        // 外部播放的状态回写由宿主经 GetToolbar().SetPlayState 驱动
+        //（GP01 会话的 onPlayStateChanged），不再依赖引擎 StateChangeCallback
     }
 
     // ── 统一选择回调（Hierarchy ↔ Inspector ↔ Viewport Gizmo 联动） ──
@@ -244,12 +286,17 @@ namespace Engine {
             if (!fp.empty()) s->SaveToFile(fp);
         });
 
-        auto playFn  = [this]() { m_SceneManager.Play(); };
+        // 默认接线：引擎内置 PIE（宿主可经 SetExternalPlayback 整体接管，
+        // 届时以下 Play/Stop/Pause/Step 回调被覆盖，Pause/Step 隐藏）
+        auto playFn  = [this]() -> bool { return m_SceneManager.Play(); };
         auto stopFn  = [this]() { m_SceneManager.Stop(); };
         auto pauseFn = [this]() { m_SceneManager.TogglePause(); };
         auto stepFn  = [this]() { m_SceneManager.StepFrame(); };
 
-        m_MenuBar.SetPlayCallback(playFn);
+        m_MenuBar.SetPlayCallback([this]() {
+            if (!m_SceneManager.Play())
+                ENGINE_LOG_WARN("Editor", "[PIE] play not started (no scene or already playing)");
+        });
         m_MenuBar.SetStopCallback(stopFn);
         m_MenuBar.SetPauseCallback(pauseFn);
         m_MenuBar.SetStepCallback(stepFn);
@@ -266,6 +313,16 @@ namespace Engine {
                 case EditorState::Pause: m_Toolbar.SetPlayState(Toolbar::PlayState::Paused);  break;
             }
         });
+
+        // ── S4b：Undo 三线打通 ──
+        // 执行端：对象解析回调（按当前活跃场景 FindID，替代桩 nullptr）
+        UndoManager::Get().SetObjectResolver([this](uint64 id) -> GameObject* {
+            Scene* s = m_SceneManager.GetScene();
+            return s ? s->FindByID(static_cast<uint32>(id)) : nullptr;
+        });
+        // UI 端：菜单 Undo/Redo 真实驱动全局栈
+        m_MenuBar.SetUndoCallback([]() { UndoManager::Get().GetGlobalStack().Undo(); });
+        m_MenuBar.SetRedoCallback([]() { UndoManager::Get().GetGlobalStack().Redo(); });
 
         m_Toolbar.SetViewModeCallback([this](int m) {
             if (auto* ctx = m_App ? m_App->GetRenderContext() : nullptr) {
@@ -464,6 +521,12 @@ namespace Engine {
         ImGui::PopStyleVar(3);
 
         // ── 1. 内嵌菜单栏 ──
+        // S4b：Undo/Redo 菜单项启用状态每帧对齐全局栈真实深度
+        {
+            const auto& gs = UndoManager::Get().GetGlobalStack();
+            m_MenuBar.SetCanUndo(gs.GetUndoCount() > 0);
+            m_MenuBar.SetCanRedo(gs.GetRedoCount() > 0);
+        }
         if (ImGui::BeginMenuBar()) {
             m_MenuBar.OnMenuBar();
             ImGui::EndMenuBar();

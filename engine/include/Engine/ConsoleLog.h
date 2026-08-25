@@ -1,42 +1,29 @@
 ﻿#pragma once
-#include <atomic>
 
 /**
  * @file ConsoleLog.h
- * @brief 环形缓冲区日志系统 — 轻量级控制台日志，支持 Info/Warn/Error 级别
+ * @brief LOG_* 宏兼容垫片（GP1-DX S4a 日志单缓冲收敛）
  *
- * 使用方式：
- * @code
- *   LOG_INFO("Hello World");
- *   LOG_WARN("Something suspicious");
- *   LOG_ERROR("Something failed: " + std::to_string(code));
- * @endcode
+ * 原本这里是一套独立的 512 槽环形缓冲（ConsoleLog 单例）：
+ *   - 全仓零读者（GetBuffer/GetCount/GetStartIndex 从未被 UI 渲染）
+ *   - SetLogPath 无任何落盘实现（虚假功能）
+ *   - 与 ConsolePanel 私有缓冲构成双缓冲分叉，且宏日志绕过 spdlog
+ *     导致永不上屏（docs/GP1-DX-State-Layer-Analysis.md §1.3）
  *
- * 配合 ConsolePanel 在 ImGui 中显示。
+ * 现状：LOG_* 宏改道 spdlog 默认 logger → PanelBridgeSink → ConsolePanel，
+ * 全进程唯一日志显示面。头文件路径与宏签名保持不变，既有调用点零改动。
  *
- * ── 线程安全 ──
- * 非线程安全。预期仅在主线程使用。若需线程安全请在 Log() 内加锁。
- *
- * ── 架构说明 ──
- * 使用 Meyer's Singleton（static 局部变量）避免静态初始化顺序问题。
- * m_Buffer 使用 unique_ptr<LogEntry[]> 在堆上分配，避免全局/静态对象的
- * ASan redzone 保护与 MSVC std::string constexpr 初始化之间的冲突。
- * （全局 redzone 中的对象若包含 std::array<LogEntry,N> 且 LogEntry::message
- *  是 std::string，MSVC ASan 会在 `eh vector ctor iterator` 循环中误报
- *  global-buffer-overflow。）
+ * 线程安全：spdlog logger 自身线程安全；异步模式下写入经后台线程池。
  */
 
 #include "Engine/Types.h"
-#include <array>
-#include <ctime>
-#include <memory>
+#include "Engine/Core/Log.h"
+#include <spdlog/spdlog.h>
 #include <string>
 
 namespace Engine {
 
-// ============================================================
-// 日志级别
-// ============================================================
+// 日志级别枚举保留（历史 API 面兼容；新代码请直接用 spdlog/ENGINE_LOG_*）
 enum class LogLevel : uint8 {
   Info = 0,
   Warn = 1,
@@ -45,125 +32,47 @@ enum class LogLevel : uint8 {
   COUNT
 };
 
-/// 日志级别的显示名称
 inline const char *LogLevelName(LogLevel level) {
   switch (level) {
-  case LogLevel::Info:
-    return "INFO";
-  case LogLevel::Warn:
-    return "WARN";
-  case LogLevel::Error:
-    return "ERROR";
-  case LogLevel::Command:
-    return "CMD";
-  default:
-    return "????";
+  case LogLevel::Info:   return "INFO";
+  case LogLevel::Warn:   return "WARN";
+  case LogLevel::Error:  return "ERROR";
+  case LogLevel::Command:return "CMD";
+  default:               return "????";
   }
 }
 
-/// 日志级别的 ImGui 颜色编码（ABGR）
 inline uint32 LogLevelColor(LogLevel level) {
   switch (level) {
-  case LogLevel::Info:
-    return 0xFFAAAAAA; // 浅灰
-  case LogLevel::Warn:
-    return 0xFF00CCFF; // 橙黄
-  case LogLevel::Error:
-    return 0xFF3333FF; // 红
-  case LogLevel::Command:
-    return 0xFF88CC00; // 亮绿
-  default:
-    return 0xFFFFFFFF;
+  case LogLevel::Info:   return 0xFFAAAAAA;
+  case LogLevel::Warn:   return 0xFF00CCFF;
+  case LogLevel::Error:  return 0xFF3333FF;
+  case LogLevel::Command:return 0xFF88CC00;
+  default:               return 0xFFFFFFFF;
   }
 }
-
-// ============================================================
-// 单条日志条目
-// ============================================================
-struct LogEntry {
-  LogLevel level = LogLevel::Info;
-  double timestamp = 0.0; ///< 自程序启动以来的秒数
-  char message[1024]; ///< 日志内容（固定缓冲区，避开 std::string 的 ASan
-                      ///< 初始化冲突）
-};
-
-// ============================================================
-// 环形缓冲区日志系统（Meyer's 单例，堆分配缓冲区）
-// ============================================================
-class ConsoleLog {
-public:
-  /// 环形缓冲区容量
-  static constexpr uint32 kBufferSize = 512;
-
-  /// 获取单例引用（Meyer's Singleton）
-  static ConsoleLog &Instance() {
-    static ConsoleLog instance;
-    return instance;
-  }
-
-  /// 写入一条日志
-  void Log(LogLevel level, const std::string &message);
-
-  /// 清空所有日志
-  void Clear();
-
-  // ── 数据访问（供 ConsolePanel 使用） ──
-
-  /// 获取底层环形缓冲区指针
-  const LogEntry *GetBuffer() const { return m_Buffer.get(); }
-
-  /// 获取有效条目数（≤ kBufferSize）
-  uint32 GetCount() const { return m_Count; }
-
-  /// 获取最旧条目的索引（用于遍历）
-  uint32 GetStartIndex() const { return m_StartIndex; }
-
-  /// 获取缓冲区容量
-  uint32 GetCapacity() const { return kBufferSize; }
-
-  // ── 控制台日志持久化路径 ──
-
-  /** 获取日志文件持久化路径（空字符串表示未启用） */
-  const std::string &GetLogPath() const { return m_LogPath; }
-
-  /** 设置日志文件持久化路径（空字符串=禁用持久化） */
-  void SetLogPath(const std::string &path) { m_LogPath = path; }
-
-private:
-  ConsoleLog() : m_Buffer(new LogEntry[kBufferSize]) {
-    // 堆分配的数组，避开全局 redzone 的 ASan 保护问题
-  }
-  ~ConsoleLog();   // GP1-DX fix: stop async logger before freeing ring buffer
-  ConsoleLog(const ConsoleLog &) = delete;
-  ConsoleLog &operator=(const ConsoleLog &) = delete;
-
-  void ShutdownNoThrow();
-  static std::atomic<bool> s_Alive;
-  std::unique_ptr<LogEntry[]> m_Buffer; // 堆分配，避开全局 redzone
-  uint32 m_StartIndex = 0;
-  uint32 m_Count = 0;
-  std::string m_LogPath;
-};
-
-// ── 编译时一致性断言 ──
-static_assert(ConsoleLog::kBufferSize == 512,
-              "ConsoleLog::kBufferSize must be exactly 512 across all "
-              "translation units.");
 
 } // namespace Engine
 
 // ============================================================
-// 便捷宏定义
+// 便捷宏 —— 统一走 spdlog 默认 logger（"{}" 包裹避免消息内花括号
+// 被当作 fmt 占位符解析）
 // ============================================================
 
-/// 记录一条 INFO 级别日志
 #define LOG_INFO(msg)                                                          \
-  Engine::ConsoleLog::Instance().Log(Engine::LogLevel::Info, (msg))
+  do {                                                                         \
+    if (auto _cl_ = ::Engine::Log::GetDefaultLogger())                         \
+      _cl_->log(spdlog::level::info, "{}", (msg));                             \
+  } while (0)
 
-/// 记录一条 WARN 级别日志
 #define LOG_WARN(msg)                                                          \
-  Engine::ConsoleLog::Instance().Log(Engine::LogLevel::Warn, (msg))
+  do {                                                                         \
+    if (auto _cl_ = ::Engine::Log::GetDefaultLogger())                         \
+      _cl_->log(spdlog::level::warn, "{}", (msg));                             \
+  } while (0)
 
-/// 记录一条 ERROR 级别日志
 #define LOG_ERROR(msg)                                                         \
-  Engine::ConsoleLog::Instance().Log(Engine::LogLevel::Error, (msg))
+  do {                                                                         \
+    if (auto _cl_ = ::Engine::Log::GetDefaultLogger())                         \
+      _cl_->log(spdlog::level::err, "{}", (msg));                              \
+  } while (0)
