@@ -138,7 +138,6 @@ namespace Engine {
         void DrawHeader(GameObject* obj);
         void DrawTransformComponent(GameObject* obj, const DrawContext& ctx);
         void DrawComponentSection(GameObject* obj, Component& comp, const DrawContext& ctx);
-        void DrawAddComponentMenu();
         void DrawDebugInfo(GameObject* obj);
 
         // ── 反射自动绘制 ──
@@ -181,10 +180,6 @@ namespace Engine {
         // 回调
         ModifyCallback m_ModifyCallback;
         UndoCallback m_UndoCallback;
-
-        // 添加组件菜单状态
-        char m_AddComponentSearch[128] = {};
-        bool m_ShowAddComponentMenu = false;
     };
 
 } // namespace Engine

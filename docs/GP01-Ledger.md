@@ -211,6 +211,33 @@ Decision:            FIX NOW —— ① Sprite 贴图进渲染路径；② 日�
                      教训入计划：P0 验收必须含"最小可视性"硬标准。
 Level:               L1（复现于首次真实使用）
 ```
+### GP-DX-008
+```
+Title:               UI 链路假成功/假删除簇（AUD-1..4，GP-DX-007 同构家族）
+Category:            Process / Production UI
+Severity:            HIGH
+Game Context:        GP1-D Human Run 前置全量 UI 审计（docs/GP1-DX-UI-Audit.md，
+                     2026-08-25，逐按钮链路追踪）
+Observed Problem:    四处反馈层缺陷会直接污染人工 Run 判决：
+                     ① Script Save 写盘失败仍打 "script saved"；② Play 态
+                     Assign Sprite 改动随 Stop 蒸发但报成功；③ 子对象
+                     Delete 不解除父 children 引用（树/渲染仍见"已删"实体）；
+                     ④ Save Project 失败完全静默。审计同时暴露
+                     GameObject::RemoveChild 先 SetParent 后 erase 的双重
+                     迭代器失效——此前为零调用死代码，Scene 层修复首次
+                     接线即触发（新契约测试当场捕获）。
+Current API Attempt: 不适用（实现/验收问题，非能力缺口）。
+Why Current API Is Insufficient: 不适用。
+Workaround:          无 —— Run 结果有效性直接受损（GP1-D 继续 BLOCKED）。
+Frequency:           每次 Save / Assign / Delete 生产操作路径。
+Production Cost:     人工验证判决不可信；假成功日志误导排障方向。
+Cross-Game Evidence: GP-DX-007（同构教训："成功日志必须以真实 IO 结果为准"）。
+Decision:            FIX NOW —— AUD-1/2/4 反馈层补返回值校验+失败日志；
+                     AUD-3 Scene::RemoveObject 父引用摘除 + RemoveChild
+                     迭代器序修正；契约 EditorWorkflow_DeleteSemantics(D7)
+                     固化；基线 121→122，gate GREEN。P1-b 清单见审计报告 §5。
+Level:               L1（静态复现 + 契约固化）
+```
 ### Dogfood04 DX 台账复核（DX02/03/05/07）
 
 | 编号 | 复核结果 | 处置 |
@@ -443,6 +470,7 @@ Level:               L0→L2 已记录（缺口确凿），晋升等成本证据
 
 | 编号 | Title | Category | Severity | Level | Decision |
 |------|-------|----------|----------|-------|----------|
+| GP-DX-008 | UI 链路假成功/假删除簇（AUD-1..4） | Process/Production UI | HIGH | L1 | FIX NOW（已修，D7 契约固化，122 GREEN） |
 | GP-DX-006 | Project Session 生命周期 | Editor/Session | LOW | L0 | OBSERVE（Human Run 实测） |
 | GP-DX-005 | Viewport 仅 Billboard 反馈 | Editor/Rendering | LOW | L0 | OBSERVE（升级标准已定） |
 | GP-DX-004 | Editor/Play 状态一致性语义 | Editor/State | MEDIUM(前瞻) | L0 | OBSERVE（Save=恒编辑态，Run3 裁决） |

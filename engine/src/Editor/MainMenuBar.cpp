@@ -56,11 +56,13 @@ namespace Engine {
 
     void MainMenuBar::DrawFileMenu() {
         if (ImGui::BeginMenu("File")) {
-            if (ImGui::MenuItem("New Scene",    "Ctrl+N")) {
+            // 快捷键文本已移除（GP1-DX 审计 P1-b）：这些组合键从未注册，
+            // 展示未实现的键位属虚假可供性。
+            if (ImGui::MenuItem("New Scene")) {
                 if (m_NewSceneCallback) m_NewSceneCallback();
             }
 
-            if (ImGui::MenuItem("Open Scene...", "Ctrl+O")) {
+            if (ImGui::MenuItem("Open Scene...")) {
                 // 回调接受文件路径字符串
                 // 实际文件对话框由 EngineEditor 或外部分配的 OpenScenePathCallback 处理
                 if (m_OpenSceneCallback) {
@@ -71,11 +73,11 @@ namespace Engine {
 
             ImGui::Separator();
 
-            if (ImGui::MenuItem("Save Scene",   "Ctrl+S")) {
+            if (ImGui::MenuItem("Save Scene")) {
                 if (m_SaveSceneCallback) m_SaveSceneCallback();
             }
 
-            if (ImGui::MenuItem("Save As...",   "Ctrl+Shift+S")) {
+            if (ImGui::MenuItem("Save As...")) {
                 if (m_SaveAsCallback) m_SaveAsCallback();
             }
 
@@ -99,11 +101,11 @@ namespace Engine {
             bool canUndo = m_UndoState.canUndo;
             bool canRedo = m_UndoState.canRedo;
 
-            if (ImGui::MenuItem("Undo", "Ctrl+Z", false, canUndo)) {
+            if (ImGui::MenuItem("Undo", nullptr, false, canUndo)) {
                 if (m_UndoCallback) m_UndoCallback();
             }
 
-            if (ImGui::MenuItem("Redo", "Ctrl+Y", false, canRedo)) {
+            if (ImGui::MenuItem("Redo", nullptr, false, canRedo)) {
                 if (m_RedoCallback) m_RedoCallback();
             }
 
@@ -122,17 +124,21 @@ namespace Engine {
 
     void MainMenuBar::DrawSceneMenu() {
         if (ImGui::BeginMenu("Scene")) {
-            if (ImGui::MenuItem("Play",    "F5")) {
+            // 修复（GP1-DX 审计 P1-b）：移除装饰性快捷键文本 ——
+            // 这些键位从未注册；F5 在 EditorDemo 宿主中已被
+            // GP01ProductionSession 占用为脚本热重载，展示"F5=Play"
+            // 构成误导（GP-DX-007 假阳性教训：不提供虚假可供性）。
+            if (ImGui::MenuItem("Play")) {
                 if (m_PlayCallback) m_PlayCallback();
             }
-            if (ImGui::MenuItem("Pause",   "F6")) {
+            if (ImGui::MenuItem("Pause")) {
                 if (m_PauseCallback) m_PauseCallback();
             }
-            if (ImGui::MenuItem("Stop",    "Shift+F5")) {
+            if (ImGui::MenuItem("Stop")) {
                 if (m_StopCallback) m_StopCallback();
             }
             ImGui::Separator();
-            if (ImGui::MenuItem("Step Frame", "F10")) {
+            if (ImGui::MenuItem("Step Frame")) {
                 if (m_StepCallback) m_StepCallback();
             }
             ImGui::EndMenu();
@@ -224,12 +230,19 @@ namespace Engine {
     void MainMenuBar::DrawHelpMenu() {
         if (ImGui::BeginMenu("Help")) {
             if (ImGui::MenuItem("About")) {
-                ImGui::OpenPopup("About Engine");
+                m_AboutOpenRequested = true;
             }
             ImGui::EndMenu();
         }
 
         // ── About 弹窗 ──
+        // 修复（GP1-DX 审计 P1-b）：OpenPopup 原在 Help 菜单子窗口的 ID 域内
+        // 调用，而 BeginPopupModal 在菜单栏根作用域查找 —— 弹窗永不开。
+        // 现以标志延迟到 EndMenu 之后的同一作用域触发。
+        if (m_AboutOpenRequested) {
+            m_AboutOpenRequested = false;
+            ImGui::OpenPopup("About Engine");
+        }
         if (ImGui::BeginPopupModal("About Engine", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
             ImGui::Text("Game Engine Demo v0.1");
             ImGui::Separator();

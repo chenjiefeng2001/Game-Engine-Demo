@@ -95,8 +95,11 @@ namespace Engine {
 
         if (it == m_Children.end()) return false;
 
-        (*it)->SetParent(nullptr);
+        // 先持有引用再 erase：SetParent 会扫描旧父级 children，
+        // 若先 SetParent 后 erase，迭代器已被内部移除失效（双重删除）。
+        std::shared_ptr<GameObject> owned = *it;
         m_Children.erase(it);
+        child->SetParent(nullptr);
         return true;
     }
 

@@ -86,11 +86,21 @@ public:
     }
 
     bool SaveProject() {
-        if (!m_EditScene) return false;
+        if (!m_EditScene) {
+            Log::Warn("[GP01] save: no project loaded");
+            return false;
+        }
         RealignBindings();
         Content::SceneSnapshot live = Content::CaptureScene(*m_EditScene, m_Bindings);
-        if (!Content::SaveSnapshotToFile(live, m_ScenePath)) return false;
-        if (!m_Reg.SaveManifest(m_ManifestPath)) return false;
+        if (!Content::SaveSnapshotToFile(live, m_ScenePath)) {
+            Log::Error("[GP01] SAVE FAILED: cannot write scene file: {}", m_ScenePath);
+            return false;
+        }
+        if (!m_Reg.SaveManifest(m_ManifestPath)) {
+            Log::Error("[GP01] SAVE FAILED: cannot write manifest: {} "
+                       "(scene already written)", m_ManifestPath);
+            return false;
+        }
         Log::Info("[GP01] project saved: {} ({} entities)",
                   m_ScenePath, live.entities.size());
         return true;
@@ -180,6 +190,12 @@ private:
     }
 
     void AssignSpriteToSelected(const std::string& path, ResourceGUID guid) {
+        if (m_Playing) {
+            // AUD-2：Play 态选中对象属运行态克隆，写入会随 Stop 蒸发 —— 拒绝
+            Log::Warn("[GP01] assign ignored while PLAYING "
+                      "(edit-state only; press ■ Stop first)");
+            return;
+        }
         auto sel = m_Editor->GetSelectedObject();
         if (!sel) { Log::Warn("[GP01] assign: nothing selected"); return; }
         if (!sel->HasComponent<SpriteComponent>())
@@ -188,9 +204,14 @@ private:
             sel->GetComponent<SpriteComponent>()->SetTexture(m_TexMgr, path);
         RealignBindings();
         int i = FindIndex(sel.get());
-        if (i >= 0 && i < static_cast<int>(m_Bindings.size()))
+        if (i >= 0 && i < static_cast<int>(m_Bindings.size())) {
             m_Bindings[static_cast<size_t>(i)].spriteGuid = guid;   // DL-02 纪律
-        Log::Info("[GP01] sprite assigned: {} -> {}", sel->GetName(), path);
+            Log::Info("[GP01] sprite assigned: {} -> {}", sel->GetName(), path);
+        } else {
+            // 选中实体不在编辑场景（理论上 Play 态已被上方拦截，此处兜底）
+            Log::Error("[GP01] ASSIGN FAILED: selected entity '{}' is not "
+                       "in edit scene; binding NOT written", sel->GetName());
+        }
     }
 
     void CreateEntity() {
@@ -286,11 +307,7 @@ private:
 
         if (ImGui::Button("Load")) LoadBuffer(curPath);
         ImGui::SameLine();
-        if (ImGui::Button("Save")) {
-            std::ofstream f(curPath, std::ios::binary | std::ios::trunc);
-            if (f.good()) { f.write(m_Buf, static_cast<std::streamsize>(strlen(m_Buf))); m_Dirty = false; }
-            Log::Info("[GP01] script saved: {}", curPath);
-        }
+        if (ImGui::Button("Save")) SaveScriptBuffer(curPath);
         ImGui::SameLine();
         if (ImGui::Button("Reload (F5)")) ReloadActiveScript();
         ImGui::TextDisabled("%s%s", m_Dirty ? "* " : "", curPath.c_str());
@@ -302,10 +319,30 @@ private:
 
     void LoadBuffer(const std::string& path) {
         std::ifstream f(path, std::ios::binary);
-        if (!f.good()) return;
+        if (!f.good()) {
+            Log::Error("[GP01] script load failed (cannot open): {}", path);
+            return;
+        }
         std::memset(m_Buf, 0, sizeof(m_Buf));
         f.read(m_Buf, sizeof(m_Buf) - 1);
         m_Dirty = false;
+    }
+
+    // AUD-1：成功日志必须以真实写盘结果为准（GP-DX-007 假阳性教训）
+    bool SaveScriptBuffer(const std::string& path) {
+        std::ofstream f(path, std::ios::binary | std::ios::trunc);
+        if (!f.good()) {
+            Log::Error("[GP01] SCRIPT SAVE FAILED (cannot open): {}", path);
+            return false;
+        }
+        f.write(m_Buf, static_cast<std::streamsize>(strlen(m_Buf)));
+        if (!f.good()) {
+            Log::Error("[GP01] SCRIPT SAVE FAILED (write error): {}", path);
+            return false;
+        }
+        m_Dirty = false;
+        Log::Info("[GP01] script saved: {}", path);
+        return true;
     }
 
     OpenGLGraphicsFactory m_Gfx;                 // 会话自有工厂（与宿主解耦）

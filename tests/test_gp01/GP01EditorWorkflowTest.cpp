@@ -73,6 +73,54 @@ namespace {
 } // namespace
 
 // ════════════════════════════════════════════════════════════
+// D7 删除语义（AUD-3，GP1-DX UI 审计 remediation）：
+//   Hierarchy 右键 Delete → Scene::RemoveObject 必须把子对象
+//   从父 children 一并摘除 —— 否则父 shared_ptr 继续持有，
+//   “删除”后的对象仍被树遍历/渲染（假删除）。根对象路径回归。
+// ════════════════════════════════════════════════════════════
+TEST(GP01, EditorWorkflow_DeleteSemantics) {
+    Scene s;
+    auto parent = std::make_shared<GameObject>("Parent");
+    auto child  = std::make_shared<GameObject>("Child");
+    auto grand  = std::make_shared<GameObject>("Grand");
+    s.AddObject(parent);
+    parent->AddChild(child);
+    child->AddChild(grand);
+    ASSERT_EQ(s.GetTotalObjectCount(), 3u);
+
+    // ── 层级中间节点删除（审计缺陷原复现路径）──
+    ASSERT_TRUE(s.RemoveObject(child.get()));
+    EXPECT_TRUE(parent->GetChildren().empty())
+        << "AUD-3: removed child must be detached from parent's children";
+    EXPECT_EQ(s.FindObject("Child"), nullptr);
+    EXPECT_EQ(s.FindObject("Grand"), nullptr)
+        << "subtree must leave scene traversal after removal";
+    EXPECT_EQ(s.GetTotalObjectCount(), 1u);
+
+    // ── 根对象删除（原行为回归）──
+    EXPECT_TRUE(s.RemoveObject(parent.get()));
+    EXPECT_EQ(s.GetTotalObjectCount(), 0u);
+
+    // ── 边界：空指针 / 重复删 / 非本场景对象 ──
+    EXPECT_FALSE(s.RemoveObject(nullptr));
+    EXPECT_FALSE(s.RemoveObject(parent.get()))
+        << "double remove must fail cleanly";
+    auto stranger = std::make_shared<GameObject>("Stranger");
+    EXPECT_FALSE(s.RemoveObject(stranger.get()));
+
+    // ── 深层后代直接删除：按立即父摘除，与深度无关 ──
+    auto a = std::make_shared<GameObject>("A");
+    auto b = std::make_shared<GameObject>("B");
+    auto c = std::make_shared<GameObject>("C");
+    s.AddObject(a);
+    a->AddChild(b);
+    b->AddChild(c);
+    EXPECT_TRUE(s.RemoveObject(c.get()));
+    EXPECT_TRUE(b->GetChildren().empty());
+    EXPECT_EQ(s.GetTotalObjectCount(), 2u);
+}
+
+// ════════════════════════════════════════════════════════════
 // D6 黄金路径：Clean Start → Import → Create → Assign → Transform
 //   → Save → Play → Reload → Modify → Save → Cold Restart
 //   → Load → Verify → Play → Continue

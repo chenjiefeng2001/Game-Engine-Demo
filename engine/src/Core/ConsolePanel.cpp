@@ -1,4 +1,5 @@
 #include "Engine/ConsolePanel.h"
+#include "Engine/ConsoleCommandRegistry.h"
 #include "Engine/Core/Log.h"
 #include "Engine/Editor/IconsFontAwesome6.h"
 #include <imgui.h>
@@ -355,30 +356,63 @@ namespace Engine {
         // 显示执行的命令
         ConsoleLogSink::Write("> " + cmd, 0, "Console");
 
-        // 解析并执行命令
+        // 面板自有命令：清屏（注册表的 clear 无法触及面板缓冲）
         if (cmd == "clear" || cmd == "cls") {
             s_LogBuffer.clear();
             s_LogHead = -1;
             s_LogCount = 0;
-        } else if (cmd == "help") {
-            ConsoleLogSink::Write("Available commands:", 0, "Console");
-            ConsoleLogSink::Write("  clear/cls  - Clear console", 0, "Console");
-            ConsoleLogSink::Write("  help       - Show this help", 0, "Console");
-            ConsoleLogSink::Write("  stats      - Toggle stats overlay", 0, "Console");
-            ConsoleLogSink::Write("  gc         - Force garbage collection", 0, "Console");
+            m_InputBuf[0] = '\0';
+            return;
+        }
+
+        // 修复（GP1-DX 审计 P1-b）：接入 ConsoleCommandRegistry ——
+        // 原实现硬编码只认 clear/cls/help，完整内置命令体系悬空。
+        std::string output;
+        if (ConsoleCommandRegistry::Instance().Execute(cmd, output)) {
+            if (!output.empty()) {
+                ConsoleLogSink::Write(StripColorCodes(output), 0, "Console");
+            }
         } else {
-            ConsoleLogSink::Write("Unknown command: " + cmd, 1, "Console");
+            ConsoleLogSink::Write("Unknown command: " + cmd +
+                                  "  (try 'help' or 'cmdlist')", 1, "Console");
         }
 
         m_InputBuf[0] = '\0';
     }
 
-    void ConsolePanel::AutoComplete() {
-        // 简化 Tab 补全
-        if (!m_CompletionCandidates.empty()) {
-            m_CompletionIndex = (m_CompletionIndex + 1) % m_CompletionCandidates.size();
-            std::strncpy(m_InputBuf, m_CompletionCandidates[m_CompletionIndex].c_str(), sizeof(m_InputBuf) - 1);
+    std::string ConsolePanel::StripColorCodes(const std::string& text) {
+        // 注册表输出使用 Quake 风格 ^N 色码；面板按纯文本渲染，剥离之
+        std::string out;
+        out.reserve(text.size());
+        for (size_t i = 0; i < text.size(); ++i) {
+            if (text[i] == '^' && i + 1 < text.size() &&
+                text[i + 1] >= '0' && text[i + 1] <= '9') {
+                ++i;   // 跳过色码数字
+                continue;
+            }
+            out += text[i];
         }
+        return out;
+    }
+
+    void ConsolePanel::AutoComplete() {
+        // 修复（GP1-DX 审计 P1-b）：原实现依赖永不填充的候选表（DEAD）。
+        // 现以当前输入为前缀查询注册表：唯一命中直接补全，多重命中列出候选。
+        const std::string prefix(m_InputBuf);
+        if (prefix.empty()) return;
+
+        auto candidates = ConsoleCommandRegistry::Instance().GetCompletions(prefix);
+        if (candidates.empty()) return;
+
+        if (candidates.size() == 1) {
+            std::strncpy(m_InputBuf, candidates.front().c_str(), sizeof(m_InputBuf) - 1);
+            m_InputBuf[sizeof(m_InputBuf) - 1] = '\0';
+            return;
+        }
+
+        std::string list = "matches:";
+        for (const auto& c : candidates) list += "  " + c;
+        ConsoleLogSink::Write(list, 0, "Console");
     }
 
     void ConsolePanel::HistoryPrev() {
