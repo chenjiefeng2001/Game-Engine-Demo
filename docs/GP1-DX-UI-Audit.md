@@ -220,3 +220,49 @@ ASan interception 死锁态）锁死 exe/pdb —— 以 rename 绕过解锁，�
 
 P1-c 结构债维持开放（Toolbar 桥接或摘除 / 双 PIE 入口隔离 / UndoSystem 接线或冻结声明 /
 死代码簇清扫 / PropertyDrawer 孤儿库处置），见 §5。
+
+---
+
+## 7. UI 层级/布局专项审计（2026-08-26，三准则）
+
+> 准则来源：人工评审要求 —— ① 类别不混（不该同组的组件不得放一起）；
+> ② 菜单不过深；③ 字体显示完整、位置正确。
+> 方法：全 UI 源码走查 + **图标码位 × 真实字体 cmap 机器比对**（Python 解析
+> OTF cmap format 4/12，对 `assets/fonts/fa-solid-900.otf` 与 FA7 子模块双验）
+> + EditorDemo 实机冒烟。
+
+### 7.1 准则①类别混淆
+
+| 编号 | 发现 | 判定 | 处置 |
+|------|------|------|------|
+| CAT-1 | View > Scene Panels 子菜单内 "Hierarchy (Entity Tree)" 与核心组 "Scene Hierarchy" 绑定**同一 bool** —— 同一组件出现在两个类别，开关互相干扰且语义重复 | 混类 | ✅ 摘除子菜单内副本（MainMenuBar.cpp DrawViewMenu） |
+| CAT-2 | Tools 菜单把 Dear ImGui 内置调试三件套（Demo/Metrics/StackTool）排在内容创作编辑器之前，两类别仅一条分隔线且顺序反直觉 | 混类(轻) | ✅ 平铺分组重排：创作工具在前、ImGui 调试组隔离置后；**未引入子菜单层级** |
+| CAT-3 | GP01 Production 窗口单行混排三类控件：工程 IO（Open/Save）+ 播放控制（Play/Stop/Reload）+ 实体创建（+ Entity） | 混类 | ✅ 竖分隔线分三组；提示文案拆为 edit/play 两行各归其类（GP01ProductionSession.h DrawProductionWindow） |
+| OBS-T1 | Toolbar W/E/R 全局键拦截（Toolbar.cpp:38-42）在 Play 态与游戏 WASD 输入语义冲突（当前回调为空无可见影响） | 登记 | P1-c Toolbar 桥接/摘除决策时强制一并处理 |
+
+### 7.2 准则②菜单深度
+
+全 UI 实测最深层级 = **2**（View > Scene Panels / Browsers；Viewport 右键
+Add...；AssetBrowser 右键 Create）—— 合规，无需收敛。本轮全部修复均为平铺
+操作，零新增子菜单。结论：该准则当前无违规项，作为后续改动约束记录。
+
+### 7.3 准则③字体显示完整性 / 位置
+
+| 编号 | 发现 | 后果 | 处置 |
+|------|------|------|------|
+| FONT-1 | `IconsFontAwesome6.h`（自定义 70 宏子集）与真实 FA7 Solid 字体脱节：**4 码位不在 cmap**（ROTATE_LEFT f3e2 / ROTATE_RIGHT f3e3 / MAP_LOCATION_DOT f620 / WATER f777）；**2 个字节↔注释不符**（ARROWS 字节实为 U+F071=警告三角，注释写 f07b=folder；WATER 字节 f777 注释写 f77b） | Toolbar/Viewport 浮层 Rotate 按钮、SceneManager 窗口标题、流式分组图标渲染为 "?"；**移动工具按钮显示警告三角**（图标语义错误） | ✅ 5 宏替换为经 cmap 验证的等义码位：ROTATE_LEFT→f0e2、ROTATE_RIGHT→f01e、MAP_LOCATION_DOT→f5a0、WATER→f773、ARROWS→f0b2(move)；复验 **70/70 全部存在于字体** |
+| FONT-2 | `SetScale` 运行期静默 no-op：Begin() 经 LoadFont(null) 被 `m_CjkFontAttempted` 短路，ApplyEngineStyle 也未调用 —— 字体与样式均不变，**日志却打印 "Scale set to ..."**（GP-DX-007 假成功家族第 5 例） | 缩放功能整体失效且排障被假日志误导（ImGuiTest/ImGuiDemo 宿主实际触发路径） | ✅ Begin() 帧间（NewFrame 前）`RebuildFontAtlas(newSize)` + `ApplyEngineStyle(pending)`；1.92 动态纹理系统按 WantCreate/WantDestroy 自动重建 GPU 纹理；过时的"禁用 Clear()"注释更正为官方口径（Clear 仅禁止帧中调用） |
+| POS-1 | MainMenuBar 右侧版本文本固定 `SameLine(Width−160)`，窗口偏窄时与左侧菜单重叠 | 重叠遮挡 | ✅ 实测文本宽 + 余量守卫，空间不足跳过绘制 |
+| OBS-P1 | Viewport 浮层工具条固定 400px 宽，snap 展开时内容估宽 ~360px 接近上限（窄视口折行裁切风险） | 观察 | 低危，P1-c 一并评估 |
+| OBS-P2 | StatusBar 右侧簇按硬编码 ~300px 预留，长分支名可左侵任务区 | 观察 | 低危，P1-c 一并评估 |
+| OBS-P3 | ViewportPanel 浮层水平流内用 `Separator()`（短横线）而 Toolbar 用自绘竖线 —— 分隔符语言不统一 | 观察 | 纯视觉一致性，P1-c |
+
+### 7.4 验证记录
+
+- 构建：EngineCore + EditorDebug(EditorDemo) Debug 编译通过（零新告警）。
+- Gate：`integrity_gate.ps1` **ALL GREEN (I1+I2+I3), 122/122**。
+- 实机冒烟：EditorDemo 启动 15s 存活、`Merged CJK font: msyh.ttc (16px)` +
+  `Merged FontAwesome: assets/fonts/fa-solid-900.otf (16px)`、GP01 工程
+  10 objects/33 assets 自动加载、engine.log 零 error。
+- 字体比对脚本结论留存于本节方法注记（cmap 解析对两份字体文件结果一致：
+  3235 codepoints）。

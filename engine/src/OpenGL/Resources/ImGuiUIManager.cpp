@@ -145,8 +145,14 @@ namespace Engine {
         if (m_PendingScale > 0.0f) {
             float pending = m_PendingScale;
             m_PendingScale = -1.0f;
-            float newSize = std::roundf(16.0f * pending);
-            LoadFont(m_FontPath.empty() ? nullptr : m_FontPath.c_str(), newSize);
+            // UI 层级审计修复（GP-DX-011）：运行期缩放此前是静默 no-op ——
+            // LoadFont 在 m_CjkFontAttempted 置位后直接短路，样式也未重缩放，
+            // 日志却照常打印 "Scale set to ..."（假成功，GP-DX-007 同构）。
+            // 现改为：帧间（NewFrame 前）重建图集 + 同步重缩放主题尺寸。
+            ApplyEngineStyle(pending);
+            const float newSize = std::roundf(16.0f * pending);
+            RebuildFontAtlas(newSize);
+            m_FontSize = newSize;
             s_Log.Info("Scale set to {} (font: {}px)", pending, newSize);
         }
 
@@ -222,118 +228,134 @@ namespace Engine {
     //   2. 否则尝试加载 Windows 系统 CJK 字体（微软雅黑）
     //   3. 若均失败 → 回退到默认内嵌字体（不支持中文）
     //
-    // 重要安全说明：
-    //   - 不要调用 io.Fonts->Clear()，否则会销毁当前帧还在引用的图集。
-    //   - 不要直接调用 GetTexDataAsRGBA32()/Build()，后端会在首次渲染时
-    //     自动处理纹理上传；提前调用可能因后端纹理能力未就绪而触发断言。
-    //   - 使用 m_CjkFontAttempted 标志确保 CJK 字体只尝试加载一次。
+    // 运行期重建（1.92 动态字体/纹理系统）：
+    //   - ImFontAtlas::Clear() 仅允许帧间调用（本引擎固定在 Begin() 内、
+    //     NewFrame 之前）；Clear 后重新 AddFont，NewFrame 自动光栅化，
+    //     渲染后端按 ImTextureStatus_WantCreate/WantDestroy 自动重建
+    //     GPU 纹理，无需手动调用后端接口。
+    //   - 使用 m_CjkFontAttempted 标志确保 CJK 字体只在首次 LoadFont 时尝试。
     // ============================================================
+
+    void ImGuiUIManager::RebuildFontAtlas(float sizePixels) {
+        ImGuiIO& io = ImGui::GetIO();
+        io.Fonts->Clear();
+
+        // 先加载默认字体，但指定显式 SizePixels。
+        // 若不设显式大小，AddFontDefault 会将字体标记为 ImFontFlags_ImplicitRefSize，
+        // 导致后续 MergeMode 的 CJK 字体加载时触发断言冲突。
+        {
+            ImFontConfig defaultConfig;
+            defaultConfig.SizePixels = sizePixels;
+            io.Fonts->AddFontDefault(&defaultConfig);
+        }
+
+        // 尝试从 Windows 系统字体目录合并 CJK 字形
+        const char* cjkCandidates[] = {
+            "C:/Windows/Fonts/msyh.ttc",     // Microsoft YaHei
+            "C:/Windows/Fonts/msyhbd.ttc",   // Microsoft YaHei Bold
+            "C:/Windows/Fonts/simhei.ttf",   // SimHei
+            "C:/Windows/Fonts/yahei.ttf",    // YaHei fallback
+            "C:/Windows/Fonts/msjh.ttc",     // Microsoft JhengHei (繁体)
+        };
+
+        bool cjkLoaded = false;
+        for (auto& candidate : cjkCandidates) {
+            ImFontConfig config;
+            config.MergeMode = true;
+            config.SizePixels = sizePixels;  // 与默认字体保持一致
+            // 仅加载 CJK 和符号字形 —— 不包含 Basic Latin / Latin-1，
+            // 以便 ProggyClean 的清晰位图字体继续渲染英文。
+            static const ImWchar cjkRanges[] = {
+                0x4E00, 0x9FFF,     // CJK Unified Ideographs (汉字)
+                0x3400, 0x4DBF,     // CJK Extension A (生僻字)
+                0x3000, 0x303F,     // CJK Symbols and Punctuation（。、）
+                0xFF00, 0xFFEF,     // Fullwidth Forms（！＂）
+                0x2010, 0x205F,     // General Punctuation（–—'）
+                0x2300, 0x27BF,     // Misc Technical / Symbols / Dingbats / Geometric Shapes
+                                    //  (⏸ ⏩ ▶ ◀ ■ ◆ ★ etc.)
+                0,
+            };
+            if (io.Fonts->AddFontFromFileTTF(candidate, sizePixels, &config, cjkRanges)) {
+                s_Log.Info("Merged CJK font: {} ({}px)", candidate, sizePixels);
+                cjkLoaded = true;
+                break;
+            }
+        }
+
+        if (!cjkLoaded) {
+            s_Log.Warn("No CJK font found, Chinese characters may show as '?'");
+        }
+
+        // ── Font Awesome 图标字体（MergeMode 到主字体的 FreeType 渲染器中） ──
+        // 注意: FontAwesome 7 提供 .otf 格式，ImGui 的 AddFontFromFileTTF 能加载 OTF。
+        // 仅合并图标私有使用区字形，不覆盖拉丁字母。
+        {
+            // 候选路径优先级:
+            //   1. assets/fonts/ (工作目录相对路径，兼容开发环境)
+            //   2. third_party/fontawesome/otfs/ (子模块原始路径)
+            //   3. ../ (从某些构建输出目录回溯)
+            const char* faCandidates[] = {
+                "assets/fonts/fa-solid-900.otf",
+                "third_party/fontawesome/otfs/Font Awesome 7 Free-Solid-900.otf",
+                "../assets/fonts/fa-solid-900.otf",
+            };
+
+            // FontAwesome 图标的 Unicode 私有使用区范围
+            // 这些码点对应 ICON_FA_* 宏的 UTF-8 编码。
+            static const ImWchar faRanges[] = {
+                0xE005, 0xF8FF,  // Private Use Area
+                0,
+            };
+
+            ImFontConfig faConfig;
+            faConfig.MergeMode = true;
+            faConfig.PixelSnapH = true;
+            faConfig.GlyphMinAdvanceX = sizePixels; // 图标等宽
+            faConfig.SizePixels = sizePixels;
+
+            bool faLoaded = false;
+            for (auto& candidate : faCandidates) {
+                if (io.Fonts->AddFontFromFileTTF(candidate, sizePixels, &faConfig, faRanges)) {
+                    s_Log.Info("Merged FontAwesome: {} ({}px)", candidate, sizePixels);
+                    faLoaded = true;
+                    break;
+                }
+            }
+
+            if (!faLoaded) {
+                s_Log.Warn("FontAwesome not found, editor icons will show as text fallback. "
+                           "Run: git submodule update --init --recursive");
+            }
+        }
+
+        io.Fonts->Build();
+    }
 
     void ImGuiUIManager::LoadFont(const char* filePath, float sizePixels) {
         ImGuiIO& io = ImGui::GetIO();
 
         if (filePath && filePath[0] != '\0') {
             // ── 用户指定了自定义字体路径 ──
+            io.Fonts->Clear();
+            m_FontPath = filePath;
             if (io.Fonts->AddFontFromFileTTF(filePath, sizePixels)) {
                 s_Log.Info("Loaded custom font: {} ({}px)", filePath, sizePixels);
             } else {
+                // 加载失败：回退到默认 + CJK + 图标整套（比旧实现仅内嵌默认字体
+                // 多保留图标/CJK 可用性）
                 s_Log.Warn("Failed to load custom font: {}, falling back to default", filePath);
-                io.Fonts->AddFontDefault();
+                m_FontPath.clear();
+                RebuildFontAtlas(sizePixels);
             }
+            io.Fonts->Build();
             m_CjkFontAttempted = true; // 自定义字体，不再尝试 CJK
         } else if (!m_CjkFontAttempted) {
-            // ── 仅首次调用时尝试自动加载 CJK 字体 ──
+            // ── 仅首次调用时自动加载 CJK + 图标整套 ──
             m_CjkFontAttempted = true;
-
-            // 先加载默认字体，但指定显式 SizePixels。
-            // 若不设显式大小，AddFontDefault 会将字体标记为 ImFontFlags_ImplicitRefSize，
-            // 导致后续 MergeMode 的 CJK 字体加载时触发断言冲突。
-            {
-                ImFontConfig defaultConfig;
-                defaultConfig.SizePixels = sizePixels;
-                io.Fonts->AddFontDefault(&defaultConfig);
-            }
-
-            // 尝试从 Windows 系统字体目录合并 CJK 字形
-            const char* cjkCandidates[] = {
-                "C:/Windows/Fonts/msyh.ttc",     // Microsoft YaHei
-                "C:/Windows/Fonts/msyhbd.ttc",   // Microsoft YaHei Bold
-                "C:/Windows/Fonts/simhei.ttf",   // SimHei
-                "C:/Windows/Fonts/yahei.ttf",    // YaHei fallback
-                "C:/Windows/Fonts/msjh.ttc",     // Microsoft JhengHei (繁体)
-            };
-
-            bool cjkLoaded = false;
-            for (auto& candidate : cjkCandidates) {
-                ImFontConfig config;
-                config.MergeMode = true;
-                config.SizePixels = sizePixels;  // 与默认字体保持一致
-                // 仅加载 CJK 和符号字形 —— 不包含 Basic Latin / Latin-1，
-                // 以便 ProggyClean 的清晰位图字体继续渲染英文。
-                static const ImWchar cjkRanges[] = {
-                    0x4E00, 0x9FFF,     // CJK Unified Ideographs (汉字)
-                    0x3400, 0x4DBF,     // CJK Extension A (生僻字)
-                    0x3000, 0x303F,     // CJK Symbols and Punctuation（。、）
-                    0xFF00, 0xFFEF,     // Fullwidth Forms（！＂）
-                    0x2010, 0x205F,     // General Punctuation（–—'）
-                    0x2300, 0x27BF,     // Misc Technical / Symbols / Dingbats / Geometric Shapes
-                                        //  (⏸ ⏩ ▶ ◀ ■ ◆ ★ etc.)
-                    0,
-                };
-                if (io.Fonts->AddFontFromFileTTF(candidate, sizePixels, &config, cjkRanges)) {
-                    s_Log.Info("Merged CJK font: {} ({}px)", candidate, sizePixels);
-                    cjkLoaded = true;
-                    break;
-                }
-            }
-
-            if (!cjkLoaded) {
-                s_Log.Warn("No CJK font found, Chinese characters may show as '?'");
-            }
-
-            // ── Font Awesome 图标字体（MergeMode 到主字体的 FreeType 渲染器中） ──
-            // 注意: FontAwesome 7 提供 .otf 格式，ImGui 的 AddFontFromFileTTF 能加载 OTF。
-            // 仅合并图标私有使用区字形，不覆盖拉丁字母。
-            {
-                // 候选路径优先级:
-                //   1. assets/fonts/ (工作目录相对路径，兼容开发环境)
-                //   2. third_party/fontawesome/otfs/ (子模块原始路径)
-                //   3. ../ (从某些构建输出目录回溯)
-                const char* faCandidates[] = {
-                    "assets/fonts/fa-solid-900.otf",
-                    "../assets/fonts/fa-solid-900.otf",
-                    "third_party/fontawesome/otfs/Font Awesome 7 Free-Solid-900.otf",
-                };
-
-                // FontAwesome 图标的 Unicode 私有使用区范围
-                // 这些码点对应 ICON_FA_* 宏的 UTF-8 编码。
-                static const ImWchar faRanges[] = {
-                    0xE005, 0xF8FF,  // Private Use Area
-                    0,
-                };
-
-                ImFontConfig faConfig;
-                faConfig.MergeMode = true;
-                faConfig.PixelSnapH = true;
-                faConfig.GlyphMinAdvanceX = sizePixels; // 图标等宽
-                faConfig.SizePixels = sizePixels;
-
-                bool faLoaded = false;
-                for (auto& candidate : faCandidates) {
-                    if (io.Fonts->AddFontFromFileTTF(candidate, sizePixels, &faConfig, faRanges)) {
-                        s_Log.Info("Merged FontAwesome: {} ({}px)", candidate, sizePixels);
-                        faLoaded = true;
-                        break;
-                    }
-                }
-
-                if (!faLoaded) {
-                    s_Log.Warn("FontAwesome not found, editor icons will show as text fallback. "
-                               "Run: git submodule update --init --recursive");
-                }
-            }
+            RebuildFontAtlas(sizePixels);
         }
-        // 非首次调用且无自定义路径：不做任何事（字体已存在，避免重复添加）
+        // 非首次调用且无自定义路径：不做任何事（字体已存在，避免重复添加）；
+        // 运行期缩放走 Begin() 内的 RebuildFontAtlas 路径，不经此处。
     }
 
     // ============================================================

@@ -268,6 +268,40 @@ Decision:            OBSERVE —— 修复路线 §5 S1-S5 已排定；S1（双 
                      S5 涉序列化格式需 L2 评审。
 Level:               L1（结构复现 + 全量证据链固化；S1/S4 已收敛）
 ```
+### GP-DX-011
+```
+Title:               图标码位表与真实字体脱节 + 运行期缩放假成功（UI 层级审计簇）
+Category:            Process / Production UI
+Severity:            MEDIUM
+Game Context:        GP1-DX UI 层级专项审计（三准则：类别不混 / 菜单不过深 /
+                     字体显示完整位置正确；报告 docs/GP1-DX-UI-Audit.md §7）
+Observed Problem:    ① 自定义 ICON_FA_* 表 70 宏中 4 码位不在 FA7 Solid 字体
+                     cmap（Rotate 按钮 ×2 / SceneManager 标题 / 流式分组图标
+                     渲染为 "?"）、ARROWS 字节错映射至警告三角 U+F071（移动
+                     工具按钮图标语义错误）；② UIManager.SetScale 运行期
+                     no-op 但日志报 "Scale set to ..."（假成功）；③ 主菜单栏
+                     右侧版本文本窄窗口重叠菜单；④ View 菜单同一 Hierarchy
+                     开关双入口（核心组 + Scene Panels 子菜单同 bool）；
+                     ⑤ Tools 菜单 ImGui 调试件与创作编辑器混类；
+                     ⑥ GP01 Production 单行混排工程 IO/播放/实体创建。
+Current API Attempt: 不适用（资产表/实现缺陷，非能力缺口）。
+Why Current API Is Insufficient: 不适用。
+Workaround:          无 —— 图标错误/缩放失效直接可见可感。
+Frequency:           每帧渲染（图标）/每次缩放操作/每次打开相关菜单。
+Production Cost:     视觉语义误导排障成本；Human Run 录像可信度受损。
+Cross-Game Evidence: GP-DX-007 / GP-DX-008 同构家族（"成功反馈必须以真实
+                     结果为准"的字体/缩放版；假可供性再犯）。
+Decision:            FIX NOW —— 5 码位经 cmap 复验替换（70/70 PASS，双字体
+                     文件一致）；RebuildFontAtlas 帧间重建 + ApplyEngineStyle
+                     同步缩放（1.92 动态纹理自动重建）；版本文本宽度守卫；
+                     View 双入口摘除；Tools 平铺分组不加深层级；Production
+                     行三分组。gate ALL GREEN 122/122 + EditorDemo 冒烟通过。
+                     OBS 登记：Toolbar W/E/R 与 Play 态 WASD 冲突（随 P1-c）；
+                     Viewport 浮层宽距上限 / StatusBar 右簇预留硬编码 /
+                     分隔符语言不统一（低危随 P1-c）。菜单深度实测最深 2 级，
+                     合规，作为后续约束记录。
+Level:               L1（机器比对静态复现 + 构建级验证）
+```
 ### Dogfood04 DX 台账复核（DX02/03/05/07）
 
 | 编号 | 复核结果 | 处置 |
@@ -500,6 +534,7 @@ Level:               L0→L2 已记录（缺口确凿），晋升等成本证据
 
 | 编号 | Title | Category | Severity | Level | Decision |
 |------|-------|----------|----------|-------|----------|
+| GP-DX-011 | 图标码位脱节 + 缩放假成功（UI 层级审计簇） | Process/Production UI | MEDIUM | L1 | FIX NOW（已修，70/70 cmap 复验 + gate 122 GREEN） |
 | GP-DX-010 | 编辑器无统一状态层（多点离散） | Editor/Architecture | HIGH(结构) | L1 | OBSERVE（S1-S5 路线已排定，GP1-E 或事故触发 PROMOTE） |
 | GP-DX-008 | UI 链路假成功/假删除簇（AUD-1..4） | Process/Production UI | HIGH | L1 | FIX NOW（已修，D7 契约固化，122 GREEN） |
 | GP-DX-006 | Project Session 生命周期 | Editor/Session | LOW | L0 | OBSERVE（Human Run 实测） |

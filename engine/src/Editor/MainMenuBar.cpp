@@ -14,8 +14,15 @@ namespace Engine {
         if (!ImGui::BeginMainMenuBar()) return;
         OnMenuBar();
         // 右侧状态信息
-        ImGui::SameLine(ImGui::GetWindowWidth() - 160.0f);
-        ImGui::TextColored(ImVec4(0.5f, 0.5f, 0.5f, 1.0f), "Engine Editor v0.1");
+        // UI 层级审计（GP-DX-011）：窄窗口下 SameLine(Width-160) 会与左侧菜单
+        // 重叠 —— 仅在剩余宽度足够容纳文本时绘制，否则跳过。
+        const char* versionLabel = "Engine Editor v0.1";
+        const float labelWidth = ImGui::CalcTextSize(versionLabel).x;
+        const float menuCursorX = ImGui::GetCursorPosX();
+        if (ImGui::GetWindowWidth() - menuCursorX > labelWidth + 16.0f) {
+            ImGui::SameLine(ImGui::GetWindowWidth() - labelWidth - 12.0f);
+            ImGui::TextColored(ImVec4(0.5f, 0.5f, 0.5f, 1.0f), "%s", versionLabel);
+        }
         ImGui::EndMainMenuBar();
     }
 
@@ -169,8 +176,10 @@ namespace Engine {
             ImGui::Separator();
 
             // ── 场景面板组 ──
+            // UI 层级审计（GP-DX-011）：此处原有 "Hierarchy (Entity Tree)" 与
+            // 核心组 "Scene Hierarchy" 绑定同一 bool —— 同一组件出现在两个
+            // 类别中构成重复入口，摘除子菜单内副本。
             if (ImGui::BeginMenu("Scene Panels")) {
-                ImGui::MenuItem("Hierarchy (Entity Tree)",  nullptr, &m_Visibility->sceneHierarchy);
                 ImGui::MenuItem("Scene Viewer (Runtime)",   nullptr, &m_Visibility->sceneViewerPanel);
                 ImGui::MenuItem("Scene Manager (Groups)",   nullptr, &m_Visibility->sceneManager);
                 ImGui::Separator();
@@ -207,7 +216,18 @@ namespace Engine {
 
     void MainMenuBar::DrawToolsMenu() {
         if (ImGui::BeginMenu("Tools")) {
-            // ImGui Demo 窗口
+            // UI 层级审计（GP-DX-011）：内容创作编辑器与 ImGui 内置调试窗口
+            // 属不同类别 —— 创作工具在前，ImGui 调试组以分隔线隔离置后
+            //（平铺分组，不引入子菜单层级）。
+            if (m_Visibility) {
+                ImGui::MenuItem("Shader Graph Editor", nullptr, &m_Visibility->shaderGraph);
+                ImGui::MenuItem("VFX Editor",          nullptr, &m_Visibility->vfxEditor);
+                ImGui::MenuItem("Animation Editor",    nullptr, &m_Visibility->animationEditor);
+            }
+
+            ImGui::Separator();
+
+            // ── Dear ImGui 内置调试工具 ──
             ImGui::MenuItem("ImGui Demo", nullptr, &m_ShowDemo);
 
             // ImGui Metrics/Debugger（性能分析 + 窗口列表）
@@ -215,15 +235,6 @@ namespace Engine {
 
             // ImGui Stack Tool（控件堆栈追踪）
             ImGui::MenuItem("Stack Tool", nullptr, &m_ShowStackTool);
-
-            ImGui::Separator();
-
-            // ── 编辑器工具（通过 PanelVisibility 控制可见性） ──
-            if (m_Visibility) {
-                ImGui::MenuItem("Shader Graph Editor", nullptr, &m_Visibility->shaderGraph);
-                ImGui::MenuItem("VFX Editor",          nullptr, &m_Visibility->vfxEditor);
-                ImGui::MenuItem("Animation Editor",    nullptr, &m_Visibility->animationEditor);
-            }
 
             ImGui::EndMenu();
         }
