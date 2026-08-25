@@ -258,12 +258,27 @@ private:
     void DrawProductionWindow() {
         if (!ImGui::Begin("GP01 Production")) { ImGui::End(); return; }
         ImGui::TextDisabled("project: %s", m_ScenePath.c_str());
+
+        // UI 层级审计（GP-DX-011）：单行原先混排三类控件（工程 IO / 播放控制 /
+        // 实体创建），现以竖分隔线分组 —— 类别间留有视觉边界，顺序不变。
+        // [工程]
         if (ImGui::Button("Open Project")) {
             LoadProject("assets/gp01/manifest.json", "assets/gp01/Main.scene");
         }
         ImGui::SameLine();
         if (ImGui::Button("Save Project")) SaveProject();
-        ImGui::SameLine();
+
+        // [播放] —— 与工程操作隔离
+        auto VerticalSeparator = []() {
+            ImGui::SameLine();
+            ImVec2 p = ImGui::GetCursorScreenPos();
+            ImDrawList* dl = ImGui::GetWindowDrawList();
+            dl->AddLine(ImVec2(p.x + 2.0f, p.y + 3.0f), ImVec2(p.x + 2.0f, p.y + 21.0f),
+                        IM_COL32(80, 80, 90, 160), 1.0f);
+            ImGui::Dummy(ImVec2(6.0f, 0.0f));
+            ImGui::SameLine();
+        };
+        VerticalSeparator();
         if (!m_Playing) {
             ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.2f, 0.55f, 0.2f, 1.f));
             if (ImGui::Button("Play")) Play();
@@ -275,9 +290,14 @@ private:
             ImGui::SameLine();
             if (ImGui::Button("Reload (F5)")) ReloadActiveScript();
         }
-        ImGui::SameLine();
+
+        // [场景] —— 实体创建独立成组
+        VerticalSeparator();
         if (ImGui::Button("+ Entity")) CreateEntity();
-        ImGui::TextDisabled("WASD move / J attack (Play) | selection syncs Inspector & Viewport");
+
+        // 提示文案按类别拆分：编辑辅助 vs 播放操作
+        ImGui::TextDisabled("edit: selection syncs Inspector & Viewport");
+        ImGui::TextDisabled("play: WASD move / J attack | F5 reload script");
         ImGui::End();
     }
 

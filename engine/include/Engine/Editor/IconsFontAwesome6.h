@@ -23,10 +23,10 @@
 #define ICON_FA_SYNC       "\xef\x80\xa1"  // f021
 
 // ── 变换/编辑工具图标 ──
-#define ICON_FA_ARROWS        "\xef\x81\xb1"  // f07b  (arrows-alt)
+#define ICON_FA_ARROWS        "\xef\x82\xb2"  // f0b2 (up-down-left-right)
 #define ICON_FA_UP_DOWN_LEFT_RIGHT "\xef\x82\xb2" // f0b2 (move)
-#define ICON_FA_ROTATE_LEFT   "\xef\x8f\xa2"  // f3e2 (undo)
-#define ICON_FA_ROTATE_RIGHT  "\xef\x8f\xa3"  // f3e3 (redo)
+#define ICON_FA_ROTATE_LEFT   "\xef\x83\xa2"  // f0e2 (arrow-rotate-left)
+#define ICON_FA_ROTATE_RIGHT  "\xef\x80\x9e"  // f01e (arrow-rotate-right)
 #define ICON_FA_EXPAND        "\xef\x81\xa5"  // f065 (expand-arrows-alt)
 #define ICON_FA_COMPRESS      "\xef\x81\xa6"  // f066
 #define ICON_FA_OBJECT_GROUP  "\xef\x89\x87"  // f247
@@ -82,8 +82,8 @@
 #define ICON_FA_UNLOCK      "\xef\x82\x9c"  // f09c
 #define ICON_FA_MAGNIFYING_GLASS "\xef\x80\x82" // f002
 #define ICON_FA_BUG               "\xef\x86\x88"  // f188
-#define ICON_FA_MAP_LOCATION_DOT  "\xef\x98\xa0"  // f620
-#define ICON_FA_WATER             "\xef\x9d\xb7"  // f77b
+#define ICON_FA_MAP_LOCATION_DOT  "\xef\x96\xa0"  // f5a0
+#define ICON_FA_WATER             "\xef\x9d\xb3"  // f773
 #define ICON_FA_BOXES_STACK       "\xef\x91\xa8"  // f468
 #define ICON_FA_PEN_TO_SQUARE     "\xef\x81\x84"  // f044
 #define ICON_FA_FLOPPY_DISK       "\xef\x83\x87"  // f0c7

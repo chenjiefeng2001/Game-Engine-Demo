@@ -52,6 +52,11 @@ namespace Engine {
         /** 应用引擎暗色主题 */
         void ApplyEngineStyle(float scale);
 
+        /** 以指定像素尺寸重建整套字体图集（默认字形 + CJK 合并 + FontAwesome 合并）。
+         *  仅允许在帧间（Begin 内 NewFrame 之前）调用 —— ImFontAtlas::Clear
+         *  禁止在帧中调用；1.92 动态纹理系统会在随后渲染时自动重建 GPU 纹理。 */
+        void RebuildFontAtlas(float sizePixels);
+
         bool m_Initialized = false;
         bool m_Visible = true;
         float m_Scale = 1.0f;
