@@ -252,7 +252,9 @@ namespace Engine {
                         int type = static_cast<int>(body->GetType());
                         const char* typeNames[] = { "Static", "Kinematic", "Dynamic" };
                         if (ImGui::Combo("##BodyType", &type, typeNames, 3)) {
-                            // 设置刚体类型
+                            // 修复（GP1-DX 审计 P1-b）：原实现只改 UI 状态未落盘，
+                            // 下一帧被 GetType() 弹回
+                            body->SetType(static_cast<BodyType>(type));
                             ctx.recordUndo();
                         }
 
@@ -282,9 +284,7 @@ namespace Engine {
     // InspectorPanel 实现
     // ============================================================
 
-    InspectorPanel::InspectorPanel() {
-        m_AddComponentSearch[0] = '\0';
-    }
+    InspectorPanel::InspectorPanel() = default;
 
     void InspectorPanel::SetTarget(GameObject* target) {
         if (m_Locked) return;
@@ -393,18 +393,11 @@ namespace Engine {
         ImGui::Spacing();
         ImGui::Separator();
         ImGui::Spacing();
-        
-        // 居中绘制按钮
-        float buttonWidth = 150.0f;
-        ImGui::SetCursorPosX((ImGui::GetContentRegionAvail().x - buttonWidth) * 0.5f);
-        if (ImGui::Button("Add Component", ImVec2(buttonWidth, 30))) {
-            ImGui::OpenPopup("AddComponentPopup");
-        }
 
-        if (ImGui::BeginPopup("AddComponentPopup")) {
-            DrawAddComponentMenu();
-            ImGui::EndPopup();
-        }
+        // Add Component 假入口已摘除（GP1-DX 审计 P1-b）：原弹窗的
+        // Selectable 点击无任何挂载逻辑（引擎无 type-erased 组件工厂），
+        // 属虚假可供性。Sprite 走 Content 面板 Assign；MeshRenderer/Physics
+        // 由实体创建路径自带。通用组件工厂如成为生产需求，走 GP ledger 晋升。
 
         if (m_DebugMode) DrawDebugInfo(obj);
 
@@ -463,30 +456,6 @@ namespace Engine {
 
     void InspectorPanel::DrawTransformComponent(GameObject* obj, const DrawContext& ctx) {
         DrawTransformWidget(obj, ctx);
-    }
-
-    void InspectorPanel::DrawAddComponentMenu() {
-        ImGui::InputTextWithHint("##search", ICON_FA_MAGNIFYING_GLASS " Search...", m_AddComponentSearch, sizeof(m_AddComponentSearch));
-        ImGui::Separator();
-
-        std::string search(m_AddComponentSearch);
-        std::transform(search.begin(), search.end(), search.begin(), ::tolower);
-
-        for (auto& [typeId, drawer] : m_DrawerRegistry) {
-            if (drawer.builtin && drawer.displayName != "Mesh Renderer" && drawer.displayName != "Physics") continue;
-
-            std::string name = drawer.displayName;
-            std::string lowerName = name;
-            std::transform(lowerName.begin(), lowerName.end(), lowerName.begin(), ::tolower);
-            
-            if (!search.empty() && lowerName.find(search) == std::string::npos) continue;
-
-            if (ImGui::Selectable(name.c_str())) {
-                // 这里需要调用底层引擎实际为 GameObject 挂载对应组件的代码
-                // obj->AddComponentByID(typeId);
-                ImGui::CloseCurrentPopup();
-            }
-        }
     }
 
     void InspectorPanel::DrawDebugInfo(GameObject* obj) {

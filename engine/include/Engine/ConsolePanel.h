@@ -67,6 +67,9 @@ namespace Engine {
         /** Tab 补全当前输入 */
         void AutoComplete();
 
+        /** 剥离注册表输出中的 Quake 风格 ^N 色码（面板按纯文本渲染） */
+        static std::string StripColorCodes(const std::string& text);
+
         /** 从历史中加载上一条/下一条命令 */
         void HistoryPrev();
         void HistoryNext();
@@ -87,12 +90,6 @@ namespace Engine {
         /** 命令历史记录（最新的在末尾） */
         std::vector<std::string> m_CommandHistory;
         static constexpr int kMaxHistory = 64;
-
-        /** Tab 补全状态 */
-        std::vector<std::string> m_CompletionCandidates;
-        int m_CompletionIndex = 0;
-        bool m_Completing = false;
-        std::string m_CompletionBase;   ///< 触发补全时的前缀
     };
 
 } // namespace Engine

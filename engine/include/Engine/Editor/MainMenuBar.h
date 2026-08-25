@@ -112,6 +112,10 @@ namespace Engine {
         // ── 布局重置信号 ──
         bool m_ResetLayoutRequested = false;
 
+        // ── About 弹窗请求（菜单子窗口与根窗口 ID 域不同，
+        //    OpenPopup 必须延迟到 EndMenu 之后的同一作用域调用）──
+        bool m_AboutOpenRequested = false;
+
         // ── 撤消/重做状态 ──
         UndoState m_UndoState;
 

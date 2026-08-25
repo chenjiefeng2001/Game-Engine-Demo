@@ -37,11 +37,29 @@ namespace Engine {
 
     bool Scene::RemoveObject(GameObject* obj) {
         if (!obj) return false;
+
+        // 先接管所有权，保证 OnDestroy 调用期间对象存活。
+        std::shared_ptr<GameObject> owned;
+
+        // 1) 根列表
         auto it = std::find_if(m_Objects.begin(), m_Objects.end(),
             [obj](const std::shared_ptr<GameObject>& o) { return o.get() == obj; });
-        if (it == m_Objects.end()) return false;
-        (*it)->OnDestroy();
-        m_Objects.erase(it);
+        if (it != m_Objects.end()) {
+            owned = *it;
+            m_Objects.erase(it);
+        } else {
+            // 2) 层级子对象：必须同时从父节点 children 摘除，
+            //    否则父级 shared_ptr 继续持有 —— “删除”后仍被遍历与渲染。
+            GameObject* parent = obj->GetParent();
+            if (parent) {
+                for (const auto& c : parent->GetChildren())
+                    if (c.get() == obj) { owned = c; break; }
+                if (owned) parent->RemoveChild(obj);
+            }
+        }
+        if (!owned) return false;
+
+        owned->OnDestroy();
         return true;
     }
 

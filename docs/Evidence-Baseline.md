@@ -17,8 +17,8 @@
 | test_content | 42 | VERIFIED | Content Pipeline v1 + Resource Lifecycle + Editor Workflow + DF05/06/07 + DX Golden Gate + VS01 |
 | test_job | 4 | VERIFIED | JobSystem 压力 |
 | test_e2e | 6 | VERIFIED | 引擎启动生命周期 |
-| test_gp01 | 21 | VERIFIED | Game Production GP-P1 · GP01 生产契约（GP1-A/B/C/D） |
-| **合计** | **121** | | |
+| test_gp01 | 22 | VERIFIED | Game Production GP-P1 · GP01 生产契约（GP1-A/B/C/D + DX 审计 remediation D7） |
+| **合计** | **122** | | |
 
 ## Excluded 目标（记录原因，不计入基线）
 
