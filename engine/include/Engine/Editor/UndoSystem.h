@@ -319,6 +319,16 @@ namespace Engine {
 
         // ── 当前的活跃场景栈名称 ──
         void SetActiveScene(const std::string& sceneName) { m_ActiveScene = sceneName; }
+
+        // ── 对象解析回调（GP1-DX S4b 执行端接线）──
+        /// PropertyChangeCommand 的 Execute/Undo 经此把持久 ID 解析回
+        /// 活指针；由编辑器宿主注入（如按当前活跃场景 FindByID）。
+        /// 未注入时命令退化为日志（与旧行为一致）。
+        using ObjectResolver = std::function<GameObject*(uint64 objectID)>;
+        void SetObjectResolver(ObjectResolver r) { m_ObjectResolver = std::move(r); }
+        GameObject* ResolveObject(uint64 objectID) {
+            return m_ObjectResolver ? m_ObjectResolver(objectID) : nullptr;
+        }
         const std::string& GetActiveScene() const { return m_ActiveScene; }
 
     private:
@@ -328,6 +338,9 @@ namespace Engine {
         UndoStack m_GlobalStack;
         std::unordered_map<std::string, UndoStack> m_SceneStacks;
         std::string m_ActiveScene;
+
+        // ── 对象解析回调（GP1-DX S4b）──
+        ObjectResolver m_ObjectResolver;
     };
 
 } // namespace Engine

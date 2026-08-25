@@ -73,11 +73,24 @@ protected:
                     m_Editor.GetSceneManager().SetEditorScene(s.get());
                     m_Editor.GetSceneViewerPanel().SetEditorScene(s.get());
                 });
+            // S1：播放状态回写通道 —— 无论 Play 从哪个入口发起
+            //（Production 窗口 / 工具栏 / 菜单），工具栏都反映真实状态
+            m_GP01.SetPlayStateCallback([this](bool playing) {
+                m_Editor.GetToolbar().SetPlayState(playing
+                    ? Toolbar::PlayState::Playing
+                    : Toolbar::PlayState::Stopped);
+            });
             gp01 = m_GP01.LoadProject("assets/gp01/manifest.json",
                                       "assets/gp01/Main.scene");
             if (!gp01) m_Scene.reset();       // 回退演示场景
         }
         if (!gp01) BuildTestScene();
+
+        // S1 双 PIE 合一：菜单/工具栏的 Play/Stop 一律走 GP01 内容管线，
+        // 引擎内置 PIE 从 UI 不可达（GP-DX-010 R1 三层叠加风险消除）
+        m_Editor.SetExternalPlayback(
+            [this]() -> bool { return m_GP01.Play(); },
+            [this]() { m_GP01.Stop(); });
 
         // Sprite 抽屉（P0：提示分配入口；纹理经 Content 面板指派）
         m_InspectorPanel.RegisterDrawer<SpriteComponent>([](GameObject* obj) {

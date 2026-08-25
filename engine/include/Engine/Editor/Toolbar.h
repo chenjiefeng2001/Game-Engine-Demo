@@ -30,11 +30,14 @@ namespace Engine {
 
         // ── 回调类型 ──
         using ActionCallback = std::function<void()>;
+        /// Play 动作返回 false = 播放未启动（无场景/克隆失败等），
+        /// 工具栏据实反映状态，不再乐观置位（GP1-DX S1）
+        using PlayAction = std::function<bool()>;
         using ViewModeChangeCallback = std::function<void(int newMode)>;
         using CameraSpeedCallback = std::function<void(float speed)>;
 
         // ── 播放控制回调 ──
-        void SetPlayCallback(ActionCallback cb)     { m_PlayCallback = std::move(cb); }
+        void SetPlayCallback(PlayAction cb)         { m_PlayCallback = std::move(cb); }
         void SetStopCallback(ActionCallback cb)     { m_StopCallback = std::move(cb); }
         void SetPauseCallback(ActionCallback cb)    { m_PauseCallback = std::move(cb); }
         void SetStepCallback(ActionCallback cb)     { m_StepCallback = std::move(cb); }
@@ -114,7 +117,7 @@ namespace Engine {
         bool m_ShowColliders = false;
 
         // ── 回调 ──
-        ActionCallback m_PlayCallback;
+        PlayAction m_PlayCallback;
         ActionCallback m_StopCallback;
         ActionCallback m_PauseCallback;
         ActionCallback m_StepCallback;

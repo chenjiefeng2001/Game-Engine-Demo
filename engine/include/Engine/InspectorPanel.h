@@ -128,6 +128,11 @@ namespace Engine {
         using UndoCallback = std::function<void(GameObject*)>;
         void SetUndoCallback(UndoCallback cb) { m_UndoCallback = std::move(cb); }
 
+        /// GP1-DX S4b 记录端：以"帧首快照 vs 当前值"对比生成撤销命令。
+        /// 由 SetUndoCallback 注入的回调在属性控件变更时调用；
+        /// 目标切换或首次选中时自动重建基线快照。
+        void FlushUndoFromSnapshot(GameObject* obj);
+
         // ── 外部依赖注入 ──
         void SetSearchFilter(const std::string& filter) { m_Filter.searchText = filter; }
         const InspectorFilter& GetFilter() const { return m_Filter; }
@@ -163,6 +168,19 @@ namespace Engine {
         // ── 数据 ──
         GameObject* m_Target = nullptr;
         std::vector<GameObject*> m_MultiTargets;
+
+        // ── 撤销快照（GP1-DX S4b 记录端）──
+        struct UndoSnap {
+            bool        valid = false;
+            GameObject* obj = nullptr;
+            std::string name;
+            float pos[3] = { 0.f, 0.f, 0.f };
+            float rot[3] = { 0.f, 0.f, 0.f };
+            float scl[3] = { 1.f, 1.f, 1.f };
+        };
+        void EnsureUndoSnapshot(GameObject* obj);
+        static void CaptureUndoSnap(UndoSnap& s, GameObject* o);
+        UndoSnap m_UndoPrev;
         bool m_Visible = true;
         bool m_Locked = false;
         bool m_DebugMode = false;

@@ -1,5 +1,6 @@
 #include "Engine/InspectorPanel.h"
 #include "Engine/UiHelpers.h"
+#include "Engine/Editor/UndoSystem.h"
 #include "Engine/Core/GameObject/GameObject.h"
 #include "Engine/Core/GameObject/Component.h"
 #include "Engine/Core/GameObject/SpriteComponent.h"
@@ -347,6 +348,9 @@ namespace Engine {
             return;
         }
 
+        // S4b 记录端：帧首建立/保持撤销基线快照（目标切换即重建）
+        EnsureUndoSnapshot(obj);
+
         // ── 绘制实体头部 (Entity Header) ──
         DrawHeader(obj);
         ImGui::Separator();
@@ -408,6 +412,60 @@ namespace Engine {
             action();
         }
         s_DeferredActions.clear();
+    }
+
+    // ── S4b 记录端：帧首快照 vs 当前值 → PropertyChangeCommand ──
+
+    void InspectorPanel::CaptureUndoSnap(UndoSnap& s, GameObject* o) {
+        const auto& xf = o->GetTransform();
+        const Vec3 r = xf.GetRotation();
+        s.obj = o;
+        s.name = o->GetName();
+        s.pos[0] = xf.GetPosition().x; s.pos[1] = xf.GetPosition().y; s.pos[2] = xf.GetPosition().z;
+        s.rot[0] = r.x; s.rot[1] = r.y; s.rot[2] = r.z;
+        s.scl[0] = xf.GetScale().x; s.scl[1] = xf.GetScale().y; s.scl[2] = xf.GetScale().z;
+        s.valid = true;
+    }
+
+    void InspectorPanel::EnsureUndoSnapshot(GameObject* obj) {
+        if (m_UndoPrev.valid && m_UndoPrev.obj == obj) return;
+        m_UndoPrev = {};
+        CaptureUndoSnap(m_UndoPrev, obj);
+    }
+
+    void InspectorPanel::FlushUndoFromSnapshot(GameObject* obj) {
+        if (!obj) return;
+
+        // 基线不可用（首次选中/刚切换目标）：只重建基线，不产生命令
+        if (!m_UndoPrev.valid || m_UndoPrev.obj != obj) {
+            EnsureUndoSnapshot(obj);
+            return;
+        }
+
+        const auto& xf = obj->GetTransform();
+        const Vec3 np = xf.GetPosition();
+        const Vec3 nr = xf.GetRotation();
+        const Vec3 ns = xf.GetScale();
+
+        nlohmann::json oldJ, newJ;
+        oldJ["name"] = m_UndoPrev.name;
+        newJ["name"] = obj->GetName();
+        oldJ["position"] = { m_UndoPrev.pos[0], m_UndoPrev.pos[1], m_UndoPrev.pos[2] };
+        newJ["position"] = { np.x, np.y, np.z };
+        oldJ["rotation"] = { m_UndoPrev.rot[0], m_UndoPrev.rot[1], m_UndoPrev.rot[2] };
+        newJ["rotation"] = { nr.x, nr.y, nr.z };
+        oldJ["scale"] = { m_UndoPrev.scl[0], m_UndoPrev.scl[1], m_UndoPrev.scl[2] };
+        newJ["scale"] = { ns.x, ns.y, ns.z };
+
+        if (oldJ != newJ)
+            UndoManager::RecordPropertyChange(obj, "Transform", oldJ, newJ);
+
+        // 基线推进到当前值 —— 连续帧的拖拽经 TryMerge 合并为单一命令
+        m_UndoPrev.name = obj->GetName();
+        m_UndoPrev.pos[0] = np.x; m_UndoPrev.pos[1] = np.y; m_UndoPrev.pos[2] = np.z;
+        m_UndoPrev.rot[0] = nr.x; m_UndoPrev.rot[1] = nr.y; m_UndoPrev.rot[2] = nr.z;
+        m_UndoPrev.scl[0] = ns.x; m_UndoPrev.scl[1] = ns.y; m_UndoPrev.scl[2] = ns.z;
+        m_UndoPrev.valid = true;
     }
 
     void InspectorPanel::DrawToolbar() {

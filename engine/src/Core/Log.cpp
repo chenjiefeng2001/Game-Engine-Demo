@@ -152,31 +152,9 @@ private:
 };
 
 // ============================================================
-// ConsoleLogSink — 将日志转发到 ImGui 控制台
+// （GP1-DX S4a）ConsoleLogSink 已移除 —— 日志单缓冲收敛：
+// ConsolePanel 经 PanelBridgeSink 自行订阅 spdlog，此处不再转发
 // ============================================================
-
-class ConsoleLogSink final : public spdlog::sinks::base_sink<std::mutex> {
-protected:
-    void sink_it_(const spdlog::details::log_msg& msg) override {
-        LogLevel clLevel;
-        switch (msg.level) {
-            case spdlog::level::warn:    clLevel = LogLevel::Warn;  break;
-            case spdlog::level::err:
-            case spdlog::level::critical: clLevel = LogLevel::Error; break;
-            default:                     clLevel = LogLevel::Info;  break;
-        }
-
-        spdlog::memory_buf_t formatted;
-        formatter_->format(msg, formatted);
-        std::string text(formatted.data(), formatted.size());
-
-        ConsoleLog::Instance().Log(clLevel, text);
-    }
-
-    void flush_() override {
-        // ConsoleLog 无需显式 flush
-    }
-};
 
 // ============================================================
 // 静态成员
@@ -215,14 +193,11 @@ void Log::Init(const std::string& filePath, Level consoleLevel, Level fileLevel)
         fileSink->set_level(static_cast<spdlog::level::level_enum>(fileLevel));
         fileSink->set_pattern("[%Y-%m-%d %H:%M:%S.%e] [%l] [%n] [%s:%#] %v");
 
-        // ── 5. 创建 ImGui 控制台 sink ──
-        auto imGuiSink = std::make_shared<ConsoleLogSink>();
-        imGuiSink->set_level(spdlog::level::trace);
-
-        // ── 6. 创建异步默认 logger（标签 "Engine"） ──
+        // ── 5. 创建异步默认 logger（标签 "Engine"） ──
         // 使用 async_factory 让所有日志通过线程池异步写入
+        // （GP1-DX S4a：ImGui 控制台 sink 已移除，ConsolePanel 自行订阅）
         std::vector<spdlog::sink_ptr> sinks = {
-            consoleSink, fileSink, imGuiSink, s_MemorySink
+            consoleSink, fileSink, s_MemorySink
         };
 
         s_DefaultLogger = std::make_shared<spdlog::logger>(

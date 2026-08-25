@@ -1,11 +1,28 @@
 #include "Engine/Editor/UndoSystem.h"
 #include "Engine/Core/GameObject/GameObject.h"
 #include "Engine/Core/GameObject/Component.h"
+#include "Engine/Core/GameObject/TransformComponent.h"
 #include "Engine/Core/Scene/Scene.h"
 #include "Engine/Core/Log.h"
 #include <algorithm>
 
 namespace Engine {
+
+    // ── 快照应用（GP1-DX S4b）：PropertyChangeCommand 的值域约定 ──
+    // json 形如 {"name":str, "position":[x,y,z], "rotation":[x,y,z], "scale":[x,y,z]}
+    // 仅包含调用方记录的字段，缺失字段不触碰。
+    static void ApplyObjectSnapshot(GameObject* obj, const nlohmann::json& j) {
+        if (!obj || !j.is_object()) return;
+        auto& xf = obj->GetTransform();
+        if (j.contains("name") && j["name"].is_string())
+            obj->SetName(j["name"].get<std::string>());
+        if (j.contains("position") && j["position"].is_array() && j["position"].size() >= 3)
+            xf.SetPosition(j["position"][0].get<float>(), j["position"][1].get<float>(), j["position"][2].get<float>());
+        if (j.contains("rotation") && j["rotation"].is_array() && j["rotation"].size() >= 3)
+            xf.SetRotation(j["rotation"][0].get<float>(), j["rotation"][1].get<float>(), j["rotation"][2].get<float>());
+        if (j.contains("scale") && j["scale"].is_array() && j["scale"].size() >= 3)
+            xf.SetScale(Vec3(j["scale"][0].get<float>(), j["scale"][1].get<float>(), j["scale"][2].get<float>()));
+    }
 
     // ============================================================
     // UndoManager 单例
@@ -99,28 +116,28 @@ namespace Engine {
     }
 
     GameObject* PropertyChangeCommand::FindTarget() const {
-        // 通过 SceneManager 查找对象
-        // 简化实现：这里假设外部通过回调注入查找逻辑
-        return nullptr;
+        // GP1-DX S4b：经宿主注入的解析回调把持久 ID 解析回活指针
+        // （此前为返回 nullptr 的桩，命令永不生效）
+        return UndoManager::Get().ResolveObject(m_ObjectID);
     }
 
     void PropertyChangeCommand::Execute() {
-        // 应用新值
         auto* obj = FindTarget();
         if (!obj) {
             Log::Info("[Undo] Cannot execute PropertyChange: object {} not found", m_ObjectID);
             return;
         }
+        ApplyObjectSnapshot(obj, m_NewValue);
         Log::Info("[Undo] Execute: {}.{}", m_ObjectName, m_PropertyName);
     }
 
     void PropertyChangeCommand::Undo() {
-        // 恢复旧值
         auto* obj = FindTarget();
         if (!obj) {
             Log::Info("[Undo] Cannot undo PropertyChange: object {} not found", m_ObjectID);
             return;
         }
+        ApplyObjectSnapshot(obj, m_OldValue);
         Log::Info("[Undo] Undo: {}.{}", m_ObjectName, m_PropertyName);
     }
 

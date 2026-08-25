@@ -66,9 +66,16 @@ namespace Engine {
         bool IsEditing() const { return m_SceneManager.IsEditing(); }
 
         void RegisterSceneHierarchy(SceneHierarchyPanel* panel);
-        void RegisterInspector(InspectorPanel* panel)           { m_Inspector = panel; }
+        void RegisterInspector(InspectorPanel* panel);
         void RegisterConsole(ConsolePanel* panel)               { m_Console = panel; }
         void RegisterPerformance(PerformanceWindow* window)     { m_Performance = window; }
+
+        /// ── 外部播放接管（GP1-DX S1 双 PIE 合一）──
+        /// 启用后菜单/工具栏 Play/Stop 改调宿主提供的回调（如 GP01 内容
+        /// 管线），引擎内置 PIE 不再从 UI 可达；Pause/Step 一并隐藏/禁用。
+        /// play 返回 false = 未启动，UI 保持 Stopped（非乐观置位）。
+        void SetExternalPlayback(std::function<bool()> play,
+                                 std::function<void()> stop);
 
         void SetSelectedObject(std::shared_ptr<class GameObject> obj) { m_SelectedObject = obj; }
         std::shared_ptr<class GameObject> GetSelectedObject() const { return m_SelectedObject.lock(); }
@@ -140,6 +147,10 @@ namespace Engine {
         // ── 外部注册的引擎面板 ──
         SceneHierarchyPanel* m_SceneHierarchy = nullptr;
         InspectorPanel*      m_Inspector      = nullptr;
+
+        // ── 外部播放接管（GP1-DX S1）──
+        std::function<bool()>  m_ExternalPlay;
+        std::function<void()>  m_ExternalStop;
         ConsolePanel*        m_Console        = nullptr;
         PerformanceWindow*   m_Performance    = nullptr;
 

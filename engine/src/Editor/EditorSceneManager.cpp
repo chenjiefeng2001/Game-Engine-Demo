@@ -29,11 +29,11 @@ namespace Engine {
     //   - Stop 后编辑器场景瞬间恢复原始状态（零开销）
     // ═══════════════════════════════════════════════════════════════
 
-    void EditorSceneManager::Play() {
-        if (m_State == EditorState::Play) return;
+    bool EditorSceneManager::Play() {
+        if (m_State == EditorState::Play) return false;
         if (!m_EditorScene) {
             ENGINE_LOG_ERROR("Editor", "Cannot Play: no editor scene set");
-            return;
+            return false;
         }
 
         // ── 1. 通过 JSON 序列化深度克隆编辑器场景 ──
@@ -46,7 +46,7 @@ namespace Engine {
             JsonSerializer::Deserialize(*m_RuntimeScene, json);
         } catch (const std::exception& e) {
             ENGINE_LOG_ERROR("Editor", "PIE scene clone failed: {}", e.what());
-            return;
+            return false;
         }
 
         // ── 2. 切换状态 ──
@@ -66,6 +66,7 @@ namespace Engine {
         }
 
         ENGINE_LOG_INFO("Editor", "=== PIE Play started ===");
+        return true;
     }
 
     void EditorSceneManager::Stop() {

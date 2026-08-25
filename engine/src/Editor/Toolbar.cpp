@@ -115,8 +115,10 @@ namespace Engine {
             ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.1f, 0.5f, 0.1f, 1.0f));
             ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.15f, 0.6f, 0.15f, 1.0f));
             if (ImGui::Button(ICON_FA_PLAY " Play", ImVec2(70, 24))) {
-                if (m_PlayCallback) m_PlayCallback();
-                m_PlayState = PlayState::Playing;
+                // S1：以真实结果置位 —— PlayAction 返回 false（无场景/克隆
+                // 失败等）时保持 Stopped，消灭"假 Playing 态"
+                const bool ok = m_PlayCallback && m_PlayCallback();
+                if (ok) m_PlayState = PlayState::Playing;
             }
             ImGui::PopStyleColor(2);
         } else {
@@ -128,15 +130,19 @@ namespace Engine {
             }
             ImGui::PopStyleColor(2);
 
+            // Pause/Step 为引擎内置 PIE 专属能力；外部播放接管时回调为空，
+            // 按钮禁用而非消失（保持布局稳定，杜绝误触）
             ImGui::SameLine();
             auto pauseLabel = (m_PlayState == PlayState::Playing) ? ICON_FA_PAUSE "##pause" : ICON_FA_PLAY "##pause";
+            ImGui::BeginDisabled(!m_PauseCallback);
             if (ImGui::Button(pauseLabel, ImVec2(32, 24))) {
                 if (m_PauseCallback) m_PauseCallback();
                 m_PlayState = (m_PlayState == PlayState::Playing) ? PlayState::Paused : PlayState::Playing;
             }
+            ImGui::EndDisabled();
 
             ImGui::SameLine();
-            ImGui::BeginDisabled(m_PlayState != PlayState::Paused);
+            ImGui::BeginDisabled(m_PlayState != PlayState::Paused || !m_StepCallback);
             if (ImGui::Button(ICON_FA_FORWARD "##step", ImVec2(32, 24))) {
                 if (m_StepCallback) m_StepCallback();
             }

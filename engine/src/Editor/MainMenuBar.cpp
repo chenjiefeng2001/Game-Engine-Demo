@@ -131,15 +131,21 @@ namespace Engine {
             if (ImGui::MenuItem("Play")) {
                 if (m_PlayCallback) m_PlayCallback();
             }
-            if (ImGui::MenuItem("Pause")) {
-                if (m_PauseCallback) m_PauseCallback();
+            // Pause/Step 仅引擎内置 PIE 提供；外部播放接管模式下隐藏，
+            // 防止误入与内容管线并行的第二套播放器（GP-DX-010 R1）
+            if (!m_IsExternalPlayback) {
+                if (ImGui::MenuItem("Pause")) {
+                    if (m_PauseCallback) m_PauseCallback();
+                }
             }
             if (ImGui::MenuItem("Stop")) {
                 if (m_StopCallback) m_StopCallback();
             }
-            ImGui::Separator();
-            if (ImGui::MenuItem("Step Frame")) {
-                if (m_StepCallback) m_StepCallback();
+            if (!m_IsExternalPlayback) {
+                ImGui::Separator();
+                if (ImGui::MenuItem("Step Frame")) {
+                    if (m_StepCallback) m_StepCallback();
+                }
             }
             ImGui::EndMenu();
         }

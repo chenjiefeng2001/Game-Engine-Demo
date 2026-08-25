@@ -238,6 +238,36 @@ Decision:            FIX NOW —— AUD-1/2/4 反馈层补返回值校验+失败
                      固化；基线 121→122，gate GREEN。P1-b 清单见审计报告 §5。
 Level:               L1（静态复现 + 契约固化）
 ```
+### GP-DX-010
+```
+Title:               编辑器无统一状态层（场景/选择/内容数据多点离散）
+Category:            Editor / Architecture
+Severity:            HIGH（结构性，前瞻）
+Game Context:        GP1-D Human Run 前架构调查（用户观察触发；证据 =
+                     docs/GP1-DX-State-Layer-Analysis.md 三路源码调查）
+Observed Problem:    7 个"当前场景"持有点、4 个选择持有者（10 写入点）、
+                     3 条互不相通的每帧通路（渲染/Update/UI 源）、双 PIE 可
+                     叠加三层场景；同步仅靠四路手工重接 lambda + 双通道冗余
+                     EventBus；工程文档数据（Registry/Bindings/TexMgr/路径）
+                     全部私活在 sandbox 会话头文件。11 项已证实失效案例
+                     （R1-R11），含错误落盘风险（R11）与 glfwTerminate 析构
+                     未爆弹。
+Current API Attempt: 不适用（架构组织问题，非单点能力缺口）。
+Why Current API Is Insufficient: 无 ProjectDocument/PlaybackController/
+                     SelectionService 抽象——每个视图自持真相，无不变量守护。
+Workaround:          手工重接 lambda（已知漏一路）+ 操作纪律（避免交叉序列）。
+Frequency:           每次 Load/Play/Stop/New/Open/跨面板操作均处于风险面。
+Production Cost:     状态不一致类 bug 难排查且随功能增长线性恶化；R1/R11 可致
+                     数据事故。
+Cross-Game Evidence: AUD-2/AUD-3（写错对象）、R2/R3（拾取错位）、DL-02（绑定
+                     错位）均为同一根因的局部表现。
+Decision:            OBSERVE —— 修复路线 §5 S1-S5 已排定；S1（双 PIE 合一 +
+                     R7 单次广播 + Toolbar 非乐观态）与 S4（日志单缓冲 +
+                     Undo 三线打通）已于 2026-08-25 执行落地，gate GREEN
+                     122/122；剩余 S2/S3 建议 GP1-E 开工时 PROMOTE，
+                     S5 涉序列化格式需 L2 评审。
+Level:               L1（结构复现 + 全量证据链固化；S1/S4 已收敛）
+```
 ### Dogfood04 DX 台账复核（DX02/03/05/07）
 
 | 编号 | 复核结果 | 处置 |
@@ -470,6 +500,7 @@ Level:               L0→L2 已记录（缺口确凿），晋升等成本证据
 
 | 编号 | Title | Category | Severity | Level | Decision |
 |------|-------|----------|----------|-------|----------|
+| GP-DX-010 | 编辑器无统一状态层（多点离散） | Editor/Architecture | HIGH(结构) | L1 | OBSERVE（S1-S5 路线已排定，GP1-E 或事故触发 PROMOTE） |
 | GP-DX-008 | UI 链路假成功/假删除簇（AUD-1..4） | Process/Production UI | HIGH | L1 | FIX NOW（已修，D7 契约固化，122 GREEN） |
 | GP-DX-006 | Project Session 生命周期 | Editor/Session | LOW | L0 | OBSERVE（Human Run 实测） |
 | GP-DX-005 | Viewport 仅 Billboard 反馈 | Editor/Rendering | LOW | L0 | OBSERVE（升级标准已定） |
