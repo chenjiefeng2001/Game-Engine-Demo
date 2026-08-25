@@ -188,6 +188,29 @@ Cross-Game Evidence: GP-DX-001 同族（全局状态生命周期）。
 Decision:            OBSERVE —— Human Run 操作矩阵实测。
 Level:               L0
 ```
+
+### GP-DX-007
+```
+Title:               P0 假阳性 —— UI 交付被人工 Run 即刻证伪
+Category:            Process / Production UI
+Severity:            HIGH
+Game Context:        GP1-DX P0 交付（9c6ef22）后首次 Human Run：开发者 33 秒内
+                     放弃使用；退出时 ASan heap-use-after-free。
+Observed Problem:    ① 视口仅图标无真实贴图，Assign 结果不可视 → Run2 无法
+                     人工验证；② ConsoleLog 环形缓冲先于 async 日志线程
+                     析构，关闭即崩（ConsoleLog.cpp:28 use-after-free）。
+Current API Attempt: P0 计划 §3 将"Billboard 呈现"登记为已知限制 —— 判定
+                     错误：对"验证贴图是否绑对"这一核心任务而言这不是
+                     可接受限制。
+Why Current API Is Insufficient: 不适用（实现/验收问题，非能力缺口）。
+Workaround:          —
+Frequency:          每次 Human Run 必现。
+Production Cost:     生产验证完全不可执行（GP1-D 继续阻塞）。
+Cross-Game Evidence: 无。
+Decision:            FIX NOW —— ① Sprite 贴图进渲染路径；② 日志析构序修复；
+                     教训入计划：P0 验收必须含"最小可视性"硬标准。
+Level:               L1（复现于首次真实使用）
+```
 ### Dogfood04 DX 台账复核（DX02/03/05/07）
 
 | 编号 | 复核结果 | 处置 |

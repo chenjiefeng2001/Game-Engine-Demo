@@ -1,4 +1,5 @@
-#pragma once
+﻿#pragma once
+#include <atomic>
 
 /**
  * @file ConsoleLog.h
@@ -132,10 +133,12 @@ private:
   ConsoleLog() : m_Buffer(new LogEntry[kBufferSize]) {
     // 堆分配的数组，避开全局 redzone 的 ASan 保护问题
   }
-  ~ConsoleLog() = default;
+  ~ConsoleLog();   // GP1-DX fix: stop async logger before freeing ring buffer
   ConsoleLog(const ConsoleLog &) = delete;
   ConsoleLog &operator=(const ConsoleLog &) = delete;
 
+  void ShutdownNoThrow();
+  static std::atomic<bool> s_Alive;
   std::unique_ptr<LogEntry[]> m_Buffer; // 堆分配，避开全局 redzone
   uint32 m_StartIndex = 0;
   uint32 m_Count = 0;

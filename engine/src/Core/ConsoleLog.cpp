@@ -1,4 +1,4 @@
-#include "Engine/ConsoleLog.h"
+﻿#include "Engine/ConsoleLog.h"
 #include <algorithm>
 #include <cstring>
 
@@ -6,6 +6,7 @@ namespace Engine {
 
     void ConsoleLog::Log(LogLevel level, const std::string& message)
     {
+        if (!s_Alive.load(std::memory_order_acquire)) return;
         // 获取时间戳（秒，相对于程序启动）
         static auto startTime = std::clock();
         double timestamp = static_cast<double>(std::clock() - startTime) / CLOCKS_PER_SEC;
@@ -41,3 +42,13 @@ namespace Engine {
     }
 
 } // namespace Engine
+// ── GP1-DX fix：异步日志线程可能晚于环形缓冲析构（heap-use-after-free）──
+#include <spdlog/spdlog.h>
+std::atomic<bool> Engine::ConsoleLog::s_Alive{true};
+
+void Engine::ConsoleLog::ShutdownNoThrow() {
+    s_Alive.store(false, std::memory_order_release);
+    try { spdlog::shutdown(); } catch (...) {}   // 先停线程池再放缓冲
+}
+
+Engine::ConsoleLog::~ConsoleLog() { ShutdownNoThrow(); }

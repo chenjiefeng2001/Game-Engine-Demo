@@ -471,6 +471,7 @@ protected:
         m_BillboardShader->SetVec3("u_CamRight", r);
         m_BillboardShader->SetVec3("u_CamUp", u);
         m_BillboardShader->SetVec2("u_Scale", s);
+        m_BillboardShader->SetInt("u_IconTex", 0);   // GP1-DX: sprite 走单元0
 
         auto& gladGL = oglCtx->GetGL();
 
@@ -483,8 +484,22 @@ protected:
 
             if (hasMesh) continue; // 网格物体已有视觉表示
 
-            bool isBillboardTarget = hasLight || hasSprite;
-            if (!isBillboardTarget) continue;
+            // GP1-DX: Sprite 实体渲染真实贴图（尺寸随 transform.scale）
+            float sc[2] = { s[0], s[1] };
+            if (hasSprite) {
+                auto* sp = obj->GetComponent<SpriteComponent>();
+                if (sp && sp->GetTexture()) {
+                    sp->GetTexture()->Bind(0);
+                    Vec3 scl = obj->GetTransform().GetScale();
+                    sc[0] = 0.9f * (scl.x > 0.05f ? scl.x : 0.4f);
+                    sc[1] = 0.9f * (scl.z > 0.05f ? scl.z : 0.4f);
+                    m_BillboardShader->SetVec2("u_Scale", sc);
+                } else {
+                    continue;                        // 未绑定贴图不画占位
+                }
+            } else if (!hasLight) {
+                continue;
+            }
 
             Vec3 pos = obj->GetTransform().GetPosition();
             float wp[3] = {pos.x, pos.y, pos.z};
