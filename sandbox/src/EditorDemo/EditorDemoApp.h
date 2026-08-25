@@ -27,9 +27,11 @@
 #include <Engine/OpenGL/OpenGLContext.h>
 #include <iostream>
 #include <memory>
+#include <filesystem>
 #include <vector>
 
 #include "EditorDemoTest.h"
+#include "GP01ProductionSession.h"
 
 #include <glm/glm.hpp>
 #include <glm/gtc/type_ptr.hpp>
@@ -56,12 +58,34 @@ protected:
         m_Editor.RegisterInspector(&m_InspectorPanel);
         m_Editor.RegisterConsole(&m_ConsolePanel);
         m_Editor.RegisterPerformance(&m_PerfWindow);
+        m_HierarchyPanel.Init();          // EventBus 订阅：视口点选 → 树高亮
 
         // ── 2. 默认资产（simple.vert + simple.frag，Lambert 光照） ──
         InitializeRenderingResources();
 
-        // ── 3. 场景 ──
-        BuildTestScene();
+        // ── 3. 场景：优先 GP01 生产工程，缺失则退回演示场景 ──
+        bool gp01 = false;
+        if (std::filesystem::exists("assets/gp01/manifest.json")) {
+            m_GP01.Init(&m_Editor,
+                [this](std::shared_ptr<Scene> s) {
+                    m_Scene = s;
+                    m_HierarchyPanel.SetScene(s.get());
+                    m_Editor.GetSceneManager().SetEditorScene(s.get());
+                    m_Editor.GetSceneViewerPanel().SetEditorScene(s.get());
+                });
+            gp01 = m_GP01.LoadProject("assets/gp01/manifest.json",
+                                      "assets/gp01/Main.scene");
+            if (!gp01) m_Scene.reset();       // 回退演示场景
+        }
+        if (!gp01) BuildTestScene();
+
+        // Sprite 抽屉（P0：提示分配入口；纹理经 Content 面板指派）
+        m_InspectorPanel.RegisterDrawer<SpriteComponent>([](GameObject* obj) {
+            if (!ImGui::CollapsingHeader("SpriteComponent")) return;
+            auto* sp = obj->GetComponent<SpriteComponent>();
+            ImGui::TextDisabled("texture: %s", sp && sp->GetTexture() ? "(assigned)" : "(none)");
+            ImGui::TextDisabled("assign via Content (Registry) panel");
+        });
 
         // ── 4. 桥接 ──
         m_Editor.GetSceneManager().SetEditorScene(m_Scene.get());
@@ -218,7 +242,8 @@ protected:
     // ═══════════════════════════════════════════════════════════════
 
     void RenderActiveScene(const float* viewProj16, const float* camPos3) {
-        if (!m_Scene) return;
+        Scene* scn = m_GP01.RenderScene();          // Play 期间渲染运行态克隆
+        if (!scn) return;
         auto* oglCtx = static_cast<OpenGLContext*>(GetRenderContext());
         if (!oglCtx) return;
 
@@ -228,14 +253,14 @@ protected:
         // ── 1. 收集灯光 ──
         glm::vec3 lightDir = glm::normalize(glm::vec3(-0.5f, -1.0f, -0.5f));
         glm::vec3 lightColor = glm::vec3(0.0f);
-        for (auto& obj : m_Scene->GetObjects()) {
+        for (auto& obj : scn->GetObjects()) {
             if (!obj || !obj->IsActive()) continue;
             CollectLights(obj.get(), lightDir, lightColor);
             CollectChildLights(obj, lightDir, lightColor);
         }
 
         // ── 2. 渲染网格 ──
-        for (auto& obj : m_Scene->GetObjects()) {
+        for (auto& obj : scn->GetObjects()) {
             if (!obj || !obj->IsActive()) continue;
             RenderGameObject(obj.get(), vp, lightDir, lightColor);
             RenderChildren(obj, vp, lightDir, lightColor);
@@ -423,7 +448,8 @@ protected:
     }
 
     void RenderBillboards(const float* viewProj16, const float* camPos3) {
-        if (!m_Scene || !m_BillboardShader || !m_BillboardMesh) return;
+        Scene* scn = m_GP01.RenderScene();
+        if (!scn || !m_BillboardShader || !m_BillboardMesh) return;
         auto* oglCtx = static_cast<OpenGLContext*>(GetRenderContext());
         if (!oglCtx) return;
 
@@ -448,7 +474,7 @@ protected:
 
         auto& gladGL = oglCtx->GetGL();
 
-        for (auto& obj : m_Scene->GetObjects()) {
+        for (auto& obj : scn->GetObjects()) {
             if (!obj || !obj->IsActive()) continue;
 
             bool hasMesh = obj->HasComponent<MeshRendererComponent>();
@@ -470,9 +496,13 @@ protected:
         }
     }
 
-    void OnUpdate(float32 dt) override { m_Editor.OnUpdate(dt); m_Test.OnUpdate(dt); }
+    void OnUpdate(float32 dt) override {
+        m_Editor.OnUpdate(dt);
+        m_Test.OnUpdate(dt);
+        m_GP01.Tick(dt);                          // GP01 Play 驱动 + F5
+    }
     void OnRender() override {}
-    void OnImGui() override { m_Editor.OnImGui(); m_Test.OnImGui(); }
+    void OnImGui() override { m_Editor.OnImGui(); m_Test.OnImGui(); m_GP01.DrawWindows(); }
 
 private:
     EngineEditor m_Editor;
@@ -488,6 +518,7 @@ private:
     InspectorPanel m_InspectorPanel;
     ConsolePanel m_ConsolePanel;
     EditorDemoTest m_Test;
+    GP01ProductionSession m_GP01;
 };
 
 } // namespace Engine

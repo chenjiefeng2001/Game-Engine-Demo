@@ -1,4 +1,4 @@
-# GP01 Ledger — 真实生产摩擦账本
+﻿# GP01 Ledger — 真实生产摩擦账本
 
 > 建立：2026-08-24（GP-P1 DAY 0）· 依据：`docs/GP-P1-Charter.md` §8
 > 性质：GP-P1 期间一切引擎能力讨论的**唯一入口**。看到问题 → 直接写 Engine 是被禁止的。
@@ -108,6 +108,31 @@ Level:               L0→L1
 （含运行漂移），不是 authored 状态回滚。开发者心智模型 =
 "PristineSave 先于战斗"；成本可控，暂无晋升动作。
 
+
+### GP-DX-003
+```
+Title:               Production UI Workflow Gap（人工生产验证阻塞）
+Category:            Editor / Production UI
+Severity:            BLOCKER（对 GP1-D Human Run 而言）
+Game Context:        GP1-D 收尾裁决：自动化契约 4/4 GREEN，但人工完成 Arena v2
+                     改造无法成立 —— 生产入口未闭环。
+Observed Problem:    开发者无法仅用 Editor UI 完成 GP01 v1→v2 的修改与验证，
+                     必须依赖内部 API / 手改文件。断点集中在接线层：
+                     资产分配三条 DND 通路全断、ContentRegistry 与主编辑器
+                     零连接、脚本编辑器为死代码、选择同步缺一环。
+Current API Attempt: 全部生产能力已在冻结契约层被四契约证明（GoldenPath 等），
+                     缺的仅是 UI 入口 —— Engine Capability 不是瓶颈。
+Why Current API Is Insufficient: 不适用（API 充足，UI 层缺失）。
+Workaround:          无（这正是阻塞本身）。
+Frequency:           每次内容生产尝试。
+Production Cost:     人工生产验证完全不可行。
+Cross-Game Evidence: VS01（ScriptSandbox 单页形态已暴露同类需求）。
+Decision:            PROMOTE —— 触发 GP1-DX / Production UI Foundation：
+                     最小 UI 闭环（工程加载/内容分配/Hierarchy-Inspector-
+                     Viewport 联动/Save/Play/Stop），目标 = 仅用 Editor 完成
+                     GP01 v1→v2。不做完整 Unity/Unreal。
+Level:               L2（晋升资格成立）
+```
 ### Dogfood04 DX 台账复核（DX02/03/05/07）
 
 | 编号 | 复核结果 | 处置 |
@@ -340,6 +365,7 @@ Level:               L0→L2 已记录（缺口确凿），晋升等成本证据
 
 | 编号 | Title | Category | Severity | Level | Decision |
 |------|-------|----------|----------|-------|----------|
+| GP-DX-003 | Production UI Workflow Gap（人工验证 BLOCKED） | Editor/Production UI | BLOCKER* | L2 | PROMOTE → GP1-DX 最小 UI 闭环 |
 | GP-DX-002 | 重名实体按名选择静默错选（DX05 二次复现） | Editor/Identity | MEDIUM | L1 | OBSERVE（真实内容事故才晋升） |
 | GP-DX-001 | 跨工程上下文切换无自动恢复 | Workflow/Editor Context | LOW | L0 | OBSERVE（多场景工作流出现时复核） |
 | GP-010 | Collision Event 再评价（手写圆碰撞规模成本） | Collision | — | L0 | DEFER 维持（结论性：晋升条件未出现） |
