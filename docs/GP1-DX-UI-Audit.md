@@ -266,3 +266,28 @@ Add...；AssetBrowser 右键 Create）—— 合规，无需收敛。本轮全�
   10 objects/33 assets 自动加载、engine.log 零 error。
 - 字体比对脚本结论留存于本节方法注记（cmap 解析对两份字体文件结果一致：
   3235 codepoints）。
+
+---
+
+## 8. P1-c 第一批：Toolbar 摘除手术 + Reset Layout 实装（2026-08-26）
+
+> 承接 §5 P1-c 与 §7 OBS-T1。裁决：**摘除而非桥接** —— 真实 gizmo 状态以
+> ViewportPanel 浮层 + Q/W/E/R 为单一真相源；桥接等于为摆设控件扩 API 面，
+> 违反 GP-DX-007/GP-DX-008 一脉的"不提供虚假可供性"纪律。
+
+| 编号 | 内容 | 处置 |
+|------|------|------|
+| TLB-1 | Toolbar 死控件整簇摘除：T/R/S gizmo 按钮、W/E/R 全局键拦截（OBS-T1 冲突源）、Local/World、Snap 磁铁+数值、Overlays 三开关（Show Grid/Gizmos/Colliders 全仓零消费者）、Camera Fly Speed 滑条 | ✅ 删除（Toolbar.h/.cpp 收敛为播放传送带 + Render Mode 平铺 Combo） |
+| TLB-2 | Toolbar Reset 按钮（与 View>Reset Layout 同类双入口） | ✅ 摘除，布局重置唯一入口 = View 菜单 |
+| TLB-3 | `EngineEditor::DrawGizmo` 第二套无调用者 gizmo 实现（死状态唯一消费者） | ✅ 连同声明、ImGuizmo include 一并移除 |
+| TLB-4 | `InitDockingLayout()` 孤儿声明（只有声明无定义） | ✅ 摘除 |
+| RST-1 | **View>Reset Layout 自审计以来一直 DEAD**：信号在 Init 末尾被 `ConsumeResetLayoutSignal()` 读后丢弃（§3.2 判定复核成立） | ✅ 双修：删除 Init 期吞信号行 + OnImGui 每帧消费，以 docking 分支 DockBuilder 重建四区规范布局（左 Hierarchy 22% / 中 Viewport / 右 Inspector 24% / 底 Console+Performance Tab 组 25%） |
+
+验证：EngineCore+EditorDemo 编译通过；gate **ALL GREEN 122/122**；
+EditorDemo 冒烟两轮（一轮 30s 存活；另轮 8s 干净关机为不可复现偶发，
+启动日志路径两轮完全一致：CJK+FA merged / GP01 loaded / 零 error）。
+
+P1-c 余项（维持开放）：双 PIE 入口隔离收尾观察、UndoSystem 接线效果实测
+（S4b 已接线）、死代码簇清扫余量（PropertyDrawer 孤儿库、
+EditorSceneManager::DrawPlayToolbar、DockspaceBuilder 疑似孤儿等）、
+§7 OBS-P1/P2/P3 低危布局项。

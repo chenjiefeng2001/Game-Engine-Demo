@@ -22,7 +22,8 @@
 #include "Engine/Core/Log.h"
 #include "Engine/OpenGL/OpenGLContext.h"
 #include <imgui.h>
-#include <ImGuizmo.h>
+#include <imgui_internal.h>
+#include "Engine/Editor/IconsFontAwesome6.h"
 #include <glm/gtx/matrix_decompose.hpp>
 
 #include "Engine/Platform/FileDialog.h"
@@ -335,7 +336,8 @@ namespace Engine {
             }
         });
 
-        m_Toolbar.SetResetLayoutCallback([this]() { m_ResetLayoutRequested = true; });
+        // P1-c：Toolbar Reset Layout 按钮已摘除（与 View>Reset Layout 构成
+        // 同类双入口，GP-DX-011 CAT 族）—— 布局重置唯一入口 = View 菜单。
 
         m_Visibility.sceneHierarchy  = true;
         m_Visibility.inspector       = true;
@@ -458,7 +460,6 @@ namespace Engine {
             }
         });
 
-        m_MenuBar.ConsumeResetLayoutSignal();
     }
 
     void EngineEditor::OnUpdate(float32 dt) {
@@ -552,6 +553,33 @@ namespace Engine {
         // ID "MainDockSpace" 固定不变，imgui.ini 自动保存用户布局。
         const ImGuiID dockspaceID = ImGui::GetID("MainDockSpace");
         ImGui::DockSpace(dockspaceID, ImVec2(0.0f, 0.0f), ImGuiDockNodeFlags_None);
+
+        // ── 3.5 布局重置（P1-c 实装）──
+        // View>Reset Layout 自审计以来一直为 DEAD：信号在 Init 末尾被
+        // ConsumeResetLayoutSignal() 读取后丢弃。现于每帧消费，以 docking
+        // 分支 DockBuilder 重建四区规范布局（左 Hierarchy / 中 Viewport /
+        // 右 Inspector / 底 Console+Performance Tab 组）。Toolbar 的 Reset
+        // 按钮已摘除 —— 本菜单为布局重置唯一入口。
+        if (m_MenuBar.ConsumeResetLayoutSignal()) {
+            ImGui::DockBuilderRemoveNode(dockspaceID);
+            ImGui::DockBuilderAddNode(dockspaceID, ImGuiDockNodeFlags_DockSpace);
+            ImGui::DockBuilderSetNodeSize(dockspaceID, viewport->WorkSize);
+
+            ImGuiID mainNode = dockspaceID;
+            const ImGuiID dockBottom = ImGui::DockBuilderSplitNode(
+                mainNode, ImGuiDir_Down, 0.25f, nullptr, &mainNode);
+            const ImGuiID dockRight = ImGui::DockBuilderSplitNode(
+                mainNode, ImGuiDir_Right, 0.24f, nullptr, &mainNode);
+            const ImGuiID dockLeft = ImGui::DockBuilderSplitNode(
+                mainNode, ImGuiDir_Left, 0.22f, nullptr, &mainNode);
+
+            ImGui::DockBuilderDockWindow("Scene Hierarchy", dockLeft);
+            ImGui::DockBuilderDockWindow(ICON_FA_INFO_CIRCLE " Inspector", dockRight);
+            ImGui::DockBuilderDockWindow(ICON_FA_TERMINAL " Console", dockBottom);
+            ImGui::DockBuilderDockWindow("Performance", dockBottom); // 与 Console 同区成 Tab
+            ImGui::DockBuilderDockWindow("Viewport", mainNode);      // 中央区
+            ImGui::DockBuilderFinish(dockspaceID);
+        }
 
         // ── 4. 渲染所有面板 ──
         // 每个面板的 ImGui::Begin() 窗口名必须固定，
@@ -652,53 +680,6 @@ namespace Engine {
         if (m_ShowDockingDemo) ImGui::ShowDemoWindow(&m_ShowDockingDemo);
 
         ImGui::End(); // EditorRootWindow
-    }
-
-    // ============================================================
-    // Gizmo 渲染
-    // ============================================================
-
-    void EngineEditor::DrawGizmo(const glm::mat4& viewMatrix,
-                                 const glm::mat4& projMatrix) {
-        auto selected = m_SelectedObject.lock();
-        if (!selected) return;
-
-        auto& transform = selected->GetTransform();
-        const Mat4& worldMat = transform.GetWorldMatrix();
-        glm::mat4 model = glm::make_mat4(worldMat.Data());
-
-        ImGuizmo::OPERATION op;
-        switch (m_Toolbar.GetGizmoMode()) {
-            case 0:  op = ImGuizmo::TRANSLATE; break;
-            case 1:  op = ImGuizmo::ROTATE;    break;
-            case 2:  op = ImGuizmo::SCALE;     break;
-            default: op = ImGuizmo::TRANSLATE; break;
-        }
-
-        ImGuizmo::MODE mode = m_Toolbar.IsGizmoLocal()
-                              ? ImGuizmo::LOCAL
-                              : ImGuizmo::WORLD;
-
-        bool useSnap = m_Toolbar.IsSnapEnabled();
-        float snapVals[3] = { m_Toolbar.GetSnapValue(), m_Toolbar.GetSnapValue(), m_Toolbar.GetSnapValue() };
-
-        ImGuizmo::Manipulate(glm::value_ptr(viewMatrix),
-                             glm::value_ptr(projMatrix),
-                             op, mode,
-                             glm::value_ptr(model),
-                             nullptr,
-                             useSnap ? snapVals : nullptr);
-
-        if (ImGuizmo::IsUsing()) {
-            glm::vec3 newPos, newScale, newSkew;
-            glm::quat newRot;
-            glm::vec4 newPerspective;
-            glm::decompose(model, newScale, newRot, newPos, newSkew, newPerspective);
-            glm::vec3 euler = glm::eulerAngles(newRot);
-            transform.SetPosition(Vec3(newPos.x, newPos.y, newPos.z));
-            transform.SetRotation(Vec3(glm::degrees(euler.x), glm::degrees(euler.y), glm::degrees(euler.z)));
-            transform.SetScale(Vec3(newScale.x, newScale.y, newScale.z));
-        }
     }
 
     // ============================================================
