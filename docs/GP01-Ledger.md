@@ -133,6 +133,61 @@ Decision:            PROMOTE —— 触发 GP1-DX / Production UI Foundation：
                      GP01 v1→v2。不做完整 Unity/Unreal。
 Level:               L2（晋升资格成立）
 ```
+
+### GP-DX-004
+```
+Title:               Editor/Play 双场景状态一致性语义
+Category:            Editor / State Model
+Severity:            MEDIUM（前瞻）
+Game Context:        GP1-DX Play = SceneSerializerV1 克隆 + 冻结 API 驱动；
+                     编辑态与运行态并存。
+Observed Problem:    待人工验证：Play 中修改 → Stop → Save，开发者预期与
+                     实际保存物是否一致。
+Current API Attempt: 设计语义已定：Save 恒存编辑态；Stop 整体丢弃克隆。
+Why Current API Is Insufficient: 不适用（语义明确，风险在心智模型）。
+Workaround:          —
+Frequency:           每次 Play 后保存。
+Production Cost:     若语义被误解则产生"改动丢失感"。
+Cross-Game Evidence: 无（DL-01 同族：Save=活快照）。
+Decision:            OBSERVE —— GP1-D-Human-Run.md Run3 步骤6 实测裁决。
+Level:               L0
+```
+
+### GP-DX-005
+```
+Title:               Viewport 仅 Billboard 反馈（Sprite 不可视）
+Category:            Editor / Rendering Feedback
+Severity:            LOW
+Game Context:        GP1-DX P0 已知限制（计划 §3）。
+Observed Problem:    无法在视口直接判断贴图绑定正确性/位置遮挡关系。
+Current API Attempt: Content 面板 + Inspector 文案辅助判断。
+Why Current API Is Insufficient: 待证据 —— 若人工 Run 判定受阻即升级 P1。
+Workaround:          面板文案核对。
+Frequency:           每次 Assign。
+Production Cost:     低-中（取决于 Run2 实测）。
+Cross-Game Evidence: 无。
+Decision:            OBSERVE（升级标准见 GP1-D-Human-Run.md）。
+Level:               L0
+```
+
+### GP-DX-006
+```
+Title:               Project Session 生命周期（重复加载/反复 Play）
+Category:            Editor / Session
+Severity:            LOW（前瞻）
+Game Context:        Open Project 可重复触发；Play/Stop 可无限循环。
+Observed Problem:    待实测：重复 Load 是否泄漏 Registry/Scene；
+                     EventBus 是否重复注册；句柄是否累积。
+Current API Attempt: 代码层预检干净 —— Load 全量替换并 GameplayAPI::Reset，
+                     Hierarchy.Init 仅启动一次。
+Why Current API Is Insufficient: 不适用。
+Workaround:          —
+Frequency:           高频（每次重开工程/每局 Play）。
+Production Cost:     泄漏则随会话时长劣化。
+Cross-Game Evidence: GP-DX-001 同族（全局状态生命周期）。
+Decision:            OBSERVE —— Human Run 操作矩阵实测。
+Level:               L0
+```
 ### Dogfood04 DX 台账复核（DX02/03/05/07）
 
 | 编号 | 复核结果 | 处置 |
@@ -365,6 +420,9 @@ Level:               L0→L2 已记录（缺口确凿），晋升等成本证据
 
 | 编号 | Title | Category | Severity | Level | Decision |
 |------|-------|----------|----------|-------|----------|
+| GP-DX-006 | Project Session 生命周期 | Editor/Session | LOW | L0 | OBSERVE（Human Run 实测） |
+| GP-DX-005 | Viewport 仅 Billboard 反馈 | Editor/Rendering | LOW | L0 | OBSERVE（升级标准已定） |
+| GP-DX-004 | Editor/Play 状态一致性语义 | Editor/State | MEDIUM(前瞻) | L0 | OBSERVE（Save=恒编辑态，Run3 裁决） |
 | GP-DX-003 | Production UI Workflow Gap（人工验证 BLOCKED） | Editor/Production UI | BLOCKER* | L2 | PROMOTE → GP1-DX 最小 UI 闭环 |
 | GP-DX-002 | 重名实体按名选择静默错选（DX05 二次复现） | Editor/Identity | MEDIUM | L1 | OBSERVE（真实内容事故才晋升） |
 | GP-DX-001 | 跨工程上下文切换无自动恢复 | Workflow/Editor Context | LOW | L0 | OBSERVE（多场景工作流出现时复核） |
