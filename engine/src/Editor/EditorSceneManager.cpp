@@ -2,7 +2,6 @@
 #include "Engine/Core/Scene/Scene.h"
 #include "Engine/Core/Scene/Serializer.h"
 #include "Engine/Core/Log.h"
-#include <imgui.h>
 
 namespace Engine {
 
@@ -114,41 +113,6 @@ namespace Engine {
         if (m_State == EditorState::Pause) {
             m_StepRequested = true;
         }
-    }
-
-    // ═══════════════════════════════════════════════════════════════
-    // ImGui 工具栏
-    // ═══════════════════════════════════════════════════════════════
-
-    bool EditorSceneManager::DrawPlayToolbar() {
-        bool isPlaying = IsPlaying();
-
-        ImGui::PushStyleColor(ImGuiCol_Button, isPlaying
-            ? ImVec4(0.6f, 0.1f, 0.1f, 1.0f)  // 红色 = 播放中
-            : ImVec4(0.1f, 0.5f, 0.1f, 1.0f)); // 绿色 = 编辑中
-
-        if (ImGui::Button(isPlaying ? "■ Stop" : "▶ Play", ImVec2(80, 0))) {
-            if (isPlaying) {
-                Stop();
-            } else {
-                Play();
-            }
-        }
-        ImGui::PopStyleColor();
-
-        ImGui::SameLine();
-        if (ImGui::Button(IsPaused() ? "▶ Resume" : "⏸ Pause", ImVec2(80, 0))) {
-            TogglePause();
-        }
-
-        ImGui::SameLine();
-        ImGui::BeginDisabled(!IsPaused());
-        if (ImGui::Button("⏭ Step", ImVec2(60, 0))) {
-            StepFrame();
-        }
-        ImGui::EndDisabled();
-
-        return isPlaying;
     }
 
     // ═══════════════════════════════════════════════════════════════

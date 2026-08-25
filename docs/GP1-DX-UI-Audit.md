@@ -284,10 +284,16 @@ Add...；AssetBrowser 右键 Create）—— 合规，无需收敛。本轮全�
 | RST-1 | **View>Reset Layout 自审计以来一直 DEAD**：信号在 Init 末尾被 `ConsumeResetLayoutSignal()` 读后丢弃（§3.2 判定复核成立） | ✅ 双修：删除 Init 期吞信号行 + OnImGui 每帧消费，以 docking 分支 DockBuilder 重建四区规范布局（左 Hierarchy 22% / 中 Viewport / 右 Inspector 24% / 底 Console+Performance Tab 组 25%） |
 
 验证：EngineCore+EditorDemo 编译通过；gate **ALL GREEN 122/122**；
-EditorDemo 冒烟两轮（一轮 30s 存活；另轮 8s 干净关机为不可复现偶发，
-启动日志路径两轮完全一致：CJK+FA merged / GP01 loaded / 零 error）。
+EditorDemo 冒烟多轮（含一轮完整 Play 实跑：HP/SCORE/WAVE 脚本日志正常 +
+干净关机）。环境插曲两则（均非本批代码问题）：① 审计 §6 同款僵尸
+`test_content.exe`（前日 05:06 启动的 ASan 死锁态）再次潜伏 20 小时，
+已清除 —— 今后 gate 后建议例行 `Get-Process test_*` 检查；② spdlog 异步
+sink 刷盘滞后可达分钟级 + 强杀丢缓冲，导致"日志停在启动早期"的假卡死
+观感 —— 冒烟判定应以"进程存活 + CPU 持续消耗（渲染循环）"为准，
+日志仅作弱证据。
 
 P1-c 余项（维持开放）：双 PIE 入口隔离收尾观察、UndoSystem 接线效果实测
-（S4b 已接线）、死代码簇清扫余量（PropertyDrawer 孤儿库、
-EditorSceneManager::DrawPlayToolbar、DockspaceBuilder 疑似孤儿等）、
+（S4b 已接线）、死代码簇清扫余量（PropertyDrawer 孤儿库处置需单独裁决
+—— 与 PluginSystem 抽屉注册子系统耦合，涉插件 API 面；
+DockspaceBuilder 经查为 Application 非 Editor 宿主在用，非孤儿）、
 §7 OBS-P1/P2/P3 低危布局项。

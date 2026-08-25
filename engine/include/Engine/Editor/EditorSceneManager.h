@@ -91,9 +91,6 @@ namespace Engine {
         /** 消费单帧步进请求 */
         void ConsumeStepRequest() { m_StepRequested = false; }
 
-        // ── ImGui 工具栏控件 ──
-        bool DrawPlayToolbar();
-
         // ── 场景持久化 ──
         bool SaveSceneToFile(const std::string& filePath);
         bool LoadSceneFromFile(const std::string& filePath);
