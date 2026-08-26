@@ -61,12 +61,28 @@ namespace Engine {
                 }
 
                 // ── 右对齐：系统状态 ──
-                // 计算右侧内容所需宽度
-                float rightWidth = 40.0f; // 预留版本号
-                for (auto& toggle : m_QuickToggles) rightWidth += 50.0f;
-                rightWidth += 300.0f; // 平台 + 分支
-                float rightOffset = ImGui::GetWindowWidth() - rightWidth;
-                ImGui::SameLine(rightOffset);
+                // P1-c/OBS-P2（GP1-DX 审计 §7）：原按硬编码 ~300px 预留，
+                // 长分支名会左侵任务区 —— 改为按实际文本逐段测量。
+                {
+                    const ImGuiStyle& st = ImGui::GetStyle();
+                    float rightWidth = 0.0f;
+                    char gitLine[160];
+                    char platLine[160];
+                    snprintf(gitLine, sizeof(gitLine), ICON_FA_CODE " %s",
+                             m_GitBranch.c_str());
+                    snprintf(platLine, sizeof(platLine), ICON_FA_TERMINAL " %s | %s",
+                             m_TargetPlatform.c_str(), m_EditorVersion.c_str());
+                    rightWidth += ImGui::CalcTextSize(gitLine).x;
+                    rightWidth += ImGui::CalcTextSize(platLine).x;
+                    for (auto& toggle : m_QuickToggles)
+                        rightWidth += ImGui::CalcTextSize(toggle.name.c_str()).x
+                                    + st.FramePadding.x * 2.0f;   // 按钮宽
+                    rightWidth += st.ItemSpacing.x * (3.0f + static_cast<float>(m_QuickToggles.size()))
+                                + st.FramePadding.x * 4.0f;       // 竖分隔线 + 余量
+                    const float rightOffset = ImGui::GetWindowWidth() - rightWidth;
+                    if (ImGui::GetCursorPosX() < rightOffset)
+                        ImGui::SameLine(rightOffset);
+                }
 
                 // Git 分支（使用可用图标：ICON_FA_CODE）
                 ImGui::TextColored(ImVec4(0.8f, 0.8f, 0.8f, 1), ICON_FA_CODE " %s", m_GitBranch.c_str());

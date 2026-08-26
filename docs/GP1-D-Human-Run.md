@@ -11,9 +11,21 @@ $env:ASAN_WIN_CONTINUE_ON_INTERCEPTION_FAILURE="1"
 .\build\sandbox\EditorDemo\Debug\EditorDemo.exe
 ```
 
+> 启动前建议例行检查残留进程（GP-DX 审计 §8 教训）：
+> `Get-Process test_*,EditorDemo` —— 有半死 ASan 实例先清除（普通
+> Stop-Process 无效时用 rename 绕过锁，或直接重启机器）。
+> engine.log 已配置 1 秒周期刷盘（2026-08-26 修复），时间线可信。
+
 启动即自动加载 GP01 工程（控制台应出现
 `[GP01] project loaded: 10 objects, 33 assets`）。
 每个 Run 结束把"实际"列填入本文件并提交。
+
+### UI 现状对齐（2026-08-26，P1-c 批次后）
+
+- Production 窗口单行已分组：[工程 Open/Save] | [播放 Play·Stop·Reload] | [+ Entity]；
+- Toolbar 仅剩播放传送带 + Render Mode（gizmo 工具在视口浮层，Q/W/E/R）；
+- View > Reset Layout 已实装可用（四区规范布局）；
+- 图标码位表已与 FA7 字体对齐——若仍见 "?" 图标属环境字体问题，记录异常。
 
 ---
 
@@ -21,7 +33,7 @@ $env:ASAN_WIN_CONTINUE_ON_INTERCEPTION_FAILURE="1"
 
 | # | 操作 | 预期 | 实际 | 异常 |
 |---|------|------|------|------|
-| 1 | ＋Entity ×3（Production 窗口） | Entity_2/3/4 出现并被选中 | | |
+| 1 | ＋Entity ×3（Production 窗口） | 依次生成 Entity / Entity_2 / Entity_3，均被选中（场景内无同名对象，首个不跳号） | | |
 | 2 | Content→Assign Sprite（给其一） | Console: sprite assigned | | |
 | 3 | Hierarchy F2 重命名三者 | 树即时更新 | | |
 | 4 | Inspector 拖改 Position | Viewport 图标移动 | | |

@@ -15,7 +15,7 @@ namespace Engine {
 
         ImGui::SetNextWindowSize(ImVec2(600, 400), ImGuiCond_FirstUseEver);
         ImGui::SetNextWindowSizeConstraints(ImVec2(320, 200), ImVec2(FLT_MAX, FLT_MAX));
-        ImGui::Begin(ICON_FA_COG " Profiler", &m_Visible);
+        ImGui::Begin("Profiler", &m_Visible);
 
         // Tab 栏：CPU / GPU / Memory / Physics
         if (ImGui::BeginTabBar("##ProfilerModules", ImGuiTabBarFlags_FittingPolicyScroll)) {

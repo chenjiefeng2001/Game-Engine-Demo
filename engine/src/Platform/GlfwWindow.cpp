@@ -92,6 +92,10 @@ namespace Engine {
 	}
 
 	void GlfwWindow::OnClose() {
+		// GP1-DX 启动调查（2026-08-26）：此事件此前零消费者、无任何痕迹 ——
+		// 异常自行退出（如 8 秒退出）无法区分"OS 发来关闭"与"内部置位"。
+		// Warn 级 = 即时刷盘，不受缓冲滞后影响。
+		s_Log.Warn("WindowClose: OS-initiated close received (WM_CLOSE/X/taskkill)");
 		if (m_EventCallback) {
 			Event e{ EventType::WindowClose };
 			m_EventCallback(e);

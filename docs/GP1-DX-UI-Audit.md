@@ -283,14 +283,24 @@ Add...；AssetBrowser 右键 Create）—— 合规，无需收敛。本轮全�
 | TLB-4 | `InitDockingLayout()` 孤儿声明（只有声明无定义） | ✅ 摘除 |
 | RST-1 | **View>Reset Layout 自审计以来一直 DEAD**：信号在 Init 末尾被 `ConsumeResetLayoutSignal()` 读后丢弃（§3.2 判定复核成立） | ✅ 双修：删除 Init 期吞信号行 + OnImGui 每帧消费，以 docking 分支 DockBuilder 重建四区规范布局（左 Hierarchy 22% / 中 Viewport / 右 Inspector 24% / 底 Console+Performance Tab 组 25%） |
 
-验证：EngineCore+EditorDemo 编译通过；gate **ALL GREEN 122/122**；
-EditorDemo 冒烟多轮（含一轮完整 Play 实跑：HP/SCORE/WAVE 脚本日志正常 +
-干净关机）。环境插曲两则（均非本批代码问题）：① 审计 §6 同款僵尸
-`test_content.exe`（前日 05:06 启动的 ASan 死锁态）再次潜伏 20 小时，
-已清除 —— 今后 gate 后建议例行 `Get-Process test_*` 检查；② spdlog 异步
-sink 刷盘滞后可达分钟级 + 强杀丢缓冲，导致"日志停在启动早期"的假卡死
-观感 —— 冒烟判定应以"进程存活 + CPU 持续消耗（渲染循环）"为准，
-日志仅作弱证据。
+### 8.1 启动链路真因调查（2026-08-26 第二批，实机取证）
+
+> 触发：评审指出此前把启动异常归因"环境抖动"滑过去了。本轮以
+> 受控实验（多次受控启动 + Win32 窗口枚举 + 精确句柄 WM_CLOSE 探针 +
+> 新增关闭源取证日志）完成根因闭环。四个真 bug，全部修复：
+
+| # | 真因 | 修复 | 验证 |
+|---|------|------|------|
+| INV-1 | **日志假卡死**：logger 为同步实现（注释误标 async），仅 `flush_on(warn)`、无周期刷盘 —— 纯 Info 启动序列滞留 CRT 缓冲数分钟，制造"启动停滞在纹理加载"假象（此前多轮误判根源） | `spdlog::flush_every(1s)`（Log.cpp） | 启动时间线秒级可信；0.7s 完成加载实测 |
+| INV-2 | **布局撕裂**：默认停靠从未引导（`InitDockingLayout` 死条目的真正含义）—— 实测编辑器被拆成 **14 个漂浮 OS 窗口**；且 11 处 `Begin()` 标题带 FontAwesome 图标，原生标题栏渲染为 "? Inspector" 等 | ① 引导式规范布局：Viewport 未停靠即 DockBuilder 重建（判定延后至窗口存在帧，否则绕过 ini 持久化——已复现并修正）；② 全部标题去图标；③ 布局映射对齐真实标题（"Hierarchy" 非 "Scene Hierarchy"）；④ GP01 三件套入右下 Tab 组 | 窗口数 14→1（主窗）；干净退出后重启零重建（持久化成立） |
+| INV-3 | **关闭链路不可观测**：`WindowClose` 事件零消费者、无来源日志 —— 8 秒自退无法归因 | OnClose Warn 取证 + 主循环退出点带 uptime 日志 | WM_CLOSE→告警→干净退出全链路实测通过 |
+| INV-4 | **测试面板污染**：EditorDemoTest 无条件绘制私有 Console/Profiler/AssetBrowser，启动即生成与生产面板同类冲突的漂浮窗口 | 测试 Init 默认 SetVisible(false)（菜单通路保留） | 启动不再产生重复面板窗口 |
+
+**遗留开放项**：间歇性外部 WM_CLOSE 在无人值守启动后 ~6s 送达（取证日志已两次捕获，来源未明——疑似宿主环境回收所派生 GUI 进程）；人工操作会话不受影响，再次出现可经日志直接溯源。
+
+**环境登记**：僵尸 `test_content.exe` 第三次复发（昨日实例普通终止无效 + 今晨新实例），rename 绕过法再次生效（`.zomb` 文件留存）；**Human Run 会话前建议重启机器**，并在 gate 后例行 `Get-Process test_*` 检查。
+
+验证：gate **ALL GREEN 122/122**（rename 绕过后）；受控双启动实验通过（引导一次→持久化→优雅关闭×2）。
 
 P1-c 余项（维持开放）：双 PIE 入口隔离收尾观察、UndoSystem 接线效果实测
 （S4b 已接线）、死代码簇清扫余量（PropertyDrawer 孤儿库处置需单独裁决

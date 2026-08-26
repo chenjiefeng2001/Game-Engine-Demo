@@ -33,6 +33,14 @@ namespace Engine {
         // ── 4. 模拟测试数据 ──
         m_DepTracker.AddDependency(GUID::Generate(), GUID::Generate(), true);
         Log::Info("[DemoTest] Editor demo initialized");
+
+        // GP1-DX 启动调查（2026-08-26）：本测试面板私有的 Console/Profiler/
+        // AssetBrowser 与生产 EngineEditor 面板同类冲突，此前无条件绘制，
+        // 启动即以独立 OS 窗口污染生产工作区。默认隐藏，经测试菜单按需开启
+        //（SetVisible(true) 通路已存在）。
+        m_ConsolePanel.SetVisible(false);
+        m_ProfilerPanel.SetVisible(false);
+        m_AssetBrowser.SetVisible(false);
     }
 
     void EditorDemoTest::OnUpdate(float dt) {

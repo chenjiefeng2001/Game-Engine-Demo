@@ -331,7 +331,7 @@ namespace Engine {
         }
 
         ImGui::SetNextWindowSize(ImVec2(400, 600), ImGuiCond_FirstUseEver);
-        ImGui::Begin(ICON_FA_INFO_CIRCLE " Inspector", &m_Visible);
+        ImGui::Begin("Inspector", &m_Visible);
 
         DrawToolbar();
 
