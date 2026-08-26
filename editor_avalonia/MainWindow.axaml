@@ -1,0 +1,18 @@
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        x:Class="AvaloniaEditor.MainWindow"
+        Title="Avalonia Editor — Phase 0 Spike (AV-001)"
+        Width="720" Height="480">
+  <Grid RowDefinitions="Auto,*,Auto" Margin="12">
+    <StackPanel Grid.Row="0" Orientation="Horizontal" Spacing="8">
+      <Button x:Name="OpenProjectButton" Content="Open Project" Click="OnOpenProject"/>
+      <Button x:Name="CreateEntityButton" Content="+ Entity" Click="OnCreateEntity"/>
+      <Button x:Name="SaveProjectButton" Content="Save Project" Click="OnSaveProject"/>
+    </StackPanel>
+
+    <ListBox x:Name="LogList" Grid.Row="1" Margin="0,10,0,0"/>
+
+    <TextBlock x:Name="StatusBar" Grid.Row="2"
+               Text="AV-001 Architecture Spike — no project loaded"/>
+  </Grid>
+</Window>

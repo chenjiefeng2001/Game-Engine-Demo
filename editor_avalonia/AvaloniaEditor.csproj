@@ -1,0 +1,26 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net9.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <LangVersion>latest</LangVersion>
+    <BuiltInComInteropSupport>true</BuiltInComInteropSupport>
+    <ApplicationIcon></ApplicationIcon>
+    <AssemblyName>AvaloniaEditor</AssemblyName>
+    <RootNamespace>AvaloniaEditor</RootNamespace>
+  </PropertyGroup>
+  <ItemGroup>
+    <PackageReference Include="Avalonia" Version="11.2.7" />
+    <PackageReference Include="Avalonia.Desktop" Version="11.2.7" />
+    <PackageReference Include="Avalonia.Themes.Fluent" Version="11.2.7" />
+  </ItemGroup>
+  <ItemGroup>
+    <!-- Phase 0: 原生边界 DLL（CMake 构建产物）随宿主分发 -->
+    <None Include="..\build\bridge\Debug\EditorBridge.dll"
+          Condition="Exists('..\build\bridge\Debug\EditorBridge.dll')"
+          CopyToOutputDirectory="PreserveNewest" Link="EditorBridge.dll" />
+    <None Include="..\build\sandbox\EditorDemo\Debug\OpenAL32.dll"
+          Condition="Exists('..\build\sandbox\EditorDemo\Debug\OpenAL32.dll')"
+          CopyToOutputDirectory="PreserveNewest" Link="OpenAL32.dll" />
+  </ItemGroup>
+</Project>
