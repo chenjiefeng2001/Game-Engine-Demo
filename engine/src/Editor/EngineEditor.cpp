@@ -554,13 +554,14 @@ namespace Engine {
         const ImGuiID dockspaceID = ImGui::GetID("MainDockSpace");
         ImGui::DockSpace(dockspaceID, ImVec2(0.0f, 0.0f), ImGuiDockNodeFlags_None);
 
-        // ── 3.5 布局重置（P1-c 实装）──
-        // View>Reset Layout 自审计以来一直为 DEAD：信号在 Init 末尾被
-        // ConsumeResetLayoutSignal() 读取后丢弃。现于每帧消费，以 docking
-        // 分支 DockBuilder 重建四区规范布局（左 Hierarchy / 中 Viewport /
-        // 右 Inspector / 底 Console+Performance Tab 组）。Toolbar 的 Reset
-        // 按钮已摘除 —— 本菜单为布局重置唯一入口。
-        if (m_MenuBar.ConsumeResetLayoutSignal()) {
+        // ── 3.5 布局守卫 / 重置（P1-c 实装，GP1-DX 启动调查 2026-08-26）──
+        // 两个触发源共用同一规范布局：
+        //   a) View>Reset Layout 菜单信号；
+        //   b) 引导条件：Viewport 窗口未停靠进 MainDockSpace —— 说明 imgui.ini
+        //      缺失/失效/被撕裂（实测症状：整编辑器拆成十几个漂浮 OS 窗口、
+        //      原生标题栏渲染图标为 "?"）。InitDockingLayout 自 P0 起从未
+        //      实现即为此缺口。
+        auto ApplyDefaultLayout = [&]() {
             ImGui::DockBuilderRemoveNode(dockspaceID);
             ImGui::DockBuilderAddNode(dockspaceID, ImGuiDockNodeFlags_DockSpace);
             ImGui::DockBuilderSetNodeSize(dockspaceID, viewport->WorkSize);
@@ -573,12 +574,36 @@ namespace Engine {
             const ImGuiID dockLeft = ImGui::DockBuilderSplitNode(
                 mainNode, ImGuiDir_Left, 0.22f, nullptr, &mainNode);
 
-            ImGui::DockBuilderDockWindow("Scene Hierarchy", dockLeft);
-            ImGui::DockBuilderDockWindow(ICON_FA_INFO_CIRCLE " Inspector", dockRight);
-            ImGui::DockBuilderDockWindow(ICON_FA_TERMINAL " Console", dockBottom);
+            // 窗口名必须与各面板 Begin() 的实际标题一致（P1-c 已全部去图标）
+            ImGui::DockBuilderDockWindow("Hierarchy", dockLeft);
+            ImGui::DockBuilderDockWindow("Console", dockBottom);
             ImGui::DockBuilderDockWindow("Performance", dockBottom); // 与 Console 同区成 Tab
             ImGui::DockBuilderDockWindow("Viewport", mainNode);      // 中央区
+
+            // 右列：上 Inspector / 下 GP01 生产三件套 Tab 组
+            //（宿主级窗口，GP1-DX 启动调查：此前漂浮为独立 OS 窗口撕裂工作区）
+            ImGuiID dockRightMut = dockRight;
+            const ImGuiID dockProd = ImGui::DockBuilderSplitNode(
+                dockRightMut, ImGuiDir_Down, 0.45f, nullptr, &dockRightMut);
+            ImGui::DockBuilderDockWindow("Inspector", dockRightMut);
+            ImGui::DockBuilderDockWindow("GP01 Production", dockProd);
+            ImGui::DockBuilderDockWindow("Content (Registry)", dockProd);
+            ImGui::DockBuilderDockWindow("Script Editor", dockProd);
+
             ImGui::DockBuilderFinish(dockspaceID);
+            Log::Info("Editor layout rebuilt (bootstrap or user reset)");
+        };
+
+        // 引导/重置判定（GP1-DX 启动调查）：仅当 Viewport 窗口已存在且
+        // 未停靠时才重建 —— 首帧窗口尚未创建，若此时判定会每次启动都
+        // 误触发重建、绕过 imgui.ini 持久化（实测复现后修正）。
+        const bool resetRequested = m_MenuBar.ConsumeResetLayoutSignal();
+        bool viewportFloating = false;
+        if (const ImGuiWindow* vpWin = ImGui::FindWindowByName("Viewport"))
+            viewportFloating = (vpWin->DockNode == nullptr);
+
+        if (resetRequested || viewportFloating) {
+            ApplyDefaultLayout();
         }
 
         // ── 4. 渲染所有面板 ──

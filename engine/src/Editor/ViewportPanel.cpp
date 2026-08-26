@@ -422,18 +422,19 @@ void ViewportPanel::HandleViewportContextMenu() {
 }
 
 // ═══════════════════════════════════════════════════════════════
-// 8. Viewport 状态栏 (FPS, Draw Calls, GPU/CPU ms)
+// 8. Viewport 状态栏 (FPS / CPU ms)
 // ═══════════════════════════════════════════════════════════════
+// P1-c/OBS（GP-DX-011 同脉）：摘除假数据段 —— "GPU: ms" 由帧率推算属编造、
+// "DC: m_GL?0u:0u" 恒 0；真实 DrawCalls 已由底栏 StatusBar 显示
+// （EngineEditor 每帧喂 ctx->GetAndResetDrawCallCount）。只显示真实量。
 void ViewportPanel::DrawViewportStats() {
   ImVec2 pos(m_ViewportBounds[0].x + 10, m_ViewportBounds[1].y - 24);
   ImGui::SetCursorScreenPos(pos);
 
   ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.7f, 0.7f, 0.7f, 0.85f));
-  ImGui::Text("FPS: %.0f  |  GPU: %.1fms  |  CPU: %.1fms  |  DC: %u",
+  ImGui::Text("FPS: %.0f  |  Frame: %.1fms",
               ImGui::GetIO().Framerate,
-              1000.0f / ImGui::GetIO().Framerate * 0.5f,
-              ImGui::GetIO().DeltaTime * 1000.0f,
-              m_GL ? 0u : 0u);
+              ImGui::GetIO().DeltaTime * 1000.0f);
   ImGui::PopStyleColor();
 }
 
@@ -499,8 +500,22 @@ void ViewportPanel::DrawOverlay() {
   ImGui::PushStyleColor(ImGuiCol_ChildBg, ImVec4(0.12f, 0.12f, 0.12f, 0.85f));
   ImGui::PushStyleVar(ImGuiStyleVar_ChildRounding, 4.0f);
   ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(8, 4));
-  if (ImGui::BeginChild("##VPToolbar", ImVec2(400, 32), false,
-                        ImGuiWindowFlags_NoScrollbar)) {
+
+  // P1-c/OBS-P1（GP1-DX 审计 §7）：固定 400px 在 snap 展开时逼近溢出、
+  // 且不随字体缩放 —— 改为按当前字体度量逐项估算内容宽度，杜绝折行裁切。
+  {
+    const float btnW = ImGui::GetFrameHeight() + 6.0f;   // 方形图标按钮估宽
+    const float sepW = 8.0f;
+    const float spacing = ImGui::GetStyle().ItemSpacing.x;
+    float content = 8.0f * 2.0f;                          // WindowPadding
+    const int btnCount = 5 + 1 + 1 + 1;                   // 工具×5 + 空间切换 + 磁铁 + 网格
+    content += static_cast<float>(btnCount) * btnW
+             + (m_SnapEnabled ? 48.0f + spacing : 0.0f)   // Snap 数值框
+             + sepW * 3.0f + spacing * 9.0f;
+    const float maxW = (m_ViewportBounds[1].x - m_ViewportBounds[0].x) - 20.0f;
+    const float childW = std::min(std::max(content, 200.0f), std::max(maxW, 200.0f));
+    if (ImGui::BeginChild("##VPToolbar", ImVec2(childW, 32), false,
+                          ImGuiWindowFlags_NoScrollbar)) {
     ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0, 0, 0, 0));
     ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(4, 0));
 
@@ -522,28 +537,36 @@ void ViewportPanel::DrawOverlay() {
     TB(ICON_FA_ROTATE_LEFT, ViewportTool::Rotate, "Rotate (E)");
     TB(ICON_FA_EXPAND, ViewportTool::Scale, "Scale (R)");
 
-    ImGui::Separator();
-    ImGui::SameLine();
+    // OBS-P3：与 Toolbar/GP01 统一的自绘竖分隔线（替换水平流内 Separator 短横线）
+    auto VSep = [&]() {
+      ImGui::SameLine();
+      ImVec2 p = ImGui::GetCursorScreenPos();
+      ImDrawList *dl = ImGui::GetWindowDrawList();
+      dl->AddLine(ImVec2(p.x + 2.0f, p.y + 3.0f),
+                  ImVec2(p.x + 2.0f, p.y + ImGui::GetFrameHeight() - 3.0f),
+                  IM_COL32(80, 80, 90, 160), 1.0f);
+      ImGui::Dummy(ImVec2(6.0f, 0.0f));
+      ImGui::SameLine();
+    };
+    VSep();
     if (ImGui::Button(m_GizmoLocal ? ICON_FA_CUBE : ICON_FA_DOT_CIRCLE))
       m_GizmoLocal = !m_GizmoLocal;
     if (ImGui::IsItemHovered())
       ImGui::SetTooltip(m_GizmoLocal ? "Local" : "World");
     ImGui::SameLine();
-    ImGui::Separator();
-    ImGui::SameLine();
+    VSep();
     if (ImGui::Button(ICON_FA_MAGNET))
       m_SnapEnabled = !m_SnapEnabled;
     if (m_SnapEnabled) {
       ImGui::SameLine();
-      ImGui::SetNextItemWidth(50);
+      ImGui::SetNextItemWidth(44);
       ImGui::DragFloat("##snap", &m_SnapValue, 0.01f, 0.01f, 100.0f, "%.2f");
     }
     if (ImGui::IsItemHovered())
       ImGui::SetTooltip("Snap");
 
     ImGui::SameLine();
-    ImGui::Separator();
-    ImGui::SameLine();
+    VSep();
     if (ImGui::Button(ICON_FA_GRID))
       m_Config.ShowGrid = !m_Config.ShowGrid;
     if (ImGui::IsItemHovered())
@@ -556,5 +579,5 @@ void ViewportPanel::DrawOverlay() {
   ImGui::PopStyleVar(2);
   ImGui::PopStyleColor();
 }
-
+}
 } // namespace Engine

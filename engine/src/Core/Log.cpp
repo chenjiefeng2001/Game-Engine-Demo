@@ -205,6 +205,12 @@ void Log::Init(const std::string& filePath, Level consoleLevel, Level fileLevel)
         s_DefaultLogger->set_level(spdlog::level::trace);
         s_DefaultLogger->flush_on(spdlog::level::warn);
 
+        // GP1-DX 启动调查（2026-08-26）：此前仅 flush_on(warn) —— 纯 Info 的
+        // 启动序列会滞留 CRT 文件缓冲（数 KB 块满才落盘），engine.log 可延迟
+        // 数分钟，制造"启动卡死"的假象（冒烟误判事故见审计 §8）。
+        // 周期刷盘让日志近实时可信。
+        spdlog::flush_every(std::chrono::seconds(1));
+
         // 注册为 spdlog 默认 logger
         spdlog::set_default_logger(s_DefaultLogger);
 

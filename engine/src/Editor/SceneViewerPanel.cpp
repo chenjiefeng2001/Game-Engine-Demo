@@ -111,7 +111,7 @@ namespace Engine {
         if (!m_Visible) return;
 
         ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(0, 0));
-        if (!ImGui::Begin(ICON_FA_LAYER_GROUP " Scene Viewer", &m_Visible, ImGuiWindowFlags_NoCollapse)) {
+        if (!ImGui::Begin("Scene Viewer", &m_Visible, ImGuiWindowFlags_NoCollapse)) {
             ImGui::End();
             ImGui::PopStyleVar();
             return;

@@ -796,6 +796,15 @@ void Application::Run() {
     MemoryTracker::FrameEnd();
   }
 
+  // GP1-DX 启动调查（2026-08-26）：主循环退出点取证。若此前无
+  // "WindowClose: OS-initiated" 告警，则 ShouldClose 由内部置位
+  // （需排查 glfwSetWindowShouldClose 调用者）；有则来自 OS 关闭消息。
+  {
+    const double uptimeSec = Time::GetElapsedSinceInit();
+    Log::Warn("Main loop exited after {:.1f}s (see preceding "
+              "WindowClose warning for origin)", uptimeSec);
+  }
+
   // ── 关闭场景管理器 ──
   SceneManager::Shutdown();
 

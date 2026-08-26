@@ -348,7 +348,7 @@ namespace Engine {
         if (!m_Visible) return;
         ImGui::SetNextWindowSize(ImVec2(1000, 650), ImGuiCond_FirstUseEver);
         ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(0, 0));
-        ImGui::Begin(ICON_FA_FOLDER_OPEN " Content Browser", &m_Visible);
+        ImGui::Begin("Content Browser", &m_Visible);
         DrawToolbar();
         if (ImGui::BeginTable("BrowserLayout", 2, ImGuiTableFlags_Resizable | ImGuiTableFlags_BordersInnerV)) {
             ImGui::TableSetupColumn("Tree", ImGuiTableColumnFlags_WidthFixed, 240.0f);
@@ -554,7 +554,7 @@ namespace Engine {
 
     void AssetBrowserPanel::DrawImportSettingsPanel(const AssetBrowserEntry& entry) {
         ImGui::SetNextWindowSize(ImVec2(400, 500), ImGuiCond_FirstUseEver);
-        ImGui::Begin(ICON_FA_GEAR " Import Settings", &m_ShowImportSettings);
+        ImGui::Begin("Import Settings", &m_ShowImportSettings);
         ImGui::Text("%s", entry.displayName.c_str()); ImGui::Separator();
         auto meta = m_Database ? m_Database->GetMetaMutable(entry.guid) : nullptr;
         if (!meta) { ImGui::TextDisabled("No import settings available"); ImGui::End(); return; }
@@ -586,7 +586,7 @@ namespace Engine {
 
     void AssetBrowserPanel::DrawDependencyGraph(const AssetBrowserEntry& entry) {
         ImGui::SetNextWindowSize(ImVec2(500, 400), ImGuiCond_FirstUseEver);
-        ImGui::Begin(ICON_FA_CUBES " Reference Viewer", &m_ShowDependencyGraph);
+        ImGui::Begin("Reference Viewer", &m_ShowDependencyGraph);
         ImGui::Text("Asset: %s", entry.displayName.c_str()); ImGui::Separator();
         if (!m_DepTracker) { ImGui::TextDisabled("Dependency tracker not available"); ImGui::End(); return; }
         ImGui::TextColored(ImVec4(1,1,0.5f,1), "Dependencies (used by this asset):");
@@ -613,14 +613,14 @@ namespace Engine {
 
     void AssetBrowserPanel::DrawFavoritesPanel() {
         ImGui::SetNextWindowSize(ImVec2(250, 300), ImGuiCond_FirstUseEver);
-        ImGui::Begin(ICON_FA_CIRCLE " Favorites", &m_ShowFavoritesPanel);
+        ImGui::Begin("Favorites", &m_ShowFavoritesPanel);
         for (auto& f : m_Favorites) { if (auto* m = m_Database ? m_Database->GetMeta(f) : nullptr) { std::string_view n = ExtractFileName(m->originalPath); if (ImGui::Selectable(n.data())) { m_CurrentDir = std::filesystem::path(m->virtualPath).parent_path().string(); if (m_CurrentDir.empty()) m_CurrentDir = "Assets"; Refresh(); } if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", m->originalPath.c_str()); } }
         if (m_Favorites.empty()) ImGui::TextDisabled("No favorites yet"); ImGui::End();
     }
 
     void AssetBrowserPanel::DrawCollectionPanel() {
         ImGui::SetNextWindowSize(ImVec2(350, 350), ImGuiCond_FirstUseEver);
-        ImGui::Begin(ICON_FA_CUBES " Collections", &m_ShowCollectionPanel);
+        ImGui::Begin("Collections", &m_ShowCollectionPanel);
         for (auto& sc : m_SmartCollections) { bool active = (m_ActiveCollection == sc.name); if (ImGui::Selectable((sc.name + (sc.isDynamic ? " (Dynamic)" : "")).c_str(), active)) { m_ActiveCollection = sc.name; Refresh(); } ImGui::SameLine(); if (ImGui::SmallButton(("Delete##" + sc.name).c_str())) { RemoveSmartCollection(sc.name); m_ActiveCollection.clear(); } }
         ImGui::Separator();
         ImGui::InputText("Name", m_NewCollectionName, sizeof(m_NewCollectionName));

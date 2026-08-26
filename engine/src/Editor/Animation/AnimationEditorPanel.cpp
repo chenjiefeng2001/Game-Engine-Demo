@@ -92,7 +92,7 @@ namespace Animation {
     void AnimationEditorPanel::OnImGui() {
         ImGui::SetNextWindowSize(ImVec2(1400, 750), ImGuiCond_FirstUseEver);
         ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(0, 0));
-        if (!ImGui::Begin(ICON_FA_FILM " Animation Workspace", &m_Visible,
+        if (!ImGui::Begin("Animation Workspace", &m_Visible,
                           ImGuiWindowFlags_MenuBar | ImGuiWindowFlags_NoScrollbar)) {
             ImGui::PopStyleVar();
             ImGui::End();

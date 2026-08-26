@@ -161,7 +161,7 @@ namespace Engine {
 
         ImGui::SetNextWindowSize(ImVec2(640, 300), ImGuiCond_FirstUseEver);
         ImGui::SetNextWindowSizeConstraints(ImVec2(320, 150), ImVec2(FLT_MAX, FLT_MAX));
-        ImGui::Begin(ICON_FA_TERMINAL " Console", &m_Visible);
+        ImGui::Begin("Console", &m_Visible);
 
         // ── 工具栏 ──
         ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(4, 2));

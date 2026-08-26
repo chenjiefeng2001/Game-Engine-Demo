@@ -79,7 +79,7 @@ namespace Engine {
         if (!m_Visible) return;
 
         ImGui::SetNextWindowSize(ImVec2(320, 500), ImGuiCond_FirstUseEver);
-        ImGui::Begin(ICON_FA_LIST " Hierarchy", &m_Visible);
+        ImGui::Begin("Hierarchy", &m_Visible);
 
         if (!m_Scene) {
             ImGui::TextDisabled("  No Active Scene");
