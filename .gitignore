@@ -93,3 +93,9 @@ df09_scratch/
 vs01_scratch/
 gp01_scratch/
 !assets/vs01/**/*.scene
+
+# Avalonia editor (Phase 0 spike) build artifacts
+editor_avalonia/bin/
+editor_avalonia/obj/
+editor_avalonia/spike_gp01/
+editor_avalonia/selftest.log

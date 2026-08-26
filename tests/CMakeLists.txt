@@ -104,3 +104,16 @@ add_executable(test_e2e
 )
 target_link_libraries(test_e2e PRIVATE ${COMMON_LIBS})
 add_test(NAME test_e2e COMMAND test_e2e)
+
+# ── AV-005: EditorBridge C-ABI 契约测试（Avalonia 迁移 Phase 0）──
+add_executable(test_bridge
+    test_bridge/test_editor_capi.cpp
+)
+target_link_libraries(test_bridge PRIVATE EditorBridge GTest::gtest_main)
+add_test(NAME test_bridge COMMAND test_bridge)
+if(TARGET EditorBridge AND WIN32)
+    # DLL 与 exe 同目录，保证 add_test 直接可跑
+    add_custom_command(TARGET test_bridge POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                $<TARGET_FILE:EditorBridge> $<TARGET_FILE_DIR:test_bridge>)
+endif()

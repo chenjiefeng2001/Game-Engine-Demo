@@ -67,9 +67,10 @@ endif()
 option(ENABLE_TESTS "Build test suite" OFF)
 option(ENABLE_COVERAGE "Enable code coverage" OFF)
 
-# 包含三个子模块
+# 包含四个子模块
 add_subdirectory(third_party)
 add_subdirectory(engine)
+add_subdirectory(bridge)
 add_subdirectory(sandbox)
 
 # ── 测试套件 ──

@@ -7,6 +7,14 @@
 #include <GLFW/glfw3.h>
 #include <glad/gl.h>
 
+#ifdef _WIN32
+#define GLFW_EXPOSE_NATIVE_WIN32
+#include <GLFW/glfw3native.h>
+#define NOMINMAX
+#include <windows.h>
+#include <cstdio>
+#endif
+
 namespace {
     Engine::Logger s_Log("GlfwWindow");
 }
@@ -96,6 +104,49 @@ namespace Engine {
 		// 异常自行退出（如 8 秒退出）无法区分"OS 发来关闭"与"内部置位"。
 		// Warn 级 = 即时刷盘，不受缓冲滞后影响。
 		s_Log.Warn("WindowClose: OS-initiated close received (WM_CLOSE/X/taskkill)");
+#ifdef _WIN32
+		// WM_CLOSE 来源取证（2026-08-26 悬案：无人值守启动 ~6s 外部关闭）。
+		// InSendMessage 区分跨线程 SendMessage（发送方阻塞等待）与队列投递；
+		// 前台进程三要素（pid/exe/标题）定位潜在发送者。
+		{
+			HWND hwnd = m_Window ? glfwGetWin32Window(m_Window) : nullptr;
+			HWND fg = GetForegroundWindow();
+			DWORD fgPid = 0;
+			if (fg) GetWindowThreadProcessId(fg, &fgPid);
+			wchar_t fgTitle[128] = L"<none>";
+			if (fg) GetWindowTextW(fg, fgTitle, 128);
+			wchar_t fgExe[MAX_PATH] = L"<unknown>";
+			if (fgPid) {
+				HANDLE h = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, FALSE, fgPid);
+				if (h) {
+					DWORD sz = MAX_PATH;
+					QueryFullProcessImageNameW(h, 0, fgExe, &sz);
+					CloseHandle(h);
+				}
+			}
+			char line[768];
+			// 人为点击 X 时 WM_CLOSE 紧随真实键鼠输入（间隔 <~500ms）；
+			// 外部程序 PostMessage 则与最后输入相距甚远。以此自证来源。
+			LASTINPUTINFO lii{ sizeof(LASTINPUTINFO) };
+			DWORD inputAgeMs = DWORD(-1);
+			if (GetLastInputInfo(&lii)) {
+				inputAgeMs = GetTickCount() - lii.dwTime;
+			}
+			std::snprintf(line, sizeof(line),
+				"CloseForensics: via=%s ourHwndFocused=%d fgPid=%lu fgExe=%ls "
+				"fgTitle=%ls msgQueueTime=%lu lastInputAgeMs=%lu "
+				"(%s)",
+				InSendMessage() ? "SendMessage(caller-waiting)"
+								: "PostMessage/queued",
+				(fg == hwnd && hwnd) ? 1 : 0,
+				static_cast<unsigned long>(fgPid), fgExe, fgTitle,
+				static_cast<unsigned long>(GetMessageTime()),
+				static_cast<unsigned long>(inputAgeMs),
+				inputAgeMs < 750 ? "HUMAN-LIKE (recent input)"
+								 : "PROGRAMMATIC (no recent input)");
+			s_Log.Warn("{}", line);
+		}
+#endif
 		if (m_EventCallback) {
 			Event e{ EventType::WindowClose };
 			m_EventCallback(e);
