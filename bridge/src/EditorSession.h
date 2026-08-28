@@ -44,8 +44,21 @@ public:
     bool GetEntityName(int32_t index, std::string* out) const;
     bool GetEntityPosition(int32_t index, float out3[3]) const;
     bool SetEntityPosition(int32_t index, const float pos3[3]);
+
+    // ── Phase 2 (AV-G2) ──
+    bool DeleteEntity(int32_t index);
+    bool RenameEntity(int32_t index, const std::string& newName);
+    bool GetEntitySprite(int32_t index, std::string* out) const;
+    bool AssignSprite(int32_t assetIndex, int32_t entityIndex);
+
     bool GetAssetPath(int32_t index, std::string* out) const;
     int32_t GetAssetType(int32_t index) const;
+    bool GetAssetGuid(int32_t index, std::string* out) const;
+
+    bool ScriptRead(int32_t assetIndex, std::string* out);
+    bool ScriptSave(int32_t assetIndex, const std::string& text);
+
+    bool IsDirty() const { return m_Dirty; }
 
     void SetEventCallback(EventFn cb) { m_Event = std::move(cb); }
     const std::string& GetLastError() const { return m_LastError; }
@@ -57,6 +70,10 @@ private:
     void RealignBindings();
     /// 记录失败并返回 false（统一错误出口，供 ABI 层读取）
     bool Fail(const std::string& msg);
+    /// 置 dirty（任何编辑路径统一入口）
+    void MarkDirty();
+    /// 把 registry path 解析为可读写文件路径：相对路径锚定到 manifest 目录
+    std::string ResolveContentPath(const std::string& path) const;
 
     Engine::OpenGLGraphicsFactory m_Gfx;   // 会话自有工厂（与宿主解耦，同 GP01 先例）
     Engine::TextureManager m_TexMgr{m_Gfx};
@@ -69,6 +86,7 @@ private:
     EventFn m_Event;
     std::string m_LastError;
     bool m_Playing = false;
+    bool m_Dirty = false;
 };
 
 } // namespace editor_bridge

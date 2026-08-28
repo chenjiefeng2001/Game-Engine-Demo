@@ -12,6 +12,10 @@ public static class EditorBridgeApi
     public const int EvProjectLoaded = 1;
     public const int EvEntityCreated = 2;
     public const int EvEntityMoved = 3;
+    public const int EvProjectSaved = 4;
+    public const int EvEntityDeleted = 5;
+    public const int EvEntityRenamed = 6;
+    public const int EvEntityAssigned = 7;
 
     [UnmanagedFunctionPointer(CallingConvention.Cdecl)]
     public delegate void EditorEventCallback(int eventType,
@@ -62,6 +66,37 @@ public static class EditorBridgeApi
     [DllImport("EditorBridge", CallingConvention = CallingConvention.Cdecl)]
     public static extern int EditorSession_GetAssetType(IntPtr session,
         int index);
+
+    [DllImport("EditorBridge", CallingConvention = CallingConvention.Cdecl)]
+    public static extern int EditorSession_DeleteEntity(IntPtr session,
+        int index);
+
+    [DllImport("EditorBridge", CallingConvention = CallingConvention.Cdecl)]
+    public static extern int EditorSession_RenameEntity(IntPtr session,
+        int index, [MarshalAs(UnmanagedType.LPUTF8Str)] string newName);
+
+    [DllImport("EditorBridge", CallingConvention = CallingConvention.Cdecl)]
+    public static extern int EditorSession_GetEntitySprite(IntPtr session,
+        int index, IntPtr outBuffer, int capacity);
+
+    [DllImport("EditorBridge", CallingConvention = CallingConvention.Cdecl)]
+    public static extern int EditorSession_AssignSprite(IntPtr session,
+        int assetIndex, int entityIndex);
+
+    [DllImport("EditorBridge", CallingConvention = CallingConvention.Cdecl)]
+    public static extern int EditorSession_GetAssetGuid(IntPtr session,
+        int index, IntPtr outBuffer, int capacity);
+
+    [DllImport("EditorBridge", CallingConvention = CallingConvention.Cdecl)]
+    public static extern int EditorSession_ScriptRead(IntPtr session,
+        int assetIndex, IntPtr outBuffer, int capacity);
+
+    [DllImport("EditorBridge", CallingConvention = CallingConvention.Cdecl)]
+    public static extern int EditorSession_ScriptSave(IntPtr session,
+        int assetIndex, [MarshalAs(UnmanagedType.LPUTF8Str)] string text);
+
+    [DllImport("EditorBridge", CallingConvention = CallingConvention.Cdecl)]
+    public static extern int EditorSession_IsDirty(IntPtr session);
 
     [DllImport("EditorBridge", CallingConvention = CallingConvention.Cdecl)]
     public static extern void EditorSession_SetEventCallback(IntPtr session,

@@ -10,6 +10,7 @@
       <MenuItem Header="_File">
         <MenuItem Header="_Open Project" Click="OnOpenProject"/>
         <MenuItem Header="_Save Project" Click="OnSaveProject"/>
+        <MenuItem Header="_Close" Click="OnCloseProject"/>
       </MenuItem>
     </Menu>
 
@@ -24,16 +25,31 @@
 
     <!-- StatusBar -->
     <Border DockPanel.Dock="Bottom" Background="#22000000" Padding="8,4">
-      <TextBlock x:Name="StatusBar" Text="no project loaded"/>
+      <StackPanel Orientation="Horizontal" Spacing="10">
+        <TextBlock x:Name="StatusBar" Text="no project loaded"/>
+        <TextBlock x:Name="DirtyBadge" Text="● DIRTY" Foreground="#FFD060"
+                   IsVisible="False" FontWeight="Bold" VerticalAlignment="Center"/>
+      </StackPanel>
     </Border>
 
     <!-- 四区 Shell：左 Hierarchy / 中 Viewport / 右 Inspector / 下 Console+Assets -->
     <Grid ColumnDefinitions="240,8,*,8,280" RowDefinitions="*,8,220" Margin="4">
 
-      <!-- 左：Hierarchy -->
+      <!-- 左：Hierarchy（P2-C2：Rename/Delete/Create 回路）-->
       <Border Grid.Column="0" Grid.RowSpan="3" BorderBrush="#33FFFFFF" BorderThickness="1" Padding="4">
         <DockPanel>
           <TextBlock DockPanel.Dock="Top" Text="Hierarchy" FontWeight="Bold" Margin="2,2,0,6"/>
+          <StackPanel DockPanel.Dock="Bottom" Spacing="4" Margin="0,6,0,0">
+            <Grid ColumnDefinitions="*,Auto">
+              <TextBox x:Name="RenameBox" Text="{Binding RenameInput, Mode=TwoWay}"
+                       Watermark="new name..."/>
+              <Button Grid.Column="1" Content="Rename" Click="OnRenameEntity"/>
+            </Grid>
+            <StackPanel Orientation="Horizontal" Spacing="4">
+              <Button Content="Delete" Click="OnDeleteEntity"/>
+              <Button Content="+ Entity" Click="OnCreateEntity"/>
+            </StackPanel>
+          </StackPanel>
           <ListBox x:Name="HierarchyList"
                    ItemsSource="{Binding Entities}"
                    SelectedItem="{Binding SelectedEntity, Mode=TwoWay}">
@@ -58,6 +74,8 @@
           <TextBlock DockPanel.Dock="Top" Text="Inspector" FontWeight="Bold" Margin="2,2,0,6"/>
           <StackPanel IsVisible="{Binding HasSelection}">
             <TextBlock Text="{Binding SelectedName}" FontWeight="SemiBold" Margin="2,0,0,6"/>
+            <TextBlock Text="Sprite" Opacity="0.8" Margin="2,4,0,0"/>
+            <TextBlock Text="{Binding SelectedSprite}" Margin="2,0,0,4" TextWrapping="Wrap"/>
             <TextBlock Text="Position"/>
             <Grid ColumnDefinitions="Auto,*,Auto,*" RowDefinitions="Auto,Auto,Auto" Margin="2">
               <TextBlock Grid.Row="0" Grid.Column="0" Text="X" VerticalAlignment="Center"/>
@@ -80,16 +98,37 @@
           <ListBox ItemsSource="{Binding ConsoleLines}"/>
         </TabItem>
         <TabItem Header="Asset Browser">
-          <ListBox ItemsSource="{Binding Assets}">
-            <ListBox.ItemTemplate>
-              <DataTemplate>
-                <StackPanel Orientation="Horizontal" Spacing="6">
-                  <TextBlock Text="{Binding TypeName}" Width="64" Opacity="0.7"/>
-                  <TextBlock Text="{Binding Path}"/>
-                </StackPanel>
-              </DataTemplate>
-            </ListBox.ItemTemplate>
-          </ListBox>
+          <DockPanel>
+            <Button DockPanel.Dock="Bottom" Content="Assign Sprite to Selected"
+                    Click="OnAssignSprite" HorizontalAlignment="Left" Margin="4"/>
+            <ListBox ItemsSource="{Binding Assets}"
+                     SelectedItem="{Binding SelectedAsset, Mode=TwoWay}">
+              <ListBox.ItemTemplate>
+                <DataTemplate>
+                  <StackPanel Orientation="Horizontal" Spacing="6">
+                    <TextBlock Text="{Binding TypeName}" Width="64" Opacity="0.7"/>
+                    <TextBlock Text="{Binding Path}"/>
+                  </StackPanel>
+                </DataTemplate>
+              </ListBox.ItemTemplate>
+            </ListBox>
+          </DockPanel>
+        </TabItem>
+        <TabItem Header="Script Editor">
+          <DockPanel>
+            <StackPanel DockPanel.Dock="Top" Orientation="Horizontal" Spacing="6" Margin="0,0,0,4">
+              <TextBlock Text="{Binding ScriptTitle}" VerticalAlignment="Center" FontWeight="SemiBold"/>
+              <TextBlock Text="(edited)" Foreground="#FFD060" IsVisible="{Binding ScriptDirty}"
+                         VerticalAlignment="Center"/>
+              <Button Content="Save Script" Click="OnSaveScript" HorizontalAlignment="Left"/>
+            </StackPanel>
+            <TextBox Text="{Binding ScriptText, Mode=TwoWay}"
+                     AcceptsReturn="True" AcceptsTab="True"
+                     FontFamily="Consolas, Courier New" FontSize="12"
+                     TextChanged="OnScriptTextChanged"
+                     ScrollViewer.HorizontalScrollBarVisibility="Auto"
+                     ScrollViewer.VerticalScrollBarVisibility="Auto"/>
+          </DockPanel>
         </TabItem>
       </TabControl>
     </Grid>
