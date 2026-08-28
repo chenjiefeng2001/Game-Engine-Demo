@@ -492,3 +492,24 @@ Avalonia 侧消费新 ABI，全程 ViewModel → Session ABI → Engine 单向�
 
 Evidence: **AV-G2 ALL GREEN (2.1s)** + **gate1 回归 GREEN** + **test_bridge 13/13**
 + **integrity gate 122/122 ALL GREEN**。C++/Engine 零改动；ImGui 零；JSON 零手改。
+
+Phase 2 已冻结（commit b2919c9，tag `avalonia-phase2-av-g2`），
+Closure 见 `docs/Avalonia-Phase2-Closure.md`。
+
+### P3-0 Charter + P3-A Hierarchy (2026-08-28)
+
+- **Phase 3 Charter**（`docs/Avalonia-Phase3-Charter.md`）：Production Panels
+  目标 = Avalonia 承担完整日常内容生产流程；P3-A..F + AV-G3；晋升规则 AV-GP-xxx；
+  Viewport 红线（Phase 7 隔离）；不新增 Engine API 仅为 UI 完整。
+- **P3-A Hierarchy 正式版**：Search 过滤（大小写不敏感子串）+ 选择状态契约。
+  - VM 层 FilteredEntities 过滤视图，主列表 Entities 为会话事实源；
+  - **选择状态契约**：过滤把选中项藏掉时模型层保留选择，清空过滤后自动恢复；
+    重命名/重载后按索引保持选择（P2-C 纪律延续）；
+  - View 层 ListBox 改 OneWay + SelectionChanged 上抛（修复 TwoWay 回写 null
+    覆盖 VM 选择的契约冲突 —— AV-004 单一事实源在 View 边界落地）。
+- **Phase3Gate.cs**（`--gate3a`）：30 断言 —— open(10) → search 'Pad'→4 →
+  过滤藏选→清空恢复 → create under filter → rename（过滤实时跟随）→ delete
+  （选择清空）→ save → reload 全恢复（10 entities / filter 重验 / selection kept）。
+
+Evidence: **P3-A GATE ALL GREEN (2.1s)** + gate1/gate2 回归 GREEN +
+test_bridge 13/13 + integrity gate 122/122 ALL GREEN。C++/Engine 零改动。
