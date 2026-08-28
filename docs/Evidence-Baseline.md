@@ -18,13 +18,14 @@
 | test_job | 4 | VERIFIED | JobSystem 压力 |
 | test_e2e | 6 | VERIFIED | 引擎启动生命周期 |
 | test_gp01 | 22 | VERIFIED | Game Production GP-P1 · GP01 生产契约（GP1-A/B/C/D + DX 审计 remediation D7） |
-| **合计** | **122** | | |
+| test_bridge | 16 | VERIFIED | EditorBridge C-ABI 契约（P3-B/P3-C：Script/Import/Rename 绑定） |
+| test_core | 20 | VERIFIED | GLM 数学库 + StackAllocator（2026-08-28：Vector3Test 默认构造误读未初始化内存 → 改为值初始化后纳入） |
+| **合计** | **158** | | |
 
 ## Excluded 目标（记录原因，不计入基线）
 
 | Target | 状态 | 原因 | 跟进条件 |
 |--------|------|------|---------|
-| test_core | EXCLUDED | ASAN 拦截崩溃（exit=3，首测即死；环境级问题）| 修复 ASAN 配置或拆分 allocator 测试后纳入 |
 | test_ecs | EXCLUDED | 测试对旧 EntityManager API 编写，无法编译 | ECS 解除 deferred 后重写 |
 
 ## Dogfood → 可执行证据映射（I3 门禁强制校验）
@@ -42,6 +43,29 @@
 | DF07 | Tower Defense + Restart round-trip | test_content : `Dogfood07.LoadRunRestart` |
 | VS01 | Vertical Slice 01 产品现实门（menu→arena→boss 全流程） | test_content : `VS01.*` ＋ `VS01Debug.MinimalReloadRepro`（F1 回归守卫） |
 | GP01 | Game Production Phase 1 生产契约（GP-P1 章程 §11，随阶段逐个点亮） | test_gp01 : `GP01.*` |
+
+## 2026-08-28 整改记录（ASan/CTest 基础设施硬化）
+
+起因：`test_bridge.exe` 直跑（无 `ASAN_WIN_CONTINUE_ON_INTERCEPTION_FAILURE=1`）
+在 MSVC ASan interception 层硬失败挂死（`interception_win.cpp:193`），并遗留
+冻结进程锁死 `gp01_editor_scratch`。诊断与处置见
+`docs/Avalonia-Phase3-Freeze-ASan-Report.md`。本次整改：
+
+1. `tests/CMakeLists.txt`：ASan+MSVC 时对所有测试 target 设 CTest
+   `ENVIRONMENT ASAN_WIN_CONTINUE_ON_INTERCEPTION_FAILURE=1` → ctest 直跑永不卡死；
+   同时统一 `WORKING_DIRECTORY = 仓库根`（此前 ctest 在 build/tests 下运行，
+   相对资产路径全部落空 → 假失败）。
+2. `tools/run_test.cmd`：直跑 ASan 测试 exe 的统一启动器（main() 内设置 env
+   已太晚，必须在进程启动前生效）。
+3. test_core 从 EXCLUDED 恢复：exit=3 首测即死实为 `vec3 v;` 未初始化读
+   （注释错误宣称 GLM 会零初始化）→ 改为 `vec3 v{}`，20/20 PASS。
+4. test_bridge 首次纳入基线（16 用例，含 P3-B/P3-C 契约）。
+5. 合计 122 → 158。
+
+**长期纪律**：Windows/MSVC ASan 测试必须经统一 launcher / CTest environment
+启动；"裸跑 test exe 无 env" 不作为可靠证据。
+
+---
 
 ## 2026-08-24 整改记录（Evidence Integrity Gate 建立时发现）
 

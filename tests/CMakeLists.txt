@@ -117,3 +117,32 @@ if(TARGET EditorBridge AND WIN32)
         COMMAND ${CMAKE_COMMAND} -E copy_if_different
                 $<TARGET_FILE:EditorBridge> $<TARGET_FILE_DIR:test_bridge>)
 endif()
+
+# ════════════════════════════════════════════════════════════════
+# CTest 运行环境固化（与 tools/integrity_gate.ps1 直跑语义一致）
+# ════════════════════════════════════════════════════════════════
+# 1) 工作目录：所有测试以仓库根为 CWD。测试内部大量使用相对路径
+#    （assets/gp01/...、gp01_editor_scratch/...、assets/scenes/...），
+#    ctest 缺省在 build/tests 下运行会全部落空（manifest load failed）。
+get_property(_ctest_test_targets DIRECTORY PROPERTY TESTS)
+foreach(_t IN LISTS _ctest_test_targets)
+    set_tests_properties(${_t} PROPERTIES
+        WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}")
+endforeach()
+unset(_ctest_test_targets)
+
+# 2) MSVC ASan interception 缺陷防护（docs/Avalonia-Phase3-Freeze-ASan-Report.md）
+# interception_win.cpp:193：ASan 构建的进程在启动早期对某模块做 inline hook 时
+# 遇到无法解码的指令，缺省（未设 ASAN_WIN_CONTINUE_ON_INTERCEPTION_FAILURE=1）
+# 直接 CHECK 硬失败 → 进程挂死（无响应、无法退出，需强制结束）。C++ 测试 exe
+# 没有 Program.cs 式"首行自设"位置（env 必须在 CRT/ASan 初始化前生效，main()
+# 内设置已太晚），因此 CTest 层固化 env，保证 `ctest` 直跑永不卡死
+# （直接手跑请用 tools/run_test.cmd）。
+if(ENABLE_ASAN AND MSVC)
+    get_property(_asan_test_targets DIRECTORY PROPERTY TESTS)
+    foreach(_t IN LISTS _asan_test_targets)
+        set_tests_properties(${_t} PROPERTIES ENVIRONMENT
+            "ASAN_WIN_CONTINUE_ON_INTERCEPTION_FAILURE=1")
+    endforeach()
+    unset(_asan_test_targets)
+endif()
