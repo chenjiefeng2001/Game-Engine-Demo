@@ -99,6 +99,9 @@ editor_avalonia/bin/
 editor_avalonia/obj/
 editor_avalonia/spike_gp01/
 editor_avalonia/spike_gp02/
+editor_avalonia/spike_gp03/
+editor_avalonia/spike_gp04/
+editor_avalonia/spike_gp05/
 editor_avalonia/selftest.log
 
 # 测试运行时 scratch（test_bridge gate_p2 副本 / GP01EditorWorkflowTest kEd 产物）

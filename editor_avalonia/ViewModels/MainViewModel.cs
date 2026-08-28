@@ -102,11 +102,85 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
     }
     public bool HasAssetSelection => _selectedAsset is not null;
 
+    /// P3-C：按资产索引选中（gate / 双击等数据路径）
+    public bool SelectAssetByIndex(int index)
+    {
+        var asset = Assets.FirstOrDefault(a => a.Index == index);
+        if (asset is null) { LogToConsole($"select asset: no asset #{index}"); return false; }
+        SelectedAsset = asset;
+        return true;
+    }
+
+    // ── P3-C Asset Browser：类型过滤 + 搜索 + 过滤视图 ──
+    public ObservableCollection<AssetVm> FilteredAssets { get; } = new();
+
+    /// 过滤选项（C1）：All / Texture / Script
+    public string[] AssetTypeOptions { get; } = { "All", "Texture", "Script" };
+
+    /// 当前选中资产的裸文件名（不含扩展名）—— Rename 预填用
+    public string AssetRenameBaseName
+    {
+        get
+        {
+            if (_selectedAsset is null) return "";
+            var name = System.IO.Path.GetFileNameWithoutExtension(_selectedAsset.Path);
+            return name ?? "";
+        }
+    }
+
+    private string _assetTypeFilter = "All";
+    /// "All" / "Texture" / "Script"
+    public string AssetTypeFilter
+    {
+        get => _assetTypeFilter;
+        set
+        {
+            if (!Set(ref _assetTypeFilter, value)) return;
+            RebuildFilteredAssets();
+        }
+    }
+
+    private string _assetSearchText = "";
+    public string AssetSearchText
+    {
+        get => _assetSearchText;
+        set
+        {
+            if (!Set(ref _assetSearchText, value)) return;
+            RebuildFilteredAssets();
+        }
+    }
+
+    private bool MatchesAssetFilter(AssetVm a)
+    {
+        if (_assetTypeFilter != "All" && a.TypeName != _assetTypeFilter)
+            return false;
+        return _assetSearchText.Length == 0 ||
+               a.Path.Contains(_assetSearchText, StringComparison.OrdinalIgnoreCase);
+    }
+
+    private void RebuildFilteredAssets()
+    {
+        FilteredAssets.Clear();
+        foreach (var a in Assets)
+            if (MatchesAssetFilter(a)) FilteredAssets.Add(a);
+        Raise(nameof(FilteredAssetCount));
+    }
+
+    public int FilteredAssetCount => FilteredAssets.Count;
+
     private string _selectedSprite = "(none)";
     public string SelectedSprite
     {
         get => _selectedSprite;
         private set => Set(ref _selectedSprite, value);
+    }
+
+    private string _selectedScript = "(none)";
+    public string SelectedScript
+    {
+        get => _selectedScript;
+        private set => Set(ref _selectedScript, value);
     }
 
     // ── P2-F Script Editor ──
@@ -244,6 +318,56 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
         return ok;
     }
 
+    // ── P3-C：资产导入（File Dialog → ContentRegistry → 自动刷新）──
+    /// path 为相对进程 CWD 的工程路径；type 0=Texture 1=Script。
+    public bool ImportAssetFromPath(string path, int type)
+    {
+        if (!IsOpen)
+        {
+            LogToConsole("import ignored: no project");
+            return false;
+        }
+        int idx = _host.ImportAsset(path, type);
+        if (idx < 0)
+        {
+            LogToConsole("IMPORT FAILED: " + _host.GetLastError());
+            return false;
+        }
+        ReloadCollectionsFromSession();   // EV_ASSET_IMPORTED 亦触发，双保险
+        LogToConsole($"asset imported: {path} (#{idx})");
+        return true;
+    }
+
+    // ── P3-C：资产重命名（GUID 不变 → 绑定稳定）──
+    public bool RenameAssetFromVm(int assetIndex, string newName)
+    {
+        if (!IsOpen)
+        {
+            LogToConsole("rename asset ignored: no project");
+            return false;
+        }
+        bool ok = _host.RenameAsset(assetIndex, newName);
+        LogToConsole(ok ? $"asset renamed: {newName}"
+                        : "RENAME ASSET FAILED: " + _host.GetLastError());
+        if (ok) ReloadCollectionsFromSession();
+        return ok;
+    }
+
+    // ── P3-B：Assign Script 到选中实体（契约内实体级脚本绑定）──
+    public bool AssignScriptToSelected()
+    {
+        if (_selectedEntity is null || _selectedAsset is null)
+        {
+            LogToConsole("assign script ignored: need entity + asset selection");
+            return false;
+        }
+        bool ok = _host.AssignScript(_selectedAsset.Index, _selectedEntity.Index);
+        LogToConsole(ok ? $"assigned script {_selectedAsset.Path} -> {_selectedEntity.Name}"
+                        : "ASSIGN SCRIPT FAILED: " + _host.GetLastError());
+        if (ok) RefreshInspectorFromSession();   // 刷新 SelectedScript
+        return ok;
+    }
+
     // ── P2-F Script Editor：装载 / 保存游戏脚本 ──
     public bool OpenScript(int assetIndex)
     {
@@ -328,6 +452,21 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
                 RefreshInspectorFromSession();
                 RefreshDirtyState();
                 break;
+            case EditorBridgeApi.EvEntityScriptAssigned:
+                LogToConsole("EV EntityScriptAssigned: " + payload);
+                RefreshInspectorFromSession();
+                RefreshDirtyState();
+                break;
+            case EditorBridgeApi.EvAssetImported:
+                LogToConsole("EV AssetImported: " + payload);
+                ReloadCollectionsFromSession();
+                RefreshDirtyState();
+                break;
+            case EditorBridgeApi.EvAssetRenamed:
+                LogToConsole("EV AssetRenamed: " + payload);
+                ReloadCollectionsFromSession();
+                RefreshDirtyState();
+                break;
         }
     }
 
@@ -345,7 +484,8 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
         Assets.Clear();
         for (int i = 0; i < assetCount; i++)
             Assets.Add(new AssetVm(i, _host.GetAssetPath(i) ?? "",
-                _host.GetAssetType(i) switch { 0 => "Texture", 1 => "Script", _ => "Unknown" }));
+                _host.GetAssetType(i) switch { 0 => "Texture", 1 => "Script", _ => "Unknown" },
+                _host.GetAssetGuid(i)));
 
         if (keepIdx is int idx)
         {
@@ -358,6 +498,7 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
         }
 
         RebuildFilteredEntities();   // 列表变化后刷新过滤视图（P3-A）
+        RebuildFilteredAssets();     // P3-C：资产过滤视图同步
 
         StatusText = $"[Avalonia] project loaded: {entCount} objects, {assetCount} assets";
         LogToConsole(StatusText);
@@ -393,6 +534,7 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
         {
             SelectedName = "(none)";
             SelectedSprite = "(none)";
+            SelectedScript = "(none)";
         }
         else
         {
@@ -401,6 +543,8 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
             PosX = Format(p.x); PosY = Format(p.y); PosZ = Format(p.z);
             SelectedSprite = _host.GetEntitySprite(_selectedEntity.Index);
             if (SelectedSprite.Length == 0) SelectedSprite = "(none)";
+            SelectedScript = _host.GetEntityScript(_selectedEntity.Index);
+            if (SelectedScript.Length == 0) SelectedScript = "(none)";
         }
     }
 
@@ -445,4 +589,4 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
 
 public sealed record EntityVm(int Index, string Name);
 
-public sealed record AssetVm(int Index, string Path, string TypeName);
+public sealed record AssetVm(int Index, string Path, string TypeName, string Guid);

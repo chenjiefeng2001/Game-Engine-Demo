@@ -79,6 +79,8 @@
             <TextBlock Text="{Binding SelectedName}" FontWeight="SemiBold" Margin="2,0,0,6"/>
             <TextBlock Text="Sprite" Opacity="0.8" Margin="2,4,0,0"/>
             <TextBlock Text="{Binding SelectedSprite}" Margin="2,0,0,4" TextWrapping="Wrap"/>
+            <TextBlock Text="Script" Opacity="0.8" Margin="2,4,0,0"/>
+            <TextBlock Text="{Binding SelectedScript}" Margin="2,0,0,4" TextWrapping="Wrap"/>
             <TextBlock Text="Position"/>
             <Grid ColumnDefinitions="Auto,*,Auto,*" RowDefinitions="Auto,Auto,Auto" Margin="2">
               <TextBlock Grid.Row="0" Grid.Column="0" Text="X" VerticalAlignment="Center"/>
@@ -96,21 +98,36 @@
       </Border>
 
       <!-- 下：Console + Asset Browser Tab -->
-      <TabControl Grid.Column="2" Grid.ColumnSpan="3" Grid.Row="2">
+      <TabControl x:Name="MainTabs" Grid.Column="2" Grid.ColumnSpan="3" Grid.Row="2">
         <TabItem Header="Console">
           <ListBox ItemsSource="{Binding ConsoleLines}"/>
         </TabItem>
         <TabItem Header="Asset Browser">
           <DockPanel>
-            <Button DockPanel.Dock="Bottom" Content="Assign Sprite to Selected"
-                    Click="OnAssignSprite" HorizontalAlignment="Left" Margin="4"/>
-            <ListBox ItemsSource="{Binding Assets}"
-                     SelectedItem="{Binding SelectedAsset, Mode=TwoWay}">
+            <StackPanel DockPanel.Dock="Top" Orientation="Horizontal" Spacing="6" Margin="4">
+              <ComboBox ItemsSource="{Binding AssetTypeOptions}"
+                        SelectedItem="{Binding AssetTypeFilter, Mode=TwoWay}"
+                        Width="100"/>
+              <TextBox Text="{Binding AssetSearchText, Mode=TwoWay}" Watermark="search assets"
+                       Width="160"/>
+              <Button Content="Import..." Click="OnImportAsset"/>
+              <Button Content="Rename Selected" Click="OnRenameAsset"/>
+              <TextBlock Text="{Binding FilteredAssetCount}" VerticalAlignment="Center" Opacity="0.7"/>
+            </StackPanel>
+            <StackPanel DockPanel.Dock="Bottom" Orientation="Horizontal" Spacing="6" Margin="4">
+              <Button Content="Assign Sprite to Selected" Click="OnAssignSprite"/>
+              <Button Content="Assign Script to Selected" Click="OnAssignScript"/>
+            </StackPanel>
+            <ListBox ItemsSource="{Binding FilteredAssets}"
+                     SelectedItem="{Binding SelectedAsset, Mode=TwoWay}"
+                     DoubleTapped="OnAssetDoubleTapped">
               <ListBox.ItemTemplate>
                 <DataTemplate>
                   <StackPanel Orientation="Horizontal" Spacing="6">
                     <TextBlock Text="{Binding TypeName}" Width="64" Opacity="0.7"/>
-                    <TextBlock Text="{Binding Path}"/>
+                    <TextBlock Text="{Binding Path}" Width="200" TextTrimming="CharacterEllipsis"/>
+                    <TextBlock Text="{Binding Guid}" FontFamily="Consolas, Courier New"
+                               FontSize="10" Opacity="0.5" TextTrimming="CharacterEllipsis"/>
                   </StackPanel>
                 </DataTemplate>
               </ListBox.ItemTemplate>

@@ -3,6 +3,7 @@ using System.Collections.ObjectModel;
 using System.IO;
 using Avalonia.Controls;
 using Avalonia.Interactivity;
+using Avalonia.Platform.Storage;
 using AvaloniaEditor.Services;
 using AvaloniaEditor.ViewModels;
 
@@ -50,6 +51,22 @@ public partial class MainWindow : Window
             {
                 int code = Phase3Gate.Run(Vm, Log);
                 Log($"gate3a exit={code}");
+                Environment.Exit(code);
+            };
+
+        if (Environment.CommandLine.Contains("--gate3b"))
+            Opened += (_, _) =>
+            {
+                int code = Phase3Gate.RunInspector(Vm, Log);
+                Log($"gate3b exit={code}");
+                Environment.Exit(code);
+            };
+
+        if (Environment.CommandLine.Contains("--gate3c"))
+            Opened += (_, _) =>
+            {
+                int code = Phase3Gate.RunAssetBrowser(Vm, Log);
+                Log($"gate3c exit={code}");
                 Environment.Exit(code);
             };
     }
@@ -120,6 +137,82 @@ public partial class MainWindow : Window
     private void OnAssignSprite(object? sender, RoutedEventArgs e)
     {
         Vm.AssignSpriteToSelected();
+    }
+
+    // P3-C C4：双击分派 —— .lua → Script Editor；Texture → 预览信息；其他 → 明确不支持
+    private void OnAssetDoubleTapped(object? sender, Avalonia.Input.TappedEventArgs e)
+    {
+        if (Vm.SelectedAsset is null) return;
+        var asset = Vm.SelectedAsset;
+        if (asset.TypeName == "Script")
+        {
+            if (Vm.OpenScript(asset.Index))
+                MainTabs.SelectedIndex = 2;   // Script Editor tab
+        }
+        else if (asset.TypeName == "Texture")
+        {
+            Vm.LogToConsole($"texture selected: {asset.Path} (GUID {asset.Guid})");
+        }
+        else
+        {
+            Vm.LogToConsole($"{asset.Path}: this type is not directly editable");
+        }
+    }
+
+    private async void OnImportAsset(object? sender, RoutedEventArgs e)
+    {
+        if (!Vm.IsOpen) { Vm.LogToConsole("import ignored: no project"); return; }
+        // C3：File Dialog → Import → ContentRegistry → 自动刷新。
+        // 选文件后拷入工程 assets 目录再注册（ImportAsset 要求工程内相对路径）。
+        var files = await StorageProvider.OpenFilePickerAsync(new FilePickerOpenOptions
+        {
+            Title = "Import asset",
+            AllowMultiple = false,
+            FileTypeFilter = new[]
+            {
+                new FilePickerFileType("Texture or Script")
+                {
+                    Patterns = new[] { "*.png", "*.jpg", "*.lua" }
+                },
+                FilePickerFileTypes.All
+            }
+        });
+        if (files.Count == 0) return;
+        var src = files[0].Path.LocalPath;
+        string ext = System.IO.Path.GetExtension(src).ToLowerInvariant();
+        int type = ext == ".lua" ? 1 : 0;
+        string name = System.IO.Path.GetFileName(src);
+        var dst = System.IO.Path.Combine(Directory.GetCurrentDirectory(),
+            "assets", "gp01", ext == ".lua" ? "scripts" : "tex", name);
+        try
+        {
+            Directory.CreateDirectory(System.IO.Path.GetDirectoryName(dst)!);
+            System.IO.File.Copy(src, dst, overwrite: true);
+        }
+        catch (Exception ex)
+        {
+            Vm.LogToConsole("IMPORT COPY FAILED: " + ex.Message);
+            return;
+        }
+        Vm.ImportAssetFromPath(System.IO.Path.GetRelativePath(Directory.GetCurrentDirectory(), dst)
+            .Replace('\\', '/'), type);
+    }
+
+    private void OnRenameAsset(object? sender, RoutedEventArgs e)
+    {
+        if (Vm.SelectedAsset is null) { Vm.LogToConsole("rename asset ignored: no selection"); return; }
+        if (string.IsNullOrWhiteSpace(Vm.RenameInput))
+        {
+            if (Vm.SelectedAsset is not null) Vm.RenameInput = Vm.AssetRenameBaseName;
+            return;
+        }
+        Vm.RenameAssetFromVm(Vm.SelectedAsset.Index, Vm.RenameInput.Trim());
+        Vm.RenameInput = "";
+    }
+
+    private void OnAssignScript(object? sender, RoutedEventArgs e)
+    {
+        Vm.AssignScriptToSelected();
     }
 
     private void OnSaveScript(object? sender, RoutedEventArgs e)
