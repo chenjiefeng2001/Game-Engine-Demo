@@ -109,6 +109,82 @@ public sealed class EditorHostService : IDisposable
         return EditorBridgeApi.EditorSession_GetAssetType(_session, index);
     }
 
+    // ── Phase 2 (AV-G2)：实体回路 / 资产分配 / 脚本 / 脏状态 ──
+
+    public bool DeleteEntity(int index)
+    {
+        ThrowIfNoSession();
+        return EditorBridgeApi.EditorSession_DeleteEntity(_session, index) == 0;
+    }
+
+    public bool RenameEntity(int index, string newName)
+    {
+        ThrowIfNoSession();
+        return EditorBridgeApi.EditorSession_RenameEntity(_session, index, newName) == 0;
+    }
+
+    public string GetEntitySprite(int index)
+    {
+        ThrowIfNoSession();
+        var buf = Marshal.AllocHGlobal(512);
+        try
+        {
+            int len = EditorBridgeApi.EditorSession_GetEntitySprite(_session, index, buf, 512);
+            return len < 0 ? "" : Marshal.PtrToStringUTF8(buf) ?? "";
+        }
+        finally { Marshal.FreeHGlobal(buf); }
+    }
+
+    public bool AssignSprite(int assetIndex, int entityIndex)
+    {
+        ThrowIfNoSession();
+        return EditorBridgeApi.EditorSession_AssignSprite(_session, assetIndex, entityIndex) == 0;
+    }
+
+    public string GetAssetGuid(int index)
+    {
+        ThrowIfNoSession();
+        var buf = Marshal.AllocHGlobal(64);
+        try
+        {
+            int len = EditorBridgeApi.EditorSession_GetAssetGuid(_session, index, buf, 64);
+            return len < 0 ? "" : Marshal.PtrToStringUTF8(buf) ?? "";
+        }
+        finally { Marshal.FreeHGlobal(buf); }
+    }
+
+    public string ScriptRead(int assetIndex)
+    {
+        ThrowIfNoSession();
+        // 先取实际长度（ABI 返回完整长度，按 cap-1 截断拷贝）
+        var probe = Marshal.AllocHGlobal(8);
+        int size;
+        try { size = EditorBridgeApi.EditorSession_ScriptRead(_session, assetIndex, probe, 8); }
+        finally { Marshal.FreeHGlobal(probe); }
+        if (size < 0) return "";
+        if (size == 0) return "";
+        var buf = Marshal.AllocHGlobal(size + 1);
+        try
+        {
+            if (EditorBridgeApi.EditorSession_ScriptRead(_session, assetIndex, buf, size + 1) < 0)
+                return "";
+            return Marshal.PtrToStringUTF8(buf) ?? "";
+        }
+        finally { Marshal.FreeHGlobal(buf); }
+    }
+
+    public bool ScriptSave(int assetIndex, string text)
+    {
+        ThrowIfNoSession();
+        return EditorBridgeApi.EditorSession_ScriptSave(_session, assetIndex, text) == 0;
+    }
+
+    public bool IsDirty()
+    {
+        ThrowIfNoSession();
+        return EditorBridgeApi.EditorSession_IsDirty(_session) != 0;
+    }
+
     public string GetLastError()
     {
         if (_session == IntPtr.Zero) return "(no session)";

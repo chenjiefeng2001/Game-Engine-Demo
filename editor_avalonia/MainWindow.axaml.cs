@@ -18,7 +18,8 @@ public partial class MainWindow : Window
         InitializeComponent();
         DataContext = Vm;
         Vm.DerivedStateChanged += SyncStatusBar;
-        Vm.LogToConsole("shell ready (P1-A/B/C)");
+        Vm.PropertyChanged += OnVmPropertyChanged;
+        Vm.LogToConsole("shell ready (P2 Editor Core)");
 
         if (Environment.CommandLine.Contains("--selftest"))
             Opened += (_, _) =>
@@ -35,6 +36,14 @@ public partial class MainWindow : Window
                 Log($"gate1 exit={code}");
                 Environment.Exit(code);
             };
+
+        if (Environment.CommandLine.Contains("--gate2"))
+            Opened += (_, _) =>
+            {
+                int code = Phase2Gate.Run(Vm, Log);
+                Log($"gate2 exit={code}");
+                Environment.Exit(code);
+            };
     }
 
     private void SyncStatusBar()
@@ -47,6 +56,9 @@ public partial class MainWindow : Window
     {
         var root = FindRepoRoot();
         if (root is null) { Vm.LogToConsole("repo root not found"); return; }
+        // manifest 内相对路径（assets/gp01/...）按进程 CWD 解析（GP01 运行时语义），
+        // 宿主把 CWD 定向到工程根，使脚本/贴图读写落到真实内容。
+        Directory.SetCurrentDirectory(root.FullName);
         Vm.OpenProject(Path.Combine(root.FullName, "assets", "gp01", "manifest.json"),
                        Path.Combine(root.FullName, "assets", "gp01", "Main.scene"));
         SyncStatusBar();
@@ -69,6 +81,65 @@ public partial class MainWindow : Window
     private void OnApplyTransform(object? sender, RoutedEventArgs e)
     {
         Vm.ApplyInspectorPosition();
+    }
+
+    private void OnRenameEntity(object? sender, RoutedEventArgs e)
+    {
+        if (string.IsNullOrWhiteSpace(Vm.RenameInput))
+        {
+            // 未输入时预填当前选中名，便于就地改名
+            if (Vm.SelectedEntity is not null) Vm.RenameInput = Vm.SelectedEntity.Name;
+            return;
+        }
+        Vm.RenameSelected(Vm.RenameInput);
+        Vm.RenameInput = "";
+    }
+
+    private void OnDeleteEntity(object? sender, RoutedEventArgs e)
+    {
+        Vm.DeleteSelected();
+        SyncStatusBar();
+    }
+
+    private void OnAssignSprite(object? sender, RoutedEventArgs e)
+    {
+        Vm.AssignSpriteToSelected();
+    }
+
+    private void OnSaveScript(object? sender, RoutedEventArgs e)
+    {
+        Vm.SaveScript();
+    }
+
+    private void OnScriptTextChanged(object? sender, RoutedEventArgs e)
+    {
+        // 仅当已有打开的脚本且尚未标记时置脏（避免初始化/装载时的误标记）
+        Vm.MarkScriptEdited();
+    }
+
+    private async void OnCloseProject(object? sender, RoutedEventArgs e)
+    {
+        if (Vm.IsDirty)
+        {
+            // P2-E：未保存编辑 → 提示（无 Undo/Redo，per DF08 非 P0）
+            bool ok = await ConfirmDialog.ConfirmAsync(this,
+                "Unsaved changes", "Project has unsaved changes. Close anyway?");
+            if (!ok) return;
+        }
+        Vm.ResetSession();
+        SyncStatusBar();
+    }
+
+    private void OnVmPropertyChanged(object? sender, System.ComponentModel.PropertyChangedEventArgs e)
+    {
+        if (e.PropertyName == nameof(MainViewModel.IsDirty))
+            SyncDirtyBadge();
+    }
+
+    private void SyncDirtyBadge()
+    {
+        var badge = this.FindControl<TextBlock>("DirtyBadge");
+        if (badge is not null) badge.IsVisible = Vm.IsDirty;
     }
 
     internal static void Log(string line)

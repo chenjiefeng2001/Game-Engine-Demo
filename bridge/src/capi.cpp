@@ -72,6 +72,79 @@ EDITOR_BRIDGE_API int32_t EditorSession_SetEntityPosition(EditorSessionHandle h,
     return S(h)->SetEntityPosition(index, pos3) ? 0 : -1;
 }
 
+EDITOR_BRIDGE_API int32_t EditorSession_DeleteEntity(EditorSessionHandle h,
+                                                     int32_t index) {
+    if (!h) return -1;
+    return S(h)->DeleteEntity(index) ? 0 : -1;
+}
+
+EDITOR_BRIDGE_API int32_t EditorSession_RenameEntity(EditorSessionHandle h,
+                                                     int32_t index,
+                                                     const char* newName) {
+    if (!h || !newName) return -1;
+    return S(h)->RenameEntity(index, newName) ? 0 : -1;
+}
+
+EDITOR_BRIDGE_API int32_t EditorSession_GetEntitySprite(EditorSessionHandle h,
+                                                        int32_t index,
+                                                        char* out,
+                                                        int32_t cap) {
+    if (!h || !out || cap <= 0) return -1;
+    std::string s;
+    if (!S(h)->GetEntitySprite(index, &s)) return -1;
+    const int32_t len = static_cast<int32_t>(s.size());
+    const int32_t copy = (len < cap - 1) ? len : cap - 1;
+    std::memcpy(out, s.data(), static_cast<size_t>(copy));
+    out[copy] = '\0';
+    return len;
+}
+
+EDITOR_BRIDGE_API int32_t EditorSession_AssignSprite(EditorSessionHandle h,
+                                                     int32_t assetIndex,
+                                                     int32_t entityIndex) {
+    if (!h) return -1;
+    return S(h)->AssignSprite(assetIndex, entityIndex) ? 0 : -1;
+}
+
+EDITOR_BRIDGE_API int32_t EditorSession_GetAssetGuid(EditorSessionHandle h,
+                                                     int32_t index,
+                                                     char* out,
+                                                     int32_t cap) {
+    if (!h || !out || cap <= 0) return -1;
+    std::string guid;
+    if (!S(h)->GetAssetGuid(index, &guid)) return -1;
+    const int32_t len = static_cast<int32_t>(guid.size());
+    const int32_t copy = (len < cap - 1) ? len : cap - 1;
+    std::memcpy(out, guid.data(), static_cast<size_t>(copy));
+    out[copy] = '\0';
+    return len;
+}
+
+EDITOR_BRIDGE_API int32_t EditorSession_ScriptRead(EditorSessionHandle h,
+                                                   int32_t assetIndex,
+                                                   char* out,
+                                                   int32_t cap) {
+    if (!h || !out || cap <= 0) return -1;
+    std::string text;
+    if (!S(h)->ScriptRead(assetIndex, &text)) return -1;
+    const int32_t len = static_cast<int32_t>(text.size());
+    const int32_t copy = (len < cap - 1) ? len : cap - 1;
+    std::memcpy(out, text.data(), static_cast<size_t>(copy));
+    out[copy] = '\0';
+    return len;
+}
+
+EDITOR_BRIDGE_API int32_t EditorSession_ScriptSave(EditorSessionHandle h,
+                                                   int32_t assetIndex,
+                                                   const char* text) {
+    if (!h || !text) return -1;
+    return S(h)->ScriptSave(assetIndex, text) ? 0 : -1;
+}
+
+EDITOR_BRIDGE_API int32_t EditorSession_IsDirty(EditorSessionHandle h) {
+    return (h && S(h)->IsDirty()) ? 1 : 0;
+}
+
 EDITOR_BRIDGE_API int32_t EditorSession_GetAssetPath(EditorSessionHandle h,
                                                      int32_t index,
                                                      char* out,

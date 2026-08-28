@@ -30,6 +30,12 @@ enum {
     EV_PROJECT_LOADED  = 1, ///< payload: "objects=<n>;assets=<n>"
     EV_ENTITY_CREATED  = 2, ///< payload: 实体名
     EV_ENTITY_MOVED    = 3, ///< payload: "idx=<i>;x=<f>;y=<f>;z=<f>"
+
+    // ── Phase 2 (AV-G2) ──
+    EV_PROJECT_SAVED   = 4, ///< payload: "entities=<n>"
+    EV_ENTITY_DELETED  = 5, ///< payload: "idx=<i>;name=<n>"
+    EV_ENTITY_RENAMED  = 6, ///< payload: "idx=<i>;old=<s>;new=<s>"
+    EV_ENTITY_ASSIGNED = 7, ///< payload: "idx=<i>;asset=<assetIndex>;sprite=<path>"
 };
 
 // ── 会话生命周期 ──────────────────────────────────────────────
@@ -63,10 +69,27 @@ EDITOR_BRIDGE_API int32_t EditorSession_GetEntityName(EditorSessionHandle h,
 EDITOR_BRIDGE_API int32_t EditorSession_GetEntityPosition(EditorSessionHandle h,
                                                           int32_t index,
                                                           float out3[3]);
-/// 写实体位置（编辑态；越界索引拒绝）。成功广播 EV_ENTITY_MOVED。
+/// 写实体位置（编辑态；越界索引拒绝；会置 dirty）。成功广播 EV_ENTITY_MOVED。
 EDITOR_BRIDGE_API int32_t EditorSession_SetEntityPosition(EditorSessionHandle h,
                                                           int32_t index,
                                                           const float pos3[3]);
+/// 删除实体（编辑态；越界拒绝；会置 dirty）。成功广播 EV_ENTITY_DELETED。
+EDITOR_BRIDGE_API int32_t EditorSession_DeleteEntity(EditorSessionHandle h,
+                                                     int32_t index);
+/// 重命名实体（编辑态；空名/重名拒绝；会置 dirty）。成功广播 EV_ENTITY_RENAMED。
+EDITOR_BRIDGE_API int32_t EditorSession_RenameEntity(EditorSessionHandle h,
+                                                      int32_t index,
+                                                      const char* newName);
+/// 读实体当前 Sprite 绑定的资产路径（无绑定返回空串，失败返回 -1）。
+EDITOR_BRIDGE_API int32_t EditorSession_GetEntitySprite(EditorSessionHandle h,
+                                                        int32_t index,
+                                                        char* out,
+                                                        int32_t cap);
+/// 给实体 Assign Sprite：assetIndex 必须是 Texture 资产；会置 dirty。
+/// 成功广播 EV_ENTITY_ASSIGNED。
+EDITOR_BRIDGE_API int32_t EditorSession_AssignSprite(EditorSessionHandle h,
+                                                     int32_t assetIndex,
+                                                     int32_t entityIndex);
 
 // ── 资产查询（Asset Browser Phase 4 的最小前驱）────────────────
 
@@ -77,6 +100,30 @@ EDITOR_BRIDGE_API int32_t EditorSession_GetAssetPath(EditorSessionHandle h,
 /// 0=Texture 1=Script 2=Unknown
 EDITOR_BRIDGE_API int32_t EditorSession_GetAssetType(EditorSessionHandle h,
                                                      int32_t index);
+/// 读资产 GUID（32 字符 hex）。越界失败返回 -1，否则返回长度。
+EDITOR_BRIDGE_API int32_t EditorSession_GetAssetGuid(EditorSessionHandle h,
+                                                     int32_t index,
+                                                     char* out,
+                                                     int32_t cap);
+
+// ── 脚本文档（Script Editor；纯内容文件 IO，走 registry 解析 + manifest 目录兜底）─
+
+/// 读取脚本资产全文（UTF-8）。失败返回 -1，否则返回实际长度。
+/// 路径解析：先按 registry path；若为相对路径则锚定到 manifest 目录，
+/// 使 scratch 工程自包含。
+EDITOR_BRIDGE_API int32_t EditorSession_ScriptRead(EditorSessionHandle h,
+                                                   int32_t assetIndex,
+                                                   char* out,
+                                                   int32_t cap);
+/// 写回脚本资产全文（覆盖）。以真实写盘结果为准；成功再清 dirty。
+EDITOR_BRIDGE_API int32_t EditorSession_ScriptSave(EditorSessionHandle h,
+                                                   int32_t assetIndex,
+                                                   const char* text);
+
+// ── 脏状态（P2-E：Clean->Edit->Dirty->Save->Clean）─────────────
+
+/// 会话是否发生过未保存的编辑（Create/Delete/Rename/SetPosition/Assign 置位；Save 清位）。
+EDITOR_BRIDGE_API int32_t EditorSession_IsDirty(EditorSessionHandle h);
 
 // ── 事件 ─────────────────────────────────────────────────────
 

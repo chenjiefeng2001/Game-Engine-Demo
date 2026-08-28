@@ -10,6 +10,7 @@
 #include "editor_bridge/capi.h"
 
 #include <cstring>
+#include <filesystem>
 #include <string>
 #include <vector>
 
@@ -36,6 +37,15 @@ protected:
 
     static constexpr const char* kManifest = "assets/gp01/manifest.json";
     static constexpr const char* kScene    = "assets/gp01/Main.scene";
+
+    /// 写类用例的隔离 scratch。布局：<scratch>/assets/gp01/<GP01 内容>。
+    /// 注意：MakeScratchFacing() 会把 CWD 切到 scratch 根，因此切完后
+    /// 一律用 kManifest/kScene（相对路径），它们会精确落到副本上。
+    static constexpr const char* kScratchDir = "gp01_editor_scratch/gate_p2";
+
+    /// 复制 repo GP01 到 scratch（保留 assets/gp01 前缀）并切 CWD 到 scratch 根。
+    /// 返回先前的 CWD 供还原。
+    static std::string MakeScratchFacing();
 
     EditorSessionHandle m_Session = nullptr;
 };
@@ -165,6 +175,168 @@ TEST_F(EditorBridgeTest, AssetQueryContract) {
     EXPECT_GT(textures, 0);
     EXPECT_GT(scripts, 0);
     EXPECT_NE(EditorSession_GetAssetPath(m_Session, n + 5, nullptr, 0), 0);
+}
+
+// ── Phase 2 (AV-G2)：Delete / Rename / AssignSprite / Script / Dirty ──
+
+TEST_F(EditorBridgeTest, DeleteEntityAndEvent) {
+    ASSERT_EQ(EditorSession_OpenProject(m_Session, kManifest, kScene), 1);
+    std::vector<CapturedEvent> events;
+    EditorSession_SetEventCallback(m_Session, &CaptureCallback, &events);
+    events.clear();
+
+    const int32_t before = EditorSession_GetEntityCount(m_Session);
+    char gone[64] = {};
+    EditorSession_GetEntityName(m_Session, 0, gone, sizeof(gone));
+
+    EXPECT_EQ(EditorSession_DeleteEntity(m_Session, 0), 0);
+    EXPECT_EQ(EditorSession_GetEntityCount(m_Session), before - 1);
+
+    // 越界 / 空会话拒绝
+    EXPECT_NE(EditorSession_DeleteEntity(m_Session, 9999), 0);
+
+    EXPECT_EQ(events[0].type, EV_ENTITY_DELETED);
+    EXPECT_NE(events[0].payload.find("idx=0"), std::string::npos);
+    EXPECT_NE(events[0].payload.find("name=" + std::string(gone)),
+              std::string::npos);
+}
+
+TEST_F(EditorBridgeTest, RenameEntityRules) {
+    ASSERT_EQ(EditorSession_OpenProject(m_Session, kManifest, kScene), 1);
+    std::vector<CapturedEvent> events;
+    EditorSession_SetEventCallback(m_Session, &CaptureCallback, &events);
+    events.clear();
+
+    EXPECT_EQ(EditorSession_RenameEntity(m_Session, 0, "HeroRenamed"), 0);
+    char name[64] = {};
+    EditorSession_GetEntityName(m_Session, 0, name, sizeof(name));
+    EXPECT_STREQ(name, "HeroRenamed");
+    EXPECT_EQ(events[0].type, EV_ENTITY_RENAMED);
+    EXPECT_NE(events[0].payload.find("new=HeroRenamed"), std::string::npos);
+
+    // 空名拒绝；越界拒绝
+    EXPECT_NE(EditorSession_RenameEntity(m_Session, 0, "   "), 0);
+    EXPECT_NE(EditorSession_RenameEntity(m_Session, 9999, "X"), 0);
+    char name2[64] = {};
+    EditorSession_GetEntityName(m_Session, 0, name2, sizeof(name2));
+    EXPECT_STREQ(name2, "HeroRenamed");   // 失败的写不生效
+}
+
+TEST_F(EditorBridgeTest, AssignSpriteTwiceIdempotentTexture) {
+    ASSERT_EQ(EditorSession_OpenProject(m_Session, kManifest, kScene), 1);
+
+    // 找第一个 Texture 资产
+    const int32_t n = EditorSession_GetAssetCount(m_Session);
+    int texIdx = -1;
+    for (int32_t i = 0; i < n; ++i)
+        if (EditorSession_GetAssetType(m_Session, i) == 0) { texIdx = i; break; }
+    ASSERT_GE(texIdx, 0);
+
+    char spritePath[256] = {};
+    std::vector<CapturedEvent> events;
+    EditorSession_SetEventCallback(m_Session, &CaptureCallback, &events);
+    events.clear();
+
+    EXPECT_EQ(EditorSession_AssignSprite(m_Session, texIdx, 0), 0);
+    // 先取回再断言：EXPECT_EQ 两实参求值顺序未定义，不能在同表达式里
+    // 用 strlen(spritePath) 与返回值比对。
+    const int32_t spriteLen =
+        EditorSession_GetEntitySprite(m_Session, 0, spritePath,
+                                      sizeof(spritePath));
+    EXPECT_EQ(spriteLen, static_cast<int32_t>(strlen(spritePath)));
+    EXPECT_GT(std::strlen(spritePath), 0u);
+
+    // 重复 assign 幂等：仍是同一路径，不再叠加组件
+    EXPECT_EQ(EditorSession_AssignSprite(m_Session, texIdx, 0), 0);
+    char again[256] = {};
+    EditorSession_GetEntitySprite(m_Session, 0, again, sizeof(again));
+    EXPECT_STREQ(spritePath, again);
+
+    // 非 Texture 资产拒绝
+    int scriptIdx = -1;
+    for (int32_t i = 0; i < n; ++i)
+        if (EditorSession_GetAssetType(m_Session, i) == 1) { scriptIdx = i; break; }
+    ASSERT_GE(scriptIdx, 0);
+    EXPECT_NE(EditorSession_AssignSprite(m_Session, scriptIdx, 0), 0);
+
+    EXPECT_EQ(events[0].type, EV_ENTITY_ASSIGNED);
+}
+
+TEST_F(EditorBridgeTest, ScriptReadWriteViaRegistry) {
+    const std::string oldcwd = MakeScratchFacing();
+    // CWD 已在 scratch 根：相对路径落到副本，写操作不污染 repo 资产
+    ASSERT_EQ(EditorSession_OpenProject(m_Session, kManifest, kScene), 1);
+
+    const int32_t n = EditorSession_GetAssetCount(m_Session);
+    int scriptIdx = -1;
+    for (int32_t i = 0; i < n; ++i)
+        if (EditorSession_GetAssetType(m_Session, i) == 1) { scriptIdx = i; break; }
+    ASSERT_GE(scriptIdx, 0);
+
+    // game.lua 现为 ~12.6KB：缓冲必须大于文件，否则按 cap-1 截断
+    char original[16384] = {};
+    ASSERT_GE(EditorSession_ScriptRead(m_Session, scriptIdx, original,
+                                       sizeof(original)), 0);
+    EXPECT_GT(std::strlen(original), 100u);   // 真实 game.lua 非空
+
+    // 追加一行注释并写回，再读回验证
+    std::string edited = std::string(original) + "\n-- audit: AV-G2 script edit\n";
+    ASSERT_LT(edited.size(), sizeof(original) - 1);   // 缓冲足够容纳改写
+    EXPECT_EQ(EditorSession_ScriptSave(m_Session, scriptIdx, edited.c_str()), 0);
+    char reread[16384] = {};
+    EXPECT_EQ(EditorSession_ScriptRead(m_Session, scriptIdx, reread,
+                                       sizeof(reread)),
+              static_cast<int32_t>(edited.size()));
+    EXPECT_STREQ(reread, edited.c_str());
+
+    // 非脚本资产拒绝
+    int texIdx = -1;
+    for (int32_t i = 0; i < n; ++i)
+        if (EditorSession_GetAssetType(m_Session, i) == 0) { texIdx = i; break; }
+    ASSERT_GE(texIdx, 0);
+    EXPECT_LT(EditorSession_ScriptRead(m_Session, texIdx, original,
+                                       sizeof(original)), 0);
+
+    // 本轮改写在 scratch 副本上可丢弃；还原 CWD 而不必还原原文
+    (void)oldcwd;
+    std::filesystem::current_path(oldcwd);
+}
+
+TEST_F(EditorBridgeTest, DirtyStateContract) {
+    const std::string oldcwd = MakeScratchFacing();
+    // CWD 已在 scratch 根：SaveProject 会真实写盘，落在副本上
+    ASSERT_EQ(EditorSession_OpenProject(m_Session, kManifest, kScene), 1);
+    EXPECT_EQ(EditorSession_IsDirty(m_Session), 0);   // 打开即 Clean
+
+    float pos[3] = {};
+    int playerIdx = -1;
+    for (int32_t i = 0; i < EditorSession_GetEntityCount(m_Session); ++i) {
+        char name[64] = {};
+        EditorSession_GetEntityName(m_Session, i, name, sizeof(name));
+        if (std::strcmp(name, "Player") == 0) { playerIdx = i; break; }
+    }
+    ASSERT_GE(playerIdx, 0);
+    EditorSession_GetEntityPosition(m_Session, playerIdx, pos);
+    const float moved[3] = {pos[0], pos[1], pos[2] + 1.0f};
+    EXPECT_EQ(EditorSession_SetEntityPosition(m_Session, playerIdx, moved), 0);
+    EXPECT_EQ(EditorSession_IsDirty(m_Session), 1);   // Edit -> Dirty
+
+    // Save 会写回磁盘（因此这里必须真实保存再恢复，保证后续用例基线干净）
+    EXPECT_EQ(EditorSession_SaveProject(m_Session), 1);
+    EXPECT_EQ(EditorSession_IsDirty(m_Session), 0);   // Save -> Clean
+}
+
+std::string EditorBridgeTest::MakeScratchFacing() {
+    namespace fs = std::filesystem;
+    fs::remove_all(kScratchDir);
+    // 目标：<scratch>/assets/gp01/<内容>
+    const fs::path dst = fs::path(kScratchDir) / "assets" / "gp01";
+    fs::create_directories(dst);
+    fs::copy("assets/gp01", dst,
+             fs::copy_options::recursive | fs::copy_options::overwrite_existing);
+    const std::string old = fs::current_path().string();
+    fs::current_path(kScratchDir);   // 让 assets/gp01/... 落点到副本
+    return old;
 }
 
 } // namespace
