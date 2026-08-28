@@ -11,6 +11,7 @@ public static class EditorBridgeApi
 {
     public const int EvProjectLoaded = 1;
     public const int EvEntityCreated = 2;
+    public const int EvEntityMoved = 3;
 
     [UnmanagedFunctionPointer(CallingConvention.Cdecl)]
     public delegate void EditorEventCallback(int eventType,
@@ -45,6 +46,22 @@ public static class EditorBridgeApi
     [DllImport("EditorBridge", CallingConvention = CallingConvention.Cdecl)]
     public static extern int EditorSession_GetEntityName(IntPtr session,
         int index, IntPtr outBuffer, int capacity);
+
+    [DllImport("EditorBridge", CallingConvention = CallingConvention.Cdecl)]
+    public static extern int EditorSession_GetEntityPosition(IntPtr session,
+        int index, IntPtr outPos3);
+
+    [DllImport("EditorBridge", CallingConvention = CallingConvention.Cdecl)]
+    public static extern int EditorSession_SetEntityPosition(IntPtr session,
+        int index, IntPtr pos3);
+
+    [DllImport("EditorBridge", CallingConvention = CallingConvention.Cdecl)]
+    public static extern int EditorSession_GetAssetPath(IntPtr session,
+        int index, IntPtr outBuffer, int capacity);
+
+    [DllImport("EditorBridge", CallingConvention = CallingConvention.Cdecl)]
+    public static extern int EditorSession_GetAssetType(IntPtr session,
+        int index);
 
     [DllImport("EditorBridge", CallingConvention = CallingConvention.Cdecl)]
     public static extern void EditorSession_SetEventCallback(IntPtr session,

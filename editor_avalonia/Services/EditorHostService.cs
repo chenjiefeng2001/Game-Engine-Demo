@@ -64,6 +64,51 @@ public sealed class EditorHostService : IDisposable
         finally { Marshal.FreeHGlobal(buf); }
     }
 
+    public (float x, float y, float z) GetEntityPosition(int index)
+    {
+        ThrowIfNoSession();
+        var buf = Marshal.AllocHGlobal(12);
+        try
+        {
+            if (EditorBridgeApi.EditorSession_GetEntityPosition(_session, index, buf) != 0)
+                throw new InvalidOperationException("GetEntityPosition failed");
+            var f = new float[3];
+            Marshal.Copy(buf, f, 0, 3);
+            return (f[0], f[1], f[2]);
+        }
+        finally { Marshal.FreeHGlobal(buf); }
+    }
+
+    public bool SetEntityPosition(int index, float x, float y, float z)
+    {
+        ThrowIfNoSession();
+        var buf = Marshal.AllocHGlobal(12);
+        try
+        {
+            Marshal.Copy(new[] { x, y, z }, 0, buf, 3);
+            return EditorBridgeApi.EditorSession_SetEntityPosition(_session, index, buf) == 0;
+        }
+        finally { Marshal.FreeHGlobal(buf); }
+    }
+
+    public string? GetAssetPath(int index)
+    {
+        ThrowIfNoSession();
+        var buf = Marshal.AllocHGlobal(512);
+        try
+        {
+            int len = EditorBridgeApi.EditorSession_GetAssetPath(_session, index, buf, 512);
+            return len < 0 ? null : Marshal.PtrToStringUTF8(buf);
+        }
+        finally { Marshal.FreeHGlobal(buf); }
+    }
+
+    public int GetAssetType(int index)
+    {
+        ThrowIfNoSession();
+        return EditorBridgeApi.EditorSession_GetAssetType(_session, index);
+    }
+
     public string GetLastError()
     {
         if (_session == IntPtr.Zero) return "(no session)";

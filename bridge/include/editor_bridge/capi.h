@@ -29,6 +29,7 @@ typedef void (*EditorEventCallback)(int32_t eventType,
 enum {
     EV_PROJECT_LOADED  = 1, ///< payload: "objects=<n>;assets=<n>"
     EV_ENTITY_CREATED  = 2, ///< payload: 实体名
+    EV_ENTITY_MOVED    = 3, ///< payload: "idx=<i>;x=<f>;y=<f>;z=<f>"
 };
 
 // ── 会话生命周期 ──────────────────────────────────────────────
@@ -58,6 +59,24 @@ EDITOR_BRIDGE_API int32_t EditorSession_GetEntityName(EditorSessionHandle h,
                                                       int32_t index,
                                                       char* out,
                                                       int32_t cap);
+/// 读实体位置（Scene 冻结契约：仅 px/py/pz）。失败返回非 0。
+EDITOR_BRIDGE_API int32_t EditorSession_GetEntityPosition(EditorSessionHandle h,
+                                                          int32_t index,
+                                                          float out3[3]);
+/// 写实体位置（编辑态；越界索引拒绝）。成功广播 EV_ENTITY_MOVED。
+EDITOR_BRIDGE_API int32_t EditorSession_SetEntityPosition(EditorSessionHandle h,
+                                                          int32_t index,
+                                                          const float pos3[3]);
+
+// ── 资产查询（Asset Browser Phase 4 的最小前驱）────────────────
+
+EDITOR_BRIDGE_API int32_t EditorSession_GetAssetPath(EditorSessionHandle h,
+                                                     int32_t index,
+                                                     char* out,
+                                                     int32_t cap);
+/// 0=Texture 1=Script 2=Unknown
+EDITOR_BRIDGE_API int32_t EditorSession_GetAssetType(EditorSessionHandle h,
+                                                     int32_t index);
 
 // ── 事件 ─────────────────────────────────────────────────────
 

@@ -380,3 +380,33 @@ Evidence：
 （陈旧 ASan 元数据对象问题，见 UI-Audit §8.1 INV 系列与 Human-Run 协议）。
 
 裁决：AV-001 **PROMOTED**（Phase 0 证据链完整；锚点 avalonia-phase0-av001）。Phase 1 Editor Shell 开工。
+
+
+### AV-001 增补（Phase 1 P1-A/B/C 执行记录，2026-08-26）
+
+Shell 骨架与生命周期契约落地（commit ≥ 3e17c11，锚点 avalonia-phase0-av001）：
+
+- **P1-A Shell**：Menu(File) / Toolbar(Open·Save·+Entity) / 左 Hierarchy /
+  中 Viewport 占位(Texture presentation 留 Phase 7) / 右 Inspector(Transform) /
+  下 Console·AssetBrowser Tab / StatusBar。Avalonia 原生 Grid 布局，
+  Docking 包（Dock.Avalonia）按需后引入。
+- **P1-B 生命周期**：Open → EV_PROJECT_LOADED → VM 重载集合 → Pane 绑定刷新；
+  EntityCreated 走同一事件路径（Pane 不互相调用）；Save/重开一致。
+- **P1-C 单向依赖**：View → MainViewModel(INPC) → EditorHostService(Session ABI)
+  → Engine；C# 层零引擎内部类型泄漏。
+- **ABI 扩展**（仍属冻结契约消费，无新 Engine API）：
+  Get/SetEntityPosition(px/py/pz)、GetAssetPath/GetAssetType、EV_ENTITY_MOVED。
+  SetEntityPosition 内置编辑态纪律守卫（GP-DX-004 家族，Play 态写入拒绝，
+  m_Playing 占位待 Phase 7 Runtime track 接线）。
+
+Evidence —— Golden Gate 1（`--gate1`，可重复）：**ALL GREEN 3.35s**
+
+```text
+open GP01(scratch)      -> hierarchy 10 entities / assets 33   PASS
+select Player           -> inspector name + transform 显示      PASS
+edit PosZ 4 -> 9 Apply  -> EV_ENTITY_MOVED + inspector 反映     PASS
+Save                    -> 写盘成功                             PASS
+reopen session          -> persisted Player.z == 9.0            PASS
+```
+
+回归：test_bridge 8/8（含 TransformRoundTrip / AssetQueryContract 新增两条）。

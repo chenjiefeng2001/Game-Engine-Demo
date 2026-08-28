@@ -42,9 +42,15 @@ public:
     int32_t GetAssetCount() const { return static_cast<int32_t>(m_Reg.Count()); }
     int32_t CreateEntity(const char* name);
     bool GetEntityName(int32_t index, std::string* out) const;
+    bool GetEntityPosition(int32_t index, float out3[3]) const;
+    bool SetEntityPosition(int32_t index, const float pos3[3]);
+    bool GetAssetPath(int32_t index, std::string* out) const;
+    int32_t GetAssetType(int32_t index) const;
 
     void SetEventCallback(EventFn cb) { m_Event = std::move(cb); }
     const std::string& GetLastError() const { return m_LastError; }
+    /// 运行态占位（Play/Stop 属 Phase 7 Runtime track；当前恒 false）
+    bool IsPlaying() const { return m_Playing; }
 
 private:
     void Emit(int32_t type, const std::string& payload);
@@ -62,6 +68,7 @@ private:
     std::string m_ManifestPath;
     EventFn m_Event;
     std::string m_LastError;
+    bool m_Playing = false;
 };
 
 } // namespace editor_bridge

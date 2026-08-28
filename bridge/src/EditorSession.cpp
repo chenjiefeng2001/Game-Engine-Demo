@@ -88,6 +88,55 @@ bool EditorSession::GetEntityName(int32_t index, std::string* out) const {
     return true;
 }
 
+bool EditorSession::GetEntityPosition(int32_t index, float out3[3]) const {
+    if (!m_EditScene || index < 0 ||
+        index >= static_cast<int32_t>(m_EditScene->GetObjectCount()))
+        return false;
+    const auto& t =
+        m_EditScene->GetObjects()[static_cast<size_t>(index)]->GetTransform();
+    out3[0] = t.GetPosition().x;
+    out3[1] = t.GetPosition().y;
+    out3[2] = t.GetPosition().z;
+    return true;
+}
+
+bool EditorSession::SetEntityPosition(int32_t index, const float pos3[3]) {
+    if (!pos3) { Fail("set position: null pos"); return false; }
+    if (IsPlaying()) {        // 编辑态纪律（GP-DX-004 家族）：运行态写入拒绝
+        Fail("set position ignored while playing (edit-state only)");
+        return false;
+    }
+    if (!m_EditScene || index < 0 ||
+        index >= static_cast<int32_t>(m_EditScene->GetObjectCount()))
+        return Fail("set position: bad index " + std::to_string(index));
+    auto& t =
+        m_EditScene->GetObjects()[static_cast<size_t>(index)]->GetTransform();
+    t.SetPosition(pos3[0], pos3[1], pos3[2]);
+    Emit(EV_ENTITY_MOVED,
+         "idx=" + std::to_string(index) +
+         ";x=" + std::to_string(pos3[0]) +
+         ";y=" + std::to_string(pos3[1]) +
+         ";z=" + std::to_string(pos3[2]));
+    return true;
+}
+
+bool EditorSession::GetAssetPath(int32_t index, std::string* out) const {
+    if (index < 0 || index >= static_cast<int32_t>(m_Reg.Count())) return false;
+    *out = m_Reg.GetAllEntries()[static_cast<size_t>(index)].path;
+    return true;
+}
+
+int32_t EditorSession::GetAssetType(int32_t index) const {
+    using AT = Engine::Content::AssetType;
+    if (index < 0 || index >= static_cast<int32_t>(m_Reg.Count()))
+        return -1;
+    switch (m_Reg.GetAllEntries()[static_cast<size_t>(index)].type) {
+        case AT::Texture: return 0;
+        case AT::Script:  return 1;
+        default:          return 2;
+    }
+}
+
 void EditorSession::Emit(int32_t type, const std::string& payload) {
     if (m_Event) m_Event(type, payload.c_str());
 }
