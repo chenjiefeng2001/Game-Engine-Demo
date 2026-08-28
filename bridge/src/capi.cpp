@@ -176,6 +176,46 @@ EDITOR_BRIDGE_API int32_t EditorSession_ScriptSave(EditorSessionHandle h,
     return S(h)->ScriptSave(assetIndex, text) ? 0 : -1;
 }
 
+EDITOR_BRIDGE_API int32_t EditorSession_Play(EditorSessionHandle h,
+                                             int32_t assetIndex) {
+    return (h && S(h)->Play(assetIndex)) ? 1 : 0;
+}
+
+EDITOR_BRIDGE_API int32_t EditorSession_Reload(EditorSessionHandle h) {
+    return (h && S(h)->Reload()) ? 1 : 0;
+}
+
+EDITOR_BRIDGE_API void EditorSession_Stop(EditorSessionHandle h) {
+    if (h) S(h)->Stop();
+}
+
+EDITOR_BRIDGE_API void EditorSession_RuntimeTick(EditorSessionHandle h,
+                                                 float dt) {
+    if (h) S(h)->RuntimeTick(dt);
+}
+
+EDITOR_BRIDGE_API int32_t EditorSession_IsPlaying(EditorSessionHandle h) {
+    return (h && S(h)->IsPlaying()) ? 1 : 0;
+}
+
+EDITOR_BRIDGE_API int32_t EditorSession_RuntimePersistInt(
+    EditorSessionHandle h, const char* key, int32_t defaultVal) {
+    if (!h || !key) return defaultVal;
+    return S(h)->RuntimePersistInt(key, defaultVal);
+}
+
+EDITOR_BRIDGE_API int32_t EditorSession_GetRuntimeError(EditorSessionHandle h,
+                                                        char* out,
+                                                        int32_t cap) {
+    if (!h || !out || cap <= 0) return -1;
+    const std::string& err = S(h)->GetRuntimeError();
+    const int32_t len = static_cast<int32_t>(err.size());
+    const int32_t copy = (len < cap - 1) ? len : cap - 1;
+    std::memcpy(out, err.data(), static_cast<size_t>(copy));
+    out[copy] = '\0';
+    return len;
+}
+
 EDITOR_BRIDGE_API int32_t EditorSession_IsDirty(EditorSessionHandle h) {
     return (h && S(h)->IsDirty()) ? 1 : 0;
 }

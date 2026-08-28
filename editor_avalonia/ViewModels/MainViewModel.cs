@@ -204,6 +204,25 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
         private set => Set(ref _scriptDirty, value);
     }
 
+    // ── P3-D Script Editor：空态 + 运行时 ──
+    /// 是否已打开脚本（ScriptTitle != "(no script)"）。空态驱动用。
+    public bool HasScriptOpen => ScriptTitle != "(no script)";
+
+    private bool _isRunning;
+    public bool IsRunning
+    {
+        get => _isRunning;
+        private set => Set(ref _isRunning, value);
+    }
+
+    private string _scriptError = "";
+    /// P3-D D4：最近一次运行时/保存的 Lua 诊断文本（成功时空串）
+    public string ScriptError
+    {
+        get => _scriptError;
+        private set => Set(ref _scriptError, value);
+    }
+
     /// 供外部（gate）在会话事件之外强制重算派生状态
     public event Action? DerivedStateChanged;
 
@@ -249,6 +268,9 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
         ScriptTitle = "(no script)";
         ScriptText = "";
         ScriptDirty = false;
+        ScriptError = "";
+        IsRunning = false;
+        Raise(nameof(HasScriptOpen));
         IsDirty = false;
         StatusText = "no project loaded";
         LogToConsole("session closed");
@@ -382,6 +404,8 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
         ScriptTitle = title;
         ScriptText = text;
         ScriptDirty = false;
+        ScriptError = "";
+        Raise(nameof(HasScriptOpen));
         LogToConsole($"script loaded: {title} ({text.Length} chars)");
         return true;
     }
@@ -401,6 +425,76 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
     }
 
     public void MarkScriptEdited() => ScriptDirty = true;
+
+    // ── P3-D 运行时：Play / Reload / Stop（D3 保存→重载生效 + _PERSIST；D4 错误恢复）──
+
+    /// 从指定脚本资产启动运行时；assetIndex<0 = 项目 director。
+    public bool PlayScript(int assetIndex = -1)
+    {
+        if (!IsOpen)
+        {
+            LogToConsole("Play ignored: no project");
+            return false;
+        }
+        // D4：若脚本还有未保存编辑，先落盘再 Play，避免运行陈旧内容
+        if (ScriptDirty && _scriptAssetIndex >= 0)
+        {
+            LogToConsole("Play: saving unsaved script edits first");
+            SaveScript();
+        }
+        bool ok = _host.Play(assetIndex);
+        if (ok)
+        {
+            IsRunning = true;
+            ScriptError = "";
+            LogToConsole($"PLAY started (script asset#{(assetIndex < 0 ? "<director>" : assetIndex.ToString())})");
+        }
+        else
+        {
+            ScriptError = _host.GetRuntimeError();
+            if (ScriptError.Length == 0) ScriptError = _host.GetLastError();
+            LogToConsole("PLAY FAILED: " + _host.GetRuntimeError() + " | " + _host.GetLastError());
+        }
+        return ok;
+    }
+
+    /// 热重载当前运行脚本：保留 _PERSIST，随后重新 OnCreate。
+    public bool ReloadActiveScript()
+    {
+        if (!IsRunning)
+        {
+            LogToConsole("Reload ignored: not playing");
+            return false;
+        }
+        bool ok = _host.Reload();
+        if (ok)
+        {
+            ScriptError = "";
+            LogToConsole("RELOAD ok (persist preserved)");
+        }
+        else
+        {
+            ScriptError = _host.GetRuntimeError();
+            LogToConsole("RELOAD FAILED: " + _host.GetRuntimeError());
+        }
+        return ok;
+    }
+
+    public void StopPlaying()
+    {
+        if (!IsRunning) return;
+        _host.Stop();
+        IsRunning = false;
+        ScriptError = "";
+        LogToConsole("STOP -> edit state restored");
+    }
+
+    /// P3-D D3b：运行态 `_PERSIST[key]` 整型探针（非运行/取不到返回 default）
+    public int RuntimePersistInt(string key, int defaultVal)
+    {
+        if (!IsRunning) return defaultVal;
+        return _host.GetRuntimePersistInt(key, defaultVal);
+    }
 
     public void ApplyInspectorPosition()
     {
@@ -466,6 +560,14 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
                 LogToConsole("EV AssetRenamed: " + payload);
                 ReloadCollectionsFromSession();
                 RefreshDirtyState();
+                break;
+            case EditorBridgeApi.EvPlayStarted:
+                LogToConsole("EV PlayStarted: " + payload);
+                IsRunning = true;
+                break;
+            case EditorBridgeApi.EvPlayStopped:
+                LogToConsole("EV PlayStopped");
+                IsRunning = false;
                 break;
         }
     }

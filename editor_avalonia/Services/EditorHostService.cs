@@ -211,6 +211,57 @@ public sealed class EditorHostService : IDisposable
         return EditorBridgeApi.EditorSession_ScriptSave(_session, assetIndex, text) == 0;
     }
 
+    // ── Phase 3-D (P3-D)：运行时 Play / Reload / Stop ──
+
+    public bool Play(int assetIndex)
+    {
+        ThrowIfNoSession();
+        return EditorBridgeApi.EditorSession_Play(_session, assetIndex) != 0;
+    }
+
+    public bool Reload()
+    {
+        ThrowIfNoSession();
+        return EditorBridgeApi.EditorSession_Reload(_session) != 0;
+    }
+
+    public void Stop()
+    {
+        ThrowIfNoSession();
+        EditorBridgeApi.EditorSession_Stop(_session);
+    }
+
+    public void RuntimeTick(float dt)
+    {
+        ThrowIfNoSession();
+        EditorBridgeApi.EditorSession_RuntimeTick(_session, dt);
+    }
+
+    public bool IsPlaying()
+    {
+        ThrowIfNoSession();
+        return EditorBridgeApi.EditorSession_IsPlaying(_session) != 0;
+    }
+
+    public string GetRuntimeError()
+    {
+        if (_session == IntPtr.Zero) return "";
+        var buf = Marshal.AllocHGlobal(512);
+        try
+        {
+            EditorBridgeApi.EditorSession_GetRuntimeError(_session, buf, 512);
+            return Marshal.PtrToStringUTF8(buf) ?? "";
+        }
+        finally { Marshal.FreeHGlobal(buf); }
+    }
+
+    /// P3-D D3b：运行态 `_PERSIST[key]` 整型探针（取不到返回 default）。
+    public int GetRuntimePersistInt(string key, int defaultVal)
+    {
+        if (_session == IntPtr.Zero) return defaultVal;
+        return EditorBridgeApi.EditorSession_RuntimePersistInt(_session, key, defaultVal);
+    }
+
     public bool IsDirty()
     {
         ThrowIfNoSession();

@@ -41,6 +41,10 @@ enum {
     EV_ASSET_IMPORTED = 9,
     /// P3-C：资产重命名（GUID 不变，路径变）。payload: "idx=<i>;guid=<hex>;old=<p>;new=<p>"
     EV_ASSET_RENAMED = 10,
+    /// P3-D：进入运行态（Play 成功）。payload: "script=<path>"
+    EV_PLAY_STARTED = 11,
+    /// P3-D：回到编辑态（Stop）。payload: ""
+    EV_PLAY_STOPPED = 12,
 };
 
 // ── 会话生命周期 ──────────────────────────────────────────────
@@ -146,6 +150,33 @@ EDITOR_BRIDGE_API int32_t EditorSession_ScriptRead(EditorSessionHandle h,
 EDITOR_BRIDGE_API int32_t EditorSession_ScriptSave(EditorSessionHandle h,
                                                    int32_t assetIndex,
                                                    const char* text);
+
+// ── 运行时（Phase 3-D）：Play / Reload / Stop / Tick ────────────────
+
+/// 启动运行时：资产索引（assetIndex>=0）或项目 director（assetIndex<0）。
+/// 克隆编辑场景为运行场景，加载并 OnCreate 指定导演脚本。
+/// 成功返回 1，失败 0（原因经 GetLastError / GetRuntimeError）。
+/// 成功广播 EV_PLAY_STARTED。
+EDITOR_BRIDGE_API int32_t EditorSession_Play(EditorSessionHandle h,
+                                             int32_t assetIndex);
+/// 热重载当前运行脚本（保留 _PERSIST 表）。成功 1，失败 0（语法/运行错误
+/// 经 GetRuntimeError 取回；Session 不崩溃）。
+EDITOR_BRIDGE_API int32_t EditorSession_Reload(EditorSessionHandle h);
+/// 停止运行时，回到编辑态。非运行态为空操作。广播 EV_PLAY_STOPPED。
+EDITOR_BRIDGE_API void     EditorSession_Stop(EditorSessionHandle h);
+/// 运行态单帧推进（GameplayAPI::OnUpdate）。非运行态空操作。
+EDITOR_BRIDGE_API void     EditorSession_RuntimeTick(EditorSessionHandle h,
+                                                     float dt);
+/// 是否处于运行态。
+EDITOR_BRIDGE_API int32_t EditorSession_IsPlaying(EditorSessionHandle h);
+/// 最近一次运行时动作（Play/Reload/Tick）的 Lua 诊断文本（成功时空串）。
+EDITOR_BRIDGE_API int32_t EditorSession_GetRuntimeError(EditorSessionHandle h,
+                                                        char* out,
+                                                        int32_t cap);
+/// 运行态探针：返回 `_PERSIST[key]`（整数）。key 为裸键名（不含引号）。
+/// 非运行态/取不到时返回 defaultVal。
+EDITOR_BRIDGE_API int32_t EditorSession_RuntimePersistInt(
+    EditorSessionHandle h, const char* key, int32_t defaultVal);
 
 // ── 脏状态（P2-E：Clean->Edit->Dirty->Save->Clean）─────────────
 

@@ -69,6 +69,14 @@ public partial class MainWindow : Window
                 Log($"gate3c exit={code}");
                 Environment.Exit(code);
             };
+
+        if (Environment.CommandLine.Contains("--gate3d"))
+            Opened += (_, _) =>
+            {
+                int code = Phase3Gate.RunScriptEditor(Vm, Log);
+                Log($"gate3d exit={code}");
+                Environment.Exit(code);
+            };
     }
 
     private void SyncStatusBar()
@@ -147,7 +155,10 @@ public partial class MainWindow : Window
         if (asset.TypeName == "Script")
         {
             if (Vm.OpenScript(asset.Index))
+            {
+                _currentOpenScriptIndex = asset.Index;
                 MainTabs.SelectedIndex = 2;   // Script Editor tab
+            }
         }
         else if (asset.TypeName == "Texture")
         {
@@ -220,6 +231,35 @@ public partial class MainWindow : Window
         Vm.SaveScript();
     }
 
+    // ── P3-D Runtime：Play / Reload / Stop ──
+    private void OnPlay(object? sender, RoutedEventArgs e)
+    {
+        if (Vm.IsRunning) { Vm.StopPlaying(); return; }
+        // Play 当前打开脚本（assetIndex>=0）；未打开则跑项目 director（<0）
+        Vm.PlayScript(Vm.ScriptTitle == "(no script)" ? -1 : _currentOpenScriptIndex);
+        SyncPlayButton();
+    }
+
+    private void OnReloadScript(object? sender, RoutedEventArgs e)
+    {
+        Vm.ReloadActiveScript();
+    }
+
+    private void OnStop(object? sender, RoutedEventArgs e)
+    {
+        Vm.StopPlaying();
+        SyncPlayButton();
+    }
+
+    private void SyncPlayButton()
+    {
+        var btn = this.FindControl<Button>("PlayBtn");
+        if (btn is not null) btn.Content = Vm.IsRunning ? "Stop" : "Play";
+    }
+
+    /// 当前打开脚本的资产索引（供 Play 直接运行编辑中的脚本）
+    private int _currentOpenScriptIndex = -1;
+
     private void OnScriptTextChanged(object? sender, RoutedEventArgs e)
     {
         // 仅当已有打开的脚本且尚未标记时置脏（避免初始化/装载时的误标记）
@@ -243,6 +283,8 @@ public partial class MainWindow : Window
     {
         if (e.PropertyName == nameof(MainViewModel.IsDirty))
             SyncDirtyBadge();
+        if (e.PropertyName == nameof(MainViewModel.IsRunning))
+            SyncPlayButton();
     }
 
     private void SyncDirtyBadge()

@@ -555,6 +555,125 @@ TEST_F(EditorBridgeTest, DirtyStateContract) {
     EXPECT_EQ(EditorSession_IsDirty(m_Session), 0);   // Save -> Clean
 }
 
+// ── Phase 3-D (P3-D)：Runtime Play / Reload(_PERSIST) / Stop / 错误恢复 ──
+
+/// 把一段 Lua 写入 scratch（适用 CWD 已在 scratch 根时）。
+static void WriteScratchScript(const char* rel, const std::string& content) {
+    std::filesystem::create_directories(
+        std::filesystem::path(rel).parent_path());
+    std::ofstream f(rel, std::ios::binary | std::ios::trunc);
+    f << content;
+}
+
+/// 找（可选的）脚本资产索引：按 registry 序第一个 Script；未找到返回 -1。
+static int FindScriptIndex(EditorSessionHandle s) {
+    const int32_t n = EditorSession_GetAssetCount(s);
+    for (int32_t i = 0; i < n; ++i)
+        if (EditorSession_GetAssetType(s, i) == 1) return i;
+    return -1;
+}
+
+TEST_F(EditorBridgeTest, RuntimePlayReloadPersistStop) {
+    const std::string oldcwd = MakeScratchFacing();
+    ASSERT_EQ(EditorSession_OpenProject(m_Session, kManifest, kScene), 1);
+
+    // 导入一个 _PERSIST 探针脚本（D3b gold：初次 1 → Reload 后 2）
+    const char* probeRel = "assets/gp01/scripts/probe.lua";
+    WriteScratchScript(probeRel,
+        "_PERSIST = _PERSIST or {}\n"
+        "_PERSIST.n = (_PERSIST.n or 0) + 1\n"
+        "function OnUpdate(dt) end\n");
+    const int32_t probeIdx = EditorSession_ImportAsset(m_Session, probeRel, 1);
+    ASSERT_GE(probeIdx, 0);
+
+    EXPECT_EQ(EditorSession_IsPlaying(m_Session), 0);
+    // Play 前取 _PERSIST 探针：非运行态返回默认值
+    EXPECT_EQ(EditorSession_RuntimePersistInt(m_Session, "n", 42), 42);
+
+    EXPECT_EQ(EditorSession_Play(m_Session, probeIdx), 1);
+    EXPECT_EQ(EditorSession_IsPlaying(m_Session), 1);
+    EXPECT_EQ(EditorSession_RuntimePersistInt(m_Session, "n", 0), 1)
+        << "fresh play: _PERSIST.n must be 1";
+
+    // Reload：保留 _PERSIST → n=2（S4）
+    EXPECT_EQ(EditorSession_Reload(m_Session), 1);
+    EXPECT_EQ(EditorSession_IsPlaying(m_Session), 1);
+    EXPECT_EQ(EditorSession_RuntimePersistInt(m_Session, "n", 0), 2)
+        << "reload must preserve _PERSIST (1 -> 2)";
+
+    // Stop → 回编辑态
+    EditorSession_Stop(m_Session);
+    EXPECT_EQ(EditorSession_IsPlaying(m_Session), 0);
+
+    (void)oldcwd;
+    std::filesystem::current_path(oldcwd);
+}
+
+TEST_F(EditorBridgeTest, RuntimePlayDirectorAndTick) {
+    const std::string oldcwd = MakeScratchFacing();
+    ASSERT_EQ(EditorSession_OpenProject(m_Session, kManifest, kScene), 1);
+
+    // assetIndex<0 = 项目 director（场景首个 scriptGuid → game.lua），应可跑
+    EXPECT_EQ(EditorSession_Play(m_Session, -1), 1);
+    EXPECT_EQ(EditorSession_IsPlaying(m_Session), 1);
+    // OnUpdate 单帧推进（无输入 provider → input.is_down=false，安全）
+    EditorSession_RuntimeTick(m_Session, 0.016f);
+    EXPECT_EQ(EditorSession_IsPlaying(m_Session), 1);
+
+    EditorSession_Stop(m_Session);
+    EXPECT_EQ(EditorSession_IsPlaying(m_Session), 0);
+    // Reload 在非运行态被拒
+    EXPECT_EQ(EditorSession_Reload(m_Session), 0);
+
+    (void)oldcwd;
+    std::filesystem::current_path(oldcwd);
+}
+
+TEST_F(EditorBridgeTest, RuntimeLuaErrorRecovery) {
+    const std::string oldcwd = MakeScratchFacing();
+    ASSERT_EQ(EditorSession_OpenProject(m_Session, kManifest, kScene), 1);
+    const int32_t scriptIdx = FindScriptIndex(m_Session);
+    ASSERT_GE(scriptIdx, 0);
+
+    // ── 语法错误的脚本：Play 失败，Diagnostic 非空，Session 不崩 ──
+    WriteScratchScript("assets/gp01/broken.lua", "function broken( end end end");
+    const int32_t brokenIdx = EditorSession_ImportAsset(m_Session,
+                                                        "assets/gp01/broken.lua", 1);
+    ASSERT_GE(brokenIdx, 0);
+
+    EXPECT_EQ(EditorSession_Play(m_Session, brokenIdx), 0);
+    EXPECT_EQ(EditorSession_IsPlaying(m_Session), 0);
+    char err[512] = {};
+    EXPECT_GT(EditorSession_GetRuntimeError(m_Session, err, sizeof(err)), 0);
+    EXPECT_GT(std::strlen(err), 0u) << "Lua syntax error must be surfaced";
+
+    // 修复后 Play 恢复
+    WriteScratchScript("assets/gp01/broken.lua",
+        "_PERSIST = _PERSIST or {}\nfunction OnUpdate(dt) end\n");
+    EXPECT_EQ(EditorSession_Play(m_Session, brokenIdx), 1);
+    EXPECT_EQ(EditorSession_IsPlaying(m_Session), 1);
+
+    // ── 运行中途把脚本改成语法错误 → Reload 失败（加载即 pcall 捕获），Session 存活 ──
+    WriteScratchScript("assets/gp01/broken.lua",
+        "function broke( end end end\n");
+    EXPECT_EQ(EditorSession_Reload(m_Session), 0);
+    EXPECT_EQ(EditorSession_IsPlaying(m_Session), 1) << "session survives failed reload";
+    EXPECT_GT(EditorSession_GetRuntimeError(m_Session, err, sizeof(err)), 0)
+        << "Lua load error must be surfaced after failed reload";
+
+    // 修复 → Reload 恢复
+    WriteScratchScript("assets/gp01/broken.lua",
+        "_PERSIST = _PERSIST or {}\nfunction OnUpdate(dt) end\n");
+    EXPECT_EQ(EditorSession_Reload(m_Session), 1);
+    EXPECT_EQ(EditorSession_IsPlaying(m_Session), 1);
+
+    EditorSession_Stop(m_Session);
+    EXPECT_EQ(EditorSession_IsPlaying(m_Session), 0);
+
+    (void)oldcwd;
+    std::filesystem::current_path(oldcwd);
+}
+
 std::string EditorBridgeTest::MakeScratchFacing() {
     namespace fs = std::filesystem;
     fs::remove_all(kScratchDir);
