@@ -46,6 +46,10 @@ bool EditorSession::OpenProject(const std::string& manifestPath,
     m_ScenePath = scenePath;
     m_ManifestPath = manifestPath;
     m_Dirty = false;
+    // 会话稳定序：以本次打开时的注册表快照建立（此后只 append）
+    m_AssetOrder.clear();
+    for (const auto& e : m_Reg.GetAllEntries())
+        m_AssetOrder.push_back(e.guid);
 
     Engine::Log::Info("[EditorBridge] project loaded: {} objects, {} assets",
                       m_EditScene->GetObjectCount(), m_Reg.Count());
@@ -210,9 +214,10 @@ bool EditorSession::AssignSprite(int32_t assetIndex, int32_t entityIndex) {
         return Fail("assign sprite: bad entity index " +
                     std::to_string(entityIndex));
 
-    // 注意：GetAllEntries() 按值返回临时 vector，引用会悬垂（ASan 捕获），
-    // 必须按值拷贝条目再使用。
-    const auto entry = m_Reg.GetAllEntries()[static_cast<size_t>(assetIndex)];
+    Engine::Content::AssetEntry entry;
+    if (!AssetAt(assetIndex, &entry))   // 稳定索引（会话序）
+        return Fail("assign sprite: bad asset index " +
+                    std::to_string(assetIndex));
     if (entry.type != Engine::Content::AssetType::Texture)
         return Fail("assign sprite: asset is not a texture");
 
@@ -236,18 +241,152 @@ bool EditorSession::AssignSprite(int32_t assetIndex, int32_t entityIndex) {
     return true;
 }
 
+bool EditorSession::GetEntityScript(int32_t index, std::string* out) const {
+    if (!m_EditScene || index < 0 ||
+        index >= static_cast<int32_t>(m_EditScene->GetObjectCount()))
+        return false;
+    const Engine::Content::EntityContentBinding& b =
+        m_Bindings[static_cast<size_t>(index)];
+    if (b.scriptGuid.IsNull()) { *out = ""; return true; }
+    *out = m_Reg.ResolvePath(b.scriptGuid);
+    return true;
+}
+
+bool EditorSession::AssignScript(int32_t assetIndex, int32_t entityIndex) {
+    if (IsPlaying()) {
+        return Fail("assign script ignored while playing (edit-state only)");
+    }
+    if (assetIndex < 0 || assetIndex >= static_cast<int32_t>(m_Reg.Count()))
+        return Fail("assign script: bad asset index " +
+                    std::to_string(assetIndex));
+    if (!m_EditScene || entityIndex < 0 ||
+        entityIndex >= static_cast<int32_t>(m_EditScene->GetObjectCount()))
+        return Fail("assign script: bad entity index " +
+                    std::to_string(entityIndex));
+
+    Engine::Content::AssetEntry entry;
+    if (!AssetAt(assetIndex, &entry))   // 稳定索引（会话序）
+        return Fail("assign script: bad asset index " +
+                    std::to_string(assetIndex));
+    if (entry.type != Engine::Content::AssetType::Script)
+        return Fail("assign script: asset is not a script");
+
+    const auto& objs = m_EditScene->GetObjects();
+    const auto& obj = objs[static_cast<size_t>(entityIndex)];
+    // 实体级脚本绑定是契约内数据（场景 JSON "script" 字段），只写 binding 表；
+    // 运行时（Play）按 GP01 语义消费第一个非空 scriptGuid 作 director。
+    RealignBindings();
+    m_Bindings[static_cast<size_t>(entityIndex)].scriptGuid = entry.guid;
+    MarkDirty();
+    Engine::Log::Info("[EditorBridge] script assigned: {} -> {}",
+                      obj->GetName(), entry.path);
+    Emit(EV_ENTITY_SCRIPT_ASSIGNED,
+         "idx=" + std::to_string(entityIndex) +
+         ";asset=" + std::to_string(assetIndex) +
+         ";script=" + entry.path);
+    return true;
+}
+
 bool EditorSession::GetAssetGuid(int32_t index, std::string* out) const {
-    if (index < 0 || index >= static_cast<int32_t>(m_Reg.Count())) return false;
-    *out = m_Reg.GetAllEntries()[static_cast<size_t>(index)].guid.ToHex();
+    Engine::Content::AssetEntry e;
+    if (!AssetAt(index, &e)) return false;
+    *out = e.guid.ToHex();
+    return true;
+}
+
+// ════════════════════════════════════════════════════════════
+// Phase 3-C：Asset Browser（Import / Rename，引擎零改动）
+// ════════════════════════════════════════════════════════════
+
+int32_t EditorSession::ImportAsset(const std::string& path, int32_t type) {
+    if (!m_EditScene) { Fail("import asset: no project loaded"); return -1; }
+    if (path.empty()) { Fail("import asset: empty path"); return -1; }
+    using AT = Engine::Content::AssetType;
+    AT t;
+    if (type == 0) t = AT::Texture;
+    else if (type == 1) t = AT::Script;
+    else { Fail("import asset: bad type " + std::to_string(type)); return -1; }
+
+    // 文件必须真实存在（避免登记不存在的资产造成假成功，GP-DX-007 纪律）
+    const std::string filePath = ResolveContentPath(path);
+    std::error_code ec;
+    if (!fs::is_regular_file(filePath, ec) || ec) {
+        Fail("import asset: file not found: " + filePath);
+        return -1;
+    }
+
+    // ContentRegistry::Import 幂等：同路径返回既有 GUID
+    const Engine::ResourceGUID guid = m_Reg.Import(path, t);
+    MarkDirty();
+    // 会话稳定序：新 GUID 只 append，既有索引不位移
+    if (std::find(m_AssetOrder.begin(), m_AssetOrder.end(), guid) ==
+        m_AssetOrder.end())
+        m_AssetOrder.push_back(guid);
+    int32_t idx = -1;
+    for (size_t i = 0; i < m_AssetOrder.size(); ++i)
+        if (m_AssetOrder[i] == guid) { idx = static_cast<int32_t>(i); break; }
+    Engine::Log::Info("[EditorBridge] asset imported: {} ({})", path,
+                      Engine::Content::ToString(t));
+    Emit(EV_ASSET_IMPORTED,
+         "idx=" + std::to_string(idx) + ";guid=" + guid.ToHex() +
+         ";path=" + path + ";type=" + std::to_string(type));
+    return idx;
+}
+
+bool EditorSession::RenameAsset(int32_t assetIndex, const std::string& newName) {
+    if (!m_EditScene)
+        return Fail("rename asset: no project loaded");
+    if (assetIndex < 0 || assetIndex >= static_cast<int32_t>(m_Reg.Count()))
+        return Fail("rename asset: bad asset index " +
+                    std::to_string(assetIndex));
+    std::string cleaned = newName;
+    auto isSpace = [](unsigned char c) { return std::isspace(c) != 0; };
+    if (cleaned.empty() ||
+        std::all_of(cleaned.begin(), cleaned.end(), isSpace))
+        return Fail("rename asset: empty name rejected");
+
+    Engine::Content::AssetEntry entry;
+    if (!AssetAt(assetIndex, &entry))   // 稳定索引（会话序）
+        return Fail("rename asset: bad asset index " +
+                    std::to_string(assetIndex));
+    // 只允许改 basename（不含路径分隔符/扩展名语义由调用方给裸名）
+    if (cleaned.find_first_of("/\\") != std::string::npos)
+        return Fail("rename asset: name must be a bare filename");
+
+    const fs::path oldPath(ResolveContentPath(entry.path));
+    const std::string ext = oldPath.extension().string();
+    const fs::path newPath = oldPath.parent_path() / (cleaned + ext);
+
+    // 物理改名（失败即止，不污染注册表）
+    std::error_code ec;
+    fs::rename(oldPath, newPath, ec);
+    if (ec)
+        return Fail("rename asset: fs rename failed: " + ec.message());
+
+    // 注册表路径更新：GUID 不变 → 场景绑定稳定（DL-02 契约）
+    m_Reg.Unregister(entry.guid);
+    const std::string newRel = fs::relative(newPath, fs::current_path(ec), ec)
+                                   .lexically_normal().generic_string();
+    if (ec || !m_Reg.RegisterExplicit(entry.guid, newRel, entry.type)) {
+        // 回滚物理改名，保持一致性
+        fs::rename(newPath, oldPath, ec);
+        return Fail("rename asset: registry update failed (rolled back)");
+    }
+    MarkDirty();
+    Engine::Log::Info("[EditorBridge] asset renamed: {} -> {}",
+                      entry.path, newRel);
+    Emit(EV_ASSET_RENAMED,
+         "idx=" + std::to_string(assetIndex) + ";guid=" + entry.guid.ToHex() +
+         ";old=" + entry.path + ";new=" + newRel);
     return true;
 }
 
 bool EditorSession::ScriptRead(int32_t assetIndex, std::string* out) {
     if (assetIndex < 0 || assetIndex >= static_cast<int32_t>(m_Reg.Count()))
         return false;
-    // 同上：GetAllEntries() 临时 vector 的引用悬垂，按值拷贝。
-    const auto entry = m_Reg.GetAllEntries()[static_cast<size_t>(assetIndex)];
-    if (entry.type != Engine::Content::AssetType::Script)
+    Engine::Content::AssetEntry entry;   // 稳定索引 + 按值拷贝（ASan 纪律）
+    if (!AssetAt(assetIndex, &entry) ||
+        entry.type != Engine::Content::AssetType::Script)
         return false;
     const std::string filePath = ResolveContentPath(entry.path);
     std::ifstream f(filePath, std::ios::binary);
@@ -265,8 +404,10 @@ bool EditorSession::ScriptSave(int32_t assetIndex, const std::string& text) {
     if (assetIndex < 0 || assetIndex >= static_cast<int32_t>(m_Reg.Count()))
         return Fail("script save: bad asset index " +
                     std::to_string(assetIndex));
-    // 同上：GetAllEntries() 临时 vector 的引用悬垂，按值拷贝。
-    const auto entry = m_Reg.GetAllEntries()[static_cast<size_t>(assetIndex)];
+    Engine::Content::AssetEntry entry;
+    if (!AssetAt(assetIndex, &entry))
+        return Fail("script save: bad asset index " +
+                    std::to_string(assetIndex));
     if (entry.type != Engine::Content::AssetType::Script)
         return Fail("script save: asset is not a script");
     const std::string filePath = ResolveContentPath(entry.path);
@@ -283,20 +424,34 @@ bool EditorSession::ScriptSave(int32_t assetIndex, const std::string& text) {
 }
 
 bool EditorSession::GetAssetPath(int32_t index, std::string* out) const {
-    if (index < 0 || index >= static_cast<int32_t>(m_Reg.Count())) return false;
-    *out = m_Reg.GetAllEntries()[static_cast<size_t>(index)].path;
+    Engine::Content::AssetEntry e;
+    if (!AssetAt(index, &e)) return false;
+    *out = e.path;
     return true;
 }
 
 int32_t EditorSession::GetAssetType(int32_t index) const {
     using AT = Engine::Content::AssetType;
-    if (index < 0 || index >= static_cast<int32_t>(m_Reg.Count()))
-        return -1;
-    switch (m_Reg.GetAllEntries()[static_cast<size_t>(index)].type) {
+    Engine::Content::AssetEntry e;
+    if (!AssetAt(index, &e)) return -1;
+    switch (e.type) {
         case AT::Texture: return 0;
         case AT::Script:  return 1;
         default:          return 2;
     }
+}
+
+bool EditorSession::AssetAt(int32_t index, Engine::Content::AssetEntry* out) const {
+    if (!out || index < 0 ||
+        index >= static_cast<int32_t>(m_AssetOrder.size()))
+        return false;
+    const Engine::ResourceGUID& guid = m_AssetOrder[static_cast<size_t>(index)];
+    // 注册表按 GUID 查回条目（不依赖 unordered_map 迭代序）；按值拷贝
+    // （GetAllEntries 临时 vector 引用会悬垂，ASan 纪律）
+    auto entries = m_Reg.GetAllEntries();
+    for (const auto& e : entries)
+        if (e.guid == guid) { *out = e; return true; }
+    return false;
 }
 
 void EditorSession::Emit(int32_t type, const std::string& payload) {

@@ -141,6 +141,24 @@ public sealed class EditorHostService : IDisposable
         return EditorBridgeApi.EditorSession_AssignSprite(_session, assetIndex, entityIndex) == 0;
     }
 
+    public string GetEntityScript(int index)
+    {
+        ThrowIfNoSession();
+        var buf = Marshal.AllocHGlobal(512);
+        try
+        {
+            int len = EditorBridgeApi.EditorSession_GetEntityScript(_session, index, buf, 512);
+            return len < 0 ? "" : Marshal.PtrToStringUTF8(buf) ?? "";
+        }
+        finally { Marshal.FreeHGlobal(buf); }
+    }
+
+    public bool AssignScript(int assetIndex, int entityIndex)
+    {
+        ThrowIfNoSession();
+        return EditorBridgeApi.EditorSession_AssignScript(_session, assetIndex, entityIndex) == 0;
+    }
+
     public string GetAssetGuid(int index)
     {
         ThrowIfNoSession();
@@ -151,6 +169,20 @@ public sealed class EditorHostService : IDisposable
             return len < 0 ? "" : Marshal.PtrToStringUTF8(buf) ?? "";
         }
         finally { Marshal.FreeHGlobal(buf); }
+    }
+
+    // ── Phase 3-C (P3-C)：资产导入 / 重命名 ──
+
+    public int ImportAsset(string path, int type)
+    {
+        ThrowIfNoSession();
+        return EditorBridgeApi.EditorSession_ImportAsset(_session, path, type);
+    }
+
+    public bool RenameAsset(int assetIndex, string newName)
+    {
+        ThrowIfNoSession();
+        return EditorBridgeApi.EditorSession_RenameAsset(_session, assetIndex, newName) == 0;
     }
 
     public string ScriptRead(int assetIndex)

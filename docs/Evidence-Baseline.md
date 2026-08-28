@@ -18,9 +18,9 @@
 | test_job | 4 | VERIFIED | JobSystem 压力 |
 | test_e2e | 6 | VERIFIED | 引擎启动生命周期 |
 | test_gp01 | 22 | VERIFIED | Game Production GP-P1 · GP01 生产契约（GP1-A/B/C/D + DX 审计 remediation D7） |
-| test_bridge | 16 | VERIFIED | EditorBridge C-ABI 契约（P3-B/P3-C：Script/Import/Rename 绑定） |
+| test_bridge | 17 | VERIFIED | EditorBridge C-ABI 契约（P3-B/P3-C：Script/Import/Rename 绑定 + 会话内资产 index 稳定契约） |
 | test_core | 20 | VERIFIED | GLM 数学库 + StackAllocator（2026-08-28：Vector3Test 默认构造误读未初始化内存 → 改为值初始化后纳入） |
-| **合计** | **158** | | |
+| **合计** | **159** | | |
 
 ## Excluded 目标（记录原因，不计入基线）
 
@@ -59,8 +59,9 @@
    已太晚，必须在进程启动前生效）。
 3. test_core 从 EXCLUDED 恢复：exit=3 首测即死实为 `vec3 v;` 未初始化读
    （注释错误宣称 GLM 会零初始化）→ 改为 `vec3 v{}`，20/20 PASS。
-4. test_bridge 首次纳入基线（16 用例，含 P3-B/P3-C 契约）。
-5. 合计 122 → 158。
+4. test_bridge 首次纳入基线（16 用例，含 P3-B/P3-C 契约；P3-C 收官时
+   新增会话内资产 index 稳定契约测试 → 17 用例）。
+5. 合计 122 → 159。
 
 **长期纪律**：Windows/MSVC ASan 测试必须经统一 launcher / CTest environment
 启动；"裸跑 test exe 无 env" 不作为可靠证据。

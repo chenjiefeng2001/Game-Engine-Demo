@@ -36,6 +36,11 @@ enum {
     EV_ENTITY_DELETED  = 5, ///< payload: "idx=<i>;name=<n>"
     EV_ENTITY_RENAMED  = 6, ///< payload: "idx=<i>;old=<s>;new=<s>"
     EV_ENTITY_ASSIGNED = 7, ///< payload: "idx=<i>;asset=<assetIndex>;sprite=<path>"
+    EV_ENTITY_SCRIPT_ASSIGNED = 8, ///< payload: "idx=<i>;asset=<assetIndex>;script=<path>"
+    /// P3-C：资产导入（幂等）。payload: "idx=<i>;guid=<hex>;path=<p>;type=<t>"
+    EV_ASSET_IMPORTED = 9,
+    /// P3-C：资产重命名（GUID 不变，路径变）。payload: "idx=<i>;guid=<hex>;old=<p>;new=<p>"
+    EV_ASSET_RENAMED = 10,
 };
 
 // ── 会话生命周期 ──────────────────────────────────────────────
@@ -90,6 +95,28 @@ EDITOR_BRIDGE_API int32_t EditorSession_GetEntitySprite(EditorSessionHandle h,
 EDITOR_BRIDGE_API int32_t EditorSession_AssignSprite(EditorSessionHandle h,
                                                      int32_t assetIndex,
                                                      int32_t entityIndex);
+/// 读实体脚本绑定路径（无绑定返回空串，失败返回 -1）。P3-B。
+EDITOR_BRIDGE_API int32_t EditorSession_GetEntityScript(EditorSessionHandle h,
+                                                        int32_t index,
+                                                        char* out,
+                                                        int32_t cap);
+/// 给实体 Assign Script（binding 表）：assetIndex 必须是 Script 资产；
+/// 会置 dirty。成功广播 EV_ENTITY_SCRIPT_ASSIGNED。P3-B。
+EDITOR_BRIDGE_API int32_t EditorSession_AssignScript(EditorSessionHandle h,
+                                                     int32_t assetIndex,
+                                                     int32_t entityIndex);
+/// 导入资产（ContentRegistry::Import，幂等）：path 为相对 CWD 的工程路径，
+/// type 0=Texture 1=Script。文件必须已存在。成功返回资产索引（≥0），
+/// 失败 -1。会置 dirty。成功广播 EV_ASSET_IMPORTED。P3-C。
+EDITOR_BRIDGE_API int32_t EditorSession_ImportAsset(EditorSessionHandle h,
+                                                    const char* path,
+                                                    int32_t type);
+/// 重命名资产（GUID 不变 → 场景绑定稳定）：物理文件改名 + 注册表路径更新。
+/// newName 不含扩展名（按原扩展名补全）。成功 0，失败 -1。会置 dirty。
+/// 成功广播 EV_ASSET_RENAMED。P3-C。
+EDITOR_BRIDGE_API int32_t EditorSession_RenameAsset(EditorSessionHandle h,
+                                                    int32_t assetIndex,
+                                                    const char* newName);
 
 // ── 资产查询（Asset Browser Phase 4 的最小前驱）────────────────
 

@@ -106,6 +106,27 @@ EDITOR_BRIDGE_API int32_t EditorSession_AssignSprite(EditorSessionHandle h,
     return S(h)->AssignSprite(assetIndex, entityIndex) ? 0 : -1;
 }
 
+EDITOR_BRIDGE_API int32_t EditorSession_GetEntityScript(EditorSessionHandle h,
+                                                        int32_t index,
+                                                        char* out,
+                                                        int32_t cap) {
+    if (!h || !out || cap <= 0) return -1;
+    std::string s;
+    if (!S(h)->GetEntityScript(index, &s)) return -1;
+    const int32_t len = static_cast<int32_t>(s.size());
+    const int32_t copy = (len < cap - 1) ? len : cap - 1;
+    std::memcpy(out, s.data(), static_cast<size_t>(copy));
+    out[copy] = '\0';
+    return len;
+}
+
+EDITOR_BRIDGE_API int32_t EditorSession_AssignScript(EditorSessionHandle h,
+                                                     int32_t assetIndex,
+                                                     int32_t entityIndex) {
+    if (!h) return -1;
+    return S(h)->AssignScript(assetIndex, entityIndex) ? 0 : -1;
+}
+
 EDITOR_BRIDGE_API int32_t EditorSession_GetAssetGuid(EditorSessionHandle h,
                                                      int32_t index,
                                                      char* out,
@@ -118,6 +139,20 @@ EDITOR_BRIDGE_API int32_t EditorSession_GetAssetGuid(EditorSessionHandle h,
     std::memcpy(out, guid.data(), static_cast<size_t>(copy));
     out[copy] = '\0';
     return len;
+}
+
+EDITOR_BRIDGE_API int32_t EditorSession_ImportAsset(EditorSessionHandle h,
+                                                    const char* path,
+                                                    int32_t type) {
+    if (!h || !path) return -1;
+    return S(h)->ImportAsset(path, type);
+}
+
+EDITOR_BRIDGE_API int32_t EditorSession_RenameAsset(EditorSessionHandle h,
+                                                    int32_t assetIndex,
+                                                    const char* newName) {
+    if (!h || !newName) return -1;
+    return S(h)->RenameAsset(assetIndex, newName) ? 0 : -1;
 }
 
 EDITOR_BRIDGE_API int32_t EditorSession_ScriptRead(EditorSessionHandle h,
