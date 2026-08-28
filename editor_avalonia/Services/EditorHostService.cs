@@ -280,6 +280,19 @@ public sealed class EditorHostService : IDisposable
         finally { Marshal.FreeHGlobal(buf); }
     }
 
+    /// OpenProject 非致命告警（缺失 GUID 资产；实体保留）。空串 = 无告警。
+    public string GetWarnings()
+    {
+        if (_session == IntPtr.Zero) return "";
+        var buf = Marshal.AllocHGlobal(4096);
+        try
+        {
+            EditorBridgeApi.EditorSession_GetWarnings(_session, buf, 4096);
+            return Marshal.PtrToStringUTF8(buf) ?? "";
+        }
+        finally { Marshal.FreeHGlobal(buf); }
+    }
+
     private void OnNativeEvent(int eventType, string payload, IntPtr userData)
         => NativeEvent?.Invoke(eventType, payload);
 

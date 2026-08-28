@@ -77,6 +77,14 @@ public partial class MainWindow : Window
                 Log($"gate3d exit={code}");
                 Environment.Exit(code);
             };
+
+        if (Environment.CommandLine.Contains("--gate3g"))
+            Opened += (_, _) =>
+            {
+                int code = Phase3Gate.RunProduction(Vm, Log);
+                Log($"gate3g exit={code}");
+                Environment.Exit(code);
+            };
     }
 
     private void SyncStatusBar()

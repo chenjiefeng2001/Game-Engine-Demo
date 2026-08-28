@@ -153,4 +153,9 @@ public static class EditorBridgeApi
     [DllImport("EditorBridge", CallingConvention = CallingConvention.Cdecl)]
     public static extern int EditorSession_GetLastError(IntPtr session,
         IntPtr outBuffer, int capacity);
+
+    // ── Phase 3-G (AV-G3)：OpenProject 非致命告警（缺失 GUID 资产，实体保留）──
+    [DllImport("EditorBridge", CallingConvention = CallingConvention.Cdecl)]
+    public static extern int EditorSession_GetWarnings(IntPtr session,
+        IntPtr outBuffer, int capacity);
 }

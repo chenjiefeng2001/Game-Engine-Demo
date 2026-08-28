@@ -194,3 +194,7 @@ EDITOR_BRIDGE_API void EditorSession_SetEventCallback(
 EDITOR_BRIDGE_API int32_t EditorSession_GetLastError(EditorSessionHandle h,
                                                      char* out,
                                                      int32_t cap);
+/// 取最近一次 OpenProject 的非致命告警（如缺失 GUID 资产；实体保留）。空串=无。
+EDITOR_BRIDGE_API int32_t EditorSession_GetWarnings(EditorSessionHandle h,
+                                                    char* out,
+                                                    int32_t cap);

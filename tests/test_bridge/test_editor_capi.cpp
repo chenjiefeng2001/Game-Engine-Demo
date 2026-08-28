@@ -674,6 +674,56 @@ TEST_F(EditorBridgeTest, RuntimeLuaErrorRecovery) {
     std::filesystem::current_path(oldcwd);
 }
 
+TEST_F(EditorBridgeTest, MissingGuidAssetWarnsAndEntityRemains) {
+    // AV-G3 E3：场景引用 registry 不存在的 GUID → 契约内告警 + 实体保留 + Editor 可用。
+    const std::string oldcwd = MakeScratchFacing();
+
+    namespace fs = std::filesystem;
+    // E3.scene：Player(有效 sprite) + GhostDangling(dangling script GUID)
+    WriteScratchScript("assets/gp01/E3.scene",
+        "{\n"
+        "  \"format\": \"engine.scene\", \"version\": 1,\n"
+        "  \"entities\": [\n"
+        "    { \"name\": \"Player\", \"position\": [0,0,4], \"sprite\": \"d1000000000000000000000000000001\" },\n"
+        "    { \"name\": \"GhostDangling\", \"position\": [1,0,2], \"script\": \"ffffffffffffffffffffffffffffffff\" }\n"
+        "  ]\n"
+        "}\n");
+
+    // 打开成功（非致命），实体整批保留
+    EXPECT_EQ(EditorSession_OpenProject(m_Session, kManifest, "assets/gp01/E3.scene"), 1);
+    EXPECT_EQ(EditorSession_GetEntityCount(m_Session), 2);
+
+    // 无脚本绑定（缺失资产的实体照常存在但不带该组件）
+    int ghost = -1;
+    for (int32_t i = 0; i < EditorSession_GetEntityCount(m_Session); ++i) {
+        char name[64] = {};
+        EditorSession_GetEntityName(m_Session, i, name, sizeof(name));
+        if (std::strcmp(name, "GhostDangling") == 0) { ghost = i; break; }
+    }
+    ASSERT_GE(ghost, 0);
+    char scr[256] = {};
+    EXPECT_EQ(EditorSession_GetEntityScript(m_Session, ghost, scr, sizeof(scr)), 0);
+    EXPECT_EQ(scr[0], '\0') << "dangling script GUID -> no binding, entity remains";
+
+    // 告警可读（E3 观察通道）
+    char warn[1024] = {};
+    EXPECT_GT(EditorSession_GetWarnings(m_Session, warn, sizeof(warn)), 0);
+    EXPECT_NE(std::strstr(warn, "missing"), nullptr);
+    EXPECT_NE(std::strstr(warn, "GhostDangling"), nullptr);
+
+    // Editor 仍可用（可保存回写 E3.scene）
+    EXPECT_EQ(EditorSession_SaveProject(m_Session), 1);
+    EXPECT_TRUE(std::filesystem::exists("assets/gp01/E3.scene"));
+
+    // 干净工程打开 → 无告警
+    EXPECT_EQ(EditorSession_OpenProject(m_Session, kManifest, kScene), 1);
+    warn[0] = '\0';
+    EXPECT_EQ(EditorSession_GetWarnings(m_Session, warn, sizeof(warn)), 0);
+
+    (void)oldcwd;
+    std::filesystem::current_path(oldcwd);
+}
+
 std::string EditorBridgeTest::MakeScratchFacing() {
     namespace fs = std::filesystem;
     fs::remove_all(kScratchDir);

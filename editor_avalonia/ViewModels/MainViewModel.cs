@@ -239,6 +239,11 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
             LogToConsole("OPEN FAILED: " + _host.GetLastError());
             return false;
         }
+        // E3 负路径：契约内缺失 GUID 资产的非致命告警（实体保留）入 Console
+        var warns = _host.GetWarnings();
+        if (warns.Length > 0)
+            foreach (var w in warns.Split('\n'))
+                if (w.Length > 0) LogToConsole("[WARN] " + w);
         ReloadCollectionsFromSession();     // ProjectLoaded → 各 Pane 刷新
         return true;
     }

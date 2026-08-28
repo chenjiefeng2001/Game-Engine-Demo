@@ -44,6 +44,12 @@ bool EditorSession::OpenProject(const std::string& manifestPath,
     auto r = Engine::Content::InstantiateScene(snap, *scene, m_TexMgr, reg);
     if (!r.ok)
         return Fail("instantiate failed: " + scenePath);
+    // E3 负路径：契约内缺失 GUID 资产的非致命告警（实体保留），拼接供读取
+    m_Warnings.clear();
+    for (const auto& w : r.warnings) {
+        if (!m_Warnings.empty()) m_Warnings += "\n";
+        m_Warnings += w;
+    }
 
     m_Reg = std::move(reg);
     m_EditScene = std::move(scene);

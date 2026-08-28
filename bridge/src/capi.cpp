@@ -259,3 +259,15 @@ EDITOR_BRIDGE_API int32_t EditorSession_GetLastError(EditorSessionHandle h,
     out[copy] = '\0';
     return len;
 }
+
+EDITOR_BRIDGE_API int32_t EditorSession_GetWarnings(EditorSessionHandle h,
+                                                    char* out,
+                                                    int32_t cap) {
+    if (!h || !out || cap <= 0) return -1;
+    const std::string& w = S(h)->GetWarnings();
+    const int32_t len = static_cast<int32_t>(w.size());
+    const int32_t copy = (len < cap - 1) ? len : cap - 1;
+    std::memcpy(out, w.data(), static_cast<size_t>(copy));
+    out[copy] = '\0';
+    return len;
+}
