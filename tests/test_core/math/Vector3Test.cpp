@@ -12,7 +12,9 @@
 using namespace glm;
 
 TEST(Vector3Test, DefaultConstructorIsZero) {
-    vec3 v; // GLM 默认初始化为 (0,0,0)
+    // 注意：GLM 默认不零初始化（无 GLM_FORCE_CTOR_INIT 时 vec3 v; 为未初始化
+    // 栈内存，读取即 UB，ASan/CRT 断言下会崩）。显式值初始化使断言确定。
+    vec3 v{}; // 值初始化 → (0,0,0)
     EXPECT_FLOAT_EQ(v.x, 0.0f);
     EXPECT_FLOAT_EQ(v.y, 0.0f);
     EXPECT_FLOAT_EQ(v.z, 0.0f);
