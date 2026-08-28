@@ -115,4 +115,56 @@ TEST_F(EditorBridgeTest, SaveProjectRequiresOpen) {
     EXPECT_NE(std::strstr(buf, "no project"), nullptr);
 }
 
+// ── Phase 1（P1-B/P1-C）：Transform 读写 + 资产查询 ──────────────
+
+TEST_F(EditorBridgeTest, TransformRoundTrip) {
+    ASSERT_EQ(EditorSession_OpenProject(m_Session, kManifest, kScene), 1);
+    std::vector<CapturedEvent> events;
+    EditorSession_SetEventCallback(m_Session, &CaptureCallback, &events);
+
+    float pos[3] = {};
+    // Player 是场景内已知实体；先按名定位（GG1 契约路径）
+    int playerIdx = -1;
+    for (int32_t i = 0; i < EditorSession_GetEntityCount(m_Session); ++i) {
+        char name[64] = {};
+        EditorSession_GetEntityName(m_Session, i, name, sizeof(name));
+        if (std::strcmp(name, "Player") == 0) { playerIdx = i; break; }
+    }
+    ASSERT_GE(playerIdx, 0);
+    EXPECT_EQ(EditorSession_GetEntityPosition(m_Session, playerIdx, pos), 0);
+
+    const float moved[3] = {pos[0], pos[1], pos[2] + 5.0f};
+    EXPECT_EQ(EditorSession_SetEntityPosition(m_Session, playerIdx, moved), 0);
+
+    float back[3] = {};
+    EXPECT_EQ(EditorSession_GetEntityPosition(m_Session, playerIdx, back), 0);
+    EXPECT_NEAR(back[2], moved[2], 1e-4f);   // 写后读一致
+
+    ASSERT_FALSE(events.empty());
+    EXPECT_EQ(events.back().type, EV_ENTITY_MOVED);
+    EXPECT_NE(events.back().payload.find("idx="), std::string::npos);
+
+    // 越界写拒绝
+    const float junk[3] = {0, 0, 0};
+    EXPECT_NE(EditorSession_SetEntityPosition(m_Session, 9999, junk), 0);
+}
+
+TEST_F(EditorBridgeTest, AssetQueryContract) {
+    ASSERT_EQ(EditorSession_OpenProject(m_Session, kManifest, kScene), 1);
+    const int32_t n = EditorSession_GetAssetCount(m_Session);
+    ASSERT_GE(n, 33);
+
+    int textures = 0, scripts = 0;
+    for (int32_t i = 0; i < n; ++i) {
+        char path[256] = {};
+        EXPECT_GE(EditorSession_GetAssetPath(m_Session, i, path, sizeof(path)), 0);
+        const int32_t t = EditorSession_GetAssetType(m_Session, i);
+        ASSERT_TRUE(t == 0 || t == 1);
+        if (t == 0) ++textures; else ++scripts;
+    }
+    EXPECT_GT(textures, 0);
+    EXPECT_GT(scripts, 0);
+    EXPECT_NE(EditorSession_GetAssetPath(m_Session, n + 5, nullptr, 0), 0);
+}
+
 } // namespace

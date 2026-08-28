@@ -58,6 +58,39 @@ EDITOR_BRIDGE_API int32_t EditorSession_GetEntityName(EditorSessionHandle h,
     return len;
 }
 
+EDITOR_BRIDGE_API int32_t EditorSession_GetEntityPosition(EditorSessionHandle h,
+                                                          int32_t index,
+                                                          float out3[3]) {
+    if (!h || !out3) return -1;
+    return S(h)->GetEntityPosition(index, out3) ? 0 : -1;
+}
+
+EDITOR_BRIDGE_API int32_t EditorSession_SetEntityPosition(EditorSessionHandle h,
+                                                          int32_t index,
+                                                          const float pos3[3]) {
+    if (!h) return -1;
+    return S(h)->SetEntityPosition(index, pos3) ? 0 : -1;
+}
+
+EDITOR_BRIDGE_API int32_t EditorSession_GetAssetPath(EditorSessionHandle h,
+                                                     int32_t index,
+                                                     char* out,
+                                                     int32_t cap) {
+    if (!h || !out || cap <= 0) return -1;
+    std::string path;
+    if (!S(h)->GetAssetPath(index, &path)) return -1;
+    const int32_t len = static_cast<int32_t>(path.size());
+    const int32_t copy = (len < cap - 1) ? len : cap - 1;
+    std::memcpy(out, path.data(), static_cast<size_t>(copy));
+    out[copy] = '\0';
+    return len;
+}
+
+EDITOR_BRIDGE_API int32_t EditorSession_GetAssetType(EditorSessionHandle h,
+                                                     int32_t index) {
+    return h ? S(h)->GetAssetType(index) : -1;
+}
+
 EDITOR_BRIDGE_API void EditorSession_SetEventCallback(
     EditorSessionHandle h, EditorEventCallback cb, void* userData) {
     if (!h) return;
