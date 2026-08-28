@@ -65,6 +65,9 @@ test_bridge    20/20 PASS   （EditorBridgeTest.*，含 P3-D Runtime 三用例�
 test_scripting 23/23 PASS   （S1-S5 + Gameplay G1-G8 + M001/M005）
 ```
 
+> AV-G3 落地后（§8）test_bridge 升至 **21/21**（+`MissingGuidAssetWarnsAndEntityRemains`）；
+> baseline 已同步更新（见 `Evidence-Baseline.md`）。
+
 ---
 
 ## 2. AV-G3 Golden Scenario（单一生产门）
@@ -161,3 +164,25 @@ Play 验证/Save/Close/Reopen/再 Play），并记录七元组
 - 断言全部走 VM → Session ABI 单向路径（复用现有 `MainViewModel` / `EditorHostService`）。
 - 负路径 E1/E2/E3 各自独立断言块；E3 复用既有 GUID 缺失契约（不新增 Engine）。
 - 最终裁决结论写入本文件 §6 与 `docs/AV-G3-Ledger.md`。
+
+---
+
+## 9. 实施结果（已落地）
+
+`AvaloniaEditor --gate3g` **ALL GREEN exit=0**：
+
+- **Authoring**：Open→Create G3Hero→Rename G3Protagonist→Transform(1.5,0,-3.25)
+  →Import texture+script→Assign Sprite/Script→Save。
+- **Scripting**：Open game.lua→改写 director（`_PERSIST.hp`）→Save→Play（hp=14）→
+  改 hp→Save→Reload（**`_PERSIST` 保留，14 不被 50 覆盖**）→Stop→Re-play（hp=50
+  生效）。
+- **Persistence**：Save→Close→Reopen→Name/Transform/Sprite/脚本绑定/GUID 稳定/
+  game.lua 磁盘内容 == 保存内容；reopen→Play 用 hp=50。
+- **负路径**：E1（dirty→Recover 已保存态）、E2（broken→error→存活→fix→恢复）、
+  E3（缺失 GUID→**告警入 Console**＋实体保留＋Editor 可用）。
+
+回归：gate1/2/3a/3b/3c/3d **全 exit=0**；test_bridge **21/21**；test_scripting 23/23；
+Integrity Gate **ALL GREEN (163 tests)**；Evidence-Baseline test_bridge 21。
+
+**Final Verdict → Result A — Production Ready → Phase 3 FROZEN。**
+摩擦记录见 `docs/AV-G3-Ledger.md`（AV-GP-101~106，均低严重度，无 Capability Gap）。

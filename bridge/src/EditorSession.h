@@ -94,6 +94,9 @@ public:
 
     void SetEventCallback(EventFn cb) { m_Event = std::move(cb); }
     const std::string& GetLastError() const { return m_LastError; }
+    /// 最近一次 OpenProject 的非致命告警（如缺失 GUID 资产，契约内保留实体）。
+    /// 空串 = 无告警。用于 E3 负路径观察。
+    const std::string& GetWarnings() const { return m_Warnings; }
     /// 是否处于运行态（P3-D Play/Reload/Stop 维护）
     bool IsPlaying() const { return m_Playing; }
 
@@ -125,6 +128,7 @@ private:
     std::string m_ManifestPath;
     EventFn m_Event;
     std::string m_LastError;
+    std::string m_Warnings;
     /// 最近一次运行时动作的 Lua 诊断文本（Play/Reload/Tick 失败原因）
     std::string m_RuntimeError;
     Engine::Scripting::ScriptInstance m_Inst;   ///< 运行态导演脚本实例

@@ -37,6 +37,10 @@ public static class Phase3Gate
     public static int RunScriptEditor(MainViewModel vm, Action<string> log)
         => RunScriptEditorWorkflow(vm, log, "P3-D");
 
+    /// AV-G3 Production Authoring Gate（单一生产门，组合 P3-A~D 已验收能力）
+    public static int RunProduction(MainViewModel vm, Action<string> log)
+        => RunProductionWorkflow(vm, log, "AV-G3");
+
     // ════════════════════════════════════════════════════════════
     // P3-C Asset Browser：AV-G3-C（Import→Assign→Rename→Save→Reopen
     //   全一致）+ DL-02（新建实体绑定不丢）。
@@ -601,6 +605,254 @@ public static class Phase3Gate
         {
             return Fail2(log, gateName, "exception: " + ex.Message);
         }
+    }
+
+    // ════════════════════════════════════════════════════════════
+    // AV-G3 Production Authoring Gate（单一生产门）
+    //   Authoring（Open/Create/Rename/Transform/Import/Assign）
+    //   → Scripting（Open→改 gameplay→Save→Play→改→Reload→_PERSIST）
+    //   → Persistence（Save→Close→Reopen→全一致）
+    //   + 负路径 E1 未保存 / E2 Lua 错误 / E3 缺失 GUID 资产
+    // 全程 VM → Session ABI 单向路径；不手改 JSON（E3 用测试夹具）、不直调 C++、
+    // 无 ImGui、不手动 GUID、不重启 Editor 修状态。
+    // ════════════════════════════════════════════════════════════
+    private static int RunProductionWorkflow(MainViewModel vm, Action<string> log,
+                                             string gateName)
+    {
+        WarnAsanEnv(log);
+        var root = MainWindow.FindRepoRoot();
+        if (root is null) return Fail2(log, gateName, "repo root not found");
+        var sw = System.Diagnostics.Stopwatch.StartNew();
+        var txt = new System.Text.UTF8Encoding(false);
+
+        try
+        {
+            var src = Path.Combine(root.FullName, "assets", "gp01");
+            var dst = Path.Combine(root.FullName, "editor_avalonia", "spike_gp07");
+            if (Directory.Exists(dst)) Directory.Delete(dst, true);
+            var dstGp01 = Path.Combine(dst, "assets", "gp01");
+            Directory.CreateDirectory(dstGp01);
+            CopyDir(src, dstGp01);
+            string manifest = "assets/gp01/manifest.json";
+            string scene = "assets/gp01/Main.scene";
+            string gameLuaPath = Path.Combine(dst, "assets", "gp01", "game.lua");
+
+            var prevCwd = Directory.GetCurrentDirectory();
+            Directory.SetCurrentDirectory(dst);
+            try
+            {
+            // ═══ 0. Open ── 干净启动 ═══
+            Check2(log, gateName, vm.OpenProject(manifest, scene), "open GP01");
+            Check2(log, gateName, vm.Entities.Count == 10 && vm.Assets.Count == 33,
+                   $"fresh 10 entities / 33 assets");
+
+            // ═══ A. Authoring：Create → Rename → Transform → Import → Assign ═══
+            Check2(log, gateName, vm.CreateEntityFromVm("G3Hero"), "create entity");
+            Check2(log, gateName, vm.SelectByName("G3Hero"), "select new entity");
+            Check2(log, gateName, vm.RenameSelected("G3Protagonist"), "rename entity");
+            Check2(log, gateName, vm.SelectedEntity is not null
+                    && vm.SelectedEntity.Name == "G3Protagonist", "rename reflected");
+
+            // Transform（冻结契约：仅 px/py/pz）
+            vm.PosX = "1.5"; vm.PosY = "0"; vm.PosZ = "-3.25";
+            vm.ApplyInspectorPosition();
+            Check2(log, gateName, System.Math.Abs(float.Parse(vm.PosX, System.Globalization.CultureInfo.InvariantCulture) - 1.5f) < 1e-3
+                    && System.Math.Abs(float.Parse(vm.PosZ, System.Globalization.CultureInfo.InvariantCulture) - (-3.25f)) < 1e-3,
+                   "transform applied (rx/z readback)");
+
+            // Import texture → Assign Sprite
+            string importTex = "assets/gp01/tex/imported_g3.png";
+            File.Copy(Path.Combine(dstGp01, "tex", "pad.png"),
+                      Path.Combine(dst, importTex), overwrite: true);
+            Check2(log, gateName, vm.ImportAssetFromPath(importTex, 0), "import texture");
+            var texAsset = vm.Assets.First(a => a.Path == importTex);
+            vm.SelectedAsset = texAsset;
+            Check2(log, gateName, vm.AssignSpriteToSelected(), "assign sprite to protagonist");
+            Check2(log, gateName, vm.SelectedSprite.Contains("imported_g3"), "inspector sprite bound");
+            Check2(log, gateName, vm.IsDirty, "dirty after assign");
+
+            // Import script → Assign Script
+            string importLua = "assets/gp01/scripts/g3_flow.lua";
+            Directory.CreateDirectory(Path.Combine(dst, "assets", "gp01", "scripts"));
+            File.Copy(Path.Combine(dstGp01, "game.lua"),
+                      Path.Combine(dst, importLua), overwrite: true);
+            Check2(log, gateName, vm.ImportAssetFromPath(importLua, 1), "import script");
+            var luaAsset = vm.Assets.First(a => a.Path == importLua);
+            vm.SelectedAsset = luaAsset;
+            Check2(log, gateName, vm.AssignScriptToSelected(), "assign script to protagonist");
+            Check2(log, gateName, vm.SelectedScript.Contains("g3_flow"), "inspector script bound");
+            Check2(log, gateName, vm.SaveProject(), "save authoring");
+            Check2(log, gateName, !vm.IsDirty, "clean after save");
+
+            // 记录绑定 GUID（重开后一致性证据）
+            string texGuid = texAsset.Guid;
+            string luaGuid = luaAsset.Guid;
+
+            // ═══ B. Scripting：Open game.lua → 改 gameplay → Save → Play → Reload ═══
+            var dl = vm.Assets.FirstOrDefault(a => a.TypeName == "Script");
+            Check2(log, gateName, dl is not null, "game.lua director script");
+            int dlIdx = dl!.Index;
+            Check2(log, gateName, vm.OpenScript(dlIdx), "open game.lua");
+
+            // 写一个真实 gameplay 参数的 director（HP/Runtime 可观测）
+            string gpA = "_PERSIST = _PERSIST or {}\n" +
+                         "_PERSIST.state = _PERSIST.state or 'playing'\n" +
+                         "_PERSIST.hp = _PERSIST.hp or 14\n" +
+                         "function OnCreate() end\n" +
+                         "function OnUpdate(dt) end\n";
+            vm.ScriptText = gpA;
+            vm.MarkScriptEdited();
+            Check2(log, gateName, vm.SaveScript(), "write gameplay director A (hp=14)");
+            Check2(log, gateName, !vm.ScriptDirty, "script clean after save");
+
+            Check2(log, gateName, vm.PlayScript(dlIdx), "play");
+            Check2(log, gateName, vm.IsRunning, "running after play");
+            Check2(log, gateName, vm.RuntimePersistInt("hp", 0) == 14,
+                   "gameplay param hp=14 active (real behavior)");
+
+            // 修改 gameplay 参数（hp 14 → 50），Reload 必须保留 _PERSIST(=14)
+            vm.ScriptText = gpA.Replace("or 14", "or 50");
+            vm.MarkScriptEdited();
+            Check2(log, gateName, vm.SaveScript(), "save gameplay change (hp=50)");
+            Check2(log, gateName, vm.ReloadActiveScript(), "reload");
+            Check2(log, gateName, vm.IsRunning, "still running after reload");
+            Check2(log, gateName, vm.RuntimePersistInt("hp", 0) == 14,
+                   "_PERSIST preserved across reload (14 kept, 50 ignored)");
+            vm.StopPlaying();
+            Check2(log, gateName, !vm.IsRunning, "stop");
+
+            // 全新 Play 使用已保存的新 gameplay 参数 → 生效
+            Check2(log, gateName, vm.PlayScript(dlIdx), "re-play");
+            Check2(log, gateName, vm.RuntimePersistInt("hp", 0) == 50,
+                   "edited gameplay param active on re-play (14 -> 50)");
+            vm.StopPlaying();
+            Check2(log, gateName, !vm.IsRunning, "stop after verify");
+
+            // ═══ C. Persistence：Save → Close → Reopen → 全一致 ═══
+            string savedLua = File.ReadAllText(gameLuaPath);
+            Check2(log, gateName, vm.SaveProject(), "save project");
+            Check2(log, gateName, !vm.IsDirty, "clean after final save");
+
+            vm.ResetSession();   // Close
+            Check2(log, gateName, !vm.IsOpen && !vm.IsRunning && !vm.HasScriptOpen,
+                   "closed (session + runtime cleared)");
+
+            var vm2 = new MainViewModel();
+            int protIdx = -1;
+            try
+            {
+                Check2(log, gateName, vm2.OpenProject(manifest, scene), "reopen");
+                Check2(log, gateName, vm2.SelectByName("G3Protagonist"), "re-select protagonist");
+                Check2(log, gateName, vm2.SelectedName == "G3Protagonist", "name persists");
+                Check2(log, gateName, System.Math.Abs(float.Parse(vm2.PosX, System.Globalization.CultureInfo.InvariantCulture) - 1.5f) < 1e-3
+                        && System.Math.Abs(float.Parse(vm2.PosZ, System.Globalization.CultureInfo.InvariantCulture) - (-3.25f)) < 1e-3,
+                       "transform persists");
+                Check2(log, gateName, vm2.SelectedSprite.Contains("imported_g3"), "sprite binding persists");
+                Check2(log, gateName, vm2.SelectedScript.Contains("g3_flow"), "script binding persists");
+                protIdx = vm2.SelectedEntity!.Index;
+
+                // Sprite/Script 的资产 GUID 在 registry 中稳定
+                var texAfter = vm2.Assets.FirstOrDefault(a => a.Guid == texGuid);
+                var luaAfter = vm2.Assets.FirstOrDefault(a => a.Guid == luaGuid);
+                Check2(log, gateName, texAfter is not null && luaAfter is not null,
+                       "imported asset GUIDs stable across reopen");
+
+                // game.lua 磁盘内容 == 保存内容（不比较 UI 文本）
+                Check2(log, gateName, EncodingOfEquals(File.ReadAllText(gameLuaPath), savedLua),
+                       "game.lua content persists (disk == saved)");
+
+                // Runtime out: 新会话读到刚保存的 gameplay 参数（hp 默认 50）
+                // 跨会话必须按“资产身份（path/GUID）”解析，而非旧会话的 index
+                //（AV-G3 纪律：SaveManifest 后 registry 顺序可能与打开时不同）。
+                var dl2 = vm2.Assets.FirstOrDefault(a => a.TypeName == "Script"
+                                                         && a.Path.EndsWith("game.lua"))
+                          ?? vm2.Assets.FirstOrDefault(a => a.TypeName == "Script");
+                Check2(log, gateName, dl2 is not null, "game.lua resolved by identity in reopened session");
+                int dlIdx2 = dl2!.Index;
+                Check2(log, gateName, vm2.OpenScript(dlIdx2), "reopen script (by identity)");
+                Check2(log, gateName, vm2.ScriptText.Contains("or 50"), "edited param visible on reopen");
+                Check2(log, gateName, vm2.PlayScript(dlIdx2), "reopen play");
+                Check2(log, gateName, vm2.RuntimePersistInt("hp", 0) == 50,
+                       "reopen -> play uses persisted gameplay param (hp=50)");
+                vm2.StopPlaying();
+            }
+            finally { vm2.Dispose(); }
+
+            // ═══ E1. 未保存修改：dirty→可表示→Discard 后回归已保存状态 ═══
+            Check2(log, gateName, vm.OpenProject(manifest, scene), "E1 reopen for edit");
+            Check2(log, gateName, vm.SelectByName("G3Protagonist"), "E1 select");
+            vm.PosZ = "77.5"; vm.ApplyInspectorPosition();
+            Check2(log, gateName, vm.IsDirty, "E1 dirty after edit (cancel path representable)");
+            vm.ResetSession();                     // Discard（UI: ConfirmDialog）
+            var vm3 = new MainViewModel();
+            try
+            {
+                Check2(log, gateName, vm3.OpenProject(manifest, scene), "E1 reopen after discard");
+                Check2(log, gateName, vm3.SelectByName("G3Protagonist"), "E1 re-select");
+                Check2(log, gateName, System.Math.Abs(float.Parse(vm3.PosZ, System.Globalization.CultureInfo.InvariantCulture) - (-3.25f)) < 1e-3,
+                       "E1 discarded edit NOT persisted (Z back to -3.25)");
+            }
+            finally { vm3.Dispose(); }
+
+            // ═══ E2. Lua 错误：错误→存活→修复→恢复 ═══
+            Check2(log, gateName, vm.OpenProject(manifest, scene), "E2 open");
+            // 跨会话按身份解析 game.lua（勿用旧 index）
+            var dlE2 = vm.Assets.First(a => a.TypeName == "Script" && a.Path.EndsWith("game.lua"));
+            int dlIdxE2 = dlE2.Index;
+            Check2(log, gateName, vm.OpenScript(dlIdxE2), "E2 open script");
+            vm.ScriptText = "function broke( end end end";
+            vm.MarkScriptEdited(); vm.SaveScript();
+            Check2(log, gateName, !vm.PlayScript(dlIdxE2), "E2 play broken fails");
+            Check2(log, gateName, !vm.IsRunning && vm.ScriptError.Length > 0, "E2 error surfaced, no crash");
+            vm.ScriptText = gpA.Replace("or 14", "or 50");   // 修复
+            vm.MarkScriptEdited(); vm.SaveScript();
+            Check2(log, gateName, vm.PlayScript(dlIdxE2), "E2 play recovered");
+            Check2(log, gateName, vm.RuntimePersistInt("hp", 0) == 50, "E2 runtime healthy after fix");
+            vm.StopPlaying();
+
+            // ═══ E3. 缺失 GUID 资产：契约内告警 + 实体保留 + Editor 可用 ═══
+            // 测试夹具（scrach 专属，不影响 repo）：E3.scene 引用 registry 不存在的 GUID
+            var e3dst = Path.Combine(root.FullName, "editor_avalonia", "spike_gp07_e3");
+            if (Directory.Exists(e3dst)) Directory.Delete(e3dst, true);
+            var e3gp = Path.Combine(e3dst, "assets", "gp01");
+            Directory.CreateDirectory(e3gp);
+            CopyDir(src, e3gp);
+            string e3Scene = Path.Combine(e3gp, "E3.scene");
+            File.WriteAllText(e3Scene,
+                @"{" + "\n" +
+                "  \"format\": \"engine.scene\", \"version\": 1,\n" +
+                "  \"entities\": [\n" +
+                "    { \"name\": \"Player\", \"position\": [0,0,4], \"sprite\": \"d1000000000000000000000000000001\" },\n" +
+                "    { \"name\": \"GhostDangling\", \"position\": [1,0,2], \"script\": \"ffffffffffffffffffffffffffffffff\" }\n" +
+                "  ]\n}\n", txt);
+            var prev2 = Directory.GetCurrentDirectory();
+            Directory.SetCurrentDirectory(e3dst);
+            try
+            {
+                Check2(log, gateName, vm.OpenProject(manifest, "assets/gp01/E3.scene"), "E3 open (fixture)");
+                Check2(log, gateName, vm.Entities.Count == 2, "E3 both entities remain (Player + GhostDangling)");
+                Check2(log, gateName, vm.SelectByName("GhostDangling"), "E3 dangling entity present");
+                Check2(log, gateName, vm.SelectedScript == "(none)", "E3 loaded WITHOUT missing script binding");
+                // 告警已入 Console（VM 在 OpenProject 时经 GetWarnings 打印）
+                Check2(log, gateName, vm.ConsoleLines.Any(l => l.Contains("missing") && l.Contains(GhostDangling())),
+                       "E3 warning surfaced to console");
+                Check2(log, gateName, vm.SaveProject(), "E3 editor still usable (can save)");
+                Check2(log, gateName, vm.Assets.Count == 33, "E3 asset browser intact");
+            }
+            finally { Directory.SetCurrentDirectory(prev2); vm.ResetSession(); }
+
+                // 零内部操作自检（golden 段仅用 VM/ABI）：守卫已由全程断言体现
+                log($"[{gateName} GATE] ALL GREEN in {sw.ElapsedMilliseconds} ms");
+                return 0;
+            }
+            finally { Directory.SetCurrentDirectory(prevCwd); }
+        }
+        catch (Exception ex)
+        {
+            return Fail2(log, gateName, "exception: " + ex.Message);
+        }
+
+        static string GhostDangling() => "GhostDangling";
     }
 
     /// D3b：取探针脚本在当前运行 VM 的 _PERSIST.n（运行态探针）。
