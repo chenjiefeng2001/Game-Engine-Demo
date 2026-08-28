@@ -22,6 +22,9 @@
 #include <Engine/Core/Scene/Scene.h>
 #include <Engine/Core/RenderResources/TextureManager.h>
 #include <Engine/OpenGL/OpenGLGraphicsFactory.h>
+#include <Engine/Scripting/ScriptInstance.h>
+#include <Engine/Scripting/LuaEngine.h>
+#include <Engine/Scripting/GameplayAPI.h>
 
 namespace editor_bridge {
 
@@ -69,11 +72,29 @@ public:
     bool ScriptRead(int32_t assetIndex, std::string* out);
     bool ScriptSave(int32_t assetIndex, const std::string& text);
 
+    // ── Phase 3-D (P3-D) Runtime：Play / Reload / Stop ──
+    /// 启动运行时：克隆编辑场景为新运行场景，绑定 GameplayAPI 句柄，
+    /// 用 ScriptInstance 加载并执行指定脚本资产（assetIndex<0 = 项目 director：
+    /// 第一个非空 scriptGuid）。失败返回 false 并在 Error/RuntimeError 取原因。
+    bool Play(int32_t assetIndex);
+    /// 热重载当前运行脚本：保留 _PERSIST 表（S4），随后重新 OnCreate。
+    /// 语法/运行错误经 pcall 捕获，Session 不崩溃；返回 false + RuntimeError。
+    bool Reload();
+    /// 停止运行时并回到编辑态（重新绑定编辑场景）。非运行态为空操作。
+    void Stop();
+    /// 运行态单帧推进（可选；编辑器不发常驻帧时 gate 可手动 tick 验证 OnUpdate）
+    void RuntimeTick(float dt);
+    /// 运行态探针：执行 `<probe> = _PERSIST[key]` 并返回整数值（D3b _PERSIST 验证）。
+    /// 非运行态或取不到时返回 def。
+    int32_t RuntimePersistInt(const std::string& key, int32_t def);
+    /// 最近一次运行时动作（Play/Reload/Tick）的 Lua 诊断文本（成功时空串）
+    const std::string& GetRuntimeError() const { return m_RuntimeError; }
+
     bool IsDirty() const { return m_Dirty; }
 
     void SetEventCallback(EventFn cb) { m_Event = std::move(cb); }
     const std::string& GetLastError() const { return m_LastError; }
-    /// 运行态占位（Play/Stop 属 Phase 7 Runtime track；当前恒 false）
+    /// 是否处于运行态（P3-D Play/Reload/Stop 维护）
     bool IsPlaying() const { return m_Playing; }
 
 private:
@@ -104,6 +125,11 @@ private:
     std::string m_ManifestPath;
     EventFn m_Event;
     std::string m_LastError;
+    /// 最近一次运行时动作的 Lua 诊断文本（Play/Reload/Tick 失败原因）
+    std::string m_RuntimeError;
+    Engine::Scripting::ScriptInstance m_Inst;   ///< 运行态导演脚本实例
+    std::shared_ptr<Engine::Scene> m_Runtime;    ///< 运行态场景（编辑场景克隆）
+    std::string m_RuntimeScriptPath;             ///< 当前运行脚本的绝对路径
     bool m_Playing = false;
     bool m_Dirty = false;
 };

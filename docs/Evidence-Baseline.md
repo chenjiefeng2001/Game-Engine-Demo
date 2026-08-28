@@ -18,7 +18,7 @@
 | test_job | 4 | VERIFIED | JobSystem 压力 |
 | test_e2e | 6 | VERIFIED | 引擎启动生命周期 |
 | test_gp01 | 22 | VERIFIED | Game Production GP-P1 · GP01 生产契约（GP1-A/B/C/D + DX 审计 remediation D7） |
-| test_bridge | 17 | VERIFIED | EditorBridge C-ABI 契约（P3-B/P3-C：Script/Import/Rename 绑定 + 会话内资产 index 稳定契约） |
+| test_bridge | 20 | VERIFIED | EditorBridge C-ABI 契约（P3-B/P3-C：Script/Import/Rename 绑定 + 资产 index 稳定；P3-D：Runtime Play/Reload(_PERSIST)/Stop/错误恢复） |
 | test_core | 20 | VERIFIED | GLM 数学库 + StackAllocator（2026-08-28：Vector3Test 默认构造误读未初始化内存 → 改为值初始化后纳入） |
 | **合计** | **159** | | |
 

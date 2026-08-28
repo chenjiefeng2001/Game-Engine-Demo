@@ -20,6 +20,10 @@ public static class EditorBridgeApi
     public const int EvAssetImported = 9;
     public const int EvAssetRenamed = 10;
 
+    // ── Phase 3-D (P3-D) 运行时 ──
+    public const int EvPlayStarted = 11;
+    public const int EvPlayStopped = 12;
+
     [UnmanagedFunctionPointer(CallingConvention.Cdecl)]
     public delegate void EditorEventCallback(int eventType,
         [MarshalAs(UnmanagedType.LPUTF8Str)] string payload, IntPtr userData);
@@ -116,6 +120,31 @@ public static class EditorBridgeApi
 
     [DllImport("EditorBridge", CallingConvention = CallingConvention.Cdecl)]
     public static extern int EditorSession_IsDirty(IntPtr session);
+
+    // ── Phase 3-D (P3-D)：运行时 Play / Reload / Stop ──
+
+    [DllImport("EditorBridge", CallingConvention = CallingConvention.Cdecl)]
+    public static extern int EditorSession_Play(IntPtr session, int assetIndex);
+
+    [DllImport("EditorBridge", CallingConvention = CallingConvention.Cdecl)]
+    public static extern int EditorSession_Reload(IntPtr session);
+
+    [DllImport("EditorBridge", CallingConvention = CallingConvention.Cdecl)]
+    public static extern void EditorSession_Stop(IntPtr session);
+
+    [DllImport("EditorBridge", CallingConvention = CallingConvention.Cdecl)]
+    public static extern void EditorSession_RuntimeTick(IntPtr session, float dt);
+
+    [DllImport("EditorBridge", CallingConvention = CallingConvention.Cdecl)]
+    public static extern int EditorSession_IsPlaying(IntPtr session);
+
+    [DllImport("EditorBridge", CallingConvention = CallingConvention.Cdecl)]
+    public static extern int EditorSession_GetRuntimeError(IntPtr session,
+        IntPtr outBuffer, int capacity);
+
+    [DllImport("EditorBridge", CallingConvention = CallingConvention.Cdecl)]
+    public static extern int EditorSession_RuntimePersistInt(IntPtr session,
+        [MarshalAs(UnmanagedType.LPUTF8Str)] string key, int defaultVal);
 
     [DllImport("EditorBridge", CallingConvention = CallingConvention.Cdecl)]
     public static extern void EditorSession_SetEventCallback(IntPtr session,

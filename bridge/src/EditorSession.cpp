@@ -11,6 +11,8 @@
 #include <Engine/Core/GameObject/SpriteComponent.h>
 #include <Engine/Core/Log.h>
 #include <Engine/Scripting/GameplayAPI.h>
+#include <Engine/Scripting/ScriptInstance.h>
+#include <Engine/Scripting/LuaEngine.h>
 
 #include <algorithm>
 #include <cctype>
@@ -32,6 +34,9 @@ bool EditorSession::OpenProject(const std::string& manifestPath,
     std::string err;
     if (!Engine::Content::LoadSnapshotFromFile(scenePath, snap, err))
         return Fail("scene load failed: " + scenePath + " (" + err + ")");
+
+    // 若存在运行态，先无损拆卸（镜像 GP01 LoadProject 的 TeardownRuntime）
+    if (m_Playing) { Stop(); m_RuntimeError.clear(); }
 
     auto scene = std::make_shared<Engine::Scene>("AvaloniaSession");
     Engine::Scripting::GameplayAPI::Reset();
@@ -421,6 +426,120 @@ bool EditorSession::ScriptSave(int32_t assetIndex, const std::string& text) {
     MarkDirty();
     Engine::Log::Info("[EditorBridge] script saved: {}", filePath);
     return true;
+}
+
+// ════════════════════════════════════════════════════════════
+// Phase 3-D (P3-D) Script Editor 运行时：Play / Reload / Stop
+// 镜像 GP01ProductionSession::Play（docs/GP1-DX-Production-UI-Plan.md 契约）：
+//   编辑场景快照 → 克隆新场景 → GameplayAPI 绑定 → 解析导演脚本 →
+//   ScriptInstance::Initialize → OnCreate。Reload 走 ScriptInstance::Reload
+//   （保留 _PERSIST 表 S4）。错误一律 pcall 捕获，Session 不崩溃。
+// ════════════════════════════════════════════════════════════
+
+bool EditorSession::Play(int32_t assetIndex) {
+    m_RuntimeError.clear();
+    if (m_Playing) return Fail("play: already playing (stop first)");
+    if (!m_EditScene) return Fail("play: no project loaded");
+
+    RealignBindings();
+    Engine::Content::SceneSnapshot live =
+        Engine::Content::CaptureScene(*m_EditScene, m_Bindings);
+
+    // ── 解析要运行的脚本路径 ──
+    std::string scriptPath;
+    if (assetIndex >= 0) {
+        Engine::Content::AssetEntry entry;
+        if (!AssetAt(assetIndex, &entry))
+            return Fail("play: bad asset index " + std::to_string(assetIndex));
+        if (entry.type != Engine::Content::AssetType::Script)
+            return Fail("play: asset is not a script");
+        scriptPath = entry.path;
+    } else {
+        for (const auto& b : m_Bindings)
+            if (!b.scriptGuid.IsNull()) {
+                scriptPath = m_Reg.ResolvePath(b.scriptGuid);
+                break;
+            }
+        if (scriptPath.empty())
+            return Fail("play: no script binding -> cannot play");
+    }
+    m_RuntimeScriptPath = ResolveContentPath(scriptPath);
+
+    // ── 克隆编辑场景为新建运行场景 ──
+    auto rt = std::make_shared<Engine::Scene>("AvaloniaRuntime");
+    auto r = Engine::Content::InstantiateScene(live, *rt, m_TexMgr, m_Reg);
+    if (!r.ok) return Fail("play: scene clone failed");
+
+    // ── 绑定 GameplayAPI 到运行场景并登记句柄 ──
+    Engine::Scripting::GameplayAPI::Reset();
+    Engine::Scripting::GameplayAPI::SetScene(rt.get());
+    for (const auto& o : rt->GetObjects())
+        Engine::Scripting::GameplayAPI::HandleAdopt(o);
+
+    // ── 加载并执行导演脚本（指令预算防死循环，沙箱已开）──
+    Engine::Scripting::ScriptInstance::Config cfg;
+    if (!m_Inst.Initialize(m_RuntimeScriptPath, cfg)) {
+        m_RuntimeError = m_Inst.GetEngine()
+                             ? m_Inst.GetEngine()->GetLastError().message
+                             : "(no engine)";
+        Engine::Scripting::GameplayAPI::Reset();
+        Engine::Scripting::GameplayAPI::SetScene(m_EditScene.get());
+        return Fail("play: director init failed: " + m_RuntimeError);
+    }
+    m_Inst.OnCreate();
+
+    m_Runtime = std::move(rt);
+    m_Playing = true;
+    Engine::Log::Info("[EditorBridge] PLAY (script={})", m_RuntimeScriptPath);
+    Emit(EV_PLAY_STARTED, "script=" + m_RuntimeScriptPath);
+    return true;
+}
+
+bool EditorSession::Reload() {
+    m_RuntimeError.clear();
+    if (!m_Playing || !m_Inst.IsValid())
+        return Fail("reload: not playing");
+    if (!m_Inst.Reload()) {
+        m_RuntimeError = m_Inst.GetEngine()
+                             ? m_Inst.GetEngine()->GetLastError().message
+                             : "(no engine)";
+        return Fail("reload failed: " + m_RuntimeError);
+    }
+    m_Inst.OnCreate();
+    Engine::Log::Info("[EditorBridge] RELOAD ok (persist preserved): {}",
+                      m_RuntimeScriptPath);
+    return true;
+}
+
+void EditorSession::Stop() {
+    if (!m_Playing) return;
+    m_Inst.OnDestroy();
+    m_Inst.Shutdown();
+    Engine::Scripting::GameplayAPI::Reset();
+    Engine::Scripting::GameplayAPI::SetScene(m_EditScene.get());   // 回到编辑态
+    m_Runtime.reset();
+    m_RuntimeScriptPath.clear();
+    m_Playing = false;
+    Engine::Log::Info("[EditorBridge] STOP -> edit state restored");
+    Emit(EV_PLAY_STOPPED, "");
+}
+
+void EditorSession::RuntimeTick(float dt) {
+    if (!m_Playing || !m_Inst.IsValid()) return;
+    m_Inst.OnUpdate(dt);
+    // OnUpdate 内运行时错误（如接触伤害路径）已由 ScriptInstance 内部 pcall
+    // 捕获并记录到 GetLastError；这里非阻断，Session 不崩。
+}
+
+int32_t EditorSession::RuntimePersistInt(const std::string& key, int32_t def) {
+    if (!m_Playing || !m_Inst.IsValid() || !m_Inst.GetEngine()) return def;
+    if (key.empty()) return def;
+    // 探针：`__p3d_persist_probe = _PERSIST[key] or nil`（key 按安全标识符/裸键引用）
+    const std::string code =
+        std::string("__p3d_persist_probe = _PERSIST and _PERSIST[\"") +
+        key + std::string("\"] or nil");
+    if (!m_Inst.Execute(code)) return def;
+    return m_Inst.GetEngine()->GetGlobalInt("__p3d_persist_probe", def);
 }
 
 bool EditorSession::GetAssetPath(int32_t index, std::string* out) const {
