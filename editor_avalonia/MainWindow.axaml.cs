@@ -44,6 +44,14 @@ public partial class MainWindow : Window
                 Log($"gate2 exit={code}");
                 Environment.Exit(code);
             };
+
+        if (Environment.CommandLine.Contains("--gate3a"))
+            Opened += (_, _) =>
+            {
+                int code = Phase3Gate.Run(Vm, Log);
+                Log($"gate3a exit={code}");
+                Environment.Exit(code);
+            };
     }
 
     private void SyncStatusBar()
@@ -81,6 +89,14 @@ public partial class MainWindow : Window
     private void OnApplyTransform(object? sender, RoutedEventArgs e)
     {
         Vm.ApplyInspectorPosition();
+    }
+
+    /// P3-A：View 仅汇报用户点选；选择状态真相在 VM（AV-004 单一事实源）。
+    /// 过滤把选中项藏掉时 ListBox 会临时失选，但不得回写 null 覆盖 VM 选择。
+    private void OnHierarchySelectionChanged(object? sender, SelectionChangedEventArgs e)
+    {
+        if (HierarchyList.SelectedItem is EntityVm evm)
+            Vm.SelectedEntity = evm;
     }
 
     private void OnRenameEntity(object? sender, RoutedEventArgs e)

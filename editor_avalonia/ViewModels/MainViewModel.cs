@@ -63,6 +63,28 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
 
     public bool IsOpen => Entities.Count > 0;
 
+    // ── P3-A Hierarchy：Search ──
+    /// 主列表（会话事实源）；FilteredEntities 为视图消费的过滤视图。
+    public ObservableCollection<EntityVm> FilteredEntities { get; } = new();
+
+    private string _searchText = "";
+    public string SearchText
+    {
+        get => _searchText;
+        set
+        {
+            if (!Set(ref _searchText, value)) return;
+            RebuildFilteredEntities();
+        }
+    }
+    public bool HasFilter => _searchText.Length > 0;
+    public int FilteredCount => FilteredEntities.Count;
+
+    /// 过滤条件：空串=全显；否则大小写不敏感子串。
+    private bool MatchesFilter(EntityVm e)
+        => _searchText.Length == 0 ||
+           e.Name.Contains(_searchText, StringComparison.OrdinalIgnoreCase);
+
     // ── P2-C2 实体回路 ──
     private string _renameInput = "";
     public string RenameInput
@@ -335,9 +357,34 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
             }
         }
 
+        RebuildFilteredEntities();   // 列表变化后刷新过滤视图（P3-A）
+
         StatusText = $"[Avalonia] project loaded: {entCount} objects, {assetCount} assets";
         LogToConsole(StatusText);
         DerivedStateChanged?.Invoke();
+    }
+
+    /// P3-A：按 SearchText 重建过滤视图。
+    /// 选择状态契约：过滤把选中项藏掉时模型层保留选择，
+    /// 清空过滤后自动恢复；选中项仍在结果集则保持。
+    private void RebuildFilteredEntities()
+    {
+        int? keepIdx = _selectedEntity?.Index;
+        FilteredEntities.Clear();
+        foreach (var e in Entities)
+            if (MatchesFilter(e)) FilteredEntities.Add(e);
+
+        if (keepIdx is int idx)
+        {
+            var hit = FilteredEntities.FirstOrDefault(e => e.Index == idx);
+            if (hit is not null)
+            {
+                _selectedEntity = hit;
+                RefreshInspectorFromSession();
+            }
+        }
+        Raise(nameof(HasFilter));
+        Raise(nameof(FilteredCount));
     }
 
     private void RefreshInspectorFromSession()

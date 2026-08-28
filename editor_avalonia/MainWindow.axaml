@@ -40,6 +40,8 @@
         <DockPanel>
           <TextBlock DockPanel.Dock="Top" Text="Hierarchy" FontWeight="Bold" Margin="2,2,0,6"/>
           <StackPanel DockPanel.Dock="Bottom" Spacing="4" Margin="0,6,0,0">
+            <TextBox x:Name="SearchBox" Text="{Binding SearchText, Mode=TwoWay}"
+                     Watermark="search entities..."/>
             <Grid ColumnDefinitions="*,Auto">
               <TextBox x:Name="RenameBox" Text="{Binding RenameInput, Mode=TwoWay}"
                        Watermark="new name..."/>
@@ -51,8 +53,9 @@
             </StackPanel>
           </StackPanel>
           <ListBox x:Name="HierarchyList"
-                   ItemsSource="{Binding Entities}"
-                   SelectedItem="{Binding SelectedEntity, Mode=TwoWay}">
+                   ItemsSource="{Binding FilteredEntities}"
+                   SelectedItem="{Binding SelectedEntity, Mode=OneWay}"
+                   SelectionChanged="OnHierarchySelectionChanged">
             <ListBox.ItemTemplate>
               <DataTemplate><TextBlock Text="{Binding Name}"/></DataTemplate>
             </ListBox.ItemTemplate>
