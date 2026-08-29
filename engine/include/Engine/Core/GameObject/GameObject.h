@@ -71,6 +71,7 @@ class GameObject : public IRenderable {
             raw->OnCreate();
 
             m_Components[hash] = std::move(ptr);
+            NotifyComponentLifecycle(*raw, true);
             return raw;
         }
 
@@ -110,6 +111,7 @@ class GameObject : public IRenderable {
                           "T must derive from Component");
             auto it = m_Components.find(typeid(T).hash_code());
             if (it != m_Components.end()) {
+                NotifyComponentLifecycle(*it->second, false);
                 it->second->OnDestroy();
                 m_Components.erase(it);
                 return true;
@@ -147,6 +149,20 @@ class GameObject : public IRenderable {
          *        同 typeid 已存在则返回既有实例，不入栈新的。设置 owner + OnCreate。
          */
         Component* Attach(std::shared_ptr<Component> comp);
+
+        // ── 组件生命周期监听（F2-B4 Integration Hook）──
+        /**
+         * 组件生命周期回调：组件成功挂载（attached=true）或即将移除/随 GameObject 销毁
+         * （attached=false）时同步触发。默认无监听器（零行为变化）；
+         * PhysicsColliderAdapter 借此自动 Bind/Unbind，无需轮询。
+         */
+        using ComponentLifecycleCallback = std::function<void(Component&, bool attached)>;
+
+        /** 注册组件生命周期监听器，返回监听器 ID（供移除） */
+        uint32 AddComponentLifecycleListener(ComponentLifecycleCallback cb);
+
+        /** 按 ID 移除组件生命周期监听器 */
+        void RemoveComponentLifecycleListener(uint32 listenerId);
 
         // ── 组件迭代（供序列化器等外部模块遍历所有组件） ──
         /** 遍历所有已挂载的组件 */
@@ -239,6 +255,13 @@ class GameObject : public IRenderable {
 
         // 动态组件存储（type_index → Component）
         std::unordered_map<size_t, std::shared_ptr<Component>> m_Components;
+
+        // 组件生命周期监听器（F2-B4；默认空，零行为变化）
+        std::vector<std::pair<uint32, ComponentLifecycleCallback>> m_ComponentLifecycleListeners;
+        uint32 m_NextListenerId = 1;
+
+        /** 同步通知全部监听器（监听器可增删，迭代用副本） */
+        void NotifyComponentLifecycle(Component& comp, bool attached);
     };
 
 } // namespace Engine

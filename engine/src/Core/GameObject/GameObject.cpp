@@ -19,12 +19,14 @@ namespace Engine {
     }
 
     GameObject::~GameObject() {
-        // 通知所有组件销毁
+        // 通知所有组件销毁（含生命周期监听器：先通知再销毁，Adapter 可干净 Unbind）
         for (auto& [hash, comp] : m_Components) {
             (void)hash;
+            NotifyComponentLifecycle(*comp, false);
             comp->OnDestroy();
         }
         m_Components.clear();
+        m_ComponentLifecycleListeners.clear();
         // 递归销毁子对象
         m_Children.clear();
     }
@@ -42,6 +44,36 @@ namespace Engine {
             (void)hash;
             if (comp->IsEnabled())
                 comp->OnDestroy();
+        }
+    }
+
+    // ════════════════════════════════════════════
+    // 组件生命周期监听（F2-B4 Integration Hook）
+    // ════════════════════════════════════════════
+
+    uint32 GameObject::AddComponentLifecycleListener(ComponentLifecycleCallback cb) {
+        const uint32 id = m_NextListenerId++;
+        m_ComponentLifecycleListeners.emplace_back(id, std::move(cb));
+        return id;
+    }
+
+    void GameObject::RemoveComponentLifecycleListener(uint32 listenerId) {
+        for (auto it = m_ComponentLifecycleListeners.begin();
+             it != m_ComponentLifecycleListeners.end(); ++it) {
+            if (it->first == listenerId) {
+                m_ComponentLifecycleListeners.erase(it);
+                return;
+            }
+        }
+    }
+
+    void GameObject::NotifyComponentLifecycle(Component& comp, bool attached) {
+        if (m_ComponentLifecycleListeners.empty()) return;
+        // 副本迭代：监听器回调内可能增删监听器（如 UnobserveGameObject）
+        const auto listeners = m_ComponentLifecycleListeners;
+        for (const auto& [id, cb] : listeners) {
+            (void)id;
+            cb(comp, attached);
         }
     }
 
@@ -217,6 +249,7 @@ namespace Engine {
         if (comp->IsEnabled()) comp->OnCreate();
         Component* raw = comp.get();
         m_Components[hash] = std::move(comp);
+        NotifyComponentLifecycle(*raw, true);
         return raw;
     }
 
@@ -243,6 +276,7 @@ namespace Engine {
         for (auto it = m_Components.begin(); it != m_Components.end(); ++it) {
             const char* tn = it->second->GetComponentTypeName();
             if (tn && typeName == tn) {
+                NotifyComponentLifecycle(*it->second, false);
                 it->second->OnDestroy();
                 m_Components.erase(it);
                 return true;

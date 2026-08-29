@@ -268,9 +268,18 @@ namespace Engine {
     }
 
     void Box2DPhysicsBody::ClearFixtures() {
-        for (auto& entry : m_Shapes) {
-            if (b2Shape_IsValid(entry.shapeId)) {
-                b2DestroyShape(entry.shapeId, true);
+        // B6-Fix：必须清空 body 上【全部】形状，而不仅是 m_Shapes 追踪的 fixture。
+        // CreateBody 经 CreateShapesFromBodyDef 生成的初始 shape 不在 m_Shapes 中，
+        // 若只清 m_Shapes 会遗留一个“实心”初始形状 —— 这正是 B6 暴露的 sensor/filter
+        // 行为失效根源（sensor=1 的新 shape 与初始实心 shape 并存，后者依然参与碰撞）。
+        if (b2Body_IsValid(m_BodyId)) {
+            const int32 count = b2Body_GetShapeCount(m_BodyId);
+            if (count > 0) {
+                std::vector<b2ShapeId> ids(static_cast<size_t>(count));
+                const int32 n = b2Body_GetShapes(m_BodyId, ids.data(), count);
+                for (int32 i = 0; i < n; ++i) {
+                    if (b2Shape_IsValid(ids[i])) b2DestroyShape(ids[i], true);
+                }
             }
         }
         m_Shapes.clear();

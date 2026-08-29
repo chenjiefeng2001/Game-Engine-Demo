@@ -24,6 +24,7 @@
  */
 
 #include "Engine/Core/GameObject/Component.h"
+#include <functional>
 #include <string>
 
 namespace Engine {
@@ -48,28 +49,38 @@ namespace Engine {
         // 契约稳定身份（F1-A 同源）
         const char* GetComponentTypeName() const override { return "Collider"; }
 
-        // ── 配置访问器（声明式状态）──
-        void SetShape(ColliderShape s) { m_Shape = s; }
+        // ── 配置访问器（声明式状态；修改即触发运行时变更钩子，F2-B4）──
+        void SetShape(ColliderShape s) { m_Shape = s; NotifyChanged("shape"); }
         ColliderShape GetShape() const { return m_Shape; }
 
-        void SetRadius(float r) { m_Radius = r; }
+        void SetRadius(float r) { m_Radius = r; NotifyChanged("radius"); }
         float GetRadius() const { return m_Radius; }
 
-        void SetHalfExtents(float hx, float hy) { m_HalfX = hx; m_HalfY = hy; }
-        void SetHalfExtentsX(float hx) { m_HalfX = hx; }
-        void SetHalfExtentsY(float hy) { m_HalfY = hy; }
+        void SetHalfExtents(float hx, float hy) { m_HalfX = hx; m_HalfY = hy; NotifyChanged("halfX"); }
+        void SetHalfExtentsX(float hx) { m_HalfX = hx; NotifyChanged("halfX"); }
+        void SetHalfExtentsY(float hy) { m_HalfY = hy; NotifyChanged("halfY"); }
         float GetHalfExtentsX() const { return m_HalfX; }
         float GetHalfExtentsY() const { return m_HalfY; }
 
         /// 传感器标记（只触发回调，不产生实体碰撞）
-        void SetIsSensor(bool s) { m_IsSensor = s; }
+        void SetIsSensor(bool s) { m_IsSensor = s; NotifyChanged("isSensor"); }
         bool IsSensor() const { return m_IsSensor; }
 
         /// 碰撞滤波（与 2D BodyDef categoryBits/maskBits 语义一致，但不依赖其头）
-        void SetCategory(uint16 c) { m_Category = c; }
+        void SetCategory(uint16 c) { m_Category = c; NotifyChanged("category"); }
         uint16 GetCategory() const { return m_Category; }
-        void SetMask(uint16 m) { m_Mask = m; }
+        void SetMask(uint16 m) { m_Mask = m; NotifyChanged("mask"); }
         uint16 GetMask() const { return m_Mask; }
+
+        // ── 运行时变更钩子（F2-B4，Physics-free）──
+        /**
+         * 声明式属性被修改（直接 setter 或反射 SetPropertyValue）成功后触发；
+         * propName 为稳定属性名（"shape"/"radius"/"halfX"/"halfY"/"isSensor"/
+         * "category"/"mask"/"enabled"）。由 PhysicsColliderAdapter 安装并据 B2-4 表
+         * 执行 SetActive（enabled）或 Rebuild（其余）。组件自身不包含任何 Physics 依赖。
+         */
+        using ColliderMutationHook = std::function<void(ColliderComponent&, const char* propName)>;
+        void SetMutationHook(ColliderMutationHook hook) { m_MutationHook = std::move(hook); }
 
         // ── 反射 / 元数据（F1-B 同源）──
         size_t GetPropertyCount() const override;
@@ -82,6 +93,8 @@ namespace Engine {
         bool Deserialize(const nlohmann::json& json) override;
 
     private:
+        void NotifyChanged(const char* propName);
+
         ColliderShape m_Shape    = ColliderShape::Circle;
         float         m_Radius   = 0.5f;   ///< Circle
         float         m_HalfX    = 0.5f;   ///< Box 半宽
@@ -89,6 +102,8 @@ namespace Engine {
         bool          m_IsSensor = false;
         uint16        m_Category = 0x0001; ///< Layer_Default（对齐 CollisionLayers）
         uint16        m_Mask     = 0xFFFF; ///< Layer_All
+
+        ColliderMutationHook m_MutationHook;   ///< 运行时变更钩子（默认空 = 无观察者）
     };
 
     /// 登记内置契约组件（Collider）到 ComponentRegistryGo；由 EnsureRegistered 调用

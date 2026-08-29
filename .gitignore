@@ -92,6 +92,7 @@ df08_scratch/
 df09_scratch/
 vs01_scratch/
 gp01_scratch/
+f2b_scratch/
 !assets/vs01/**/*.scene
 
 # Avalonia editor (Phase 0 spike) build artifacts

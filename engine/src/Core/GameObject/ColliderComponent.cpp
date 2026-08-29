@@ -67,41 +67,55 @@ bool ColliderComponent::SetPropertyValue(size_t index, const ComponentPropertyVa
         case kPropEnabled:
             if (value.type != ComponentValueType::Bool) return false;
             SetEnabled(value.boolValue);
+            NotifyChanged("enabled");
             return true;
         case kPropShape: {
             if (value.type != ComponentValueType::String) return false;
             ColliderShape s;
             if (!ParseColliderShape(value.stringValue.c_str(), &s)) return false;
             m_Shape = s;
+            NotifyChanged("shape");
             return true;
         }
         case kPropRadius:
             if (value.type != ComponentValueType::Float) return false;
             m_Radius = value.floatValue;
+            NotifyChanged("radius");
             return true;
         case kPropHalfX:
             if (value.type != ComponentValueType::Float) return false;
             m_HalfX = value.floatValue;
+            NotifyChanged("halfX");
             return true;
         case kPropHalfY:
             if (value.type != ComponentValueType::Float) return false;
             m_HalfY = value.floatValue;
+            NotifyChanged("halfY");
             return true;
         case kPropIsSensor:
             if (value.type != ComponentValueType::Bool) return false;
             m_IsSensor = value.boolValue;
+            NotifyChanged("isSensor");
             return true;
         case kPropCategory:
             if (value.type != ComponentValueType::Int) return false;
             m_Category = static_cast<uint16>(value.intValue);
+            NotifyChanged("category");
             return true;
         case kPropMask:
             if (value.type != ComponentValueType::Int) return false;
             m_Mask = static_cast<uint16>(value.intValue);
+            NotifyChanged("mask");
             return true;
         default:
             return false;
     }
+}
+
+// ── 运行时变更通知（F2-B4）────────────────────────────────
+
+void ColliderComponent::NotifyChanged(const char* propName) {
+    if (m_MutationHook) m_MutationHook(*this, propName);
 }
 
 // ── 序列化 ───────────────────────────────────────────────
