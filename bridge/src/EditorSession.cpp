@@ -8,6 +8,8 @@
 
 #include <Engine/Core/Content/SceneSerializerV1.h>
 #include <Engine/Core/GameObject/GameObject.h>
+#include <Engine/Core/GameObject/Component.h>
+#include <Engine/Core/GameObject/ComponentRegistry_Go.h>
 #include <Engine/Core/GameObject/SpriteComponent.h>
 #include <Engine/Core/Log.h>
 #include <Engine/Scripting/GameplayAPI.h>
@@ -16,6 +18,7 @@
 
 #include <algorithm>
 #include <cctype>
+#include <cstdio>
 #include <filesystem>
 #include <fstream>
 #include <sstream>
@@ -23,6 +26,57 @@
 namespace fs = std::filesystem;
 
 namespace editor_bridge {
+
+namespace {
+    // ── 反射属性值 ↔ UTF-8 字符串（C ABI 边界）──
+
+    std::string ComponentValueToString(const Engine::ComponentPropertyValue& v) {
+        switch (v.type) {
+            case Engine::ComponentValueType::Bool:   return v.boolValue ? "true" : "false";
+            case Engine::ComponentValueType::Int:    return std::to_string(v.intValue);
+            case Engine::ComponentValueType::Float:  {
+                char buf[32];
+                std::snprintf(buf, sizeof(buf), "%.6g", v.floatValue);
+                return buf;
+            }
+            case Engine::ComponentValueType::String: return v.stringValue;
+        }
+        return "";
+    }
+
+    bool ParseComponentValue(const std::string& str,
+                             Engine::ComponentValueType type,
+                             Engine::ComponentPropertyValue* out) {
+        if (!out) return false;
+        out->type = type;
+        switch (type) {
+            case Engine::ComponentValueType::Bool:
+                if (str == "true" || str == "1") { out->boolValue = true; return true; }
+                if (str == "false" || str == "0") { out->boolValue = false; return true; }
+                return false;
+            case Engine::ComponentValueType::Float:
+                try { out->floatValue = std::stof(str); return true; }
+                catch (...) { return false; }
+            case Engine::ComponentValueType::Int:
+                try { out->intValue = std::stoi(str); return true; }
+                catch (...) { return false; }
+            case Engine::ComponentValueType::String:
+                out->stringValue = str; return true;
+        }
+        return false;
+    }
+
+    int FindPropertyIndex(Engine::Component* comp, const std::string& propName) {
+        if (!comp) return -1;
+        const size_t n = comp->GetPropertyCount();
+        for (size_t i = 0; i < n; ++i) {
+            Engine::ComponentPropertyDesc d;
+            if (comp->GetPropertyDesc(i, &d) && d.name && propName == d.name)
+                return static_cast<int>(i);
+        }
+        return -1;
+    }
+} // namespace
 
 bool EditorSession::OpenProject(const std::string& manifestPath,
                                 const std::string& scenePath) {
@@ -295,6 +349,156 @@ bool EditorSession::AssignScript(int32_t assetIndex, int32_t entityIndex) {
          "idx=" + std::to_string(entityIndex) +
          ";asset=" + std::to_string(assetIndex) +
          ";script=" + entry.path);
+    return true;
+}
+
+// ════════════════════════════════════════════════════════════
+// F1（Component Contract）：约定组件（Camera 等）增删 + 属性读写
+// ════════════════════════════════════════════════════════════
+
+bool EditorSession::AddComponent(int32_t entityIndex,
+                                 const std::string& typeName) {
+    if (IsPlaying())
+        return Fail("add component ignored while playing (edit-state only)");
+    if (typeName.empty())
+        return Fail("add component: empty type name");
+    if (!m_EditScene || entityIndex < 0 ||
+        entityIndex >= static_cast<int32_t>(m_EditScene->GetObjectCount()))
+        return Fail("add component: bad entity index " +
+                    std::to_string(entityIndex));
+    if (!Engine::ComponentRegistryGo::IsRegistered(typeName))
+        return Fail("add component: unknown contract type '" + typeName + "'");
+
+    auto* obj = m_EditScene->GetObjects()[static_cast<size_t>(entityIndex)].get();
+    Engine::Component* comp = obj->AddComponentByName(typeName);
+    if (!comp)
+        return Fail("add component: failed for '" + typeName + "'");
+    MarkDirty();
+    Emit(EV_COMPONENT_CHANGED,
+         "idx=" + std::to_string(entityIndex) + ";type=" + typeName +
+         ";action=add");
+    Engine::Log::Info("[EditorBridge] component added: {} -> {}",
+                      obj->GetName(), typeName);
+    return true;
+}
+
+bool EditorSession::RemoveComponent(int32_t entityIndex,
+                                    const std::string& typeName) {
+    if (IsPlaying())
+        return Fail("remove component ignored while playing (edit-state only)");
+    if (typeName.empty())
+        return Fail("remove component: empty type name");
+    if (!m_EditScene || entityIndex < 0 ||
+        entityIndex >= static_cast<int32_t>(m_EditScene->GetObjectCount()))
+        return Fail("remove component: bad entity index " +
+                    std::to_string(entityIndex));
+
+    auto* obj = m_EditScene->GetObjects()[static_cast<size_t>(entityIndex)].get();
+    if (!obj->HasComponentByName(typeName))
+        return Fail("remove component: entity has no '" + typeName + "'");
+    obj->RemoveComponentByName(typeName);
+    MarkDirty();
+    Emit(EV_COMPONENT_CHANGED,
+         "idx=" + std::to_string(entityIndex) + ";type=" + typeName +
+         ";action=remove");
+    Engine::Log::Info("[EditorBridge] component removed: {} -> {}",
+                      obj->GetName(), typeName);
+    return true;
+}
+
+bool EditorSession::HasComponent(int32_t entityIndex,
+                                 const std::string& typeName) const {
+    if (!m_EditScene || entityIndex < 0 ||
+        entityIndex >= static_cast<int32_t>(m_EditScene->GetObjectCount()))
+        return false;
+    const auto* obj =
+        m_EditScene->GetObjects()[static_cast<size_t>(entityIndex)].get();
+    return obj->HasComponentByName(typeName);
+}
+
+int32_t EditorSession::GetComponentCount(int32_t entityIndex) const {
+    if (!m_EditScene || entityIndex < 0 ||
+        entityIndex >= static_cast<int32_t>(m_EditScene->GetObjectCount()))
+        return -1;
+    const auto* obj =
+        m_EditScene->GetObjects()[static_cast<size_t>(entityIndex)].get();
+    int32_t count = 0;
+    obj->ForEachComponent([&count](const Engine::Component& c) {
+        if (c.GetComponentTypeName()) ++count;
+    });
+    return count;
+}
+
+bool EditorSession::GetComponentTypeAt(int32_t entityIndex, int32_t compIndex,
+                                       std::string* out) const {
+    if (!out || !m_EditScene || entityIndex < 0 ||
+        entityIndex >= static_cast<int32_t>(m_EditScene->GetObjectCount())
+        || compIndex < 0)
+        return false;
+    const auto* obj =
+        m_EditScene->GetObjects()[static_cast<size_t>(entityIndex)].get();
+    int32_t seen = 0;
+    bool found = false;
+    obj->ForEachComponent([&](const Engine::Component& c) {
+        const char* tn = c.GetComponentTypeName();
+        if (!tn) return;
+        if (seen == compIndex) { *out = tn; found = true; }
+        ++seen;
+    });
+    return found;
+}
+
+bool EditorSession::GetComponentProperty(int32_t entityIndex,
+                                         const std::string& typeName,
+                                         const std::string& propName,
+                                         std::string* out) const {
+    if (!out) return false;
+    if (!m_EditScene || entityIndex < 0 ||
+        entityIndex >= static_cast<int32_t>(m_EditScene->GetObjectCount()))
+        return false;
+    const auto* obj =
+        m_EditScene->GetObjects()[static_cast<size_t>(entityIndex)].get();
+    auto* comp = obj->GetComponentByName(typeName);
+    if (!comp) return false;
+    const int i = FindPropertyIndex(comp, propName);
+    if (i < 0) return false;
+    Engine::ComponentPropertyValue v;
+    if (!comp->GetPropertyValue(static_cast<size_t>(i), &v)) return false;
+    *out = ComponentValueToString(v);
+    return true;
+}
+
+bool EditorSession::SetComponentProperty(int32_t entityIndex,
+                                         const std::string& typeName,
+                                         const std::string& propName,
+                                         const std::string& valueStr) {
+    if (IsPlaying())
+        return Fail("set component ignored while playing (edit-state only)");
+    if (!m_EditScene || entityIndex < 0 ||
+        entityIndex >= static_cast<int32_t>(m_EditScene->GetObjectCount()))
+        return Fail("set component: bad entity index " +
+                    std::to_string(entityIndex));
+    auto* obj = m_EditScene->GetObjects()[static_cast<size_t>(entityIndex)].get();
+    auto* comp = obj->GetComponentByName(typeName);
+    if (!comp)
+        return Fail("set component: no component '" + typeName + "' on entity");
+    const int i = FindPropertyIndex(comp, propName);
+    if (i < 0)
+        return Fail("set component: no property '" + propName + "'");
+    Engine::ComponentPropertyDesc d;
+    if (!comp->GetPropertyDesc(static_cast<size_t>(i), &d) || !d.editable)
+        return Fail("set component: property '" + propName + "' not editable");
+    Engine::ComponentPropertyValue v;
+    if (!ParseComponentValue(valueStr, d.type, &v))
+        return Fail("set component: bad value '" + valueStr + "' for '" + propName + "'");
+    if (!comp->SetPropertyValue(static_cast<size_t>(i), v))
+        return Fail("set component: write failed for '" + propName + "'");
+    MarkDirty();
+    Emit(EV_COMPONENT_CHANGED,
+         "idx=" + std::to_string(entityIndex) + ";type=" + typeName +
+         ";action=set");
+    Engine::Log::Info("[EditorBridge] component prop set: {}[{}.{}] = {}",
+                      obj->GetName(), typeName, propName, valueStr);
     return true;
 }
 

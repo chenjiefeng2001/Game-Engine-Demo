@@ -293,6 +293,51 @@ public sealed class EditorHostService : IDisposable
         finally { Marshal.FreeHGlobal(buf); }
     }
 
+    // ── F1 (Component Contract)：契约组件（Camera 等）──
+
+    public bool AddComponent(int entityIndex, string typeName)
+    {
+        ThrowIfNoSession();
+        return EditorBridgeApi.EditorSession_AddComponent(_session, entityIndex, typeName) == 0;
+    }
+
+    public bool RemoveComponent(int entityIndex, string typeName)
+    {
+        ThrowIfNoSession();
+        return EditorBridgeApi.EditorSession_RemoveComponent(_session, entityIndex, typeName) == 0;
+    }
+
+    public bool HasComponent(int entityIndex, string typeName)
+    {
+        if (_session == IntPtr.Zero) return false;
+        return EditorBridgeApi.EditorSession_HasComponent(_session, entityIndex, typeName) == 1;
+    }
+
+    /// 读契约组件反射属性（字符串形式）。实体/组件/属性不存在返回 ""。
+    public string GetComponentProperty(int entityIndex, string typeName, string propName)
+    {
+        ThrowIfNoSession();
+        var probe = Marshal.AllocHGlobal(8);
+        int len;
+        try { len = EditorBridgeApi.EditorSession_GetComponentProperty(_session, entityIndex, typeName, propName, probe, 8); }
+        finally { Marshal.FreeHGlobal(probe); }
+        if (len < 0) return "";
+        var buf = Marshal.AllocHGlobal(len + 1);
+        try
+        {
+            if (EditorBridgeApi.EditorSession_GetComponentProperty(_session, entityIndex, typeName, propName, buf, len + 1) < 0)
+                return "";
+            return Marshal.PtrToStringUTF8(buf) ?? "";
+        }
+        finally { Marshal.FreeHGlobal(buf); }
+    }
+
+    public bool SetComponentProperty(int entityIndex, string typeName, string propName, string value)
+    {
+        ThrowIfNoSession();
+        return EditorBridgeApi.EditorSession_SetComponentProperty(_session, entityIndex, typeName, propName, value) == 0;
+    }
+
     private void OnNativeEvent(int eventType, string payload, IntPtr userData)
         => NativeEvent?.Invoke(eventType, payload);
 

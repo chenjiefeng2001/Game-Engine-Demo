@@ -6,6 +6,8 @@
 #include "Engine/Core/Content/SceneSerializerV1.h"
 #include "Engine/Core/Scene/Scene.h"
 #include "Engine/Core/GameObject/GameObject.h"
+#include "Engine/Core/GameObject/Component.h"
+#include "Engine/Core/GameObject/ComponentRegistry_Go.h"
 #include "Engine/Core/GameObject/TransformComponent.h"
 #include "Engine/Core/GameObject/SpriteComponent.h"
 #include "Engine/Core/RenderResources/TextureManager.h"
@@ -34,6 +36,13 @@ nlohmann::json SerializeSnapshot(const SceneSnapshot& snap) {
         };
         if (!e.spriteGuid.IsNull()) je["sprite"] = e.spriteGuid.ToHex();
         if (!e.scriptGuid.IsNull()) je["script"] = e.scriptGuid.ToHex();
+        // 契约组件（F1-D）：type = 稳定类型名，data = 组件 Serialize 产出
+        if (!e.components.empty()) {
+            auto cj = nlohmann::json::array();
+            for (const auto& c : e.components)
+                cj.push_back({ { "type", c.type }, { "data", c.data } });
+            je["components"] = std::move(cj);
+        }
         j["entities"].push_back(je);
     }
     return j;
@@ -73,7 +82,20 @@ bool DeserializeSnapshot(const nlohmann::json& j, SceneSnapshot& out,
             se.spriteGuid = ResourceGUID::FromHex(e["sprite"].get<std::string>());
         if (e.contains("script") && e["script"].is_string())
             se.scriptGuid = ResourceGUID::FromHex(e["script"].get<std::string>());
-        out.entities.push_back(se);
+        // 契约组件（F1-D）：未知类型保留数据但不在加载层扩展（负路径在
+        // InstantiateScene 处理），这里原样还原到快照避免信息丢失。
+        if (e.contains("components") && e["components"].is_array()) {
+            for (const auto& c : e["components"]) {
+                if (!c.is_object() || !c.contains("type") || !c["type"].is_string())
+                    continue;   // 结构损坏的子项跳过（整体仍然可加载）
+                SerializedComponent sc;
+                sc.type = c["type"].get<std::string>();
+                if (c.contains("data") && c["data"].is_object())
+                    sc.data = c["data"];
+                se.components.push_back(std::move(sc));
+            }
+        }
+        out.entities.push_back(std::move(se));
     }
     return true;
 }
@@ -95,7 +117,17 @@ SceneSnapshot CaptureScene(const Scene& scene,
             e.spriteGuid = bindings[i].spriteGuid;
             e.scriptGuid = bindings[i].scriptGuid;
         }
-        snap.entities.push_back(e);
+        // 契约组件：只收编有稳定类型名的组件（GetComponentTypeName() != nullptr），
+        // 避免把 Sprite 等仍走顶层 GUID 的既有组件双重序列化。
+        obj.ForEachComponent([&e](const Component& c) {
+            const char* tn = c.GetComponentTypeName();
+            if (!tn) return;
+            SerializedComponent sc;
+            sc.type = tn;
+            c.Serialize(sc.data);
+            e.components.push_back(std::move(sc));
+        });
+        snap.entities.push_back(std::move(e));
     }
     return snap;
 }
@@ -134,6 +166,23 @@ LoadResult InstantiateScene(const SceneSnapshot& snap, Scene& outScene,
             } else {
                 binding.scriptGuid = e.scriptGuid;
             }
+        }
+
+        // 契约组件（F1-D）：未知类型 → warning（实体照常加载）；已知 → 反序列化 + 挂载
+        for (const auto& sc : e.components) {
+            if (!ComponentRegistryGo::IsRegistered(sc.type)) {
+                r.warnings.push_back("entity '" + e.name
+                    + "': unknown contract component type '" + sc.type
+                    + "' (skipped)");
+                continue;
+            }
+            auto comp = ComponentRegistryGo::Create(sc.type);
+            if (!comp) continue;
+            if (!comp->Deserialize(sc.data)) {
+                r.warnings.push_back("entity '" + e.name
+                    + "': component '" + sc.type + "' DataBad (kept defaults)");
+            }
+            obj->Attach(comp);
         }
 
         outScene.AddObject(obj);

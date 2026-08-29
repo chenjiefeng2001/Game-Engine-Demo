@@ -183,6 +183,72 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
         private set => Set(ref _selectedScript, value);
     }
 
+    // ── F1 (Component Contract)：Camera Inspector（反射元数据驱动）──
+    private bool _hasCamera;
+    public bool HasCamera
+    {
+        get => _hasCamera;
+        private set => Set(ref _hasCamera, value);
+    }
+    private string _cameraEnabled = "true";
+    public string CameraEnabled { get => _cameraEnabled; set => Set(ref _cameraEnabled, value); }
+    private string _cameraZoom = "1";
+    public string CameraZoom { get => _cameraZoom; set => Set(ref _cameraZoom, value); }
+    private string _cameraViewport = "0 0 1280 720";
+    public string CameraViewport { get => _cameraViewport; set => Set(ref _cameraViewport, value); }
+    private string _cameraBounds = "";
+    public string CameraBounds { get => _cameraBounds; set => Set(ref _cameraBounds, value); }
+
+    // ── F1 (Component Contract)：Camera Inspector 操作 ──
+    public bool AddCameraToSelected()
+    {
+        if (_selectedEntity is null) { LogToConsole("add camera ignored: no selection"); return false; }
+        if (!_host.AddComponent(_selectedEntity.Index, "Camera"))
+        {
+            LogToConsole("ADD CAMERA FAILED: " + _host.GetLastError());
+            return false;
+        }
+        LogToConsole($"camera added: {_selectedEntity.Name}");
+        RefreshInspectorFromSession();
+        RefreshDirtyState();
+        return true;
+    }
+
+    public bool RemoveCameraFromSelected()
+    {
+        if (_selectedEntity is null) { LogToConsole("remove camera ignored: no selection"); return false; }
+        if (!_host.RemoveComponent(_selectedEntity.Index, "Camera"))
+        {
+            LogToConsole("REMOVE CAMERA FAILED: " + _host.GetLastError());
+            return false;
+        }
+        LogToConsole($"camera removed: {_selectedEntity.Name}");
+        RefreshInspectorFromSession();
+        RefreshDirtyState();
+        return true;
+    }
+
+    /// 应用 Camera 属性（enabled/zoom/viewport/bounds）到选中实体
+    public void ApplyCamera()
+    {
+        if (_selectedEntity is null || !HasCamera) return;
+        var idx = _selectedEntity.Index;
+        var enabled = CameraEnabled.Equals("true", StringComparison.OrdinalIgnoreCase) ? "true" : "false";
+        if (!_host.SetComponentProperty(idx, "Camera", "enabled", enabled)
+            || !_host.SetComponentProperty(idx, "Camera", "zoom", CameraZoom)
+            || !_host.SetComponentProperty(idx, "Camera", "viewport", CameraViewport)
+            || !_host.SetComponentProperty(idx, "Camera", "bounds", CameraBounds))
+        {
+            LogToConsole("CAMERA APPLY FAILED: " + _host.GetLastError());
+        }
+        else
+        {
+            LogToConsole($"camera applied: {_selectedEntity.Name} (zoom={CameraZoom})");
+        }
+        RefreshInspectorFromSession();
+        RefreshDirtyState();
+    }
+
     // ── P2-F Script Editor ──
     private string _scriptText = "";
     public string ScriptText
@@ -275,6 +341,7 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
         ScriptDirty = false;
         ScriptError = "";
         IsRunning = false;
+        HasCamera = false;
         Raise(nameof(HasScriptOpen));
         IsDirty = false;
         StatusText = "no project loaded";
@@ -574,6 +641,11 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
                 LogToConsole("EV PlayStopped");
                 IsRunning = false;
                 break;
+            case EditorBridgeApi.EvComponentChanged:
+                LogToConsole("EV ComponentChanged: " + payload);
+                RefreshInspectorFromSession();
+                RefreshDirtyState();
+                break;
         }
     }
 
@@ -642,6 +714,7 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
             SelectedName = "(none)";
             SelectedSprite = "(none)";
             SelectedScript = "(none)";
+            RefreshCamera(null);
         }
         else
         {
@@ -652,7 +725,29 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
             if (SelectedSprite.Length == 0) SelectedSprite = "(none)";
             SelectedScript = _host.GetEntityScript(_selectedEntity.Index);
             if (SelectedScript.Length == 0) SelectedScript = "(none)";
+            RefreshCamera(_selectedEntity.Index);
         }
+    }
+
+    /// F1：从会话读取 Camera 反射属性（存在则回填 Inspector 字段）
+    private void RefreshCamera(int? entityIndex)
+    {
+        if (entityIndex is not int idx || !_host.HasComponent(idx, "Camera"))
+        {
+            HasCamera = false;
+            return;
+        }
+        HasCamera = true;
+        CameraEnabled = _host.GetComponentProperty(idx, "Camera", "enabled") switch
+        {
+            "false" => "false", _ => "true"
+        };
+        var zoom = _host.GetComponentProperty(idx, "Camera", "zoom");
+        CameraZoom = zoom.Length == 0 ? "1" : zoom;
+        var vp = _host.GetComponentProperty(idx, "Camera", "viewport");
+        CameraViewport = vp.Length == 0 ? "0 0 1280 720" : vp;
+        var b = _host.GetComponentProperty(idx, "Camera", "bounds");
+        CameraBounds = b.Length == 0 ? "" : b;
     }
 
     private void RefreshDirtyState()

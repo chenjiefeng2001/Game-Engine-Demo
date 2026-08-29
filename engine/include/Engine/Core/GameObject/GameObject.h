@@ -125,6 +125,29 @@ class GameObject : public IRenderable {
             return GetComponent<T>() != nullptr;
         }
 
+        // ── Component Contract（F1-A）：按稳定类型名操作组件 ──
+
+        /**
+         * @brief 按稳定契约类型名挂载组件（经 ComponentRegistryGo 工厂创建）。
+         *        未知类型返回 nullptr；同类型已存在则返回既有实例（单实例语义）。
+         */
+        Component* AddComponentByName(const std::string& typeName);
+
+        /** 按稳定契约类型名查询组件；未找到返回 nullptr */
+        Component* GetComponentByName(const std::string& typeName) const;
+
+        /** 是否已挂载该稳定契约类型名的组件 */
+        bool HasComponentByName(const std::string& typeName) const;
+
+        /** 按稳定契约类型名移除组件（触发 OnDestroy）；未找到返回 false */
+        bool RemoveComponentByName(const std::string& typeName);
+
+        /**
+         * @brief 挂载一个已构造的组件实例（契约组件还原 / 脚本创建路径）。
+         *        同 typeid 已存在则返回既有实例，不入栈新的。设置 owner + OnCreate。
+         */
+        Component* Attach(std::shared_ptr<Component> comp);
+
         // ── 组件迭代（供序列化器等外部模块遍历所有组件） ──
         /** 遍历所有已挂载的组件 */
         void ForEachComponent(std::function<void(Component&)> callback) {

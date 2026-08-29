@@ -26,10 +26,37 @@
 #include "Engine/Types.h"
 #include <nlohmann/json.hpp>
 
+#include <string>
+
 namespace Engine {
 
     class GameObject;
 
+    // ── Component Contract 值类型（F1-A/B：稳定身份 + 反射/元数据）──
+    // 反射允许 Inspector / Lua / 序列化经 metadata 读取组件，而不是依赖
+    // C++ class 名 / typeid。契约组件的属性按注册表登记的字符串身份暴露。
+    enum class ComponentValueType : uint8 {
+        Bool = 0,
+        Int,
+        Float,
+        String
+    };
+
+    /// 组件属性描述（供 Editor/Inspector 消费，避免其知道 C++ class）
+    struct ComponentPropertyDesc {
+        const char*       name     = nullptr;
+        ComponentValueType type    = ComponentValueType::Float;
+        bool              editable = true;   ///< 是否可在 Editor 作者编辑
+    };
+
+    /// 组件属性的统一值（按 type 取对应字段）
+    struct ComponentPropertyValue {
+        ComponentValueType type        = ComponentValueType::Float;
+        bool               boolValue   = false;
+        int32              intValue    = 0;
+        float32            floatValue  = 0.0f;
+        std::string        stringValue;
+    };
     class Component {
     public:
         Component() = default;
@@ -75,6 +102,36 @@ namespace Engine {
 
         /** 获取此实例的类型名称 */
         virtual const char* GetTypeDisplayName() const { return "Component"; }
+
+        // ════════════════════════════════════════════════════════════
+        // Component Contract v1（F1-A/B）—— 稳定身份 + 反射/元数据
+        //   - 契约组件覆盖 GetComponentTypeName() 返回稳定字符串（持久化/脚本
+        //     身份，绝不依赖 typeid / class name / UI 字符串）。
+        //   - 默认实现为空：只有“已收编”的契约组件暴露属性，避免破坏既有
+        //     Sprite/Physics 等非契约组件的现状（F2 逐步收编）。
+        // ════════════════════════════════════════════════════════════
+
+        /** 稳定契约类型名（持久化 + Lua + Editor 身份）。
+         *  返回 nullptr = 该组件尚未收编进 Contract（不外露/不序列化为 components[]）。 */
+        virtual const char* GetComponentTypeName() const { return nullptr; }
+
+        /** 反射属性数量（默认 0 = 无反射属性） */
+        virtual size_t GetPropertyCount() const { return 0; }
+
+        /** 第 index 个属性的描述（越界返回 false） */
+        virtual bool GetPropertyDesc(size_t index, ComponentPropertyDesc* out) const {
+            (void)index; (void)out; return false;
+        }
+
+        /** 读第 index 个属性的值（越界返回 false） */
+        virtual bool GetPropertyValue(size_t index, ComponentPropertyValue* out) const {
+            (void)index; (void)out; return false;
+        }
+
+        /** 写第 index 个属性的值（越界 / 类型不符返回 false） */
+        virtual bool SetPropertyValue(size_t index, const ComponentPropertyValue& value) {
+            (void)index; (void)value; return false;
+        }
 
         /** 解析编译器 typeid name 为可读字符串（公开工具方法） */
         static const char* ParseTypeName(const char* mangledName);
