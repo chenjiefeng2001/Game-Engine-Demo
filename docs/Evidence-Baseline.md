@@ -11,16 +11,16 @@
 
 | Target | 期望计数 | 状态 | 承载证据 |
 |--------|---------|------|---------|
-| test_scripting | 25 | VERIFIED | Scripting API v2.1 C-ABI/MVP/Gameplay + F1 通用 `Engine.component.*` + Lua Camera 实证 |
+| test_scripting | 27 | VERIFIED | Scripting API v2.1 C-ABI/MVP/Gameplay + F1 通用 `Engine.component.*` + Camera 实证 + F2 Collider 实证（通用 component API，无特化域） |
 | test_physics | 16 | VERIFIED | GPU Physics v1.x CPU/GPU ring |
 | test_renderer | 9 | VERIFIED | GL46Device + RenderGraph SG6 隔离验证 |
 | test_content | 42 | VERIFIED | Content Pipeline v1 + Resource Lifecycle + Editor Workflow + DF05/06/07 + DX Golden Gate + VS01 |
 | test_job | 4 | VERIFIED | JobSystem 压力 |
 | test_e2e | 6 | VERIFIED | 引擎启动生命周期 |
 | test_gp01 | 22 | VERIFIED | Game Production GP-P1 · GP01 生产契约（GP1-A/B/C/D + DX 审计 remediation D7） |
-| test_bridge | 25 | VERIFIED | EditorBridge C-ABI 契约（P3-B/P3-C：Script/Import/Rename 绑定 + 资产 index 稳定；P3-D：Runtime Play/Reload(_PERSIST)/Stop/错误恢复；AV-G3 E3：缺失 GUID 资产告警 + 实体保留；F1：契约组件 Camera 生命周期/负路径/落盘重启/未知类型告警） |
+| test_bridge | 28 | VERIFIED | EditorBridge C-ABI 契约（P3-B/P3-C：Script/Import/Rename 绑定 + 资产 index 稳定；P3-D：Runtime Play/Reload(_PERSIST)/Stop/错误恢复；AV-G3 E3：缺失 GUID 资产告警 + 实体保留；F1：Camera 生命周期/负路径/落盘重启/未知类型告警；F2：Collider 生命周期/落盘冷重启/负路径） |
 | test_core | 20 | VERIFIED | GLM 数学库 + StackAllocator（2026-08-28：Vector3Test 默认构造误读未初始化内存 → 改为值初始化后纳入） |
-| **合计** | **169** | | |
+| **合计** | **174** | | |
 
 ## Excluded 目标（记录原因，不计入基线）
 

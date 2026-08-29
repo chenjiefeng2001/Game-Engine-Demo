@@ -1,8 +1,8 @@
-# Component Ledger — F0 Audit
+# Component Ledger — F0 Audit (+F1 已完成 / F2 进行中)
 
-> 建立日期：2026-08-28 · 阶段：Engine Foundation v1 / F0
+> 建立日期：2026-08-28 · 阶段：Engine Foundation v1 / F0→F1（已完成）→F2（进行中）
 > 逐项资产台账。每项给出：运行时模型、序列化身份、脚本可达性、生命周期、
-> 引用身份、现有证据。F0 只登记不修改。
+> 引用身份、现有证据。F0 只登记不修改；F1 起允许引擎改动（五线同步纪律）。
 
 ---
 
@@ -178,4 +178,36 @@
 - `tests/test_scripting/*` — **25/25** PASS（F1E 通用 `Engine.component.*`、F1C 落于真实 GameObject）
 - F1 回归（本阶段）：test_core 20/20、test_content 42/42、test_gp01 22/22；Avalonia `dotnet build` 0 warn/0 err
 - `AvaloniaEditor --gate3g` — ALL GREEN（D1–D5 + M1 + Authoring/Scripting/Persistence + E1–E3）
-- `docs/Integrity-Report` / Evidence-Baseline — I1+I2+I3, 163 tests
+- `docs/Integrity-Report` / Evidence-Baseline — I1+I2+I3, **169 tests**（F2 baseline，`7b8e703` 冻结）
+
+---
+
+## F2 Ledger（进行中 · 依据 `docs/Engine-Foundation-F2-Charter.md`）
+
+> 每个 F2 阶段完成的裁决 / 摩擦 / 证据在此登记，互见 Charter 与
+> `Engine-Foundation-Phase-Plan.md` §F2。F2 只允许 3 个结局（A Promate / B Blocked / C Contract Failure）。
+
+### EF-F2-001 · F2 范围控制（开工即登记）
+
+- **裁决**：F2 = **单个第二实证组件 Collider**，不是“批量补齐物理组件”。成功标准不是
+  “又做对了一个组件”，而是 **「证明 F1 模板不是 Camera 特例，能跨 Physics/ECS 边界」**。
+- **范围红线（F2 不做）**：RigidBody、Prefab、Camera 渲染视口、RenderGraph、Collision Events
+  API、大规模组件迁移、ECS 重构、Undo/Redo、为“完整性”堆组件。
+- **契约纪律**：不为了序列化方便把 Physics 内部结构直接暴露给 Component Contract；
+  Lua 只走通用 `Engine.component.*`，**不新增 `Engine.collider.*`/`Engine.physics.set_*` 特化**
+  （否则 F1 通用组件原则退化为特化 API）。
+- **状态**：OPEN（F2-0 ✅ Baseline Freeze / F2-A ✅ Collider Contract 声明式上卷；
+  F2-B Physics Binding 待启动）。并存 F2-A 证据：`ColliderComponent.{h,cpp}`、`ComponentRegistry_Go.cpp`
+  （+Collider）、test_bridge 28/28、test_scripting 27/27、baseline→174。
+
+### GP-F2-001 · 双模型边界 / 假闭环禁令（开工即登记）
+
+- **裁决（Golden-Path 视角）**：F2 不得出现 Camera 式的“组件存在、真实系统旁边另有一套对象”
+  的假闭环。Collider 必须证明 **GameObject Component 与实际 Physics/ECS 数据之间存在明确、
+  稳定、可序列化的契约**，并明确生命周期所有权与同步责任（Create/Attach/Modify/Remove/
+  Destroy/Reload 各自发生什么）。
+- **边界结果处置**：若 Collider 自身暴露双模型架构无法干净表达 → 这是 F2 最有价值的结果，
+  进入 Result B（明确最小 Foundation 修复）或 Result C（停止补组件、重做 Foundation 架构）。
+  **Result C 视作成功**：F2 判断的是“这个引擎是否具备支撑未来项目的基础设施”，而非
+  “引擎有没有 Collider”。
+- **状态**：OPEN（F2-A 未触碰 Physics 边界，等待 F2-B 验证所有权模型）。

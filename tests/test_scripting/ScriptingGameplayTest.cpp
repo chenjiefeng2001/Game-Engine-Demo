@@ -23,6 +23,7 @@
 #include "Engine/Core/Scene/Scene.h"
 #include "Engine/Core/GameObject/GameObject.h"
 #include "Engine/Core/GameObject/CameraComponent.h"
+#include "Engine/Core/GameObject/ColliderComponent.h"
 
 #include <set>
 #include <string>
@@ -298,4 +299,74 @@ TEST_F(ScriptingGameplayTest, F1C_LuaCamera_ReflectedOnGameObject) {
     EXPECT_TRUE(cam->IsEnabled());
     EXPECT_STREQ(cam->GetComponentTypeName(), "Camera");
     EXPECT_GT(cam->GetPropertyCount(), 0u);
+}
+
+// ── F2-E-D：Collider 通用 Engine.component.*（不新增特化域）──
+// 证明 F1 模板可跨到 Collider：稳定类型名 + 多字段/多类型反射读写，全部走
+// 通用 component API，不产生 Engine.collider.* / Engine.physics.set_*。
+TEST_F(ScriptingGameplayTest, F2E_ComponentContract_LuaCollider) {
+    EXPECT_TRUE(eng.RunString(
+        "h = Engine.entity.spawn('collider_rig')\n"
+        "assert(h and h > 0)\n"
+        "assert(Engine.component.has(h, 'Collider') == false)\n"
+        "assert(Engine.component.add(h, 'Collider'))\n"
+        "assert(Engine.component.has(h, 'Collider'))\n"
+        "c = Engine.component.get(h, 'Collider')\n"
+        "assert(c and c > 0)\n"
+        "-- 默认：Circle/radius=0.5；反射属归（Bool/String/Float/Int）\n"
+        "assert(Engine.component.get_string(c, 'shape') == 'Circle')\n"
+        "assert(Engine.component.get_number(c, 'radius') == 0.5)\n"
+        "assert(Engine.component.get_bool(c, 'enabled'))\n"
+        "assert(Engine.component.get_bool(c, 'isSensor') == false)\n"
+        "-- 多字段写读：切 Box + 半宽半高 + 碰撞配置\n"
+        "assert(Engine.component.set_string(c, 'shape', 'Box'))\n"
+        "assert(Engine.component.get_string(c, 'shape') == 'Box')\n"
+        "assert(Engine.component.set_number(c, 'halfX', 2.0))\n"
+        "assert(Engine.component.set_number(c, 'halfY', 1.5))\n"
+        "assert(Engine.component.get_number(c, 'halfX') == 2.0)\n"
+        "assert(Engine.component.get_number(c, 'halfY') == 1.5)\n"
+        "assert(Engine.component.set_bool(c, 'isSensor', true))\n"
+        "assert(Engine.component.get_bool(c, 'isSensor'))\n"
+        "assert(Engine.component.set_number(c, 'category', 2))\n"
+        "assert(Engine.component.set_number(c, 'mask', 4))\n"
+        "assert(Engine.component.get_number(c, 'category') == 2)\n"
+        "assert(Engine.component.get_number(c, 'mask') == 4)\n"
+        "-- 未知形状 / 未知类型拒绝\n"
+        "assert(Engine.component.set_string(c, 'shape', 'Triangle') == false)\n"
+        "assert(Engine.component.add(h, 'Nope') == false)\n"
+        "-- 移除\n"
+        "assert(Engine.component.remove(h, 'Collider'))\n"
+        "assert(Engine.component.has(h, 'Collider') == false)\n"
+        "assert(Engine.entity.destroy(h))\n"))
+        << eng.GetLastError().message;
+
+    EXPECT_EQ(scene.GetObjectCount(), 0u);
+    EXPECT_EQ(GameplayAPI::HandleCount(), 0u);
+}
+
+// ── F2-C/E cross-check：Lua 创建的 Collider 落在真实 GameObject 组件上 ──
+TEST_F(ScriptingGameplayTest, F2C_LuaCollider_ReflectedOnGameObject) {
+    EXPECT_TRUE(eng.RunString(
+        "h = Engine.entity.spawn('col')\n"
+        "assert(Engine.component.add(h, 'Collider'))\n"
+        "c = Engine.component.get(h, 'Collider')\n"
+        "assert(Engine.component.set_string(c, 'shape', 'Box'))\n"
+        "assert(Engine.component.set_number(c, 'halfX', 3.0))\n"
+        "assert(Engine.component.set_number(c, 'halfY', 2.0))\n"
+        "assert(Engine.component.set_bool(c, 'enabled', true))\n"
+        "assert(Engine.component.set_number(c, 'mask', 8))\n"))
+        << eng.GetLastError().message;
+
+    ASSERT_EQ(scene.GetObjectCount(), 1u);
+    const auto* go = scene.GetObjects()[0].get();
+    auto* col = static_cast<Engine::ColliderComponent*>(
+        go->GetComponentByName("Collider"));
+    ASSERT_NE(col, nullptr) << "Lua add must realize a real ColliderComponent";
+    EXPECT_EQ(col->GetShape(), Engine::ColliderShape::Box);
+    EXPECT_FLOAT_EQ(col->GetHalfExtentsX(), 3.0f);
+    EXPECT_FLOAT_EQ(col->GetHalfExtentsY(), 2.0f);
+    EXPECT_TRUE(col->IsEnabled());
+    EXPECT_EQ(col->GetMask(), 8u);
+    EXPECT_STREQ(col->GetComponentTypeName(), "Collider");
+    EXPECT_EQ(col->GetPropertyCount(), 8u);
 }
