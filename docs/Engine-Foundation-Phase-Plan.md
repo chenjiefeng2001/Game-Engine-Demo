@@ -2,6 +2,9 @@
 
 > 建立日期：2026-08-28 · F0 完成后据此裁定 F1 并逐阶段推进。
 > **2026-08-28 F1 状态：已完成（Camera 实证全通，见 §2 F1）。**
+> **2026-08-28 F2 状态：F2-0 Baseline Freeze 已完成（Gate ALL GREEN 169）；
+> F2-A Collider Contract 已完成（声明式上卷，test_bridge 28 / test_scripting 27，baseline→174；见
+> `Engine-Foundation-F2-Charter.md`）；F2-B Physics Binding 待启动。**
 
 ---
 

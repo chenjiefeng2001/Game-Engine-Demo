@@ -1,6 +1,7 @@
 #include "Engine/Core/GameObject/ComponentRegistry_Go.h"
 #include "Engine/Core/GameObject/Component.h"
 #include "Engine/Core/GameObject/CameraComponent.h"
+#include "Engine/Core/GameObject/ColliderComponent.h"
 #include "Engine/Core/Log.h"
 
 #include <unordered_map>
@@ -25,8 +26,9 @@ namespace {
 void EnsureRegistered() {
     if (EnsureFlag()) return;
     EnsureFlag() = true;
-    // 内置契约组件在此收编（F1 当前仅 Camera；后续组件逐个加入）
+    // 内置契约组件在此收编（F1：Camera；F2：Collider）
     RegisterCameraComponent();
+    RegisterColliderComponent();
 }
 
 void Register(const std::string& typeName, Factory factory) {

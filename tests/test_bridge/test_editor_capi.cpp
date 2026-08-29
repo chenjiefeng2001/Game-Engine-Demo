@@ -940,4 +940,203 @@ TEST_F(EditorBridgeTest, F1UnknownComponentTypeLoadWarnsAndEntityRemains) {
     std::filesystem::current_path(oldcwd);
 }
 
+// ════════════════════════════════════════════════════════════
+// F2：Collider Contract（F2-A 声明式上卷）—— 生命周期/边界/落盘/冷重启
+//   不绑定 Physics（F2-B 才做）；验证多字段(Box) / 多类型(Bool/String/Float/Int)
+//   反射与 components[] 组件化往返，证明 F1 模板非 Camera 特例。
+// ════════════════════════════════════════════════════════════
+
+TEST_F(EditorBridgeTest, F2ColliderContractLifecycle) {
+    const std::string oldcwd = MakeScratchFacing();
+    ASSERT_EQ(EditorSession_OpenProject(m_Session, kManifest, kScene), 1);
+
+    const int32_t idx = EditorSession_CreateEntity(m_Session, "ColTarget");
+    ASSERT_GE(idx, 0);
+
+    // 挂载 Collider：稳定类型名 "Collider"（与 Camera 同源注册表）
+    EXPECT_EQ(EditorSession_AddComponent(m_Session, idx, "Collider"), 0);
+    EXPECT_EQ(EditorSession_HasComponent(m_Session, idx, "Collider"), 1);
+    EXPECT_EQ(EditorSession_GetComponentCount(m_Session, idx), 1);
+    char tn[64] = {};
+    EXPECT_EQ(EditorSession_GetComponentTypeAt(m_Session, idx, 0, tn, sizeof(tn)),
+              static_cast<int32_t>(std::strlen("Collider")));
+    EXPECT_STREQ(tn, "Collider");
+
+    // 重复 Add 幂等：仍是 1 份，不叠加（单实例语义）
+    EXPECT_EQ(EditorSession_AddComponent(m_Session, idx, "Collider"), 0);
+    EXPECT_EQ(EditorSession_GetComponentCount(m_Session, idx), 1);
+
+    // 默认值
+    char v[256] = {};
+    EXPECT_EQ(EditorSession_GetComponentProperty(m_Session, idx, "Collider",
+                                                 "shape", v, sizeof(v)),
+              static_cast<int32_t>(std::strlen("Circle")));
+    EXPECT_STREQ(v, "Circle");
+    EXPECT_EQ(EditorSession_GetComponentProperty(m_Session, idx, "Collider",
+                                                 "radius", v, sizeof(v)),
+              static_cast<int32_t>(std::strlen("0.5")));
+    EXPECT_EQ(EditorSession_GetComponentProperty(m_Session, idx, "Collider",
+                                                 "enabled", v, sizeof(v)),
+              static_cast<int32_t>(std::strlen("true")));
+
+    // 多字段写读：切 Box + 半宽半高 + 传感器 + 碰撞配置（四类型全覆盖）
+    EXPECT_EQ(EditorSession_SetComponentProperty(m_Session, idx, "Collider",
+                                                 "shape", "Box"), 0);
+    EXPECT_EQ(EditorSession_SetComponentProperty(m_Session, idx, "Collider",
+                                                 "halfX", "2.0"), 0);
+    EXPECT_EQ(EditorSession_SetComponentProperty(m_Session, idx, "Collider",
+                                                 "halfY", "1.5"), 0);
+    EXPECT_EQ(EditorSession_SetComponentProperty(m_Session, idx, "Collider",
+                                                 "isSensor", "true"), 0);
+    EXPECT_EQ(EditorSession_SetComponentProperty(m_Session, idx, "Collider",
+                                                 "category", "2"), 0);
+    EXPECT_EQ(EditorSession_SetComponentProperty(m_Session, idx, "Collider",
+                                                 "mask", "12"), 0);
+
+    EXPECT_EQ(EditorSession_GetComponentProperty(m_Session, idx, "Collider",
+                                                 "shape", v, sizeof(v)),
+              static_cast<int32_t>(std::strlen("Box")));
+    EXPECT_STREQ(v, "Box");
+    EXPECT_EQ(EditorSession_GetComponentProperty(m_Session, idx, "Collider",
+                                                 "halfX", v, sizeof(v)),
+              static_cast<int32_t>(std::strlen("2")));
+    EXPECT_STREQ(v, "2");
+    EXPECT_EQ(EditorSession_GetComponentProperty(m_Session, idx, "Collider",
+                                                 "halfY", v, sizeof(v)),
+              static_cast<int32_t>(std::strlen("1.5")));
+    EXPECT_STREQ(v, "1.5");
+    EXPECT_EQ(EditorSession_GetComponentProperty(m_Session, idx, "Collider",
+                                                 "isSensor", v, sizeof(v)),
+              static_cast<int32_t>(std::strlen("true")));
+    EXPECT_STREQ(v, "true");
+    EXPECT_EQ(EditorSession_GetComponentProperty(m_Session, idx, "Collider",
+                                                 "category", v, sizeof(v)),
+              static_cast<int32_t>(std::strlen("2")));
+    EXPECT_STREQ(v, "2");
+    EXPECT_EQ(EditorSession_GetComponentProperty(m_Session, idx, "Collider",
+                                                 "mask", v, sizeof(v)),
+              static_cast<int32_t>(std::strlen("12")));
+    EXPECT_STREQ(v, "12");
+
+    EXPECT_EQ(EditorSession_IsDirty(m_Session), 1);
+
+    // 移除：处理 -> 无，计数归零
+    EXPECT_EQ(EditorSession_RemoveComponent(m_Session, idx, "Collider"), 0);
+    EXPECT_EQ(EditorSession_HasComponent(m_Session, idx, "Collider"), 0);
+    EXPECT_EQ(EditorSession_GetComponentCount(m_Session, idx), 0);
+
+    (void)oldcwd;
+    std::filesystem::current_path(oldcwd);
+}
+
+TEST_F(EditorBridgeTest, F2ColliderSaveLoadColdRestart) {
+    const std::string oldcwd = MakeScratchFacing();
+    ASSERT_EQ(EditorSession_OpenProject(m_Session, kManifest, kScene), 1);
+    const int32_t idx = EditorSession_CreateEntity(m_Session, "ColRig");
+    ASSERT_GE(idx, 0);
+
+    EXPECT_EQ(EditorSession_AddComponent(m_Session, idx, "Collider"), 0);
+    EXPECT_EQ(EditorSession_SetComponentProperty(m_Session, idx, "Collider",
+                                                 "shape", "Box"), 0);
+    EXPECT_EQ(EditorSession_SetComponentProperty(m_Session, idx, "Collider",
+                                                 "halfX", "4.0"), 0);
+    EXPECT_EQ(EditorSession_SetComponentProperty(m_Session, idx, "Collider",
+                                                 "halfY", "3.0"), 0);
+    EXPECT_EQ(EditorSession_SetComponentProperty(m_Session, idx, "Collider",
+                                                 "isSensor", "true"), 0);
+    EXPECT_EQ(EditorSession_SetComponentProperty(m_Session, idx, "Collider",
+                                                 "category", "8"), 0);
+    EXPECT_EQ(EditorSession_SetComponentProperty(m_Session, idx, "Collider",
+                                                 "mask", "31"), 0);
+    EXPECT_EQ(EditorSession_SaveProject(m_Session), 1);
+
+    // 落盘证据：场景 JSON 含 components[] 中 Collider 及其参数
+    {
+        std::ifstream f("assets/gp01/Main.scene", std::ios::binary);
+        ASSERT_TRUE(f.good());
+        std::string text((std::istreambuf_iterator<char>(f)),
+                         std::istreambuf_iterator<char>());
+        EXPECT_NE(text.find("Collider"), std::string::npos)
+            << "scene must persist Collider component";
+        EXPECT_NE(text.find("\"shape\": \"Box\""), std::string::npos);
+        EXPECT_NE(text.find("\"halfX\": 4"), std::string::npos);
+        EXPECT_NE(text.find("\"category\": 8"), std::string::npos);
+    }
+
+    // 冷重启等价：重新 OpenProject → Deserialize → Attach 还原
+    EXPECT_EQ(EditorSession_OpenProject(m_Session, kManifest, kScene), 1);
+    const int32_t reloadIdx = FindEntityIndexByName(m_Session, "ColRig");
+    ASSERT_GE(reloadIdx, 0);
+    EXPECT_EQ(EditorSession_HasComponent(m_Session, reloadIdx, "Collider"), 1);
+    char v[256] = {};
+    EXPECT_EQ(EditorSession_GetComponentProperty(m_Session, reloadIdx, "Collider",
+                                                 "shape", v, sizeof(v)),
+              static_cast<int32_t>(std::strlen("Box")));
+    EXPECT_STREQ(v, "Box");
+    EXPECT_EQ(EditorSession_GetComponentProperty(m_Session, reloadIdx, "Collider",
+                                                 "halfX", v, sizeof(v)), 1);
+    EXPECT_STRCASEEQ(v, "4");
+    EXPECT_EQ(EditorSession_GetComponentProperty(m_Session, reloadIdx, "Collider",
+                                                 "halfY", v, sizeof(v)),
+              static_cast<int32_t>(std::strlen("3")));
+    EXPECT_STRCASEEQ(v, "3");
+    EXPECT_EQ(EditorSession_GetComponentProperty(m_Session, reloadIdx, "Collider",
+                                                 "isSensor", v, sizeof(v)),
+              static_cast<int32_t>(std::strlen("true")));
+    EXPECT_STREQ(v, "true");
+    EXPECT_EQ(EditorSession_GetComponentProperty(m_Session, reloadIdx, "Collider",
+                                                 "category", v, sizeof(v)),
+              static_cast<int32_t>(std::strlen("8")));
+    EXPECT_STREQ(v, "8");
+    EXPECT_EQ(EditorSession_GetComponentProperty(m_Session, reloadIdx, "Collider",
+                                                 "mask", v, sizeof(v)),
+              static_cast<int32_t>(std::strlen("31")));
+    EXPECT_STREQ(v, "31");
+
+    (void)oldcwd;
+    std::filesystem::current_path(oldcwd);
+}
+
+TEST_F(EditorBridgeTest, F2ColliderNegativePaths) {
+    const std::string oldcwd = MakeScratchFacing();
+    ASSERT_EQ(EditorSession_OpenProject(m_Session, kManifest, kScene), 1);
+    const int32_t idx = EditorSession_CreateEntity(m_Session, "ColNeg");
+    ASSERT_GE(idx, 0);
+
+    // 未知契约类型拒绝（Add）
+    EXPECT_LT(EditorSession_AddComponent(m_Session, idx, "Nope"), 0);
+
+    // 越界实体
+    EXPECT_LT(EditorSession_AddComponent(m_Session, 99999, "Collider"), 0);
+
+    // 挂载前 SetComponentProperty 拒绝
+    EXPECT_LT(EditorSession_SetComponentProperty(m_Session, idx, "Collider",
+                                                 "radius", "5"), 0);
+    EXPECT_EQ(EditorSession_AddComponent(m_Session, idx, "Collider"), 0);
+
+    // 未知属性 / 坏值拒绝（浮点、形状、布尔）
+    EXPECT_LT(EditorSession_SetComponentProperty(m_Session, idx, "Collider",
+                                                 "nope", "1"), 0);
+    EXPECT_LT(EditorSession_SetComponentProperty(m_Session, idx, "Collider",
+                                                 "radius", "abc"), 0);
+    EXPECT_LT(EditorSession_SetComponentProperty(m_Session, idx, "Collider",
+                                                 "shape", "Triangle"), 0);
+    EXPECT_LT(EditorSession_SetComponentProperty(m_Session, idx, "Collider",
+                                                 "isSensor", "maybe"), 0);
+
+    // 失败写不改值（shape 仍为默认 Circle）
+    char v[64] = {};
+    EXPECT_EQ(EditorSession_GetComponentProperty(m_Session, idx, "Collider",
+                                                 "shape", v, sizeof(v)),
+              static_cast<int32_t>(std::strlen("Circle")));
+    EXPECT_STREQ(v, "Circle");
+
+    // 移除不存在的组件拒绝
+    EXPECT_EQ(EditorSession_RemoveComponent(m_Session, idx, "Collider"), 0);
+    EXPECT_LT(EditorSession_RemoveComponent(m_Session, idx, "Collider"), 0);
+
+    (void)oldcwd;
+    std::filesystem::current_path(oldcwd);
+}
+
 } // namespace
