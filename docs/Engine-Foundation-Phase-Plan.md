@@ -4,7 +4,11 @@
 > **2026-08-28 F1 状态：已完成（Camera 实证全通，见 §2 F1）。**
 > **2026-08-28 F2 状态：F2-0 Baseline Freeze 已完成（Gate ALL GREEN 169）；
 > F2-A Collider Contract 已完成（声明式上卷，test_bridge 28 / test_scripting 27，baseline→174；见
-> `Engine-Foundation-F2-Charter.md`）；F2-B Physics Binding 待启动。**
+> `Engine-Foundation-F2-Charter.md`）；F2-B Physics Binding 已完成并 FROZEN（
+> **Result A**：GameObject + Collider → Adapter → Box2D 全链、Destroy/Rebuild、Cold Restart、
+> 行为一致（B6 动态探针真交互 + 三路 A≈B≈C），并修复 `ClearFixtures()` 残留实心 shape 缺陷；
+> in-scope 合计 212 · Gate ALL GREEN；见 `Engine-Foundation-F2B-Plan.md` +
+> `Engine-Foundation-F2B-Closure.md`）。下一目标是 F2-C RigidBody Contract（Contract-only，不做 Adapter）。**
 
 ---
 
