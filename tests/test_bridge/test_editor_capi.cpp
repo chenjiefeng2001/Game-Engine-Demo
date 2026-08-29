@@ -737,4 +737,207 @@ std::string EditorBridgeTest::MakeScratchFacing() {
     return old;
 }
 
+// ════════════════════════════════════════════════════════════
+// F1：Component Contract v1 — Camera 合同组件（生命周期/边界/落盘/重启）
+// ════════════════════════════════════════════════════════════
+
+static int FindEntityIndexByName(EditorSessionHandle s, const char* target) {
+    const int32_t n = EditorSession_GetEntityCount(s);
+    for (int32_t i = 0; i < n; ++i) {
+        char name[128] = {};
+        EditorSession_GetEntityName(s, i, name, sizeof(name));
+        if (std::strcmp(name, target) == 0) return i;
+    }
+    return -1;
+}
+
+TEST_F(EditorBridgeTest, F1CameraComponentLifecycle) {
+    const std::string oldcwd = MakeScratchFacing();
+    ASSERT_EQ(EditorSession_OpenProject(m_Session, kManifest, kScene), 1);
+
+    const int32_t idx = EditorSession_CreateEntity(m_Session, "CamTarget");
+    ASSERT_GE(idx, 0);
+
+    // 挂载 Camera：成功，类型为稳定串 "Camera"
+    EXPECT_EQ(EditorSession_AddComponent(m_Session, idx, "Camera"), 0);
+    EXPECT_EQ(EditorSession_HasComponent(m_Session, idx, "Camera"), 1);
+    EXPECT_EQ(EditorSession_GetComponentCount(m_Session, idx), 1);
+    char tn[64] = {};
+    EXPECT_EQ(EditorSession_GetComponentTypeAt(m_Session, idx, 0, tn,
+                                               sizeof(tn)),
+              static_cast<int32_t>(std::strlen("Camera")));
+    EXPECT_STREQ(tn, "Camera");
+
+    // 重复 Add 幂等：仍是 1 份，不叠加
+    EXPECT_EQ(EditorSession_AddComponent(m_Session, idx, "Camera"), 0);
+    EXPECT_EQ(EditorSession_GetComponentCount(m_Session, idx), 1);
+
+    // 反射属性读写（zoom / enabled / viewport / bounds）
+    char v[256] = {};
+    EXPECT_EQ(EditorSession_GetComponentProperty(m_Session, idx, "Camera",
+                                                 "zoom", v, sizeof(v)),
+              static_cast<int32_t>(std::strlen("1")));
+    EXPECT_STREQ(v, "1");          // 默认 zoom=1
+
+    EXPECT_EQ(EditorSession_SetComponentProperty(m_Session, idx, "Camera",
+                                                 "zoom", "2.5"), 0);
+    EXPECT_EQ(EditorSession_GetComponentProperty(m_Session, idx, "Camera",
+                                                 "zoom", v, sizeof(v)),
+              static_cast<int32_t>(std::strlen("2.5")));
+    EXPECT_STREQ(v, "2.5");
+
+    EXPECT_EQ(EditorSession_SetComponentProperty(m_Session, idx, "Camera",
+                                                 "enabled", "false"), 0);
+    EXPECT_EQ(EditorSession_GetComponentProperty(m_Session, idx, "Camera",
+                                                 "enabled", v, sizeof(v)),
+              static_cast<int32_t>(std::strlen("false")));
+    EXPECT_STREQ(v, "false");
+
+    EXPECT_EQ(EditorSession_SetComponentProperty(m_Session, idx, "Camera",
+                                                 "viewport", "0 0 800 600"), 0);
+    EXPECT_EQ(EditorSession_GetComponentProperty(m_Session, idx, "Camera",
+                                                 "viewport", v, sizeof(v)),
+              static_cast<int32_t>(std::strlen("0 0 800 600")));
+    EXPECT_STREQ(v, "0 0 800 600");
+    EXPECT_EQ(EditorSession_SetComponentProperty(m_Session, idx, "Camera",
+                                                 "bounds", "1 2 3 4"), 0);
+    EXPECT_EQ(EditorSession_GetComponentProperty(m_Session, idx, "Camera",
+                                                 "bounds", v, sizeof(v)),
+              static_cast<int32_t>(std::strlen("1 2 3 4")));
+    EXPECT_STREQ(v, "1 2 3 4");
+
+    EXPECT_EQ(EditorSession_IsDirty(m_Session), 1);
+
+    // 移除：处理 -> 无，计数归零
+    EXPECT_EQ(EditorSession_RemoveComponent(m_Session, idx, "Camera"), 0);
+    EXPECT_EQ(EditorSession_HasComponent(m_Session, idx, "Camera"), 0);
+    EXPECT_EQ(EditorSession_GetComponentCount(m_Session, idx), 0);
+
+    (void)oldcwd;
+    std::filesystem::current_path(oldcwd);
+}
+
+TEST_F(EditorBridgeTest, F1ComponentContractNegativePaths) {
+    const std::string oldcwd = MakeScratchFacing();
+    ASSERT_EQ(EditorSession_OpenProject(m_Session, kManifest, kScene), 1);
+    const int32_t idx = EditorSession_CreateEntity(m_Session, "Neg");
+    ASSERT_GE(idx, 0);
+
+    // 未知契约类型拒绝（Add / Has / property 任一）
+    EXPECT_LT(EditorSession_AddComponent(m_Session, idx, "Nope"), 0);
+    EXPECT_EQ(EditorSession_HasComponent(m_Session, idx, "Nope"), 0);
+    EXPECT_LT(EditorSession_RemoveComponent(m_Session, idx, "Nope"), 0);
+
+    // 越界实体 / 空会话
+    EXPECT_LT(EditorSession_AddComponent(m_Session, 99999, "Camera"), 0);
+    EXPECT_LT(EditorSession_GetComponentProperty(m_Session, 99999, "Camera",
+                                                 "zoom", nullptr, 0), 0);
+
+    // 音符挂载前 SetComponentProperty 拒绝
+    EXPECT_LT(EditorSession_SetComponentProperty(m_Session, idx, "Camera",
+                                                 "zoom", "5"), 0);
+    EXPECT_EQ(EditorSession_AddComponent(m_Session, idx, "Camera"), 0);
+
+    // 未知属性 / 坏值 / 不可写 拒绝
+    EXPECT_LT(EditorSession_SetComponentProperty(m_Session, idx, "Camera",
+                                                 "nope", "1"), 0);
+    EXPECT_LT(EditorSession_SetComponentProperty(m_Session, idx, "Camera",
+                                                 "zoom", "abc"), 0);
+    EXPECT_LT(EditorSession_SetComponentProperty(m_Session, idx, "Camera",
+                                                 "enabled", "maybe"), 0);
+
+    // 失败写不改值
+    char v[64] = {};
+    EXPECT_EQ(EditorSession_GetComponentProperty(m_Session, idx, "Camera",
+                                                 "zoom", v, sizeof(v)),
+              static_cast<int32_t>(std::strlen("1")));
+    EXPECT_STREQ(v, "1");
+
+    (void)oldcwd;
+    std::filesystem::current_path(oldcwd);
+}
+
+TEST_F(EditorBridgeTest, F1CameraSaveLoadColdRestart) {
+    const std::string oldcwd = MakeScratchFacing();
+    ASSERT_EQ(EditorSession_OpenProject(m_Session, kManifest, kScene), 1);
+    const int32_t idx = EditorSession_CreateEntity(m_Session, "CameraRig");
+    ASSERT_GE(idx, 0);
+
+    EXPECT_EQ(EditorSession_AddComponent(m_Session, idx, "Camera"), 0);
+    EXPECT_EQ(EditorSession_SetComponentProperty(m_Session, idx, "Camera",
+                                                 "zoom", "3"), 0);
+    EXPECT_EQ(EditorSession_SetComponentProperty(m_Session, idx, "Camera",
+                                                 "enabled", "false"), 0);
+    EXPECT_EQ(EditorSession_SetComponentProperty(m_Session, idx, "Camera",
+                                                 "viewport", "0 0 800 600"), 0);
+    EXPECT_EQ(EditorSession_SetComponentProperty(m_Session, idx, "Camera",
+                                                 "bounds", "1 2 3 4"), 0);
+    EXPECT_EQ(EditorSession_SaveProject(m_Session), 1);
+
+    // 落盘证据：场景 JSON 含 components[] 且 Camera 类型的值
+    {
+        std::ifstream f("assets/gp01/Main.scene", std::ios::binary);
+        ASSERT_TRUE(f.good());
+        std::string text((std::istreambuf_iterator<char>(f)),
+                         std::istreambuf_iterator<char>());
+        EXPECT_NE(text.find("components"), std::string::npos)
+            << "scene must now carry components[]";
+        EXPECT_NE(text.find("Camera"), std::string::npos)
+            << "scene must persist Camera component";
+        EXPECT_NE(text.find("\"zoom\": 3"), std::string::npos);
+    }
+
+    // 冷重启等价：重新 OpenProject 走 LoadSnapshotFromFile→Instantiate 重建
+    EXPECT_EQ(EditorSession_OpenProject(m_Session, kManifest, kScene), 1);
+    const int32_t reloadIdx = FindEntityIndexByName(m_Session, "CameraRig");
+    ASSERT_GE(reloadIdx, 0);
+    EXPECT_EQ(EditorSession_HasComponent(m_Session, reloadIdx, "Camera"), 1);
+    char v[256] = {};
+    EXPECT_EQ(EditorSession_GetComponentProperty(m_Session, reloadIdx, "Camera",
+                                                 "zoom", v, sizeof(v)),
+              static_cast<int32_t>(std::strlen("3")));
+    EXPECT_STREQ(v, "3");
+    EXPECT_EQ(EditorSession_GetComponentProperty(m_Session, reloadIdx, "Camera",
+                                                 "enabled", v, sizeof(v)),
+              static_cast<int32_t>(std::strlen("false")));
+    EXPECT_STREQ(v, "false");
+    EXPECT_EQ(EditorSession_GetComponentProperty(m_Session, reloadIdx, "Camera",
+                                                 "viewport", v, sizeof(v)),
+              static_cast<int32_t>(std::strlen("0 0 800 600")));
+    EXPECT_STREQ(v, "0 0 800 600");
+    EXPECT_EQ(EditorSession_GetComponentProperty(m_Session, reloadIdx, "Camera",
+                                                 "bounds", v, sizeof(v)),
+              static_cast<int32_t>(std::strlen("1 2 3 4")));
+    EXPECT_STREQ(v, "1 2 3 4");
+
+    (void)oldcwd;
+    std::filesystem::current_path(oldcwd);
+}
+
+TEST_F(EditorBridgeTest, F1UnknownComponentTypeLoadWarnsAndEntityRemains) {
+    const std::string oldcwd = MakeScratchFacing();
+    // 场景引用一个未注册的契约组件类型 → 契约：告警 + 实体照常加载 + 无该组件
+    WriteScratchScript("assets/gp01/F1Neg.scene",
+        std::string("{\n")
+        + "  \"format\": \"engine.scene\", \"version\": 1,\n"
+        + "  \"entities\": [ { \"name\": \"Probe\", \"position\": [0,0,0],\n"
+        + "     \"components\": [ { \"type\": \"NoSuchComponent\", \"data\": {} } ] } ]\n"
+        + "}\n");
+    EXPECT_EQ(EditorSession_OpenProject(m_Session, kManifest,
+                                        "assets/gp01/F1Neg.scene"), 1);
+    EXPECT_EQ(EditorSession_GetEntityCount(m_Session), 1);
+
+    const int32_t probe = FindEntityIndexByName(m_Session, "Probe");
+    ASSERT_GE(probe, 0);
+    EXPECT_EQ(EditorSession_HasComponent(m_Session, probe, "NoSuchComponent"), 0);
+
+    char warn[1024] = {};
+    EXPECT_GT(EditorSession_GetWarnings(m_Session, warn, sizeof(warn)), 0);
+    EXPECT_NE(std::strstr(warn, "unknown contract component type"), nullptr);
+    EXPECT_NE(std::strstr(warn, "NoSuchComponent"), nullptr);
+
+    (void)oldcwd;
+    std::filesystem::current_path(oldcwd);
+}
+
 } // namespace

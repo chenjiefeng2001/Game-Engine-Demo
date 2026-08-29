@@ -21,6 +21,8 @@
 #include "Engine/Scripting/ScriptAPI.h"
 #include "Engine/Scripting/GameplayAPI.h"
 #include "Engine/Core/Scene/Scene.h"
+#include "Engine/Core/GameObject/GameObject.h"
+#include "Engine/Core/GameObject/CameraComponent.h"
 
 #include <set>
 #include <string>
@@ -242,4 +244,58 @@ TEST_F(ScriptingGameplayTest, G8_SandboxRuntimeSmoke_RealAssetChain) {
         "local x,y,z = Engine.transform.get_position(_PERSIST.h)\n"
         "assert(z == 4.5)\n"))
         << inst.GetEngine()->GetLastError().message;
+}
+
+// ── F1-E：Component Contract —— 通用 Engine.component.* Lua API ──
+// Camera 作为参考组件，验证稳定类型名 + 反射属性读写（不堆 Engine.camera.* 特化）。
+TEST_F(ScriptingGameplayTest, F1E_ComponentContract_LuaCamera) {
+    EXPECT_TRUE(eng.RunString(
+        "h = Engine.entity.spawn('cam_rig')\n"
+        "assert(h and h > 0)\n"
+        "assert(Engine.component.has(h, 'Camera') == false)\n"
+        "assert(Engine.component.add(h, 'Camera'))\n"
+        "assert(Engine.component.has(h, 'Camera'))\n"
+        "c = Engine.component.get(h, 'Camera')\n"
+        "assert(c and c > 0)\n"
+        "-- 反射属性读写\n"
+        "assert(Engine.component.set_number(c, 'zoom', 2.5))\n"
+        "assert(Engine.component.get_number(c, 'zoom') == 2.5)\n"
+        "assert(Engine.component.set_bool(c, 'enabled', false))\n"
+        "assert(Engine.component.get_bool(c, 'enabled') == false)\n"
+        "assert(Engine.component.set_string(c, 'viewport', '0 0 800 600'))\n"
+        "assert(Engine.component.get_string(c, 'viewport') == '0 0 800 600')\n"
+        "-- 未知属性 / 未知类型拒绝\n"
+        "assert(Engine.component.set_number(c, 'nope', 1) == false)\n"
+        "assert(Engine.component.get_number(c, 'nope') == nil)\n"
+        "assert(Engine.component.add(h, 'Nope') == false)\n"
+        "-- 移除\n"
+        "assert(Engine.component.remove(h, 'Camera'))\n"
+        "assert(Engine.component.has(h, 'Camera') == false)\n"
+        "assert(Engine.entity.destroy(h))\n"))
+        << eng.GetLastError().message;
+
+    // 清理后场景为空、句柄表清零（证明组件句柄随实体销毁而失效）
+    EXPECT_EQ(scene.GetObjectCount(), 0u);
+    EXPECT_EQ(GameplayAPI::HandleCount(), 0u);
+}
+
+// ── F1-C/E cross-check：Lua 创建的 Camera 落在真实 GameObject 组件上 ──
+TEST_F(ScriptingGameplayTest, F1C_LuaCamera_ReflectedOnGameObject) {
+    EXPECT_TRUE(eng.RunString(
+        "h = Engine.entity.spawn('cam')\n"
+        "assert(Engine.component.add(h, 'Camera'))\n"
+        "c = Engine.component.get(h, 'Camera')\n"
+        "assert(Engine.component.set_number(c, 'zoom', 4.0))\n"
+        "assert(Engine.component.set_bool(c, 'enabled', true))\n"))
+        << eng.GetLastError().message;
+
+    ASSERT_EQ(scene.GetObjectCount(), 1u);
+    const auto* go = scene.GetObjects()[0].get();
+    auto* cam = static_cast<Engine::CameraComponent*>(
+        go->GetComponentByName("Camera"));
+    ASSERT_NE(cam, nullptr) << "Lua add must realize a real CameraComponent";
+    EXPECT_FLOAT_EQ(cam->GetZoom(), 4.0f);
+    EXPECT_TRUE(cam->IsEnabled());
+    EXPECT_STREQ(cam->GetComponentTypeName(), "Camera");
+    EXPECT_GT(cam->GetPropertyCount(), 0u);
 }

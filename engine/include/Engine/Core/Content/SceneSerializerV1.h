@@ -34,11 +34,21 @@ namespace Engine {
 namespace Engine::Content {
 
     // ── 快照模型（格式稳定层：与运行时对象解耦）──
+    /// 一个已收编的 Contract 组件实例（F1-D，组件化快照）
+    /// type = GetComponentTypeName() 稳定字符串；data = Component::Serialize 产出。
+    struct SerializedComponent {
+        std::string   type;
+        nlohmann::json data = nlohmann::json::object();
+    };
+
     struct SerializedEntity {
         std::string  name;
         float        px = 0.f, py = 0.f, pz = 0.f;
         ResourceGUID spriteGuid;   // Null = 无
         ResourceGUID scriptGuid;   // Null = 无
+        /// 已收编的 Contract 组件（F1-D，组件化快照）。
+        /// 默认空 = 无契约组件；sprite/script 顶层字段保留向后兼容。
+        std::vector<SerializedComponent> components;
     };
 
     struct SceneSnapshot {

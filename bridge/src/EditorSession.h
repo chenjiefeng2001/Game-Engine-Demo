@@ -53,6 +53,27 @@ public:
     bool RenameEntity(int32_t index, const std::string& newName);
     bool GetEntitySprite(int32_t index, std::string* out) const;
     bool AssignSprite(int32_t assetIndex, int32_t entityIndex);
+
+    // ── F1（Component Contract）：约定组件（Camera 等）──
+    /// 挂载契约组件（单实例语义；类型未注册拒绝）。会置 dirty + 事件。
+    bool AddComponent(int32_t entityIndex, const std::string& typeName);
+    /// 移除契约组件（未找到拒绝）。会置 dirty + 事件。
+    bool RemoveComponent(int32_t entityIndex, const std::string& typeName);
+    /// 实体是否已挂载该契约组件。
+    bool HasComponent(int32_t entityIndex, const std::string& typeName) const;
+    /// 实体上已挂载的契约组件数量（-1=失败）。
+    int32_t GetComponentCount(int32_t entityIndex) const;
+    /// 按序读契约组件稳定类型名（false=越界/无项目）。
+    bool GetComponentTypeAt(int32_t entityIndex, int32_t compIndex,
+                            std::string* out) const;
+    /// 读契约组件反射属性（字符串值）。false=实体/组件/属性不存在。
+    bool GetComponentProperty(int32_t entityIndex, const std::string& typeName,
+                              const std::string& propName,
+                              std::string* out) const;
+    /// 写契约组件反射属性（编辑态；字符串按类型解析）。会置 dirty + 事件。
+    bool SetComponentProperty(int32_t entityIndex, const std::string& typeName,
+                              const std::string& propName,
+                              const std::string& valueStr);
     /// P3-B：读实体脚本绑定路径（空串=无绑定；契约内 scriptGuid 是真实数据）
     bool GetEntityScript(int32_t index, std::string* out) const;
     /// P3-B：Assign Script —— 只写 binding 表（运行时由 Play 消费 director），

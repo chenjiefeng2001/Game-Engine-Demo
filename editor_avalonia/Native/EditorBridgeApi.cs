@@ -23,6 +23,8 @@ public static class EditorBridgeApi
     // ── Phase 3-D (P3-D) 运行时 ──
     public const int EvPlayStarted = 11;
     public const int EvPlayStopped = 12;
+    // ── F1 (Component Contract)：契约组件变更（Camera 等）──
+    public const int EvComponentChanged = 13;
 
     [UnmanagedFunctionPointer(CallingConvention.Cdecl)]
     public delegate void EditorEventCallback(int eventType,
@@ -158,4 +160,34 @@ public static class EditorBridgeApi
     [DllImport("EditorBridge", CallingConvention = CallingConvention.Cdecl)]
     public static extern int EditorSession_GetWarnings(IntPtr session,
         IntPtr outBuffer, int capacity);
+
+    // ── F1 (Component Contract)：契约组件（Camera 等）──
+    [DllImport("EditorBridge", CallingConvention = CallingConvention.Cdecl)]
+    public static extern int EditorSession_AddComponent(IntPtr session,
+        int entityIndex,
+        [MarshalAs(UnmanagedType.LPUTF8Str)] string typeName);
+
+    [DllImport("EditorBridge", CallingConvention = CallingConvention.Cdecl)]
+    public static extern int EditorSession_RemoveComponent(IntPtr session,
+        int entityIndex,
+        [MarshalAs(UnmanagedType.LPUTF8Str)] string typeName);
+
+    [DllImport("EditorBridge", CallingConvention = CallingConvention.Cdecl)]
+    public static extern int EditorSession_HasComponent(IntPtr session,
+        int entityIndex,
+        [MarshalAs(UnmanagedType.LPUTF8Str)] string typeName);
+
+    [DllImport("EditorBridge", CallingConvention = CallingConvention.Cdecl)]
+    public static extern int EditorSession_GetComponentProperty(IntPtr session,
+        int entityIndex,
+        [MarshalAs(UnmanagedType.LPUTF8Str)] string typeName,
+        [MarshalAs(UnmanagedType.LPUTF8Str)] string propName,
+        IntPtr outBuffer, int capacity);
+
+    [DllImport("EditorBridge", CallingConvention = CallingConvention.Cdecl)]
+    public static extern int EditorSession_SetComponentProperty(IntPtr session,
+        int entityIndex,
+        [MarshalAs(UnmanagedType.LPUTF8Str)] string typeName,
+        [MarshalAs(UnmanagedType.LPUTF8Str)] string propName,
+        [MarshalAs(UnmanagedType.LPUTF8Str)] string valueStr);
 }

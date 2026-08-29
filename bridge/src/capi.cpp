@@ -127,6 +127,70 @@ EDITOR_BRIDGE_API int32_t EditorSession_AssignScript(EditorSessionHandle h,
     return S(h)->AssignScript(assetIndex, entityIndex) ? 0 : -1;
 }
 
+// ── Component Contract（F1）：约定组件（Camera 等）──
+
+static inline int32_t CStrCopyTo(const std::string& s, char* out, int32_t cap) {
+    if (!out || cap <= 0) return -1;
+    const int32_t len = static_cast<int32_t>(s.size());
+    const int32_t copy = (len < cap - 1) ? len : cap - 1;
+    std::memcpy(out, s.data(), static_cast<size_t>(copy));
+    out[copy] = '\0';
+    return len;
+}
+
+EDITOR_BRIDGE_API int32_t EditorSession_AddComponent(EditorSessionHandle h,
+                                                     int32_t entityIndex,
+                                                     const char* typeName) {
+    if (!h || !typeName) return -1;
+    return S(h)->AddComponent(entityIndex, typeName) ? 0 : -1;
+}
+
+EDITOR_BRIDGE_API int32_t EditorSession_RemoveComponent(EditorSessionHandle h,
+                                                        int32_t entityIndex,
+                                                        const char* typeName) {
+    if (!h || !typeName) return -1;
+    return S(h)->RemoveComponent(entityIndex, typeName) ? 0 : -1;
+}
+
+EDITOR_BRIDGE_API int32_t EditorSession_HasComponent(EditorSessionHandle h,
+                                                     int32_t entityIndex,
+                                                     const char* typeName) {
+    if (!h || !typeName) return -1;
+    return S(h)->HasComponent(entityIndex, typeName) ? 1 : 0;
+}
+
+EDITOR_BRIDGE_API int32_t EditorSession_GetComponentCount(EditorSessionHandle h,
+                                                          int32_t entityIndex) {
+    return h ? S(h)->GetComponentCount(entityIndex) : -1;
+}
+
+EDITOR_BRIDGE_API int32_t EditorSession_GetComponentTypeAt(
+    EditorSessionHandle h, int32_t entityIndex, int32_t compIndex,
+    char* out, int32_t cap) {
+    if (!h || !out || cap <= 0) return -1;
+    std::string tn;
+    if (!S(h)->GetComponentTypeAt(entityIndex, compIndex, &tn)) return -1;
+    return CStrCopyTo(tn, out, cap);
+}
+
+EDITOR_BRIDGE_API int32_t EditorSession_GetComponentProperty(
+    EditorSessionHandle h, int32_t entityIndex, const char* typeName,
+    const char* propName, char* out, int32_t cap) {
+    if (!h || !typeName || !propName || !out || cap <= 0) return -1;
+    std::string val;
+    if (!S(h)->GetComponentProperty(entityIndex, typeName, propName, &val))
+        return -1;
+    return CStrCopyTo(val, out, cap);
+}
+
+EDITOR_BRIDGE_API int32_t EditorSession_SetComponentProperty(
+    EditorSessionHandle h, int32_t entityIndex, const char* typeName,
+    const char* propName, const char* valueStr) {
+    if (!h || !typeName || !propName || !valueStr) return -1;
+    return S(h)->SetComponentProperty(entityIndex, typeName, propName,
+                                      valueStr) ? 0 : -1;
+}
+
 EDITOR_BRIDGE_API int32_t EditorSession_GetAssetGuid(EditorSessionHandle h,
                                                      int32_t index,
                                                      char* out,

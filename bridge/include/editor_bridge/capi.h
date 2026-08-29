@@ -45,6 +45,9 @@ enum {
     EV_PLAY_STARTED = 11,
     /// P3-D：回到编辑态（Stop）。payload: ""
     EV_PLAY_STOPPED = 12,
+    /// F1（Component Contract）：实体组件增删/属性变更。
+    /// payload: "idx=<i>;type=<t>;action=<add|remove|set>"（Camera 等契约组件）
+    EV_COMPONENT_CHANGED = 13,
 };
 
 // ── 会话生命周期 ──────────────────────────────────────────────
@@ -177,6 +180,42 @@ EDITOR_BRIDGE_API int32_t EditorSession_GetRuntimeError(EditorSessionHandle h,
 /// 非运行态/取不到时返回 defaultVal。
 EDITOR_BRIDGE_API int32_t EditorSession_RuntimePersistInt(
     EditorSessionHandle h, const char* key, int32_t defaultVal);
+
+// ── Component Contract（F1）：实体契约组件（Camera 等）─────────────
+// 契约身份 = 稳定类型名（与 Serialization/Lua 共用）。typeName 必须为已
+// 注册的契约组件类型，否则 Add 拒绝。属性经反射元数据读写（字符串值）。
+
+/// 给实体挂载一个契约组件（类型已注册才成功）；单实例语义（重复 = 幂等返回既有）。
+/// 会置 dirty。成功 0，失败 -1。成功广播 EV_COMPONENT_CHANGED(action=add)。
+EDITOR_BRIDGE_API int32_t EditorSession_AddComponent(EditorSessionHandle h,
+                                                     int32_t entityIndex,
+                                                     const char* typeName);
+/// 从实体移除契约组件（按其稳定类型名）。会置 dirty。成功 0，失败 -1。
+/// 成功广播 EV_COMPONENT_CHANGED(action=remove)。
+EDITOR_BRIDGE_API int32_t EditorSession_RemoveComponent(EditorSessionHandle h,
+                                                        int32_t entityIndex,
+                                                        const char* typeName);
+/// 实体是否已挂载该契约组件：1/0；失败 -1。
+EDITOR_BRIDGE_API int32_t EditorSession_HasComponent(EditorSessionHandle h,
+                                                     int32_t entityIndex,
+                                                     const char* typeName);
+/// 实体上已挂载的契约组件数量；失败 -1。
+EDITOR_BRIDGE_API int32_t EditorSession_GetComponentCount(EditorSessionHandle h,
+                                                          int32_t entityIndex);
+/// 按序读实体上第 compIndex 个契约组件的稳定类型名。返回长度或 -1。
+EDITOR_BRIDGE_API int32_t EditorSession_GetComponentTypeAt(
+    EditorSessionHandle h, int32_t entityIndex, int32_t compIndex,
+    char* out, int32_t cap);
+/// 读组件反射属性值（字符串形式：bool->"true/false"，float->%g，int->十进制，
+/// string->原样）。返回长度或 -1（实体/组件/属性不存在）。
+EDITOR_BRIDGE_API int32_t EditorSession_GetComponentProperty(
+    EditorSessionHandle h, int32_t entityIndex, const char* typeName,
+    const char* propName, char* out, int32_t cap);
+/// 写组件反射属性值（编辑态；字符串按属性类型解析）。会置 dirty。成功 0，失败 -1。
+/// 成功广播 EV_COMPONENT_CHANGED(action=set)。
+EDITOR_BRIDGE_API int32_t EditorSession_SetComponentProperty(
+    EditorSessionHandle h, int32_t entityIndex, const char* typeName,
+    const char* propName, const char* valueStr);
 
 // ── 脏状态（P2-E：Clean->Edit->Dirty->Save->Clean）─────────────
 

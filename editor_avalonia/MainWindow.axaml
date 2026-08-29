@@ -96,6 +96,34 @@
               <TextBox Grid.Row="2" Grid.Column="1" Text="{Binding PosZ}" Margin="2"/>
             </Grid>
             <Button Content="Apply Transform" Click="OnApplyTransform" HorizontalAlignment="Left"/>
+
+            <!-- F1 (Component Contract)：Camera Inspector（反射元数据驱动）-->
+            <TextBlock Text="Camera" FontWeight="Bold" Margin="2,10,0,2"/>
+            <StackPanel Orientation="Horizontal" Spacing="6">
+              <Button Content="+ Camera" Click="OnAddCamera"
+                      IsEnabled="{Binding !HasCamera}"/>
+              <Button Content="Remove Camera" Click="OnRemoveCamera"
+                      IsEnabled="{Binding HasCamera}"/>
+            </StackPanel>
+            <StackPanel IsVisible="{Binding HasCamera}" Margin="2,6,0,0" Spacing="4">
+              <Grid ColumnDefinitions="Auto,*">
+                <TextBlock Text="Enabled" VerticalAlignment="Center" Margin="0,0,8,0"/>
+                <TextBox Grid.Column="1" Text="{Binding CameraEnabled}"/>
+              </Grid>
+              <Grid ColumnDefinitions="Auto,*">
+                <TextBlock Text="Zoom" VerticalAlignment="Center" Margin="0,0,8,0"/>
+                <TextBox Grid.Column="1" Text="{Binding CameraZoom}"/>
+              </Grid>
+              <Grid ColumnDefinitions="Auto,*">
+                <TextBlock Text="Viewport" VerticalAlignment="Center" Margin="0,0,8,0"/>
+                <TextBox Grid.Column="1" Text="{Binding CameraViewport}"/>
+              </Grid>
+              <Grid ColumnDefinitions="Auto,*">
+                <TextBlock Text="Bounds" VerticalAlignment="Center" Margin="0,0,8,0"/>
+                <TextBox Grid.Column="1" Text="{Binding CameraBounds}"/>
+              </Grid>
+              <Button Content="Apply Camera" Click="OnApplyCamera" HorizontalAlignment="Left"/>
+            </StackPanel>
           </StackPanel>
           <TextBlock IsVisible="{Binding !HasSelection}" Text="(select an entity)"
                      Opacity="0.5"/>

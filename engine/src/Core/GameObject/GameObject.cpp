@@ -1,4 +1,5 @@
 #include "Engine/Core/GameObject/GameObject.h"
+#include "Engine/Core/GameObject/ComponentRegistry_Go.h"
 #include "Engine/Core/GameObject/SpriteComponent.h"
 #include "Engine/Core/Physics/PhysicsComponent.h"
 #include "Engine/Core/RHI/IRenderQueue.h"
@@ -200,6 +201,54 @@ namespace Engine {
     bool GameObject::HasPhysics() const noexcept {
         auto* physics = GetComponent<PhysicsComponent>();
         return physics != nullptr && physics->HasBody();
+    }
+
+    // ══════════════════════════════════════════════════════
+    // Component Contract（F1-A）：按稳定类型名操作组件
+    // ══════════════════════════════════════════════════════
+
+    Component* GameObject::Attach(std::shared_ptr<Component> comp) {
+        if (!comp) return nullptr;
+        const size_t hash = typeid(*comp).hash_code();
+        auto it = m_Components.find(hash);
+        if (it != m_Components.end())
+            return it->second.get();          // 单实例语义：返回既有
+        comp->m_Owner = this;
+        if (comp->IsEnabled()) comp->OnCreate();
+        Component* raw = comp.get();
+        m_Components[hash] = std::move(comp);
+        return raw;
+    }
+
+    Component* GameObject::AddComponentByName(const std::string& typeName) {
+        auto comp = ComponentRegistryGo::Create(typeName);
+        if (!comp) return nullptr;
+        return Attach(std::move(comp));
+    }
+
+    Component* GameObject::GetComponentByName(const std::string& typeName) const {
+        for (const auto& [hash, comp] : m_Components) {
+            (void)hash;
+            const char* tn = comp->GetComponentTypeName();
+            if (tn && typeName == tn) return comp.get();
+        }
+        return nullptr;
+    }
+
+    bool GameObject::HasComponentByName(const std::string& typeName) const {
+        return GetComponentByName(typeName) != nullptr;
+    }
+
+    bool GameObject::RemoveComponentByName(const std::string& typeName) {
+        for (auto it = m_Components.begin(); it != m_Components.end(); ++it) {
+            const char* tn = it->second->GetComponentTypeName();
+            if (tn && typeName == tn) {
+                it->second->OnDestroy();
+                m_Components.erase(it);
+                return true;
+            }
+        }
+        return false;
     }
 
 } // namespace Engine

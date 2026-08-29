@@ -234,6 +234,11 @@ public partial class MainWindow : Window
         Vm.AssignScriptToSelected();
     }
 
+    // ── F1 (Component Contract)：Camera Inspector ──
+    private void OnAddCamera(object? sender, RoutedEventArgs e) => Vm.AddCameraToSelected();
+    private void OnRemoveCamera(object? sender, RoutedEventArgs e) => Vm.RemoveCameraFromSelected();
+    private void OnApplyCamera(object? sender, RoutedEventArgs e) => Vm.ApplyCamera();
+
     private void OnSaveScript(object? sender, RoutedEventArgs e)
     {
         Vm.SaveScript();
