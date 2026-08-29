@@ -40,6 +40,7 @@ add_test(NAME test_ecs COMMAND test_ecs)
 add_executable(test_physics
     test_physics/CPUSimulatorTest.cpp
     test_physics/GPUPhysicsRingTest.cpp
+    test_physics/ColliderBindingTest.cpp
     main.cpp
 )
 target_link_libraries(test_physics PRIVATE ${COMMON_LIBS})
