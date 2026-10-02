@@ -61,31 +61,149 @@ namespace Engine {
         return QuantizedRange(minVal, maxVal);
     }
 
-    std::vector<QuantizedRange> AnimationCompressor::ComputeComponentRanges(
-        const AnimationTrack& track) {
+namespace {
+    // The SINGLE implementation of per-component range computation.
+    // Both ComputeComponentRanges (public API) and ProcessKeyTrack route
+    // through here, so the two cannot drift apart over time.
+    template <typename KeyVec>
+    std::vector<QuantizedRange> ComputeRangesFromKeys(const KeyVec& keys) {
         std::vector<QuantizedRange> ranges;
+        if (keys.empty()) return ranges;
 
-        switch (track.GetPropertyType()) {
-            case AnimationPropertyType::Float: {
-                // 对于 Float，我们需要从 m_FloatKeys 计算范围
-                // 但我们没有直接访问权限，使用临时方式
-                ranges.push_back(QuantizedRange(0.0f, 1.0f));
-                break;
+        using ValueType = std::decay_t<decltype(keys[0].value)>;
+        constexpr bool kIsScalar = std::is_same_v<ValueType, float32>;
+        constexpr int32 kComps = kIsScalar
+            ? 1
+            : static_cast<int32>(sizeof(ValueType) / sizeof(float32));
+
+        for (int32 c = 0; c < kComps; ++c) {
+            auto componentOf = [&](const ValueType& v) -> float32 {
+                if constexpr (kIsScalar) {
+                    (void)c;
+                    return v;
+                } else {
+                    return (c < kComps) ? v[static_cast<size_t>(c)] : 0.0f;
+                }
+            };
+
+            float32 mn = componentOf(keys[0].value);
+            float32 mx = mn;
+            for (const auto& k : keys) {
+                const float32 v = componentOf(k.value);
+                mn = std::min(mn, v);
+                mx = std::max(mx, v);
             }
-            case AnimationPropertyType::Vec2:
-                ranges = {QuantizedRange(0,1), QuantizedRange(0,1)};
-                break;
-            case AnimationPropertyType::Vec3:
-                ranges = {QuantizedRange(0,1), QuantizedRange(0,1), QuantizedRange(0,1)};
-                break;
-            case AnimationPropertyType::Vec4:
-                ranges = {QuantizedRange(0,1), QuantizedRange(0,1),
-                          QuantizedRange(0,1), QuantizedRange(0,1)};
-                break;
+            // Constant component: widen to a unit range to avoid a zero step.
+            if (mx - mn < 1e-10f) {
+                mn -= 0.5f;
+                mx += 0.5f;
+            }
+            ranges.emplace_back(mn, mx);
         }
         return ranges;
     }
+} // namespace
 
+namespace {
+    // Compress one track: decimate -> component ranges -> quantize per frame.
+    // This is the ONLY processing path for CompressTrack. The previous
+    // implementation declared a generic lambda holding this logic but never
+    // invoked it, so every input compressed to zero frames.
+    template <typename KeyVec>
+    void ProcessKeyTrack(CompressedTrack& out,
+                         const KeyVec& keys,
+                         const AnimationCompressionSettings& settings,
+                         int32 bits) {
+        if (keys.empty()) return;
+
+        using KeyType = std::decay_t<decltype(keys[0])>;
+        using ValueType = std::decay_t<decltype(keys[0].value)>;
+        constexpr bool kIsScalar = std::is_same_v<ValueType, float32>;
+        constexpr int32 kComps = kIsScalar
+            ? 1
+            : static_cast<int32>(sizeof(ValueType) / sizeof(float32));
+
+        auto componentOf = [](const ValueType& v, int32 c) -> float32 {
+            if constexpr (kIsScalar) {
+                (void)c;
+                return v;
+            } else {
+                return (c < kComps) ? v[static_cast<size_t>(c)] : 0.0f;
+            }
+        };
+
+        std::vector<KeyType> processed = keys;
+
+        // Decimation: scalar tracks only. There is no defined fidelity
+        // criterion for multi-component tracks; decimating on component 0
+        // would silently discard motion in the other components.
+        if constexpr (kIsScalar) {
+            if (settings.enableDecimation && processed.size() > 2) {
+                std::vector<KeyFrameFloat> scalar;
+                scalar.reserve(processed.size());
+                for (const auto& k : processed) {
+                    scalar.push_back(KeyFrameFloat{k.time, k.value});
+                }
+                const auto decimated = AnimationCompressor::DecimateKeyFrames(
+                    scalar, settings.decimationTolerance,
+                    AnimationInterpolation::Linear);
+                if (decimated.size() >= 2 && decimated.size() < processed.size()) {
+                    std::vector<KeyType> kept;
+                    kept.reserve(decimated.size());
+                    for (const auto& dk : decimated) {
+                        for (const auto& ok : processed) {
+                            if (std::abs(ok.time - dk.time) < 1e-6f) {
+                                kept.push_back(ok);
+                                break;
+                            }
+                        }
+                    }
+                    if (kept.size() >= 2) processed = kept;
+                }
+            }
+        }
+
+        // Time range: keys are already sorted by time (AddKeyFrame sorts).
+        const float32 tMin = processed.front().time;
+        const float32 tMax = processed.back().time;
+        out.SetTimeRange(QuantizedRange(tMin, tMax));
+
+        // Component ranges: shares ComputeRangesFromKeys with
+        // ComputeComponentRanges so the public API and the compression path
+        // cannot drift apart.
+        out.GetComponentRanges() = ComputeRangesFromKeys(processed);
+
+        // Quantize each frame
+        for (const auto& k : processed) {
+            QuantizedKeyFrame16 qk;
+            for (int32 c = 0; c < 4; ++c) { qk.components[c] = 0; }
+            qk.time = AnimationCompressor::QuantizeFloat32(k.time, tMin, tMax, bits);
+            const auto& compRanges = out.GetComponentRanges();
+            for (int32 c = 0; c < kComps; ++c) {
+                qk.components[c] = AnimationCompressor::QuantizeFloat32(
+                    componentOf(k.value, c),
+                    compRanges[c].minVal, compRanges[c].maxVal, bits);
+            }
+            out.GetQuantizedFrames().push_back(qk);
+        }
+    }
+} // namespace
+    std::vector<QuantizedRange> AnimationCompressor::ComputeComponentRanges(
+        const AnimationTrack& track) {
+        // Routes through ComputeRangesFromKeys (defined above), which is the
+        // single implementation shared with CompressTrack.
+        switch (track.GetPropertyType()) {
+            case AnimationPropertyType::Float:
+                return ComputeRangesFromKeys(track.GetFloatKeys());
+            case AnimationPropertyType::Vec2:
+                return ComputeRangesFromKeys(track.GetVec2Keys());
+            case AnimationPropertyType::Vec3:
+                return ComputeRangesFromKeys(track.GetVec3Keys());
+            case AnimationPropertyType::Vec4:
+                return ComputeRangesFromKeys(track.GetVec4Keys());
+        }
+        return {};
+    }
     // ════════════════════════════════════════════
     // 常数轨道检测
     // ════════════════════════════════════════════
@@ -315,142 +433,49 @@ namespace Engine {
 
         if (track.IsEmpty()) return compressed;
 
-        // 1. 获取原始轨道数据（准备处理）
-        AnimationTrack workingTrack = track;
-        float32 duration = track.GetDuration();
-        compressed.SetOriginalSampleRate(30.0f);
+        // The CompressedTrack storage format IS quantized frames; there is no
+        // "raw frame" representation to fall back to. Non-quantized mode is
+        // therefore normalized to 16-bit quantization.
+        //
+        // CompressedTrack::DequantizeComponent always reinterprets the stored
+        // uint16 as 16-bit, so the encode width must match or the round-trip
+        // values would be decoded with the wrong scale.
+        AnimationCompressionSettings effective = settings;
+        effective.enableQuantization = true;
+        effective.quantizeBits = 16;
+        const int32 bits = effective.quantizeBits;
 
-        // 2. 重采样（如果启用）
-        if (settings.enableResampling && settings.targetSampleRate > 0.0f) {
-            workingTrack = ResampleTrack(track, settings.targetSampleRate);
-            compressed.SetOriginalSampleRate(settings.targetSampleRate);
+        // Resampling (if enabled)
+        AnimationTrack working = track;
+        compressed.SetOriginalSampleRate(30.0f);
+        if (effective.enableResampling && effective.targetSampleRate > 0.0f) {
+            working = ResampleTrack(track, effective.targetSampleRate);
+            compressed.SetOriginalSampleRate(effective.targetSampleRate);
         }
 
-        // 3. 根据属性类型提取关键帧并处理
-        auto processKeys = [&](const auto& keys, auto addFn) {
-            using KeyType = std::decay_t<decltype(keys[0])>;
-            using ValueType = decltype(keys[0].value);
+        const float32 duration = working.GetDuration();
 
-            std::vector<KeyType> processedKeys = keys;
-
-            // 降采样
-            if (settings.enableDecimation && processedKeys.size() > 2) {
-                // 提取 float 版本做降采样
-                std::vector<KeyFrameFloat> floatKeys;
-                for (const auto& k : processedKeys) {
-                    float v = 0.0f;
-                    if constexpr (std::is_same_v<ValueType, float32>) {
-                        v = k.value;
-                    } else {
-                        // 简化：使用第一个分量
-                        v = k.value[0];
-                    }
-                    floatKeys.push_back({k.time, v});
-                }
-                auto decimated = DecimateKeyFrames(floatKeys,
-                    settings.decimationTolerance, track.GetInterpolation());
-
-                // 重建原始类型的关键帧
-                if (decimated.size() < processedKeys.size()) {
-                    // 保留下采样后的关键帧
-                    std::vector<KeyType> newKeys;
-                    for (const auto& dk : decimated) {
-                        // 找原始关键帧中最接近的
-                        for (const auto& ok : processedKeys) {
-                            if (std::abs(ok.time - dk.time) < 1e-6f) {
-                                newKeys.push_back(ok);
-                                break;
-                            }
-                        }
-                    }
-                    if (newKeys.size() >= 2) {
-                        processedKeys = newKeys;
-                    }
-                }
-            }
-
-            // 4. 量化
-            if (settings.enableQuantization) {
-                // 计算时间范围
-                float32 tMin = processedKeys.front().time;
-                float32 tMax = processedKeys.back().time;
-                compressed.SetTimeRange(QuantizedRange(tMin, tMax));
-
-                // 计算值范围（简化：用整体范围）
-                ValueType vMin = processedKeys[0].value;
-                ValueType vMax = processedKeys[0].value;
-                for (const auto& k : processedKeys) {
-                    for (int32 c = 0; c < 4; ++c) {
-                        float32 v = (c < sizeof(ValueType)/sizeof(float32))
-                            ? k.value[c] : 0.0f;
-                        if (v < vMin[c]) vMin[c] = v;
-                        if (v > vMax[c]) vMax[c] = v;
-                    }
-                }
-
-                int32 numComps = 0;
-                if constexpr (std::is_same_v<ValueType, float32>) numComps = 1;
-                else numComps = sizeof(ValueType) / sizeof(float32);
-
-                for (int32 c = 0; c < numComps; ++c) {
-                    float32 mn = vMin[c], mx = vMax[c];
-                    if (mx - mn < 1e-10f) { mn -= 0.5f; mx += 0.5f; }
-                    compressed.GetComponentRanges().push_back(QuantizedRange(mn, mx));
-                }
-
-                // 编码
-                for (const auto& k : processedKeys) {
-                    QuantizedKeyFrame16 qk;
-                    // 时间量化
-                    qk.time = QuantizeFloat32(k.time, tMin, tMax, settings.quantizeBits);
-                    // 值量化
-                    for (int32 c = 0; c < numComps; ++c) {
-                        float32 v = (c < numComps) ? k.value[c] : 0.0f;
-                        qk.components[c] = QuantizeFloat32(v,
-                            compressed.GetComponentRanges()[c].minVal,
-                            compressed.GetComponentRanges()[c].maxVal,
-                            settings.quantizeBits);
-                    }
-                    compressed.GetQuantizedFrames().push_back(qk);
-                }
-            } else {
-                // 不量化：直接复制帧数据
-                for (const auto& k : processedKeys) {
-                    addFn(compressed, k);
-                }
-            }
-
-            compressed.SetNumFrames(static_cast<int32>(processedKeys.size()));
-        };
-
-        // 根据属性类型分支（用 lambda 模拟）
-        auto addFloat = [](CompressedTrack& ct, const KeyFrameFloat& kf) {
-            // 非量化模式下无法直接存储，跳过（量化应始终启用）
-            (void)ct; (void)kf;
-        };
-
-        // 我们主要在量化模式下工作，简化处理
-        // 实际压缩流程：提取 float keys → 处理 → 存储为量化格式
-        // 对于非量化的备选路径，可以保持原始 Track 数据，这里不展开
-
-        // 构建压缩帧：从 track 中采样再量化
-        // 对于非量化模式，我们简单构造量化帧（高精度）
-        if (!settings.enableQuantization) {
-            // 非量化模式下，直接用高精度 16-bit 量化
-            // 使用临时压缩设置
-            AnimationCompressionSettings tmpSettings = settings;
-            tmpSettings.enableQuantization = true;
-            tmpSettings.quantizeBits = 16;
-            return CompressTrack(track, tmpSettings);
+        // Dispatch to the keyframe container that matches the property type
+        switch (track.GetPropertyType()) {
+            case AnimationPropertyType::Float:
+                ProcessKeyTrack(compressed, working.GetFloatKeys(), effective, bits);
+                break;
+            case AnimationPropertyType::Vec2:
+                ProcessKeyTrack(compressed, working.GetVec2Keys(), effective, bits);
+                break;
+            case AnimationPropertyType::Vec3:
+                ProcessKeyTrack(compressed, working.GetVec3Keys(), effective, bits);
+                break;
+            case AnimationPropertyType::Vec4:
+                ProcessKeyTrack(compressed, working.GetVec4Keys(), effective, bits);
+                break;
         }
 
         compressed.SetNumFrames(static_cast<int32>(compressed.GetQuantizedFrames().size()));
-        compressed.SetTimeRange(QuantizedRange(0.0f, duration));
         compressed.SetDuration(duration);
 
         return compressed;
     }
-
     // ════════════════════════════════════════════
     // 时间线压缩
     // ════════════════════════════════════════════
