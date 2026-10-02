@@ -147,3 +147,19 @@ if(ENABLE_ASAN AND MSVC)
     endforeach()
     unset(_asan_test_targets)
 endif()
+
+# ── P1: Animation 子系统测试 ──
+# 依据 docs/Engine-Capability-Audit.md §4：Animation 有 58 文件 / ~13k 行，
+# 声称完整但**零测试** —— 风险加权最高的缺口（未测试的复杂代码只会静默失败）。
+# 本 target 以**不变量**为断言依据（骨骼数守恒、权重和归一、末端误差阈值），
+# 不得以"函数返回非零"之类的弱断言充数。
+add_executable(test_animation
+    test_animation/SkeletonTest.cpp
+    test_animation/IKTest.cpp
+    test_animation/BlendTreeTest.cpp
+    test_animation/AnimationRetargetTest.cpp
+    test_animation/AnimationCompressionTest.cpp
+    main.cpp
+)
+target_link_libraries(test_animation PRIVATE ${COMMON_LIBS})
+add_test(NAME test_animation COMMAND test_animation)
