@@ -82,11 +82,17 @@ namespace Engine {
         ~AnimationRetarget() = default;
 
         // ── 骨骼设置 ──
+        //
+        // 这两个 setter 会重建索引缓存 m_SourceIndices / m_TargetIndices，
+        // 使对象与调用顺序无关：先 AddMapping 再 Set*Skeleton，与
+        // 先 Set*Skeleton 再 AddMapping，结果一致。
+        // 早期实现只在 AddMapping 当下两者均已设置时才填缓存，导致
+        // HasMappings() 为真但缓存为空，RetargetPose 越界读取并崩溃。
 
-        void SetSourceSkeleton(const Skeleton* skeleton) { m_SourceSkel = skeleton; }
-        void SetTargetSkeleton(const Skeleton* skeleton) { m_TargetSkel = skeleton; }
-        void SetSourceSkeleton(const std::shared_ptr<Skeleton>& skeleton) { m_SourceSkel = skeleton.get(); }
-        void SetTargetSkeleton(const std::shared_ptr<Skeleton>& skeleton) { m_TargetSkel = skeleton.get(); }
+        void SetSourceSkeleton(const Skeleton* skeleton);
+        void SetTargetSkeleton(const Skeleton* skeleton);
+        void SetSourceSkeleton(const std::shared_ptr<Skeleton>& skeleton);
+        void SetTargetSkeleton(const std::shared_ptr<Skeleton>& skeleton);
 
         const Skeleton* GetSourceSkeleton() const { return m_SourceSkel; }
         const Skeleton* GetTargetSkeleton() const { return m_TargetSkel; }
@@ -162,6 +168,10 @@ namespace Engine {
         // m_TargetIndices[i] = target 侧的骨骼索引
         std::vector<int32> m_SourceIndices;
         std::vector<int32> m_TargetIndices;
+
+        // 按当前 m_SourceSkel / m_TargetSkel 重建索引缓存。
+        // 由 Set*Skeleton 调用，保证缓存与映射表始终等长且同序。
+        void RebuildIndexCache();
     };
 
 } // namespace Engine
