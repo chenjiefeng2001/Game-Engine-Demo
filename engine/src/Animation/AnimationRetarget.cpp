@@ -17,6 +17,43 @@
 namespace Engine {
 
     // ============================================================
+    // 骨骼设置
+    // ============================================================
+
+    void AnimationRetarget::RebuildIndexCache() {
+        m_SourceIndices.clear();
+        m_TargetIndices.clear();
+        if (!m_SourceSkel || !m_TargetSkel) return;
+
+        m_SourceIndices.reserve(m_Mappings.size());
+        m_TargetIndices.reserve(m_Mappings.size());
+        for (const auto& m : m_Mappings) {
+            m_SourceIndices.push_back(m_SourceSkel->FindBoneIndex(m.sourceBone));
+            m_TargetIndices.push_back(m_TargetSkel->FindBoneIndex(m.targetBone));
+        }
+    }
+
+    void AnimationRetarget::SetSourceSkeleton(const Skeleton* skeleton) {
+        m_SourceSkel = skeleton;
+        RebuildIndexCache();
+    }
+
+    void AnimationRetarget::SetTargetSkeleton(const Skeleton* skeleton) {
+        m_TargetSkel = skeleton;
+        RebuildIndexCache();
+    }
+
+    void AnimationRetarget::SetSourceSkeleton(const std::shared_ptr<Skeleton>& skeleton) {
+        m_SourceSkel = skeleton.get();
+        RebuildIndexCache();
+    }
+
+    void AnimationRetarget::SetTargetSkeleton(const std::shared_ptr<Skeleton>& skeleton) {
+        m_TargetSkel = skeleton.get();
+        RebuildIndexCache();
+    }
+
+    // ============================================================
     // 映射管理
     // ============================================================
 
@@ -33,11 +70,9 @@ namespace Engine {
 
         m_Mappings.emplace_back(sourceBone, targetBone, scaleFactor);
 
-        // 更新缓存索引
-        if (m_SourceSkel && m_TargetSkel) {
-            m_SourceIndices.push_back(m_SourceSkel->FindBoneIndex(sourceBone));
-            m_TargetIndices.push_back(m_TargetSkel->FindBoneIndex(targetBone));
-        }
+        // 重建缓存：即使此刻骨架尚未设置，后续 Set*Skeleton 也会重建；
+        // 若骨架已就绪则立即得到正确索引。
+        RebuildIndexCache();
     }
 
     void AnimationRetarget::AutoMapByName() {
