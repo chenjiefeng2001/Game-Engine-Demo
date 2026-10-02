@@ -75,6 +75,14 @@ public:
     static Vec3    Interpolate(float32 t, const Vec3& a, const Vec3& b, AnimationInterpolation mode);
     static Vec4    Interpolate(float32 t, const Vec4& a, const Vec4& b, AnimationInterpolation mode);
 
+    // ── 原始关键帧访问（只读）──
+    // 压缩管线需要读取关键帧以计算分量范围并执行量化。
+    // 仅暴露 const 引用：写入必须经 AddKeyFrame（其内部会排序并更新 m_Duration）。
+    const std::vector<KeyFrameFloat>& GetFloatKeys() const noexcept { return m_FloatKeys; }
+    const std::vector<KeyFrameVec2>&  GetVec2Keys()  const noexcept { return m_Vec2Keys;  }
+    const std::vector<KeyFrameVec3>&  GetVec3Keys()  const noexcept { return m_Vec3Keys;  }
+    const std::vector<KeyFrameVec4>&  GetVec4Keys()  const noexcept { return m_Vec4Keys;  }
+
 private:
     // ── 数据 ──
     AnimationPropertyType    m_Type          = AnimationPropertyType::Float;
