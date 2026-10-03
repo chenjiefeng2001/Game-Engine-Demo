@@ -369,7 +369,11 @@ namespace Engine {
     bool FileSystem::WriteTextFile(const std::string& path, const std::string& text) {
         fs::path p{path};
         fs::create_directories(p.parent_path());
-        std::ofstream file{p};
+        // K5 修复：必须用二进制模式。ReadTextFile 走的是二进制的 ReadFile，
+        // 此前写入却用文本模式 —— Windows 上每个裸 \n 被翻成 \r\n 且读回时
+        // 无人还原，往返凭空多出 \r（实测 "a\nb" → "a\r\nb"，3 字节变 4）。
+        // 该缺陷在 Linux 上完全不可见。
+        std::ofstream file{p, std::ios::binary};
         if (!file.is_open()) return false;
         file << text;
         return file.good();
@@ -378,7 +382,8 @@ namespace Engine {
     bool FileSystem::AppendTextFile(const std::string& path, const std::string& text) {
         fs::path p{path};
         fs::create_directories(p.parent_path());
-        std::ofstream file{p, std::ios::app};
+        // 同 K5：追加也必须是二进制模式，否则与读取端不对称。
+        std::ofstream file{p, std::ios::binary | std::ios::app};
         if (!file.is_open()) return false;
         file << text;
         return file.good();
