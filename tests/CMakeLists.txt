@@ -132,21 +132,6 @@ foreach(_t IN LISTS _ctest_test_targets)
 endforeach()
 unset(_ctest_test_targets)
 
-# 2) MSVC ASan interception 缺陷防护（docs/Avalonia-Phase3-Freeze-ASan-Report.md）
-# interception_win.cpp:193：ASan 构建的进程在启动早期对某模块做 inline hook 时
-# 遇到无法解码的指令，缺省（未设 ASAN_WIN_CONTINUE_ON_INTERCEPTION_FAILURE=1）
-# 直接 CHECK 硬失败 → 进程挂死（无响应、无法退出，需强制结束）。C++ 测试 exe
-# 没有 Program.cs 式"首行自设"位置（env 必须在 CRT/ASan 初始化前生效，main()
-# 内设置已太晚），因此 CTest 层固化 env，保证 `ctest` 直跑永不卡死
-# （直接手跑请用 tools/run_test.cmd）。
-if(ENABLE_ASAN AND MSVC)
-    get_property(_asan_test_targets DIRECTORY PROPERTY TESTS)
-    foreach(_t IN LISTS _asan_test_targets)
-        set_tests_properties(${_t} PROPERTIES ENVIRONMENT
-            "ASAN_WIN_CONTINUE_ON_INTERCEPTION_FAILURE=1")
-    endforeach()
-    unset(_asan_test_targets)
-endif()
 
 # ── P1: Animation 子系统测试 ──
 # 依据 docs/Engine-Capability-Audit.md §4：Animation 有 58 文件 / ~13k 行，
@@ -185,4 +170,18 @@ if(TARGET OpenAL::OpenAL)
   add_custom_command(TARGET test_audio POST_BUILD
     COMMAND ${CMAKE_COMMAND} -E copy_if_different
             $<TARGET_FILE:OpenAL::OpenAL> $<TARGET_FILE_DIR:test_audio>)
+endif()
+
+# NOTE: this block must stay at the END of the file.
+# get_property(... DIRECTORY PROPERTY TESTS) only returns the tests
+# registered so far. Placed mid-file, later targets (test_animation /
+# test_audio) never receive the env var, so a plain `ctest` run fails
+# while a hand-run with the env set passes -- a CI-only trap.
+if(ENABLE_ASAN AND MSVC)
+    get_property(_asan_test_targets DIRECTORY PROPERTY TESTS)
+    foreach(_t IN LISTS _asan_test_targets)
+        set_tests_properties(${_t} PROPERTIES ENVIRONMENT
+            "ASAN_WIN_CONTINUE_ON_INTERCEPTION_FAILURE=1")
+    endforeach()
+    unset(_asan_test_targets)
 endif()
