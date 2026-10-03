@@ -163,3 +163,26 @@ add_executable(test_animation
 )
 target_link_libraries(test_animation PRIVATE ${COMMON_LIBS})
 add_test(NAME test_animation COMMAND test_animation)
+
+# ── P1: Audio 子系统测试 ──
+# 依据 docs/Engine-Capability-Audit.md：Audio 声称完整但零测试。
+# 首批只覆盖不依赖 OpenAL 设备的实现（AudioBusManager）。
+# 该 target 链接 ${COMMON_LIBS}，因此沿用既有 DLL staging 规则。
+add_executable(test_audio
+    test_audio/AudioBusManagerTest.cpp
+    test_audio/SpatialAudioManagerTest.cpp
+    test_audio/AudioAssetManagerTest.cpp
+    main.cpp
+)
+target_link_libraries(test_audio PRIVATE ${COMMON_LIBS})
+add_test(NAME test_audio COMMAND test_audio)
+# test_audio 引用 OpenAL 符号（AudioBusManager / SpatialAudioManager 均在
+# EngineCore 内且带 OpenAL 导入），因此 PE 导入表需要 OpenAL32.dll。
+# 其它测试（如 test_animation）不引用任何 OpenAL 符号，导入表里没有该条目，
+# 所以从未暴露这个缺失 —— 这正是"只有新 target 才会撞上"的坑。
+# Debug 配置下 MSBuild 会自动随引用拷贝，Release 不会，故显式 staging。
+if(TARGET OpenAL::OpenAL)
+  add_custom_command(TARGET test_audio POST_BUILD
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different
+            $<TARGET_FILE:OpenAL::OpenAL> $<TARGET_FILE_DIR:test_audio>)
+endif()
