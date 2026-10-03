@@ -172,6 +172,17 @@ if(TARGET OpenAL::OpenAL)
             $<TARGET_FILE:OpenAL::OpenAL> $<TARGET_FILE_DIR:test_audio>)
 endif()
 
+# ── P1: IO/Config 子系统测试 ──
+# 依据 docs/Engine-Capability-Audit.md：Config / FileSystem / UserSettings
+# 此前零直接测试。首批覆盖 Config（纯逻辑 + nlohmann/json，无设备依赖）。
+add_executable(test_io
+    test_io/IoConfigTest.cpp
+    test_io/FileSystemTest.cpp
+    main.cpp
+)
+target_link_libraries(test_io PRIVATE ${COMMON_LIBS})
+add_test(NAME test_io COMMAND test_io)
+
 # NOTE: this block must stay at the END of the file.
 # get_property(... DIRECTORY PROPERTY TESTS) only returns the tests
 # registered so far. Placed mid-file, later targets (test_animation /
