@@ -1,6 +1,7 @@
 #include "BarePhysicsTestApp.h"
 #include <array>
 #include <algorithm>
+#include <string>
 
 namespace Engine {
 
