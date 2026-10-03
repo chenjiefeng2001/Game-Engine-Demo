@@ -10,6 +10,8 @@
 #define WIN32_LEAN_AND_MEAN
 #define VK_NO_PROTOTYPES
 
+#include <iostream>
+
 #include <Engine/OpenGL/OpenGLGraphicsFactory.h>
 #include <Engine/OpenGL/OpenGLContext.h>
 #include <Engine/Core/IGraphicsFactory.h>
