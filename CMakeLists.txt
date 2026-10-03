@@ -27,13 +27,27 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 # Visual Studio / MSVC 兼容性设置
 # ============================================================================
 if(MSVC)
-    # 统一 MSVC 运行时库为 DLL 模式，避免第三方库（如 Jolt）默认为静态的冲突
-    # Debug-ASan 必须用 /MDd 以便与 shaderc Debug CRT 匹配
-    if(ENABLE_ASAN)
-        set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreadedDebugDLL")
-    else()
-        set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreadedDLL")
-    endif()
+    # 统一 MSVC 运行时库为 DLL 模式，避免第三方库（如 Jolt）默认为静态的冲突。
+    #
+    # B5: CRT 必须按**配置**选择，而不是按 ENABLE_ASAN。
+    #
+    # 依据是 engine/CMakeLists.txt 已按配置选择预编译 shaderc：
+    #   debug     -> shaderc_combined Debug   (/MDd, _ITERATOR_DEBUG_LEVEL=2)
+    #   optimized -> shaderc_combined Release (/MD,  _ITERATOR_DEBUG_LEVEL=0)
+    # CMake 的 `optimized` 覆盖 Release / MinSizeRel / RelWithDebInfo，且磁盘上
+    # 不存在 RelWithDebInfo 版 shaderc，因此：
+    #   Debug          必须 /MDd
+    #   RelWithDebInfo 必须 /MD
+    #   Release        必须 /MD
+    #
+    # 若沿用「ENABLE_ASAN=ON ⇒ 全配置 /MDd」，Release 会以 /MDd 去链接 /MD 的
+    # shaderc，产生 492 条 LNK2038；而改成按 ENABLE_ASAN 之外的条件统一 /MDd
+    # 又会让 RelWithDebInfo 出现同样的不匹配。ENABLE_ASAN 已通过
+    # /fsanitize=address 的 genex 正确按 Debug/RelWithDebInfo 生效，
+    # 不应再被当作 CRT 的配置条件。
+    set(CMAKE_MSVC_RUNTIME_LIBRARY
+        "$<$<CONFIG:Debug>:MultiThreadedDebugDLL>$<$<NOT:$<CONFIG:Debug>>:MultiThreadedDLL>")
+
     
     # 使用 UTF-8 源码编码
     add_compile_options(/utf-8)
