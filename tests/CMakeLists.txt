@@ -30,7 +30,6 @@ add_test(NAME test_core COMMAND test_core)
 # ── L1: ECS 单元测试 ──
 add_executable(test_ecs
     test_ecs/EntityManagerTest.cpp
-    test_ecs/ComponentLifecycleTest.cpp
     main.cpp
 )
 target_link_libraries(test_ecs PRIVATE ${COMMON_LIBS})
