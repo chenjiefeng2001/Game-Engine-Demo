@@ -206,25 +206,40 @@ void AudioBusManager::ApplyBusProcessing(float* buffer, size_t numFrames, uint32
     }
 
     // 步骤 3: 处理辅助发送
-    for (auto& [name, bus] : m_Buses)
+    //
+    // K4 修复：此处原本执行
+    //     destBus->volume += bus.volume * sendLevel * 0.1f;
+    // 即把 **routing state** 当作累加目标。后果：
+    //   - 每调用一次处理，目标总线音量被永久抬高（实测 1.0 → 1.1 → 1.3）
+    //   - 该路径绕过 SetBusVolume 的 [0,1] 钳制，音量可无界增长
+    //   - 处理函数产生了非幂等的副作用
+    //
+    // 现在把发送贡献累加到**局部**增益，不再写回 destBus->volume。
+    // 当前简化实现只有一条共享缓冲区、没有 per-bus 目标缓冲可供混音，
+    // 因此该局部贡献不写入任何持久状态；保留遍历与累加以便后续
+    // 实现真实的 per-bus 混音。
+    float sendContribution = 0.0f;
+    for (const auto& [name, bus] : m_Buses)
     {
         if (bus.sends.empty()) continue;
 
         for (size_t i = 0; i < bus.sends.size(); ++i)
         {
-            auto* destBus = bus.sends[i];
+            const auto* destBus = bus.sends[i];
             if (!destBus || destBus->muted) continue;
 
-            float sendLevel = (i < bus.sendLevels.size()) ? bus.sendLevels[i] : 1.0f;
+            const float sendLevel = (i < bus.sendLevels.size()) ? bus.sendLevels[i] : 1.0f;
 
-            // 将当前总线的输出按发送电平混入目标总线
             // 注意：这是一个简化的实现，实际中需要每个总线独立处理
             if (sendLevel > 0.01f)
             {
-                destBus->volume += bus.volume * sendLevel * 0.1f;
+                sendContribution += bus.volume * sendLevel * 0.1f;
             }
         }
     }
+
+    // 无 per-bus 目标缓冲可混音，故局部发送增益不落地。
+    (void)sendContribution;
 }
 
 // ============================================================================
