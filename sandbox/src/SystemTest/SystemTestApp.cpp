@@ -10,6 +10,13 @@
 #include <Engine/ConsoleVariable.h>
 #include <Engine/MemoryTracker.h>
 #include <Engine/MemoryPanel.h>
+// PROFILE_ZONE_NAME (L681, L695) and Profiler::IsConnected() (L786) are both
+// declared here. Without this include they surfaced as C3861 "undeclared
+// identifier" and C2653 "Profiler is not a class or namespace name".
+// Both symbols are current API: PROFILE_ZONE_NAME is defined in each branch of
+// the ENGINE_ENABLE_PROFILING guard (Profiler.h L67 / L133) and class Profiler
+// sits outside that guard (L157), so it is declared in every configuration.
+#include <Engine/Profiler.h>
 #include <Engine/Core/Input.h>
 #include <Engine/Box2D/Box2DPhysicsWorld.h>
 #include <imgui.h>
