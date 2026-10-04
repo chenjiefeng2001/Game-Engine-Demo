@@ -61,6 +61,14 @@ add_executable(test_renderer
 )
 target_link_libraries(test_renderer PRIVATE ${COMMON_LIBS} glfw)
 add_test(NAME test_renderer COMMAND test_renderer)
+# GL 4.6 core context 创建 + compute dispatch + 两次 gl.Finish() 同步，
+# 属真实 GPU 工作量（与 test_pick 同档）。此前本 target 是唯一没有
+# CTest TIMEOUT 的 GPU target：一旦挂住，默认 `ctest` 会无限等待，
+# 只能依赖调用方手动传 --timeout。历史上确实出现过一次 >150s 的
+# 超时（当前无法复现，机制未确认），因此这里只补齐基础设施缺口：
+# 给一个确定的上界，让挂起被确定性终止并报为 TIMEOUT/FAILED。
+# 不加 retry、不加 delay、不改测试逻辑、不改 renderer。
+set_tests_properties(test_renderer PROPERTIES TIMEOUT 180)
 
 # ── L2: 脚本 C-ABI 绑定测试 ──
 add_executable(test_scripting
