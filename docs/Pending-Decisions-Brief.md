@@ -20,8 +20,10 @@ P1 Animation / Audio / IO | `96b6c92` / `ea195d1` / `a59c725` |
 Serializer sweep | `a0f7d99`、`cf1570c`、`4c3133a`、`48d2d52`、`1503804` |
 Stage 2 headless 盘点 | `eb73f08` |
 Time Stage 3 | `4277f28`、`9033610` |
+B4 §3 runtime-safety follow-up | `629ea47`（未注册类型不再经 Release SEH 进入未定义失败） |
+ECS internal location bookkeeping defect | `b8d7243`（swap-with-back 后同步 `m_Locations`） | |
 
-**当前工程基线**：Debug / Release / RelWithDebInfo 三配置全量 build 0 error；全量 suite 均 15/16，唯一失败为已知 `test_ecs`。
+**当前工程基线**：Debug / Release / RelWithDebInfo 三配置全量 build 0 error；全量 suite 均 **16/16**，`test_ecs` 18/18。
 
 ---
 
@@ -55,12 +57,12 @@ Stack 1 canonical | `IAudioEngine` / `IAudioSource` 需重新定位；已交付�
 
 **要决定的问题**：ECS 侧组件是否需要预注册、以何种方式注册；以及 ECS 与 GameObject 两套组件模型是否收敛。
 
-**关键歧义（尚未判定）**：`test_ecs` 的失败究竟属于
+**关键歧义（尚未判定）**：`test_ecs` 曾观测到的失败究竟属于
 
 - (a) **测试遗漏注册** —— `Position` / `Velocity` 本应是已注册组件
 - (b) **测试正确表达了设计意图** —— ECS 确实不要求基类与预注册，`AddComponent<T>` 应让任意类型可用
 
-**若为 (b)，则 `EntityManager.cpp:93-101` 本身是缺陷**：它把"未注册"变成未定义行为（Release 下 SEH），而非可诊断失败。**此判定无法从代码得出。**
+**若为 (b)，则"拒绝未注册类型"这条守卫路径本身即为缺陷**：守卫只负责把未定义状态变成确定结果；若（b）成立，缺 meta 时应当就地补建而非拒绝。该未定义行为（Release 下 SEH）已由 `629ea47` 收敛，`EntityManager::AddComponentRaw` 也不再构造空签名 archetype（`assert(!metas.empty())` 现已不可达）。**但"拒绝"是否正确仍无法从代码得出。**
 
 **更正记录**：`engine/include/Engine/Core/ECS/ComponentRegistry.h:7` 注释声称"注册会在程序初始化时（static init）自动完成"，但 `RegisterComponentType<T>()` 是需手工调用的函数 —— **文档意图与实现不一致**，需一并澄清。
 
@@ -86,13 +88,13 @@ Audio §4 未决问题 5：是否存在把音频从 GameObject/Component 模型�
 
 ---
 
-## 3. 可以脱离上述决策、先行决定的一项
+## 3. 已脱离上述决策、单独决定并实施的一项
 
-**未注册组件类型在 Release 下导致 SEH，是否应改为可诊断的失败（增加运行期校验）？**
+**未注册组件类型在 Release 下导致 SEH，是否应改为可诊断的失败（增加运行期校验）？** —— **已决定：是。已实施于 `629ea47`。**
 
 此项与"选哪种注册模型"**完全独立**（ADR §7 未决问题 3），可立即单独决定：
 
-- 若决定增加运行期校验 → 在 `EntityManager` 的 archetype 创建路径上加运行期检查，使 Release 下的未注册类型产生明确失败而非 SEH。这会**独立于**注册模型的最终选择生效，且立即提升 `test_ecs` 的可诊断性。
+- 实际实施 → `AddComponentRaw` 在入口检测缺失 `ComponentMeta` 并拒绝该次添加，经既有 `Log::ErrorLoc` 上报；两处 copy 路径的空 meta 解引用改为守卫；`AddComponent<T>` 不再解引用 nullptr。守卫**不自动注册**，是否必须预注册仍由决策二回答。
 
 ---
 
@@ -127,7 +129,7 @@ Audio §4 未决问题 5：是否存在把音频从 GameObject/Component 模型�
 | 想做的事 | 前置条件 |
 |---|---|
 推进 Time 之外的 Stage 3 | 无条件可做，但阶段 2 已判定无其它值得进入的 Category 1 面 |
-修复 `test_ecs` 使 suite 达到 16/16 | 需先判定 §1 决策二的 (a)/(b) 歧义；或先决定 §3 的运行期校验 |
+确定 ECS 注册模型（决策二） | 无前置条件：suite 已 16/16，`629ea47` 已使未注册类型产生确定且可诊断的失败，(a)/(b) 现在是纯设计问题而非可观测故障 |
 清理音频绕过路径 | 需 §1 决策一 |
 引入 RelWithDebInfo/macOS/Linux-ASan CI 覆盖 | 需独立决策（当前 CI 已覆盖 Windows RelWithDebInfo+ASan，刻意未扩 macOS 与 Linux ASan） |
 
