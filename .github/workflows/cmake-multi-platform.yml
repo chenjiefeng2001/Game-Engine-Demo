@@ -47,6 +47,8 @@ jobs:
         os: [ubuntu-latest, windows-latest]
         build_type: [Release]
         c_compiler: [gcc, clang, cl]
+        # ASan 默认关闭；仅下面新增的 Windows/RelWithDebInfo 组合开启。
+        enable_asan: ['OFF']
         include:
           - os: windows-latest
             c_compiler: cl
@@ -57,6 +59,17 @@ jobs:
           - os: ubuntu-latest
             c_compiler: clang
             cpp_compiler: clang++
+          # B5-RD：新增独立组合 Windows + RelWithDebInfo + ASan。
+          # 该缺陷的触发条件是"消费侧对象带 ASan 注解 + 参与链接的静态库不带
+          # ASan 注解"同时成立。此前 CI 从未启用 ASan（ENABLE_ASAN 默认 OFF），
+          # 因此对这个配置空间**完全没有覆盖**——既无法捕获该缺陷，也不能据此
+          # 排除其它工具链上是否存在等价问题。
+          # 刻意不扩 macOS，也不扩 Linux/Clang 的 ASan 组合。
+          - os: windows-latest
+            build_type: RelWithDebInfo
+            c_compiler: cl
+            cpp_compiler: cl
+            enable_asan: 'ON'
         exclude:
           - os: windows-latest
             c_compiler: gcc
@@ -87,6 +100,16 @@ jobs:
       run: |
         echo "build-output-dir=${{ github.workspace }}/build" >> "$GITHUB_OUTPUT"
 
+# B5-RD：RelWithDebInfo+ASan 需要 /MD + ASan 的 shaderc 产物。
+    # 该产物位于 git submodule 内，并被其 .gitignore 的 `build-*/` 覆盖，
+    # 因此不会随仓库分发 —— fresh checkout 必须先生成。否则 RelWithDebInfo 会
+    # 回退到非 ASan 的 Release shaderc，sandbox/SpirVTest 链接报 LNK2038。
+    # 放在主 configure 之前：shaderc_wrapper 的映射在 configure 期用 EXISTS() 求值。
+    - name: Build ASan RelWithDebInfo shaderc artifact
+      if: runner.os == 'Windows' && matrix.enable_asan == 'ON'
+      shell: pwsh
+      run: pwsh -NoProfile -File tools/build_shaderc_asan_rwd.ps1 -SkipReconfigure
+
     - name: Configure CMake
       run: >
         cmake -B ${{ steps.strings.outputs.build-output-dir }}
@@ -94,6 +117,7 @@ jobs:
         -DCMAKE_C_COMPILER=${{ matrix.c_compiler }}
         -DCMAKE_BUILD_TYPE=${{ matrix.build_type }}
         -DENABLE_TESTS=ON
+        -DENABLE_ASAN=${{ matrix.enable_asan }}
         -Wno-dev
         -S ${{ github.workspace }}
 
