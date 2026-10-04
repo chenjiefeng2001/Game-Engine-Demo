@@ -186,6 +186,7 @@ add_executable(test_io
     test_io/IoConfigTest.cpp
     test_io/FileSystemTest.cpp
     test_io/UserSettingsTest.cpp
+    test_io/EngineSettingsTest.cpp
     main.cpp
 )
 target_link_libraries(test_io PRIVATE ${COMMON_LIBS})
