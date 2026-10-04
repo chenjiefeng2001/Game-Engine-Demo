@@ -56,6 +56,12 @@ bool DeserializeSnapshot(const nlohmann::json& j, SceneSnapshot& out,
         err = "not an engine.scene file"; return false;
     }
     if (j.contains("version")) {
+        // 类型不符属于坏输入：走既有的 err 失败通道，而不是让 type_error
+        // 穿出（本函数此前完全没有校验，也没有任何 try/catch）
+        if (!j["version"].is_number_integer() && !j["version"].is_number_unsigned()) {
+            err = "version must be an integer";
+            return false;
+        }
         const int v = j["version"].get<int>();
         if (v > kFormatVersion) {
             err = "unsupported future version " + std::to_string(v);
@@ -74,9 +80,15 @@ bool DeserializeSnapshot(const nlohmann::json& j, SceneSnapshot& out,
         se.name = e["name"].get<std::string>();
         if (e.contains("position") && e["position"].is_array()
                 && e["position"].size() >= 3) {
-            se.px = e["position"][0].get<float>();
-            se.py = e["position"][1].get<float>();
-            se.pz = e["position"][2].get<float>();
+            // 元素类型必须都是数值。position 是**可选**的实体级数据，
+            // 不可用时退回默认坐标 —— 与既有"position 缺失/长度不足"的
+            // 宽容契约一致，而不是让整个快照加载失败。
+            const auto& p = e["position"];
+            if (p[0].is_number() && p[1].is_number() && p[2].is_number()) {
+                se.px = p[0].get<float>();
+                se.py = p[1].get<float>();
+                se.pz = p[2].get<float>();
+            }
         }
         if (e.contains("sprite") && e["sprite"].is_string())
             se.spriteGuid = ResourceGUID::FromHex(e["sprite"].get<std::string>());
@@ -211,7 +223,16 @@ bool LoadSnapshotFromFile(const std::string& path, SceneSnapshot& out,
         err = std::string("corrupted scene file: ") + ex.what();
         return false;                       // fail-clean：out 保持空
     }
-    return DeserializeSnapshot(j, out, err);
+    // 提取也放进失败边界：显式校验已让正常路径不再抛，但保留一个
+    // nlohmann 层面的兜底，保证任何 json 异常都不会穿出返回 bool 的加载器。
+    // 只捕获 nlohmann::json::exception，不做 std::exception 一网打尽。
+    try {
+        return DeserializeSnapshot(j, out, err);
+    } catch (const nlohmann::json::exception& ex) {
+        err = std::string("malformed scene schema: ") + ex.what();
+        out = {};
+        return false;
+    }
 }
 
 } // namespace Engine::Content
