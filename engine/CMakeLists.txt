@@ -187,22 +187,62 @@ endif()
 # ════════════════════════════════════════════════════════
 # Shaderc 库 — GLSL/HLSL → SPIR-V 编译
 # ════════════════════════════════════════════════════════
-# 检测预编译的 shaderc_combined.lib（Release / Debug 两个配置）
+# 检测预编译的 shaderc_combined.lib（Debug / Release / RelWithDebInfo 三个配置）
 set(SHADERC_RELEASE_LIB "${PROJECT_SOURCE_DIR}/third_party/shaderc/build/libshaderc/Release/shaderc_combined.lib")
 set(SHADERC_DEBUG_LIB "${PROJECT_SOURCE_DIR}/third_party/shaderc/build/libshaderc/Debug/shaderc_combined.lib")
+# B5-RD: RelWithDebInfo 是**有意启用 ASan** 的配置（见根 CMakeLists.txt 的
+# /fsanitize=address genex），但原先磁盘上只有 Debug(/MDd+ASan) 与
+# Release(/MD, 无 ASan) 两个产物；optimized 回退到 Release 会让 ASan 目标
+# 文件（注解值 1）链接非 ASan 的 shaderc（注解值 0），产生 492 条
+# LNK2038 annotate_string/annotate_vector 不匹配（仅 sandbox/SpirVTest）。
+#
+# 该产物由 third_party/shaderc/build-asan-rwd 以 /MD + /fsanitize=address 构建
+# （已验证含 __sanitizer_annotate_contiguous_container 与 __asan_）。
+#
+# **可复现性注意**：shaderc 是 submodule，其 .gitignore 含 `build-*/`，
+# 因此这个 ASan 产物不会被提交，**新克隆的仓库默认没有它**。所以它只是
+# **可选增强**：缺失时 RelWithDebInfo 回退到 Release shaderc（回到改动前的
+# 行为，即 SpirVTest 在 RelWithDebInfo 下仍会 LNK2038），但不会像把
+# EXISTS 写进必需条件那样让 shaderc 对其他人整体失效。
+# 需要完整 RelWithDebInfo + ASan 支持的构建请先生成该产物。
+set(SHADERC_RELWITHDEBINFO_LIB "${PROJECT_SOURCE_DIR}/third_party/shaderc/build-asan-rwd/libshaderc/RelWithDebInfo/shaderc_combined.lib")
+set(SHADERC_HAVE_RELWITHDEBINFO OFF)
+if(EXISTS "${SHADERC_RELWITHDEBINFO_LIB}")
+    set(SHADERC_HAVE_RELWITHDEBINFO ON)
+    set(SHADERC_HAVE_RELWITHDEBINFO_STR " + RelWithDebInfo/ASan")
+else()
+    set(SHADERC_HAVE_RELWITHDEBINFO_STR "")
+endif()
 
+# 必需条件仍然只有 Debug + Release（与改动前一致）
 if(EXISTS "${SHADERC_RELEASE_LIB}" AND EXISTS "${SHADERC_DEBUG_LIB}")
-    message(STATUS "Shaderc: found — enabling GLSL→SPIR-V compilation")
+    message(STATUS "Shaderc: found (Debug + Release${SHADERC_HAVE_RELWITHDEBINFO_STR}) — enabling GLSL→SPIR-V compilation")
 
     # 创建接口库封装 shaderc 链接细节
     add_library(shaderc_wrapper INTERFACE)
     target_include_directories(shaderc_wrapper INTERFACE
         "${PROJECT_SOURCE_DIR}/third_party/shaderc/libshaderc/include"
     )
-    target_link_libraries(shaderc_wrapper INTERFACE
-        debug "${SHADERC_DEBUG_LIB}"
-        optimized "${SHADERC_RELEASE_LIB}"
-    )
+    # 刻意**全部**使用生成式表达式，不再混用 debug/optimized 关键字：
+    # CMake 的 target_link_libraries 关键字形式与生成式混用会被错误解析，
+    # 曾在 Release/MinSizeRel/RelWithDebInfo 的依赖列表里注入 "0.lib"/"1.lib"
+    # 这类伪库名，导致 LNK1181。映射语义保持不变：
+    #     Debug           -> Debug shaderc
+    #     RelWithDebInfo  -> /MD + ASan shaderc（仅当该产物存在）
+    #     Release/MinSizeRel -> Release shaderc
+    # ASan 产物缺失时退回改动前的映射（RelWithDebInfo -> Release shaderc）。
+    if(SHADERC_HAVE_RELWITHDEBINFO)
+        target_link_libraries(shaderc_wrapper INTERFACE
+            "$<$<CONFIG:Debug>:${SHADERC_DEBUG_LIB}>"
+            "$<$<CONFIG:RelWithDebInfo>:${SHADERC_RELWITHDEBINFO_LIB}>"
+            "$<$<NOT:$<OR:$<CONFIG:Debug>,$<CONFIG:RelWithDebInfo>>>:${SHADERC_RELEASE_LIB}>"
+        )
+    else()
+        target_link_libraries(shaderc_wrapper INTERFACE
+            "$<$<CONFIG:Debug>:${SHADERC_DEBUG_LIB}>"
+            "$<$<NOT:$<CONFIG:Debug>>:${SHADERC_RELEASE_LIB}>"
+        )
+    endif()
     target_compile_definitions(shaderc_wrapper INTERFACE ENGINE_HAS_SHADERC)
 
     # EngineCore 链接 shaderc，ShaderCompiler.cpp 真正可用

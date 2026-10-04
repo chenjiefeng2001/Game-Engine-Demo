@@ -71,7 +71,13 @@ if(MSVC)
         add_compile_options(
             "$<$<OR:$<CONFIG:Debug>,$<CONFIG:RelWithDebInfo>>:/fsanitize=address>"
         )
-        message(STATUS "[ASan] AddressSanitizer enabled globally (all targets, Debug/RelWithDebInfo)")
+        # B5-RD: MSVC 链接器不支持 /INCREMENTAL 与 /fsanitize=address 共存，
+        # 会报 LNK4300: /INCREMENTAL ASAN。对 ASan 配置显式关闭增量链接，
+        # 与上面的 ASan genex 保持同一配置范围。
+        add_link_options(
+            "$<$<OR:$<CONFIG:Debug>,$<CONFIG:RelWithDebInfo>>:/INCREMENTAL:NO>"
+        )
+        message(STATUS "[ASan] AddressSanitizer enabled globally (all targets, Debug/RelWithDebInfo); /INCREMENTAL disabled for those configs")
     else()
         message(STATUS "[ASan] AddressSanitizer disabled (ENABLE_ASAN=OFF)")
     endif()
