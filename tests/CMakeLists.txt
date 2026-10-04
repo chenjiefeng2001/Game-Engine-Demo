@@ -22,6 +22,7 @@ set(COMMON_LIBS EngineCore GTest::gtest GTest::gmock)
 add_executable(test_core
     test_core/math/Vector3Test.cpp
     test_core/memory/StackAllocatorTest.cpp
+    test_core/time/TimeTest.cpp
     main.cpp
 )
 target_link_libraries(test_core PRIVATE ${COMMON_LIBS})
