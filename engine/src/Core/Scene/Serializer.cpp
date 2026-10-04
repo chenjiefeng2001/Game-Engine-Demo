@@ -48,6 +48,10 @@ namespace Engine {
         } catch (const nlohmann::json::parse_error& e) {
             s_Log.Error("Parse error: {}", e.what());
             return false;
+        } catch (const nlohmann::json::type_error& e) {
+            // 语法合法但标量类型不符：与 parse_error 同等对待，返回失败
+            s_Log.Error("Type error: {}", e.what());
+            return false;
         }
         file.close();
 
@@ -144,21 +148,30 @@ namespace Engine {
 
         // 场景名称
         if (sceneJson.contains("name")) {
-            scene.SetName(sceneJson["name"]);
+            if (!sceneJson["name"].is_string()) {
+                s_Log.Error("Scene 'name' must be a string");
+                return false;
+            }
+            scene.SetName(sceneJson["name"].get<std::string>());
         }
 
         // 场景属性
         if (sceneJson.contains("properties")) {
-            DeserializeProperties(scene.GetProperties(), sceneJson["properties"]);
+            if (!DeserializeProperties(scene.GetProperties(), sceneJson["properties"])) {
+                s_Log.Error("Invalid scene property type");
+                return false;
+            }
         }
 
         // 根对象
         if (sceneJson.contains("objects") && sceneJson["objects"].is_array()) {
             for (const auto& objJson : sceneJson["objects"]) {
                 auto obj = std::make_shared<GameObject>();
-                if (DeserializeGameObject(*obj, objJson)) {
-                    scene.AddObject(std::move(obj));
+                if (!DeserializeGameObject(*obj, objJson)) {
+                    s_Log.Error("Invalid object entry");
+                    return false;
                 }
+                scene.AddObject(std::move(obj));
             }
         }
 
@@ -171,21 +184,38 @@ namespace Engine {
                                       json["ambientColor"][2], json["ambientColor"][3]);
         if (json.contains("gravity") && json["gravity"].is_array() && json["gravity"].size() >= 2)
             props.gravity = Vec2(json["gravity"][0], json["gravity"][1]);
-        if (json.contains("fogDensity")) props.fogDensity = json["fogDensity"];
+        // 标量字段：类型不符视为坏输入，直接返回 false。
+        // 刻意**不**静默保留旧值/默认值 —— 那会把坏输入伪装成一次成功加载。
+        if (json.contains("fogDensity")) {
+            if (!json["fogDensity"].is_number()) return false;
+            props.fogDensity = json["fogDensity"].get<float32>();
+        }
         if (json.contains("fogColor") && json["fogColor"].is_array() && json["fogColor"].size() >= 4)
             props.fogColor = Vec4(json["fogColor"][0], json["fogColor"][1],
                                   json["fogColor"][2], json["fogColor"][3]);
-        if (json.contains("enableFog")) props.enableFog = json["enableFog"];
-        if (json.contains("renderingOrder")) props.renderingOrder = json["renderingOrder"];
+        if (json.contains("enableFog")) {
+            if (!json["enableFog"].is_boolean()) return false;
+            props.enableFog = json["enableFog"].get<bool>();
+        }
+        if (json.contains("renderingOrder")) {
+            if (!json["renderingOrder"].is_number()) return false;
+            props.renderingOrder = json["renderingOrder"].get<uint32>();
+        }
         return true;
     }
 
     bool JsonSerializer::DeserializeGameObject(GameObject& obj, const nlohmann::json& json) {
         // 名称
-        if (json.contains("name")) obj.SetName(json["name"]);
+        if (json.contains("name")) {
+            if (!json["name"].is_string()) return false;
+            obj.SetName(json["name"].get<std::string>());
+        }
 
         // 活跃状态
-        if (json.contains("active")) obj.SetActive(json["active"]);
+        if (json.contains("active")) {
+            if (!json["active"].is_boolean()) return false;
+            obj.SetActive(json["active"].get<bool>());
+        }
 
         // Transform
         if (json.contains("transform")) {
@@ -203,9 +233,8 @@ namespace Engine {
         if (json.contains("children") && json["children"].is_array()) {
             for (const auto& childJson : json["children"]) {
                 auto child = std::make_shared<GameObject>();
-                if (DeserializeGameObject(*child, childJson)) {
-                    obj.AddChild(std::move(child));
-                }
+                if (!DeserializeGameObject(*child, childJson)) return false;
+                obj.AddChild(std::move(child));
             }
         }
 

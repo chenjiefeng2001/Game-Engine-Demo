@@ -481,41 +481,45 @@ TEST(JsonSerializerTest, Deserialize_WrongTypedVectorFields_AreIgnored)
     EXPECT_FLOAT_EQ(dst.GetProperties().fogDensity, 0.75f);
 }
 
-// 下面三个用例记录**当前真实行为**，而不是理想行为：
-// 标量字段（fogDensity / enableFog / renderingOrder / name / active）在
-// 反序列化时**没有**类型校验，值类型不符会抛出 nlohmann::json::type_error。
-// Serialize 时写出的类型总是正确的，因此这只在读取外部/手写/被篡改的
-// JSON 时才会触发 —— 但那时它不是返回 false，而是**未捕获异常**。
-// Serializer.cpp 全文只有一个 catch，且只捕获 parse_error（L48），
-// 因此 type_error 会一路穿过 Deserialize / LoadFromFile 抛给调用方。
-// 这是已记录的生产侧健壮性缺口，未在本 slice 中修改生产代码。
-TEST(JsonSerializerTest, Deserialize_WrongTypedFogDensity_ThrowsTypeError)
+// 标量字段类型校验契约
+//
+// 背景：标量字段（fogDensity / enableFog / renderingOrder / name / active）
+// 此前**没有**类型校验，值类型不符会抛出 nlohmann::json::type_error；而
+// LoadFromFile 只捕获 parse_error，导致**语法合法**的坏文件把未捕获异常
+// 抛给调用方。修复后的契约是：
+//     JSON 语法错误 → false
+//     标量类型错误 → false
+//     合法 JSON     → 正常加载
+// 刻意不把类型错误静默转成默认值并返回 true —— 那会把坏输入伪装成成功。
+// 向量字段（ambientColor / gravity / fogColor）维持既有行为：类型或长度
+// 不符时静默忽略；组件解析失败也仍是 best-effort（见上面的未知组件用例）。
+TEST(JsonSerializerTest, Deserialize_WrongTypedFogDensity_ReturnsFalse)
 {
     Scene dst;
     nlohmann::json j;
     j["scene"]["properties"]["fogDensity"] = "not_a_number";
-    EXPECT_THROW(JsonSerializer::Deserialize(dst, j), nlohmann::json::type_error);
+    EXPECT_FALSE(JsonSerializer::Deserialize(dst, j));
 }
 
-TEST(JsonSerializerTest, Deserialize_WrongTypedRenderingOrderAndEnableFog_ThrowTypeError)
+TEST(JsonSerializerTest, Deserialize_WrongTypedRenderingOrderAndEnableFog_ReturnFalse)
 {
     Scene dst;
     nlohmann::json j1;
     j1["scene"]["properties"]["renderingOrder"] = "not_a_uint";
-    EXPECT_THROW(JsonSerializer::Deserialize(dst, j1), nlohmann::json::type_error);
+    EXPECT_FALSE(JsonSerializer::Deserialize(dst, j1));
 
     Scene dst2;
     nlohmann::json j2;
     j2["scene"]["properties"]["enableFog"] = "not_a_bool";
-    EXPECT_THROW(JsonSerializer::Deserialize(dst2, j2), nlohmann::json::type_error);
+    EXPECT_FALSE(JsonSerializer::Deserialize(dst2, j2));
 }
 
-TEST(JsonSerializerTest, Deserialize_WrongTypedNameAndActive_ThrowTypeError)
+TEST(JsonSerializerTest, Deserialize_WrongTypedNameAndActive_ReturnFalse)
 {
     Scene dst;
     nlohmann::json j1;
     j1["scene"]["name"] = 12345;  // 期望 string
-    EXPECT_THROW(JsonSerializer::Deserialize(dst, j1), nlohmann::json::type_error);
+    EXPECT_FALSE(JsonSerializer::Deserialize(dst, j1));
 
     Scene dst2;
     nlohmann::json j2;
@@ -523,17 +527,72 @@ TEST(JsonSerializerTest, Deserialize_WrongTypedNameAndActive_ThrowTypeError)
     obj["name"] = "victim";
     obj["active"] = "yes_please";  // 期望 bool
     j2["scene"]["objects"] = nlohmann::json::array({obj});
-    EXPECT_THROW(JsonSerializer::Deserialize(dst2, j2), nlohmann::json::type_error);
+    EXPECT_FALSE(JsonSerializer::Deserialize(dst2, j2));
 }
 
-TEST(JsonSerializerTest, LoadFromFile_ValidJsonWithWrongTypedField_ThrowsUncaught)
+TEST(JsonSerializerTest, Deserialize_WrongTypedChildName_ReturnFalse)
 {
-    // 端到端后果：JSON 语法合法，但字段类型不符 → 未捕获异常穿出 LoadFromFile，
-    // 而不是像 parse_error 那样被捕获并返回 false。
+    // 子对象同样受校验：畸形 child 会让整体失败，而不是被静默丢弃
+    nlohmann::json j;
+    nlohmann::json child;
+    child["name"] = 99;
+    nlohmann::json root;
+    root["name"] = "root";
+    root["children"] = nlohmann::json::array({child});
+    j["scene"]["objects"] = nlohmann::json::array({root});
+
+    Scene dst;
+    EXPECT_FALSE(JsonSerializer::Deserialize(dst, j));
+}
+
+TEST(JsonSerializerTest, LoadFromFile_ValidJsonWithWrongTypedField_ReturnsFalse)
+{
+    // 端到端：语法合法但标量类型不符 → 返回 false，而非未捕获异常
     TempSceneFile f("wrong_type");
     f.writeText(R"({"scene":{"properties":{"fogDensity":"not_a_number"}}})");
     Scene dst;
-    EXPECT_THROW(JsonSerializer::LoadFromFile(dst, f.path()), nlohmann::json::type_error);
+    EXPECT_FALSE(JsonSerializer::LoadFromFile(dst, f.path()));
+}
+
+TEST(JsonSerializerTest, LoadFromFile_WrongTypedObjectField_ReturnsFalse)
+{
+    TempSceneFile f("wrong_type_obj");
+    f.writeText(R"({"scene":{"objects":[{"name":"a","active":"nope"}]}})");
+    Scene dst;
+    EXPECT_FALSE(JsonSerializer::LoadFromFile(dst, f.path()));
+}
+
+TEST(JsonSerializerTest, LoadFromFile_ValidScalarTypes_StillLoadSuccessfully)
+{
+    // 反向对照：类型正确时必须照常成功，避免修复把合法输入也拒掉
+    TempSceneFile f("right_type");
+    f.writeText(R"({"scene":{"name":"ok","properties":{"fogDensity":0.5,"enableFog":true,"renderingOrder":3}}})");
+    Scene dst;
+    ASSERT_TRUE(JsonSerializer::LoadFromFile(dst, f.path()));
+    EXPECT_EQ(dst.GetName(), "ok");
+    EXPECT_FLOAT_EQ(dst.GetProperties().fogDensity, 0.5f);
+    EXPECT_TRUE(dst.GetProperties().enableFog);
+    EXPECT_EQ(dst.GetProperties().renderingOrder, 3u);
+}
+
+TEST(JsonSerializerTest, LoadFromFile_MalformedJson_StillReturnsFalse)
+{
+    // 反向对照：语法错误行为不变（由 parse_error 分支处理）
+    TempSceneFile f("still_bad");
+    f.writeText("{ this is not valid json ]]");
+    Scene dst;
+    EXPECT_FALSE(JsonSerializer::LoadFromFile(dst, f.path()));
+}
+
+TEST(JsonSerializerTest, Deserialize_WrongTypedVectorField_KeepsExistingIgnoreBehaviour)
+{
+    // 向量字段维持既有行为：静默忽略并视为成功（与标量字段不同）
+    Scene dst;
+    dst.GetProperties().ambientColor = Vec4(0.4f, 0.4f, 0.4f, 0.4f);
+    nlohmann::json j;
+    j["scene"]["properties"]["ambientColor"] = "not_an_array";
+    EXPECT_TRUE(JsonSerializer::Deserialize(dst, j));
+    EXPECT_FLOAT_EQ(dst.GetProperties().ambientColor.x, 0.4f);
 }
 
 TEST(JsonSerializerTest, Deserialize_ObjectsNotAnArray_IsIgnored)
