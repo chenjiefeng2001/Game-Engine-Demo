@@ -36,6 +36,18 @@
                 "CMAKE_BUILD_TYPE": "Release",
                 "ENABLE_ASAN": "OFF"
             }
+        },
+        {
+            "name": "RelWithDebInfo",
+            "displayName": "RelWithDebInfo (ASan)",
+            "description": "RelWithDebInfo build with AddressSanitizer enabled. Per the root CMakeLists.txt ASan policy, RelWithDebInfo IS an ASan configuration, so this is the single entry point for it (no separate RelWithDebInfo-ASan). Requires the /MD + ASan shaderc artifact: run tools/build_shaderc_asan_rwd.ps1 before building, otherwise RelWithDebInfo falls back to the non-ASan Release shaderc and sandbox/SpirVTest fails with LNK2038.",
+            "generator": "Visual Studio 17 2022",
+            "architecture": "x64",
+            "binaryDir": "${sourceDir}/build/RelWithDebInfo",
+            "cacheVariables": {
+                "CMAKE_BUILD_TYPE": "RelWithDebInfo",
+                "ENABLE_ASAN": "ON"
+            }
         }
     ]
 }
