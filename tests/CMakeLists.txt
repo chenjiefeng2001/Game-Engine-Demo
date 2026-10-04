@@ -164,6 +164,8 @@ add_executable(test_audio
     test_audio/AudioBusManagerTest.cpp
     test_audio/SpatialAudioManagerTest.cpp
     test_audio/AudioAssetManagerTest.cpp
+    test_audio/ListenerTest.cpp
+    test_audio/AudioLoaderTest.cpp
     main.cpp
 )
 target_link_libraries(test_audio PRIVATE ${COMMON_LIBS})
