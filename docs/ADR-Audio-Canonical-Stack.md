@@ -1,6 +1,6 @@
 # ADR: 音频 canonical stack 选择
 
-> **状态**: 待决策（Decision Pending）— 本文档是**决策输入**，不含结论
+> **状态**: 决策草案已提出（Proposed — 待接受）— §1–§5 仍为决策输入且不含结论；§0.5 记录决策方提交的草案
 > **最后更新**: 2026-10-04
 > **涉及范围**: `engine/src/Audio/`、`engine/src/OpenAL/`、`engine/include/Engine/Audio/`、`engine/include/Engine/Core/Audio/`
 > **关联文档**: `docs/Audio-Subsystem-Summary.md`（已记载"双栈架构"）
@@ -17,6 +17,68 @@
 
 **本文档刻意不给出推荐选项。** 任何"推荐"都会使后续决策者把分析误读为已批准架构。
 选择哪个 stack 会改变所有权、生命周期、有效性语义与公开 API —— 这属于产品/架构意图。
+
+§0.5 记录的 Proposed Decision 由**决策方**提交，属方向性输入；§1–§5 的分析仍不含推荐，且 §0.5 **尚未被接受**。
+
+---
+
+## 0.5 Proposed Decision（草案，待接受）
+
+> **Status: Proposed**
+> 由决策方提交。**尚未被接受，不构成已批准架构**，也**不触发任何迁移实现**。
+> 本节与 §1–§5 的关系：§1–§5 仍是决策输入且不含推荐；本节是叠加在其上的方向性输入。
+
+将 **Stack 2（`IAudioEngine` / `IAudioSource` / `IAudioBuffer`）确定为音频系统的 canonical architecture。**
+
+Stack 1（`Engine/Audio/AudioSource` 等直接使用 OpenAL 的实现）不再作为新的生产音频架构扩展方向。现有 Stack 1 代码在迁移完成前继续存在，但不新增第二套独立的 buffer/source ownership 语义。
+
+### Decision Rationale
+
+选择 Stack 2 的主要依据不是"现有代码更多"，而是其抽象已经表达了正确的生命周期边界：
+
+- `IAudioSource::Play(shared_ptr<IAudioBuffer>)` 已经封装 buffer 绑定、播放、错误检查以及 buffer lifetime retention。
+- `IAudioEngine` 提供与 OpenAL 类型无关的 engine/source/buffer 抽象。
+- `Listener` 等消费者已经能够通过接口注入进行真正的 headless testing。
+- Stack 1 自行管理 `ALuint`、OpenAL context 和 source lifecycle，形成第二套独立 ownership model。
+- 当前 Stack 2 的 `AudioSystem` / `AudioSourceComponent` 绕过接口直接操作 `ALuint`，其根因是 `AudioClip` 当前只保存 native buffer，而没有 `IAudioBuffer` 产物。
+
+因此 Stack 2 是更适合作为长期架构边界的实现。
+
+### Consequences
+
+该决定**不立即删除 `AudioClip::m_BufferID`**。
+
+`m_BufferID` 已被证明是现有 production contract：存在多个创建点、多个 native-handle consumers，并参与 `IsValid()` 语义。任何删除或改变都必须属于后续迁移工作，而不是本决策的副作用。
+
+未来迁移必须一次性解决以下三个问题：
+
+1. `AudioClip` 如何产生 canonical `IAudioBuffer`，并处理当前 self-upload 路径的所有权与生命周期。
+2. `AudioSourceComponent` 如何获得创建/使用该 buffer 所需的 engine context。
+3. 所有 native `alSourcei` / `alSourcePlay` / `alGetError` bypass 是否能够统一收敛到 `IAudioSource::Play()`。
+
+迁移期间不得形成两条新的 buffer provenance path。不得通过增加第二个临时 buffer 来源来"桥接"现有 API。
+
+### Explicit Non-Decisions
+
+本决策不规定：
+
+- `AudioClip` 最终应保留还是移除 native buffer；
+- `AudioClip` 是否永久保留 PCM；
+- OpenAL backend 是否需要 null-driver / headless policy；
+- Stack 1 的具体删除时间；
+- 当前 112 个 headless audio tests 的最终归属方式。
+
+这些属于后续 implementation / migration decision。
+
+### Interim Rule
+
+在迁移完成前，当前双栈状态作为**明确的过渡状态**保留：
+
+> 不新增绕过 `IAudioSource` 的生产路径，不新增第三种 buffer ownership 模型，不以局部修复制造新的 hybrid architecture。
+
+### 承接的未决问题
+
+本草案方向**未回答** §4 的未决问题 5（是否存在把音频迁移到 ECS 模型的计划）；见 `ADR-B4-ECS-Registration.md` §0.5，其中同样**不要求**两套组件模型收敛。
 
 ---
 
@@ -176,10 +238,10 @@ void OpenALAudioSource::Play(std::shared_ptr<IAudioBuffer> buffer) {
 
 ## 5. 本文档明确不做的事
 
-- 不推荐任何选项
+- §1–§5 的分析不推荐任何选项（§0.5 的草案由决策方提交，非本文档推荐）
 - 不宣称任何选项"更干净"或"更现代"
 - 不把"`AudioClip` 应该提供 `IAudioBuffer`"写成技术事实 —— 这正是待决内容之一
-- 不修改任何代码
+- 不因 §0.5 的草案而修改任何代码
 
 ---
 
