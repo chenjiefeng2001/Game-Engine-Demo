@@ -73,14 +73,19 @@ Core/ECS | — | — | 继续跳过（等待 B4 决策） |
 
 **现有覆盖**：**0**（`Time::` / `Engine::Time` / `CalibrateAccumulator` 在 tests/ 下均 0 引用）。
 
-### 门控条件（implementation-gated）
+### 门控状态（已解除）
 
-> **`engine/src/Core/Time.cpp` 存在 10 行未提交的 HRC 改动。**
-> 在 HRC 对 `Time.cpp` 的语义稳定之前**不开始 characterization**。
+> **Time：Stage 3 可立即开始。HRC 当前未提交改动未改变既有计算语义。`Shutdown()` / `IsInitialized()` 属于未提交的新增生命周期 API；若 HRC 后续改变其接口，仅对应测试用例可能需要迁移。**
 
-理由：针对仍在变化的实现写行为测试，会产生"当前代码 → 测试落地 → HRC 改动 → 测试再次迁移"的链路，把一个本来干净的 Category 1 slice 变成 HRC 耦合债务。
+**门控判据的修正**：原门控写的是"等待 `Time.cpp` 稳定"，隐含把**未提交**等同于**语义不稳定**。逐项核对后该等同不成立 —— HRC 对 `Time.cpp` 的 10 行是纯增量，只新增 `Shutdown()` 与 `IsInitialized()` 两个生命周期 API，**未触碰** `Init()`、`GetTimeD()` 惰性自初始化、`UpdateDeltaTime()` 钳制、`SetTimeScale()` 钳制、`CalibrateAccumulator()` 语义、`GetTickFrequency()`。
 
-### 门控解除后的既定四步
+因此原先假设的"当前代码 → 测试落地 → HRC 改动 → 测试再次迁移"链路对这批语义并不成立，门控改由**语义是否改变**判定，而非提交状态。
+
+**残留风险的准确范围**：仅 `Shutdown()` / `IsInitialized()` 两个用例可能因 HRC 改动其接口而需要迁移；其余用例不受影响。
+
+**附带事实**（记录归属用）：`Time::Shutdown()` 的唯一消费者 `Application::Shutdown()` 在 HEAD 中并不存在，属 HRC-3 新方法（嵌于 `Application.cpp` 12 个 hunk 中的第 4 个）；`Time::IsInitialized()` 的唯一消费者 `bridge/src/EngineHost.cpp` 为 untracked 文件。两个新 API 目前只服务于 HRC-3 的生命周期工作。
+
+### 既定四步
 
 `behavioral surface → 独立 fix → assertion migration → 三配置全量回归`
 
