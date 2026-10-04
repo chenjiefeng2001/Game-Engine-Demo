@@ -1,9 +1,9 @@
 # 架构评审说明（Audio canonical stack + B4 ECS registration）
 
-> **状态**: 待评审（Review Pending）
+> **状态**: 评审已完成 —— 四项结论均**已接受**（2026-10-04）
 > **最后更新**: 2026-10-04
-> **评审对象**: `4b1f21f` 中记录的两份 **Status: Proposed** 草案
-> **用途**: 为架构评审提供可核查的决策依据；**本报告不投票、不推荐、不预判结论**
+> **评审对象**: `4b1f21f` 中记录的两份决策草案，现已转为 **Accepted**
+> **本文档保留为评审依据与范围量化记录**；§1.2 的论证性判断与 §6 的自我约束继续有效
 
 ---
 
@@ -11,8 +11,10 @@
 
 | 草案 | 位置 | 状态 | 是否已触发实现 |
 |---|---|---|---|
-Audio canonical stack = Stack 2 | `docs/ADR-Audio-Canonical-Stack.md` §0.5 | **Proposed（待接受）** | 否 |
-B4 ECS 显式受控注册 | `docs/ADR-B4-ECS-Registration.md` §0.5 | **Proposed（待接受）** | 否 |
+Audio canonical stack = Stack 2 | `docs/ADR-Audio-Canonical-Stack.md` §0.5 | **Accepted（2026-10-04）** | 否 |
+B4 ECS 显式受控注册 | `docs/ADR-B4-ECS-Registration.md` §0.5 | **Accepted（2026-10-04）** | 否 |
+B4 bootstrap 不依赖 HRC-3 | `docs/ADR-B4-ECS-Registration.md` §0.5 Bootstrap Boundary Decision | **Accepted（2026-10-04）** | 否 |
+两项分别立项、不合并迁移 | 两份 ADR §0.5 Implementation Constraints | **Accepted（2026-10-04）** | 否 |
 
 工程基线：Debug / Release / RelWithDebInfo 三配置全量 build `0 error`，全量 suite `16/16`，`test_ecs` `18/18`。HRC-3 工作区全程隔离。
 
@@ -157,17 +159,19 @@ B4 要求把 registration 责任落到"明确的 ECS initialization boundary"，
 
 ---
 
-## 5. 评审需要产出的结论
+## 5. 评审结论（2026-10-04 已产出）
 
-| # | 待产出 | 关联 |
+| # | 结论 | 结果 |
 |---|---|---|
-1 | 是否接受 Audio = Stack 2（接受 / 修改 / 否决） | §2.3 |
-2 | 是否接受 B4 显式注册（接受 / 修改 / 否决） | §3.5 |
-3 | B4 的 bootstrap 边界归属，且是否允许依赖 HRC-3 | §4.2 |
-4 | 是否接受"两项分别立项、不合并迁移" | §4.3 |
-5 | 接受后是否为每项单独授权 migration plan | §2.3、§3.5 |
+1 | 是否接受 Audio = Stack 2 | **接受** |
+2 | 是否接受 B4 显式注册 | **接受** |
+3 | B4 bootstrap 归属，且是否允许依赖 HRC-3 | **裁定：不依赖 HRC-3**；建立独立 ECS initialization boundary，由现有已提交启动路径调用 |
+4 | 是否"两项分别立项、不合并迁移" | **接受** |
+5 | 接受后是否为每项单独授权 migration plan | **B4 为第一个实施 slice**；Audio 需先做 migration design freeze |
 
-**在 1、2 得到答复前，两项保持 Proposed，不启动任何迁移实现。**
+实施顺序已确定：架构接受 → **B4 registration migration** → B4 三配置 + 16/16 回归 → Audio migration design freeze → Audio bridge → Audio consumers migration → Stack 1 retirement → native `AudioClip` contract retirement。
+
+Audio 侧先决的 ownership 问题（`AudioClip` canonical buffer、`AudioSourceComponent` engine context、bypass 收敛）**仍开放**，须在 Audio migration design freeze 中定下，详见 §2.3。
 
 ---
 

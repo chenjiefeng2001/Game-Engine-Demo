@@ -1,9 +1,9 @@
 # ADR: 音频 canonical stack 选择
 
-> **状态**: 决策草案已提出（Proposed — 待接受）— §1–§5 仍为决策输入且不含结论；§0.5 记录决策方提交的草案
+> **状态**: **已接受（Accepted，2026-10-04）** — §1–§5 仍为决策输入且不含推荐；§0.5 为已批准架构结论
 > **最后更新**: 2026-10-04
 > **涉及范围**: `engine/src/Audio/`、`engine/src/OpenAL/`、`engine/include/Engine/Audio/`、`engine/include/Engine/Core/Audio/`
-> **关联文档**: `docs/Audio-Subsystem-Summary.md`（已记载"双栈架构"）
+> **关联文档**: `docs/Audio-Subsystem-Summary.md`（已记载"双栈架构"）、`docs/Architecture-Review-Brief.md`（迁移范围量化）
 
 ---
 
@@ -18,15 +18,15 @@
 **本文档刻意不给出推荐选项。** 任何"推荐"都会使后续决策者把分析误读为已批准架构。
 选择哪个 stack 会改变所有权、生命周期、有效性语义与公开 API —— 这属于产品/架构意图。
 
-§0.5 记录的 Proposed Decision 由**决策方**提交，属方向性输入；§1–§5 的分析仍不含推荐，且 §0.5 **尚未被接受**。
+§0.5 的决策由**决策方**提交并经架构评审接受；§1–§5 的分析本身仍不含推荐 —— 结论的来源是评审，不是本文档的分析。
 
 ---
 
-## 0.5 Proposed Decision（草案，待接受）
+## 0.5 Accepted Decision（已接受）
 
-> **Status: Proposed**
-> 由决策方提交。**尚未被接受，不构成已批准架构**，也**不触发任何迁移实现**。
-> 本节与 §1–§5 的关系：§1–§5 仍是决策输入且不含推荐；本节是叠加在其上的方向性输入。
+> **Status: Accepted** —— 架构评审于 2026-10-04 接受
+> §1–§5 仍是决策输入且不含推荐；本节是叠加其上的**已批准架构结论**。
+> 接受本身**不启动任何迁移实现**：实施按下方"实施轨道约束"推进。
 
 将 **Stack 2（`IAudioEngine` / `IAudioSource` / `IAudioBuffer`）确定为音频系统的 canonical architecture。**
 
@@ -75,6 +75,12 @@ Stack 1（`Engine/Audio/AudioSource` 等直接使用 OpenAL 的实现）不再�
 在迁移完成前，当前双栈状态作为**明确的过渡状态**保留：
 
 > 不新增绕过 `IAudioSource` 的生产路径，不新增第三种 buffer ownership 模型，不以局部修复制造新的 hybrid architecture。
+
+### 实施轨道约束
+
+本决策与 B4 registration 决策**分别立项、不合并迁移**（见 `ADR-B4-ECS-Registration.md` §0.5）。两条轨道各自保持可解释的中间状态。
+
+同时冻结、不并入本迁移的事项：OpenAL null-driver / headless policy（独立的 backend/CI 决策）、Core/Physics 与 SceneManager 与 ResourceManager（阶段 2 已结束）。
 
 ### 承接的未决问题
 
@@ -238,10 +244,10 @@ void OpenALAudioSource::Play(std::shared_ptr<IAudioBuffer> buffer) {
 
 ## 5. 本文档明确不做的事
 
-- §1–§5 的分析不推荐任何选项（§0.5 的草案由决策方提交，非本文档推荐）
+- §1–§5 的分析不推荐任何选项（§0.5 的结论来自架构评审，非本文档推荐）
 - 不宣称任何选项"更干净"或"更现代"
 - 不把"`AudioClip` 应该提供 `IAudioBuffer`"写成技术事实 —— 这正是待决内容之一
-- 不因 §0.5 的草案而修改任何代码
+- 不因记录 §0.5 的接受而修改任何代码
 
 ---
 

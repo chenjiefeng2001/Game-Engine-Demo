@@ -1,8 +1,8 @@
 # 待决事项说明（Decision Brief）
 
-> **状态**: 待决策
+> **状态**: 评审已完成 —— 两项决策均**已接受**（2026-10-04）；本文档转为**实施前的最后确认清单**
 > **最后更新**: 2026-10-04
-> **用途**: 把当前所有**需要人来决定**的事项集中成一份可决策清单
+> **用途**: 记录决策**做出前**需要回答的问题、选项空间与决策依据。结论见各 ADR §0.5（Accepted），本文档的选项分析仅作决策留痕
 > **不重复** ADR 内容 —— 事实、选项、后果详见 `docs/ADR-Audio-Canonical-Stack.md` 与 `docs/ADR-B4-ECS-Registration.md`
 > **本文档不含架构结论**。技术事实已穷尽，剩余判断依赖产品/架构意图
 
@@ -27,9 +27,11 @@ ECS internal location bookkeeping defect | `b8d7243`（swap-with-back 后同步 
 
 ---
 
-## 1. 需要决策的两项
+## 1. 已决策的两项（2026-10-04 接受）
 
-### 决策一：Audio canonical stack
+> 以下两节保留决策前的选项空间与依据。**结论已产出**：Audio = Stack 2 canonical；B4 = 显式受控 registration，bootstrap 不依赖 HRC-3；两项分别立项、不合并迁移。见各 ADR §0.5。
+
+### 决策一：Audio canonical stack —— **已接受：Stack 2**
 
 **要决定的问题**：音频以哪一套 OpenAL 实现为 canonical —— Stack 2（`IAudioEngine` 抽象）、Stack 1（`Engine::Audio/AudioSource` 直接实现）、或正式承认两者共存。
 
@@ -53,7 +55,7 @@ Stack 1 canonical | `IAudioEngine` / `IAudioSource` 需重新定位；已交付�
 
 ---
 
-### 决策二：B4 ECS 组件注册模型
+### 决策二：B4 ECS 组件注册模型 —— **已接受：显式受控 registration**
 
 **要决定的问题**：ECS 侧组件是否需要预注册、以何种方式注册；以及 ECS 与 GameObject 两套组件模型是否收敛。
 
@@ -129,8 +131,10 @@ Audio §4 未决问题 5：是否存在把音频从 GameObject/Component 模型�
 | 想做的事 | 前置条件 |
 |---|---|
 推进 Time 之外的 Stage 3 | 无条件可做，但阶段 2 已判定无其它值得进入的 Category 1 面 |
-确定 ECS 注册模型（决策二） | 无前置条件：suite 已 16/16，`629ea47` 已使未注册类型产生确定且可诊断的失败，(a)/(b) 现在是纯设计问题而非可观测故障 |
-清理音频绕过路径 | 需 §1 决策一 |
+确定 ECS 注册模型（决策二） | **已完成** —— 2026-10-04 接受显式受控 registration；bootstrap 边界同时裁定为不依赖 HRC-3 |
+实施 B4 registration migration（已接受决策的第一个 slice） | 无前置条件：bootstrap 边界不依赖 HRC-3，可独立落地 |
+Audio migration design freeze（`AudioClip` ownership、`AudioSourceComponent` engine context、bypass 收敛） | 决策本身已接受；实施排在 B4 迁移与三配置回归之后 |
+清理音频绕过路径 | 需先完成 Audio migration design freeze（Stack 2 决策已接受） |
 引入 RelWithDebInfo/macOS/Linux-ASan CI 覆盖 | 需独立决策（当前 CI 已覆盖 Windows RelWithDebInfo+ASan，刻意未扩 macOS 与 Linux ASan） |
 
 ---
