@@ -325,26 +325,39 @@ TEST(SceneSerializerV1Contract, LoadSnapshotFromFile_MissingFile_FailsClean) {
     EXPECT_NE(err.find("cannot open"), std::string::npos);
 }
 
-// === characterization：当前两处未校验类型的提取会抛异常（缺陷证据）===
+// === 标量类型契约 ===
 //
-// DeserializeSnapshot 全文没有任何 try/catch；LoadSnapshotFromFile 的 try
-// 只包住 `f >> j`，调用 DeserializeSnapshot 在 catch 之外。因此下面两处
-// "键存在但类型不符" 的提取会抛出 nlohmann::json::type_error 并**穿出**
-// 返回 bool 的加载器，而不是走既有的 err 失败通道。
+// 修复前有两处提取不做类型校验（version、position 元素），会抛
+// nlohmann::json::type_error 并穿出返回 bool 的加载器 —— 本组用例曾以
+// EXPECT_THROW 记录该缺陷，现已改为断言正式契约，且不再保留 EXPECT_THROW。
 //
-// 下面两个 EXPECT_THROW 是缺陷的可执行证据，不是期望契约；修复后应改写为
-// EXPECT_FALSE 并改用 err 报告。
+// 区分两类字段（与源码既有宽容契约一致）：
+//   - version 是根级字段，类型不符无法解释 → 硬失败 false + err
+//   - position 是可选的实体级数据，不可用时按既有约定退回默认坐标
 
-TEST(SceneSerializerV1Characterization, VersionWrongType_ThrowsTypeError) {
+TEST(SceneSerializerV1TypeContract, VersionWrongType_ReturnsFalseWithErr) {
     nlohmann::json j;
     j["format"] = "engine.scene";
     j["version"] = "1";                 // 期望 int
     j["entities"] = nlohmann::json::array();
     SceneSnapshot snap; std::string err;
-    EXPECT_THROW(DeserializeSnapshot(j, snap, err), nlohmann::json::type_error);
+    EXPECT_FALSE(DeserializeSnapshot(j, snap, err));
+    EXPECT_NE(err.find("version"), std::string::npos);
+    EXPECT_TRUE(snap.entities.empty());
 }
 
-TEST(SceneSerializerV1Characterization, PositionElementWrongType_ThrowsTypeError) {
+TEST(SceneSerializerV1TypeContract, VersionWrongType_ViaFile_ReturnsFalseNotThrow) {
+    WriteFile("v1_badver.scene",
+              R"({"format":"engine.scene","version":"1","entities":[]})");
+    SceneSnapshot snap; std::string err;
+    EXPECT_FALSE(LoadSnapshotFromFile(P("v1_badver.scene"), snap, err));
+    EXPECT_FALSE(err.empty());
+    EXPECT_TRUE(snap.entities.empty());
+}
+
+TEST(SceneSerializerV1TypeContract, PositionElementWrongType_FallsBackToDefaultCoords) {
+    // position 是可选字段：元素类型不可用时按既有宽容契约退回默认坐标，
+    // 而不是让整个快照失败。
     nlohmann::json j;
     j["format"] = "engine.scene";
     j["entities"] = nlohmann::json::array({
@@ -352,7 +365,41 @@ TEST(SceneSerializerV1Characterization, PositionElementWrongType_ThrowsTypeError
                        {"position", nlohmann::json::array({"a", "b", "c"})}},
     });
     SceneSnapshot snap; std::string err;
-    EXPECT_THROW(DeserializeSnapshot(j, snap, err), nlohmann::json::type_error);
+    ASSERT_TRUE(DeserializeSnapshot(j, snap, err)) << err;
+    ASSERT_EQ(snap.entities.size(), 1u);
+    EXPECT_EQ(snap.entities[0].name, "e");
+    EXPECT_FLOAT_EQ(snap.entities[0].px, 0.0f);
+    EXPECT_FLOAT_EQ(snap.entities[0].py, 0.0f);
+    EXPECT_FLOAT_EQ(snap.entities[0].pz, 0.0f);
+}
+
+TEST(SceneSerializerV1TypeContract, PositionMixedTypes_KeepsDefaultsForWholeTriple) {
+    nlohmann::json j;
+    j["format"] = "engine.scene";
+    j["entities"] = nlohmann::json::array({
+        nlohmann::json{{"name", "mixed"},
+                       {"position", nlohmann::json::array({1.5, "bad", 3.5})}},
+    });
+    SceneSnapshot snap; std::string err;
+    ASSERT_TRUE(DeserializeSnapshot(j, snap, err)) << err;
+    ASSERT_EQ(snap.entities.size(), 1u);
+    EXPECT_FLOAT_EQ(snap.entities[0].px, 0.0f);
+    EXPECT_FLOAT_EQ(snap.entities[0].pz, 0.0f);
+}
+
+TEST(SceneSerializerV1TypeContract, PositionWithIntegerElements_IsAccepted) {
+    // 整型元素是合法数值，必须被接受（避免把 number_unsigned 误判为坏类型）
+    nlohmann::json j;
+    j["format"] = "engine.scene";
+    j["entities"] = nlohmann::json::array({
+        nlohmann::json{{"name", "ints"},
+                       {"position", nlohmann::json::array({1, 2, 3})}},
+    });
+    SceneSnapshot snap; std::string err;
+    ASSERT_TRUE(DeserializeSnapshot(j, snap, err)) << err;
+    ASSERT_EQ(snap.entities.size(), 1u);
+    EXPECT_FLOAT_EQ(snap.entities[0].px, 1.0f);
+    EXPECT_FLOAT_EQ(snap.entities[0].pz, 3.0f);
 }
 
 // === Golden Gate ===
