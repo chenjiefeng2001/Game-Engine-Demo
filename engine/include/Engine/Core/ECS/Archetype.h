@@ -35,7 +35,7 @@ public:
     EntityLocation AddEntity(EntityHandle entity);
 
     /** 移除一个实体（该实体必须在此 Archetype 中） */
-    void RemoveEntity(Chunk* chunk, uint32 row);
+    Chunk::RowMove RemoveEntity(Chunk* chunk, uint32 row);
 
     /** 查找实体是否在此 Archetype */
     bool Contains(EntityHandle entity) const;

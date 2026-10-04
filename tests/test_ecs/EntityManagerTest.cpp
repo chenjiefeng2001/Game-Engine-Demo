@@ -193,6 +193,92 @@ TEST_F(ECSBasicTest, TenThousandEntities) {
     EXPECT_EQ(em.GetEntityCount(), 0);
 }
 
+// ── swap-with-back 行号簿记契约 ─────────────────────────
+// Chunk::RemoveRow 回收槽位时把末行实体移入该槽位。若调用方不同步被移动
+// 实体的位置记录，它记录的 row 会指向已回收的槽位：Debug 触发
+// assert(row < m_EntityCount)，Release 静默读到越界数据。
+// 每个实体把自身序号写进 Position.x，以便区分"仍可达"与"数据仍然正确"。
+
+TEST_F(ECSBasicTest, DestroyMiddleEntity_KeepsSurvivorsReachable) {
+    EntityManager em;
+    std::vector<EntityHandle> entities;
+    for (uint32 i = 0; i < 8; ++i) {
+        EntityHandle e = em.CreateEntity();
+        em.AddComponent<Position>(e).x = static_cast<float>(i);
+        entities.push_back(e);
+    }
+
+    // 同一 Archetype 同一 Chunk，entities[i] 位于 row i。
+    const EntityHandle moved = entities.back();  // row 7，即末行
+    em.DestroyEntity(entities[2]);               // 回收 row 2，末行搬入 row 2
+
+    EXPECT_FALSE(em.IsAlive(entities[2]));
+    EXPECT_EQ(em.GetEntityCount(), 7);
+
+    // 被搬移实体仍可达，且携带自己的数据而非被删除实体的数据。
+    ASSERT_TRUE(em.IsAlive(moved));
+    ASSERT_NE(em.GetComponent<Position>(moved), nullptr);
+    EXPECT_FLOAT_EQ(em.GetComponent<Position>(moved)->x, 7.0f);
+
+    for (uint32 i = 0; i < 8; ++i) {
+        if (i == 2) continue;
+        ASSERT_NE(em.GetComponent<Position>(entities[i]), nullptr);
+        EXPECT_FLOAT_EQ(
+            em.GetComponent<Position>(entities[i])->x, static_cast<float>(i)
+        );
+    }
+}
+
+TEST_F(ECSBasicTest, RemoveOneComponent_KeepsSurvivorsReachable) {
+    EntityManager em;
+    std::vector<EntityHandle> entities;
+    for (uint32 i = 0; i < 8; ++i) {
+        EntityHandle e = em.CreateEntity();
+        em.AddComponent<Position>(e).x = static_cast<float>(i);
+        em.AddComponent<Velocity>(e);
+        entities.push_back(e);
+    }
+
+    // 移除中间实体的一个组件：走 MigrateEntity 路径，源 Archetype 内同样
+    // 发生 swap-with-back。
+    em.RemoveComponent<Velocity>(entities[3]);
+
+    EXPECT_FALSE(em.HasComponent<Velocity>(entities[3]));
+    EXPECT_TRUE(em.HasComponent<Position>(entities[3]));
+    EXPECT_EQ(em.GetEntityCount(), 8);
+
+    for (uint32 i = 0; i < 8; ++i) {
+        ASSERT_NE(em.GetComponent<Position>(entities[i]), nullptr);
+        EXPECT_FLOAT_EQ(
+            em.GetComponent<Position>(entities[i])->x, static_cast<float>(i)
+        );
+    }
+}
+
+TEST_F(ECSBasicTest, RemoveLastComponent_KeepsSurvivorsReachable) {
+    EntityManager em;
+    std::vector<EntityHandle> entities;
+    for (uint32 i = 0; i < 8; ++i) {
+        EntityHandle e = em.CreateEntity();
+        em.AddComponent<Position>(e).x = static_cast<float>(i);
+        entities.push_back(e);
+    }
+
+    // 移除最后一个组件：实体存活但脱离 Archetype。
+    em.RemoveComponent<Position>(entities[5]);
+
+    EXPECT_TRUE(em.IsAlive(entities[5]));
+    EXPECT_FALSE(em.HasComponent<Position>(entities[5]));
+    EXPECT_EQ(em.GetComponent<Position>(entities[5]), nullptr);
+
+    for (uint32 i = 0; i < 8; ++i) {
+        if (i == 5) continue;
+        ASSERT_NE(em.GetComponent<Position>(entities[i]), nullptr);
+        EXPECT_FLOAT_EQ(
+            em.GetComponent<Position>(entities[i])->x, static_cast<float>(i)
+        );
+    }
+}
 // ── 未注册类型的行为契约 ──────────────────────────────────
 // AddComponentRaw 拒绝没有 ComponentMeta 的类型。AddComponent 的返回类型是
 // T&，无法表达失败，因此返回一个 per-thread fallback；调用方用

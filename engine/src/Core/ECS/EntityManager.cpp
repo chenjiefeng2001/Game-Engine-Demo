@@ -30,6 +30,15 @@ EntityHandle EntityManager::CreateEntity() {
     return EntityHandle::Create(index, gen);
 }
 
+// ── 同步 swap-with-back 被搬移实体的位置记录 ──
+void EntityManager::ApplyRowMove(const Chunk::RowMove& move, Chunk* chunk) {
+    if (!move.moved) return;
+
+    EntityLocation& movedLoc = m_Locations[move.entity.Index()];
+    movedLoc.chunk = chunk;
+    movedLoc.row   = move.row;
+}
+
 void EntityManager::DestroyEntity(EntityHandle entity) {
     if (!IsAlive(entity)) return;
 
@@ -44,9 +53,9 @@ void EntityManager::DestroyEntity(EntityHandle entity) {
         }
     }
 
-    if (loc.archetype != nullptr) {
-        // 从所属 Archetype 移除
-        loc.archetype->RemoveEntity(loc.chunk, loc.row);
+if (loc.archetype != nullptr) {
+        // 从 Archetype 移除
+        ApplyRowMove(loc.archetype->RemoveEntity(loc.chunk, loc.row), loc.chunk);
     }
 
     // 标记为空
@@ -143,7 +152,7 @@ void EntityManager::MigrateEntity(
     }
 
     // 从旧 Archetype 移除
-    fromArch->RemoveEntity(fromChunk, fromRow);
+    ApplyRowMove(fromArch->RemoveEntity(fromChunk, fromRow), fromChunk);
 
     // 触发被移除组件的回调
     if (m_OnComponentRemoved) {
@@ -264,7 +273,9 @@ void EntityManager::RemoveComponentRaw(EntityHandle entity, ComponentTypeID type
 
         // 从旧 Archetype 移除，但保留实体存活（无组件实体）
         if (loc.archetype != nullptr) {
-            loc.archetype->RemoveEntity(loc.chunk, loc.row);
+            ApplyRowMove(
+                loc.archetype->RemoveEntity(loc.chunk, loc.row), loc.chunk
+            );
         }
         loc.archetype = nullptr;
         loc.chunk = nullptr;

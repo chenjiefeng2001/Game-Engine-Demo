@@ -54,9 +54,9 @@ Archetype::EntityLocation Archetype::AddEntity(EntityHandle entity) {
 }
 
 // ── 移除实体 ──
-void Archetype::RemoveEntity(Chunk* chunk, uint32 row) {
+Chunk::RowMove Archetype::RemoveEntity(Chunk* chunk, uint32 row) {
     assert(chunk != nullptr);
-    chunk->RemoveRow(row);
+    return chunk->RemoveRow(row);
 }
 
 // ── 获取有空位的 Chunk ──

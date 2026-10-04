@@ -129,6 +129,11 @@ private:
     // ── 根据组件签名查找或创建 Archetype ──
     Archetype* FindOrCreateArchetype(const ComponentSignature& sig);
 
+    // ── 同步 swap-with-back 被搬移实体的位置记录 ──
+    // Chunk::RemoveRow 回收槽位时会把末行实体移入该槽位，被移动实体自己记录
+    // 的 row 因此失效，必须改写为它的新位置。
+    void ApplyRowMove(const Chunk::RowMove& move, Chunk* chunk);
+
     // ── 数据 ──
     SparseSet<uint32> m_EntityPool;       // Index → Generation (packed)
     std::vector<EntityLocation> m_Locations;  // Index → EntityLocation
