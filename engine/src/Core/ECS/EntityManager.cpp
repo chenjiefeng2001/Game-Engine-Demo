@@ -1,6 +1,8 @@
 #include "Engine/Core/ECS/EntityManager.h"
 #include "Engine/Core/ECS/ComponentRegistry.h"
+#include "Engine/Core/Log.h"
 #include <cassert>
+#include <source_location>
 
 namespace Engine {
 
@@ -169,6 +171,22 @@ void EntityManager::AddComponentRaw(
 ) {
     if (!IsAlive(entity)) return;
 
+    // A type with no registered ComponentMeta has no size and no storage
+    // layout, so there is nothing to attach. Continuing would build an
+    // archetype with no component storage and leave the caller holding a
+    // null pointer. Refuse here so the outcome is deterministic and
+    // reportable; whether registration ought to be mandatory at all is a
+    // separate design question that this check does not answer.
+    if (GetComponentMetaByTypeID(typeID) == nullptr) {
+        Log::ErrorLoc(
+            std::source_location::current(),
+            "AddComponentRaw: component type {} has no registered ComponentMeta; "
+            "register it with RegisterComponentType<T>() before adding it",
+            typeID
+        );
+        return;
+    }
+
     EntityLocation& loc = m_Locations[entity.Index()];
     ComponentSignature oldSig, newSig;
 
@@ -193,12 +211,12 @@ void EntityManager::AddComponentRaw(
         // 写入组件数据
         if (data) {
             void* ptr = chunk->GetComponentArrayPtr(typeID);
-            if (ptr) {
-                auto& meta = *GetComponentMetaByTypeID(typeID);
+            const ComponentMeta* meta = GetComponentMetaByTypeID(typeID);
+            if (ptr != nullptr && meta != nullptr) {
                 std::memcpy(
-                    static_cast<uint8*>(ptr) + meta.size * row,
+                    static_cast<uint8*>(ptr) + meta->size * row,
                     data,
-                    meta.size
+                    meta->size
                 );
             }
         }
@@ -214,12 +232,12 @@ void EntityManager::AddComponentRaw(
         auto& newLoc = m_Locations[entity.Index()];
         if (data) {
             void* ptr = newLoc.chunk->GetComponentArrayPtr(typeID);
-            if (ptr) {
-                auto& meta = *GetComponentMetaByTypeID(typeID);
+            const ComponentMeta* meta = GetComponentMetaByTypeID(typeID);
+            if (ptr != nullptr && meta != nullptr) {
                 std::memcpy(
-                    static_cast<uint8*>(ptr) + meta.size * newLoc.row,
+                    static_cast<uint8*>(ptr) + meta->size * newLoc.row,
                     data,
-                    meta.size
+                    meta->size
                 );
             }
         }

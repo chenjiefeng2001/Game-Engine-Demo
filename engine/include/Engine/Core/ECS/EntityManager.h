@@ -20,6 +20,7 @@
 #include <unordered_map>
 #include <memory>
 #include <functional>
+#include <optional>
 
 namespace Engine {
 
@@ -217,7 +218,18 @@ T& EntityManager::AddComponent(EntityHandle entity, Args&&... args) {
     // 创建组件数据
     T component(std::forward<Args>(args)...);
     AddComponentRaw(entity, ComponentType<T>::ID(), &component);
-    return *GetComponent<T>(entity);
+
+    T* attached = GetComponent<T>(entity);
+    if (attached != nullptr) return *attached;
+
+    // The component was not attached -- AddComponentRaw refuses types with no
+    // registered ComponentMeta. This signature returns T& and therefore has no
+    // way to report that, so hand back a per-thread fallback rather than
+    // dereferencing null. Callers detect the condition with HasComponent<T>().
+    static thread_local std::optional<T> unattached;
+    unattached.reset();
+    unattached.emplace(std::move(component));
+    return *unattached;
 }
 
 template<typename T>

@@ -23,7 +23,24 @@ struct Velocity {
     float vx = 0, vy = 0, vz = 0;
 };
 
-TEST(ECSBasicTest, CreateEntityHasUniqueID) {
+// Deliberately never registered: pins the behaviour of a component type that
+// has no ComponentMeta, which is the path guarded in AddComponentRaw.
+struct UnregisteredComponent {
+    float value = 0.0f;
+};
+
+// Position and Velocity are test-local types. ComponentRegistry does not
+// register them automatically, so the suite registers them once. Whether an
+// unregistered type ought to be accepted at all is a separate open question.
+class ECSBasicTest : public ::testing::Test {
+protected:
+    static void SetUpTestSuite() {
+        RegisterComponentType<Position>();
+        RegisterComponentType<Velocity>();
+    }
+};
+
+TEST_F(ECSBasicTest, CreateEntityHasUniqueID) {
     EntityManager em;
     EntityHandle e1 = em.CreateEntity();
     EntityHandle e2 = em.CreateEntity();
@@ -32,7 +49,7 @@ TEST(ECSBasicTest, CreateEntityHasUniqueID) {
     EXPECT_TRUE(em.IsAlive(e2));
 }
 
-TEST(ECSBasicTest, DestroyEntity) {
+TEST_F(ECSBasicTest, DestroyEntity) {
     EntityManager em;
     EntityHandle e = em.CreateEntity();
     EXPECT_TRUE(em.IsAlive(e));
@@ -41,7 +58,7 @@ TEST(ECSBasicTest, DestroyEntity) {
     EXPECT_FALSE(em.IsAlive(e));
 }
 
-TEST(ECSBasicTest, AddAndGetComponent) {
+TEST_F(ECSBasicTest, AddAndGetComponent) {
     EntityManager em;
     EntityHandle e = em.CreateEntity();
 
@@ -57,7 +74,7 @@ TEST(ECSBasicTest, AddAndGetComponent) {
     EXPECT_FLOAT_EQ(retrieved->z, 30.0f);
 }
 
-TEST(ECSBasicTest, RemoveComponent) {
+TEST_F(ECSBasicTest, RemoveComponent) {
     EntityManager em;
     EntityHandle e = em.CreateEntity();
     em.AddComponent<Position>(e);
@@ -67,7 +84,7 @@ TEST(ECSBasicTest, RemoveComponent) {
     EXPECT_FALSE(em.HasComponent<Position>(e));
 }
 
-TEST(ECSBasicTest, GetComponentReturnsNullForMissing) {
+TEST_F(ECSBasicTest, GetComponentReturnsNullForMissing) {
     EntityManager em;
     EntityHandle e = em.CreateEntity();
 
@@ -75,7 +92,7 @@ TEST(ECSBasicTest, GetComponentReturnsNullForMissing) {
     EXPECT_EQ(pos, nullptr);
 }
 
-TEST(ECSBasicTest, DefaultComponentConstructor) {
+TEST_F(ECSBasicTest, DefaultComponentConstructor) {
     EntityManager em;
     EntityHandle e = em.CreateEntity();
     Position& pos = em.AddComponent<Position>(e);
@@ -86,7 +103,7 @@ TEST(ECSBasicTest, DefaultComponentConstructor) {
     EXPECT_FLOAT_EQ(pos.z, 0.0f);
 }
 
-TEST(ECSBasicTest, MultipleComponents) {
+TEST_F(ECSBasicTest, MultipleComponents) {
     EntityManager em;
     EntityHandle e = em.CreateEntity();
 
@@ -99,7 +116,7 @@ TEST(ECSBasicTest, MultipleComponents) {
     ASSERT_NE(vel, nullptr);
 }
 
-TEST(ECSBasicTest, QueryEntitiesWithComponent) {
+TEST_F(ECSBasicTest, QueryEntitiesWithComponent) {
     EntityManager em;
 
     // 创建 10 个实体，前 5 个带 Position+Velocity，后 5 个只有 Position
@@ -123,7 +140,7 @@ TEST(ECSBasicTest, QueryEntitiesWithComponent) {
     EXPECT_GT(queryBoth.Size(), 0);
 }
 
-TEST(ECSBasicTest, QueryExcludeComponent) {
+TEST_F(ECSBasicTest, QueryExcludeComponent) {
     EntityManager em;
     for (int i = 0; i < 10; ++i) {
         EntityHandle e = em.CreateEntity();
@@ -138,7 +155,7 @@ TEST(ECSBasicTest, QueryExcludeComponent) {
     EXPECT_GT(query.Size(), 0);
 }
 
-TEST(ECSBasicTest, EntityCount) {
+TEST_F(ECSBasicTest, EntityCount) {
     EntityManager em;
     EXPECT_EQ(em.GetEntityCount(), 0);
 
@@ -151,7 +168,7 @@ TEST(ECSBasicTest, EntityCount) {
 }
 
 // 大规模压力测试
-TEST(ECSBasicTest, TenThousandEntities) {
+TEST_F(ECSBasicTest, TenThousandEntities) {
     EntityManager em;
     std::vector<EntityHandle> entities;
     entities.reserve(10000);
@@ -174,4 +191,58 @@ TEST(ECSBasicTest, TenThousandEntities) {
         em.DestroyEntity(e);
     }
     EXPECT_EQ(em.GetEntityCount(), 0);
+}
+
+// ── 未注册类型的行为契约 ──────────────────────────────────
+// AddComponentRaw 拒绝没有 ComponentMeta 的类型。AddComponent 的返回类型是
+// T&，无法表达失败，因此返回一个 per-thread fallback；调用方用
+// HasComponent<T>() 判定。这些用例固定该契约，防止其回退成未定义行为。
+
+TEST_F(ECSBasicTest, AddUnregisteredComponent_ToBareEntity_LeavesItUnchanged) {
+    EntityManager em;
+    EntityHandle e = em.CreateEntity();
+
+    em.AddComponent<UnregisteredComponent>(e);
+
+    EXPECT_FALSE(em.HasComponent<UnregisteredComponent>(e));
+    EXPECT_EQ(em.GetComponent<UnregisteredComponent>(e), nullptr);
+}
+
+TEST_F(ECSBasicTest, AddUnregisteredComponent_PreservesRegisteredComponents) {
+    EntityManager em;
+    EntityHandle e = em.CreateEntity();
+    em.AddComponent<Position>(e).x = 7.0f;
+
+    em.AddComponent<UnregisteredComponent>(e);
+
+    EXPECT_FALSE(em.HasComponent<UnregisteredComponent>(e));
+    ASSERT_NE(em.GetComponent<Position>(e), nullptr);
+    EXPECT_FLOAT_EQ(em.GetComponent<Position>(e)->x, 7.0f);
+}
+
+TEST_F(ECSBasicTest, AddUnregisteredComponent_ReturnedReferenceIsWritable) {
+    EntityManager em;
+    EntityHandle e = em.CreateEntity();
+
+    UnregisteredComponent& ref = em.AddComponent<UnregisteredComponent>(e);
+    ref.value = 3.0f;
+
+    // 引用本身可用且指向有效存储；组件并未挂到实体上。
+    EXPECT_FLOAT_EQ(ref.value, 3.0f);
+    EXPECT_FALSE(em.HasComponent<UnregisteredComponent>(e));
+}
+
+TEST_F(ECSBasicTest, AddUnregisteredComponent_DoesNotAutoRegister) {
+    EntityManager em;
+    EntityHandle e = em.CreateEntity();
+
+    em.AddComponent<UnregisteredComponent>(e);
+
+    // 守卫不得顺带自动注册：重复添加仍然失败，说明没有生成 ComponentMeta。
+    EXPECT_EQ(
+        GetComponentMetaByTypeID(ComponentType<UnregisteredComponent>::ID()),
+        nullptr
+    );
+    em.AddComponent<UnregisteredComponent>(e);
+    EXPECT_FALSE(em.HasComponent<UnregisteredComponent>(e));
 }
