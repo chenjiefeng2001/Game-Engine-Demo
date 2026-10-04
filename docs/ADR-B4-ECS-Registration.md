@@ -1,9 +1,9 @@
 # ADR: B4 ECS 组件注册模型
 
-> **状态**: 待决策（Decision Pending）— 本文档是**决策输入**，不含结论
+> **状态**: 决策草案已提出（Proposed — 待接受）— §1–§10 仍为决策输入且不含结论；§0.5 记录决策方提交的草案
 > **最后更新**: 2026-10-04
 > **涉及范围**: `engine/include/Engine/Core/ECS/`、`engine/src/Core/ECS/`、`tests/test_ecs/`、`engine/include/Engine/Core/Scene/Serializer.h`
-> **影响面**: `test_ecs` 当前是全套件唯一失败项（Debug / Release / RelWithDebInfo 三配置均为 15/16）
+> **影响面**: 注册模型本身仍待接受；但其 runtime-safety 前置条件已关闭，`test_ecs` 已全绿（三配置均 16/16，18/18）
 
 ---
 
@@ -12,6 +12,76 @@
 本文档**不是**架构批准记录，只做三件事：陈列**已验证事实**、列出**可行选项**、分析**每个选项的后果**。
 
 **本文档刻意不给出推荐**，并且**不把任何注册方式写成技术事实** —— "应该显式注册" / "应该自动注册" 正是待决内容本身。
+
+§0.5 记录的 Proposed Decision 由**决策方**提交，属方向性输入；§1–§10 的分析仍不含推荐，且 §0.5 **尚未被接受**。
+
+---
+
+## 0.5 Proposed Decision（草案，待接受）
+
+> **Status: Proposed**
+> 由决策方提交。**尚未被接受，不构成已批准架构**，也**不触发任何迁移实现**。
+> 本节与 §1–§9 的关系：§1–§9 仍是决策输入且不含推荐；本节是叠加在其上的方向性输入。
+
+ECS 采用**显式、受控的 component registration model**：
+
+> 组件类型在 ECS 开始使用前必须完成 registration；registration 由明确的启动/初始化流程执行，而不是依赖隐式自动注册。
+
+`RegisterComponentType<T>()` 继续作为 registration API，但其调用责任必须由明确的 ECS initialization boundary 承担。
+
+### Decision Rationale
+
+选择显式 registration，而不是隐式自动注册，原因是：
+
+- 当前 `ComponentRegistry` 已存在独立的 registration 与 metadata 概念。
+- `EntityManager` 的 archetype 构造依赖 `ComponentMeta`，registration 不是纯缓存，而是运行所需的元数据前置条件。
+- 隐式 registration 会把"第一次使用类型"的副作用隐藏在 `AddComponent<T>()` / archetype creation 中，使 ECS 的初始化状态难以推理。
+- 显式 registration 更容易形成 deterministic startup contract，并且不会依赖 C++ static initialization order。
+- `629ea47` 已经证明"未注册"必须先表现为可诊断失败，但并没有证明"未注册类型应该自动可用"。
+
+因此，当前证据更支持**显式注册是前置条件**，而不是自动注册。
+
+### Runtime Safety Contract
+
+在组件未完成 registration 时：
+
+- 不得自动注册；
+- 不得进入零-meta archetype；
+- 不得产生 SEH / UB；
+- 必须产生可诊断的拒绝/失败结果。
+
+`629ea47` 已完成该 safety layer；`b8d7243` 已解决随后暴露的 location bookkeeping defect。
+
+### ECS / GameObject Relationship
+
+本决策**不要求 ECS 与 GameObject 两套组件模型立即收敛**。
+
+在没有额外产品架构决定之前：
+
+- ECS registry 是 ECS archetype metadata 的权威来源；
+- GameObject 的 component model 保持现状；
+- 不因为 registration decision 自动启动两套模型迁移或统一。
+
+后续若决定两套模型收敛，再单独定义 type identity、serialization、lifecycle 与 migration contract。
+
+### Explicit Non-Decisions
+
+本决策不规定：
+
+- registration 的最终调用点属于 Application、EngineHost 还是其他 bootstrap layer；
+- registration 是否最终由生成代码辅助；
+- ECS / GameObject 是否最终统一；
+- 当前已有 component call sites 的完整迁移顺序。
+
+这些属于实现计划或后续架构决策。
+
+### Compatibility Note
+
+现有代码中关于"registration 会在 static initialization 中自动完成"的注释与实际 API 行为不一致，应在实施阶段一并修正文档/注释。
+
+但该文档修正不改变本决策本身：
+
+> **ECS 不自动注册；使用前必须显式完成 registration。**
 
 ---
 
@@ -193,14 +263,21 @@ Position 无 ComponentMeta（未注册）
 
 ## 9. 本文档明确不做的事
 
-- 不推荐任何选项
+- §1–§10 的分析不推荐任何选项（§0.5 的草案由决策方提交，非本文档推荐）
 - 不判定 `test_ecs` 是"测试缺陷"还是"实现缺陷"
-- 不把"需要显式注册"或"需要自动注册"写成技术事实
+- 不把"需要显式注册"或"需要自动注册"写成技术事实 —— §0.5 的草案是决策而非技术事实
 - 不宣称 §6 的模型收敛应当发生
-- 不修改任何代码
+- 不因 §0.5 的草案而修改任何代码
 
 ---
 
 ## 10. 现状处置
 
-在决策产生之前，`test_ecs` 保持 **OPEN / DEFERRED**：三配置均 15/16，该项为唯一失败项，且**其失败性质（测试缺陷 vs 实现缺陷）本身尚未确定**。不以此阻塞其它验证工作。
+**已关闭**（原 §2.2 记录的未注册类型失败链）：
+
+- `629ea47` —— 未注册类型不再经 Release SEH 进入未定义失败，改为确定且可诊断的拒绝（`AddComponentRaw` 入口守卫 + `AddComponent<T>` 不再解引用 nullptr）。守卫**不自动注册**。
+- `b8d7243` —— 随后暴露的 `Chunk::RemoveRow` swap-with-back 位置簿记缺陷已修复，覆盖 `DestroyEntity` / `MigrateEntity` / `RemoveComponentRaw` 三条路径。
+
+`test_ecs` 现为 **18/18**，三配置全量 suite 均 **16/16**，无失败项。
+
+**仍 OPEN**：注册模型本身（显式 / 隐式 / 运行时）——§0.5 已提出草案但**尚未接受**；以及 §6 的 ECS / GameObject 模型是否收敛。两者均需架构决策，不阻塞其它验证工作。
