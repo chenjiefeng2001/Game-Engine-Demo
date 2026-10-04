@@ -53,10 +53,11 @@ uint32 Chunk::AllocateRow() {
 }
 
 // ── 删除行（swap-with-back） ──
-void Chunk::RemoveRow(uint32 row) {
+Chunk::RowMove Chunk::RemoveRow(uint32 row) {
     assert(row < m_EntityCount);
 
     uint32 lastRow = m_EntityCount - 1;
+    RowMove result;
 
     if (row != lastRow) {
         // 将最后一行移动到被删除的位置
@@ -72,12 +73,18 @@ void Chunk::RemoveRow(uint32 row) {
         }
         // 拷贝 EntityMap
         m_EntityMap[row] = m_EntityMap[lastRow];
+
+        // 报告被搬移的实体，供调用方修正其位置记录
+        result.moved  = true;
+        result.entity = m_EntityMap[row];
+        result.row    = row;
     } else {
         // 最后一行：直接析构
         DestructRow(row);
     }
 
     m_EntityCount--;
+    return result;
 }
 
 // ── 析构指定行的所有组件 ──

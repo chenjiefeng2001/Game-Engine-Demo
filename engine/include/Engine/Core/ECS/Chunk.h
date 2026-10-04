@@ -45,8 +45,16 @@ public:
     /** 分配一个新行，返回行号 */
     uint32 AllocateRow();
 
-    /** 释放指定行（swap-with-back，保持紧凑） */
-    void RemoveRow(uint32 row);
+    /** 释放指定行（swap-with-back，保持紧凑）
+     *
+     *  搬移发生时，末行实体被移入 row，调用方必须同步该实体的位置记录，
+     *  否则它记录的 row 会指向已被回收的槽位。 */
+    struct RowMove {
+        bool        moved  = false;
+        EntityHandle entity{};
+        uint32      row    = 0;
+    };
+    RowMove RemoveRow(uint32 row);
 
     /** 当前实体数 */
     uint32 GetEntityCount() const { return m_EntityCount; }
