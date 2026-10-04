@@ -166,6 +166,195 @@ TEST(SceneAdversarial, R12_CorruptedScene_FailClean) {
     EXPECT_TRUE(snap.entities.empty());
 }
 
+// === SceneSerializerV1 失败契约（JSON schema 校验）===
+//
+// 本组用例针对 DeserializeSnapshot / LoadSnapshotFromFile 的**已定义**
+// 失败与宽容契约，不涉及 GL / TextureManager，可 headless 运行。
+//
+// 快照 schema:
+//   { "format": "engine.scene", "version": <int>,
+//     "entities": [ { "name": <string>, "position": [x,y,z],
+//                     "sprite": <hex>, "script": <hex>,
+//                     "components": [ { "type": <string>, "data": {...} } ] } ] }
+//
+// 既有的宽容契约（源码注释明确，予以保留）：
+//   - 实体缺 name          → 跳过该实体，整体仍加载
+//   - position 缺失/长度<3 → 该实体用默认坐标
+//   - component 缺 type    → 跳过该 component，整体仍加载
+// 严格失败的契约（根级）：
+//   - 根不是 object / format 不符 / entities 缺失或非数组 / 版本超前
+
+TEST(SceneSerializerV1Contract, RootNotAnObject_ReturnsFalse) {
+    nlohmann::json j = nlohmann::json::array({1, 2, 3});
+    SceneSnapshot snap; std::string err;
+    EXPECT_FALSE(DeserializeSnapshot(j, snap, err));
+    EXPECT_FALSE(err.empty());
+    EXPECT_TRUE(snap.entities.empty());
+}
+
+TEST(SceneSerializerV1Contract, MissingFormat_ReturnsFalse) {
+    nlohmann::json j;
+    j["entities"] = nlohmann::json::array();
+    SceneSnapshot snap; std::string err;
+    EXPECT_FALSE(DeserializeSnapshot(j, snap, err));
+    EXPECT_NE(err.find("engine.scene"), std::string::npos);
+}
+
+TEST(SceneSerializerV1Contract, WrongFormatValue_ReturnsFalse) {
+    nlohmann::json j;
+    j["format"] = "something.else";
+    j["entities"] = nlohmann::json::array();
+    SceneSnapshot snap; std::string err;
+    EXPECT_FALSE(DeserializeSnapshot(j, snap, err));
+}
+
+TEST(SceneSerializerV1Contract, MissingEntitiesArray_ReturnsFalse) {
+    nlohmann::json j;
+    j["format"] = "engine.scene";
+    SceneSnapshot snap; std::string err;
+    EXPECT_FALSE(DeserializeSnapshot(j, snap, err));
+    EXPECT_NE(err.find("entities"), std::string::npos);
+}
+
+TEST(SceneSerializerV1Contract, EntitiesNotAnArray_ReturnsFalse) {
+    nlohmann::json j;
+    j["format"] = "engine.scene";
+    j["entities"] = "not_an_array";
+    SceneSnapshot snap; std::string err;
+    EXPECT_FALSE(DeserializeSnapshot(j, snap, err));
+}
+
+TEST(SceneSerializerV1Contract, FutureVersion_ReturnsFalse) {
+    nlohmann::json j;
+    j["format"] = "engine.scene";
+    j["version"] = 9999;
+    j["entities"] = nlohmann::json::array();
+    SceneSnapshot snap; std::string err;
+    EXPECT_FALSE(DeserializeSnapshot(j, snap, err));
+    EXPECT_NE(err.find("version"), std::string::npos);
+}
+
+// ── 宽容契约：必须保持现状，不因修 bug 而改变 ──────────────────────────
+
+TEST(SceneSerializerV1Contract, EntityWithoutName_IsSkipped_OverallStillLoads) {
+    nlohmann::json j;
+    j["format"] = "engine.scene";
+    j["entities"] = nlohmann::json::array({
+        nlohmann::json{{"name", "kept"}},
+        nlohmann::json{{"px", 1.0}},                 // 无 name → 跳过
+        nlohmann::json{{"name", 42}},               // name 类型错 → 跳过
+        nlohmann::json{{"name", "kept2"}},
+    });
+    SceneSnapshot snap; std::string err;
+    ASSERT_TRUE(DeserializeSnapshot(j, snap, err)) << err;
+    ASSERT_EQ(snap.entities.size(), 2u);
+    EXPECT_EQ(snap.entities[0].name, "kept");
+    EXPECT_EQ(snap.entities[1].name, "kept2");
+}
+
+TEST(SceneSerializerV1Contract, EntityWithShortOrMissingPosition_UsesDefaultCoords) {
+    nlohmann::json j;
+    j["format"] = "engine.scene";
+    j["entities"] = nlohmann::json::array({
+        nlohmann::json{{"name", "short"}, {"position", nlohmann::json::array({1.0})}},
+        nlohmann::json{{"name", "missing"}},
+    });
+    SceneSnapshot snap; std::string err;
+    ASSERT_TRUE(DeserializeSnapshot(j, snap, err)) << err;
+    ASSERT_EQ(snap.entities.size(), 2u);
+    EXPECT_FLOAT_EQ(snap.entities[0].px, 0.0f);
+    EXPECT_FLOAT_EQ(snap.entities[1].px, 0.0f);
+}
+
+TEST(SceneSerializerV1Contract, ComponentWithoutType_IsSkipped_OverallStillLoads) {
+    nlohmann::json j;
+    j["format"] = "engine.scene";
+    nlohmann::json good{{"type", "ContractComp"}, {"data", nlohmann::json::object()}};
+    nlohmann::json noType{{"data", nlohmann::json::object()}};
+    nlohmann::json badType{{"type", 7}, {"data", nlohmann::json::object()}};
+    nlohmann::json notObj = 5;
+    j["entities"] = nlohmann::json::array({
+        nlohmann::json{{"name", "e"}, {"components",
+            nlohmann::json::array({good, noType, badType, notObj})}},
+    });
+    SceneSnapshot snap; std::string err;
+    ASSERT_TRUE(DeserializeSnapshot(j, snap, err)) << err;
+    ASSERT_EQ(snap.entities.size(), 1u);
+    ASSERT_EQ(snap.entities[0].components.size(), 1u);
+    EXPECT_EQ(snap.entities[0].components[0].type, "ContractComp");
+}
+
+TEST(SceneSerializerV1Contract, ValidSnapshot_WithOptionalFieldsAbsent_Loads) {
+    nlohmann::json j;
+    j["format"] = "engine.scene";
+    j["version"] = 1;
+    j["entities"] = nlohmann::json::array({
+        nlohmann::json{{"name", "plain"}, {"position", nlohmann::json::array({1.0, 2.0, 3.0})}},
+    });
+    SceneSnapshot snap; std::string err;
+    ASSERT_TRUE(DeserializeSnapshot(j, snap, err)) << err;
+    ASSERT_EQ(snap.entities.size(), 1u);
+    EXPECT_FLOAT_EQ(snap.entities[0].px, 1.0f);
+    EXPECT_FLOAT_EQ(snap.entities[0].py, 2.0f);
+    EXPECT_FLOAT_EQ(snap.entities[0].pz, 3.0f);
+    EXPECT_TRUE(snap.entities[0].spriteGuid.IsNull());
+    EXPECT_TRUE(snap.entities[0].scriptGuid.IsNull());
+}
+
+TEST(SceneSerializerV1Contract, LoadSnapshotFromFile_ValidSnapshot_NormalLoad) {
+    WriteFile("v1_valid.scene", R"({"format":"engine.scene","version":1,"entities":[
+        {"name":"a","position":[1,2,3]}]})");
+    SceneSnapshot snap; std::string err;
+    ASSERT_TRUE(LoadSnapshotFromFile(P("v1_valid.scene"), snap, err)) << err;
+    ASSERT_EQ(snap.entities.size(), 1u);
+    EXPECT_EQ(snap.entities[0].name, "a");
+    EXPECT_TRUE(err.empty());
+}
+
+TEST(SceneSerializerV1Contract, LoadSnapshotFromFile_MalformedJson_StillFailsClean) {
+    WriteFile("v1_broken.scene", "{ broken");
+    SceneSnapshot snap; std::string err;
+    EXPECT_FALSE(LoadSnapshotFromFile(P("v1_broken.scene"), snap, err));
+    EXPECT_NE(err.find("corrupted"), std::string::npos);
+    EXPECT_TRUE(snap.entities.empty());
+}
+
+TEST(SceneSerializerV1Contract, LoadSnapshotFromFile_MissingFile_FailsClean) {
+    SceneSnapshot snap; std::string err;
+    EXPECT_FALSE(LoadSnapshotFromFile(P("v1_absent.scene"), snap, err));
+    EXPECT_NE(err.find("cannot open"), std::string::npos);
+}
+
+// === characterization：当前两处未校验类型的提取会抛异常（缺陷证据）===
+//
+// DeserializeSnapshot 全文没有任何 try/catch；LoadSnapshotFromFile 的 try
+// 只包住 `f >> j`，调用 DeserializeSnapshot 在 catch 之外。因此下面两处
+// "键存在但类型不符" 的提取会抛出 nlohmann::json::type_error 并**穿出**
+// 返回 bool 的加载器，而不是走既有的 err 失败通道。
+//
+// 下面两个 EXPECT_THROW 是缺陷的可执行证据，不是期望契约；修复后应改写为
+// EXPECT_FALSE 并改用 err 报告。
+
+TEST(SceneSerializerV1Characterization, VersionWrongType_ThrowsTypeError) {
+    nlohmann::json j;
+    j["format"] = "engine.scene";
+    j["version"] = "1";                 // 期望 int
+    j["entities"] = nlohmann::json::array();
+    SceneSnapshot snap; std::string err;
+    EXPECT_THROW(DeserializeSnapshot(j, snap, err), nlohmann::json::type_error);
+}
+
+TEST(SceneSerializerV1Characterization, PositionElementWrongType_ThrowsTypeError) {
+    nlohmann::json j;
+    j["format"] = "engine.scene";
+    j["entities"] = nlohmann::json::array({
+        nlohmann::json{{"name", "e"},
+                       {"position", nlohmann::json::array({"a", "b", "c"})}},
+    });
+    SceneSnapshot snap; std::string err;
+    EXPECT_THROW(DeserializeSnapshot(j, snap, err), nlohmann::json::type_error);
+}
+
 // === Golden Gate ===
 
 namespace { const char* kGS = "content_scratch/golden.scene"; const char* kGM = "content_scratch/golden_manifest.json"; }
