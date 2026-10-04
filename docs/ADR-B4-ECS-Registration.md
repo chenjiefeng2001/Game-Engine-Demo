@@ -1,9 +1,9 @@
 # ADR: B4 ECS 组件注册模型
 
-> **状态**: 决策草案已提出（Proposed — 待接受）— §1–§10 仍为决策输入且不含结论；§0.5 记录决策方提交的草案
+> **状态**: **已接受（Accepted，2026-10-04）** — §1–§10 仍为决策输入且不含推荐；§0.5 为已批准架构结论
 > **最后更新**: 2026-10-04
 > **涉及范围**: `engine/include/Engine/Core/ECS/`、`engine/src/Core/ECS/`、`tests/test_ecs/`、`engine/include/Engine/Core/Scene/Serializer.h`
-> **影响面**: 注册模型本身仍待接受；但其 runtime-safety 前置条件已关闭，`test_ecs` 已全绿（三配置均 16/16，18/18）
+> **影响面**: registration 模型已接受；bootstrap 边界已裁定为不依赖 HRC-3。runtime-safety 前置条件已关闭，`test_ecs` 全绿（三配置 16/16，18/18）
 
 ---
 
@@ -13,15 +13,15 @@
 
 **本文档刻意不给出推荐**，并且**不把任何注册方式写成技术事实** —— "应该显式注册" / "应该自动注册" 正是待决内容本身。
 
-§0.5 记录的 Proposed Decision 由**决策方**提交，属方向性输入；§1–§10 的分析仍不含推荐，且 §0.5 **尚未被接受**。
+§0.5 的决策由**决策方**提交并经架构评审接受；§1–§10 的分析本身仍不含推荐 —— 结论的来源是评审，不是本文档的分析。
 
 ---
 
-## 0.5 Proposed Decision（草案，待接受）
+## 0.5 Accepted Decision（已接受）
 
-> **Status: Proposed**
-> 由决策方提交。**尚未被接受，不构成已批准架构**，也**不触发任何迁移实现**。
-> 本节与 §1–§9 的关系：§1–§9 仍是决策输入且不含推荐；本节是叠加在其上的方向性输入。
+> **Status: Accepted** —— 架构评审于 2026-10-04 接受
+> §1–§10 仍是决策输入且不含推荐；本节是叠加其上的**已批准架构结论**。
+> 接受本身**不启动任何迁移实现**：实施按下方的 bootstrap 边界与回归要求推进。
 
 ECS 采用**显式、受控的 component registration model**：
 
@@ -64,14 +64,38 @@ ECS 采用**显式、受控的 component registration model**：
 
 后续若决定两套模型收敛，再单独定义 type identity、serialization、lifecycle 与 migration contract。
 
+### Bootstrap Boundary Decision
+
+评审同时裁定（**此项在草案中曾列为 Non-Decision，现已决定**）：
+
+> **B4 的 registration bootstrap 不得依赖 HRC-3 未提交工作。**
+
+具体含义：
+
+- **不**等待 `Application::Shutdown` / `bridge/src/EngineHost.cpp` 那批 HRC-3 修改来"顺便"承接 ECS registration；
+- 建立**独立、稳定的 ECS initialization boundary**（例如 ECS subsystem 自身的 `InitializeComponentRegistry()` / `RegisterBuiltinComponents()`），其调用点位于**现有已提交的启动路径**；
+- 该边界**不得引入自动注册机制**，且必须**可重复调用且规则清晰**；
+- 由此 B4 可独立落地，**HRC-3 无论何时合并都不成为其前置条件**。
+
+此裁定直接针对已测事实：现有全部 5 处生产注册由 `PhysicsComponents.cpp:16` 的函数内 static 初始化 lambda 触发，属隐式自动注册且依赖 C++ static initialization order —— 正是本决策排除的形态，必须改写。
+
+### Implementation Constraints
+
+本决策与 Audio canonical stack 决策**分别立项、不合并迁移**（见 `ADR-Audio-Canonical-Stack.md` §0.5）。
+
+回归要求（三配置 `Debug` / `Release` / `RelWithDebInfo`）：full build `0 error`、full CTest `16/16`、`test_ecs` `18/18`，并保留现有 ECS location regression tests 与 `TenThousandEntities`。
+
+规模约束：尽量收敛为**一个 migration commit + 一个 test/cleanup commit**（必要时再拆），**不得把 B4 演变为大重构**。已测得的迁移面为有界且可枚举：`Joint3DComponent` 一处真实未注册生产类型 + 5 处 static-init 注册改写 + 5 处错误注释修正。
+
 ### Explicit Non-Decisions
 
 本决策不规定：
 
-- registration 的最终调用点属于 Application、EngineHost 还是其他 bootstrap layer；
 - registration 是否最终由生成代码辅助；
 - ECS / GameObject 是否最终统一；
 - 当前已有 component call sites 的完整迁移顺序。
+
+（registration 的 bootstrap 归属已由上方 Bootstrap Boundary Decision 决定，不再属于 Non-Decision。）
 
 这些属于实现计划或后续架构决策。
 
@@ -263,11 +287,11 @@ Position 无 ComponentMeta（未注册）
 
 ## 9. 本文档明确不做的事
 
-- §1–§10 的分析不推荐任何选项（§0.5 的草案由决策方提交，非本文档推荐）
+- §1–§10 的分析不推荐任何选项（§0.5 的结论来自架构评审，非本文档推荐）
 - 不判定 `test_ecs` 是"测试缺陷"还是"实现缺陷"
-- 不把"需要显式注册"或"需要自动注册"写成技术事实 —— §0.5 的草案是决策而非技术事实
+- 不把"需要显式注册"或"需要自动注册"写成技术事实 —— §0.5 是已接受的架构决策，但决策本身不是技术事实
 - 不宣称 §6 的模型收敛应当发生
-- 不因 §0.5 的草案而修改任何代码
+- 不因记录 §0.5 的接受而修改任何代码
 
 ---
 
@@ -280,4 +304,6 @@ Position 无 ComponentMeta（未注册）
 
 `test_ecs` 现为 **18/18**，三配置全量 suite 均 **16/16**，无失败项。
 
-**仍 OPEN**：注册模型本身（显式 / 隐式 / 运行时）——§0.5 已提出草案但**尚未接受**；以及 §6 的 ECS / GameObject 模型是否收敛。两者均需架构决策，不阻塞其它验证工作。
+**已接受，待实施**：§0.5 的显式受控 registration 已于 2026-10-04 接受（含 bootstrap 边界裁定）。实施尚未开始 —— 迁移面为 `Joint3DComponent` 一处真实未注册生产类型 + `PhysicsComponents.cpp` 5 处 static-init 注册改写 + 5 处错误注释修正，详见 §0.5 Implementation Constraints。
+
+**仍 OPEN**：§6 的 ECS / GameObject 两套模型是否收敛 —— 本决策明确**不要求**收敛，需独立产品/架构决定。
