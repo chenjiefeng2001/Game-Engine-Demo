@@ -8,6 +8,81 @@ namespace {
     // 默认编辑器设置文件路径
     constexpr const char* kEditorSettingsPath = "engine/editor_settings.json";
     constexpr const char* kPresetsPath        = "engine/editor_presets.json";
+
+    // ── 结构与类型校验 ──────────────────────────────────────────────
+    //
+    // 加载器必须在提取之前先校验：键存在但类型不符属于**坏输入**，
+    // 既不能静默沿用默认值（会把坏文件伪装成一次成功加载），也不应
+    // 放任 nlohmann::json::type_error 穿出到调用方。
+    bool RequireObject(const nlohmann::json& parent, const char* key) {
+        return parent.contains(key) && parent.at(key).is_object();
+    }
+
+    bool TypeOk(const nlohmann::json& parent, const char* key, nlohmann::json::value_t t) {
+        return !parent.contains(key) || parent.at(key).type() == t;
+    }
+
+    // 数值字段接受任意 number 类型。刻意**不**用精确 value_t 比较：
+    // nlohmann 的文本往返会把非负整数从 number_integer 重新解析成
+    // number_unsigned（static_cast<int>(ViewMode::Normal)==0 即 dump 成 "0"），
+    // 按精确类型判断会把自家 SaveToFile 写出的合法文件判为坏输入。
+    bool NumOk(const nlohmann::json& parent, const char* key) {
+        return !parent.contains(key) || parent.at(key).is_number();
+    }
+
+    // 整数字段：signed / unsigned 皆可，但仍拒绝浮点与其它类型
+    bool IntOk(const nlohmann::json& parent, const char* key) {
+        if (!parent.contains(key)) return true;
+        const auto& v = parent.at(key);
+        return v.is_number_integer() || v.is_number_unsigned();
+    }
+
+    // "Camera" 是必需键：缺失时旧代码走 const operator[]，属未定义行为。
+    bool ValidateConfig(const nlohmann::json& json) {
+        if (!json.is_object()) {
+            s_Log.Error("Viewport config root is not an object");
+            return false;
+        }
+        if (!RequireObject(json, "Camera")) {
+            s_Log.Error("Viewport config missing object field 'Camera'");
+            return false;
+        }
+        if (!TypeOk(json, "Name", nlohmann::json::value_t::string) ||
+            !TypeOk(json, "ShowGrid", nlohmann::json::value_t::boolean) ||
+            !TypeOk(json, "ShowGizmos", nlohmann::json::value_t::boolean) ||
+            !TypeOk(json, "ShowPostProcessing", nlohmann::json::value_t::boolean) ||
+            !TypeOk(json, "ShowGridAxis", nlohmann::json::value_t::boolean) ||
+            !TypeOk(json, "ShowSelectionOutline", nlohmann::json::value_t::boolean) ||
+            !TypeOk(json, "GizmoLocal", nlohmann::json::value_t::boolean) ||
+            !TypeOk(json, "SnapEnabled", nlohmann::json::value_t::boolean) ||
+            !IntOk(json, "CurrentMode") ||
+            !IntOk(json, "GizmoMode") ||
+            !IntOk(json, "GridSubdivision") ||
+            !IntOk(json, "VisibilityMask") ||
+            !NumOk(json, "SnapValue") ||
+            !NumOk(json, "CameraFlySpeed") ||
+            !NumOk(json, "GridSize") ||
+            !NumOk(json, "GridCellSize")) {
+            s_Log.Error("Viewport config has a field with unexpected type");
+            return false;
+        }
+
+        const auto& cam = json.at("Camera");
+        if (!IntOk(cam, "Type") ||
+            !NumOk(cam, "FOV") ||
+            !NumOk(cam, "NearClip") ||
+            !NumOk(cam, "FarClip") ||
+            !NumOk(cam, "PositionX") ||
+            !NumOk(cam, "PositionY") ||
+            !NumOk(cam, "PositionZ") ||
+            !NumOk(cam, "Pitch") ||
+            !NumOk(cam, "Yaw") ||
+            !NumOk(cam, "Distance")) {
+            s_Log.Error("Viewport camera has a field with unexpected type");
+            return false;
+        }
+        return true;
+    }
 }
 
 namespace Engine {
@@ -75,7 +150,13 @@ namespace Engine {
     ViewportConfig ViewportSerializer::Deserialize(const nlohmann::json& json) {
         ViewportConfig config;
         config.Name               = json.value("Name", "Viewport");
-        config.Camera             = DeserializeCameraConfig(json["Camera"]);
+        // 旧写法 json["Camera"] 在 const json 上对缺失键是未定义行为。
+        // 这里做显式存在性检查：缺失时退回 CameraConfig 的结构体默认值。
+        // 注意：加载路径上的"缺失 Camera → 失败"契约由 ValidateConfig
+        // 负责（见 LoadFromFile），本函数没有失败返回通道。
+        config.Camera             = DeserializeCameraConfig(
+            json.contains("Camera") && json.at("Camera").is_object()
+                ? json.at("Camera") : nlohmann::json::object());
         config.ShowGrid           = json.value("ShowGrid",            true);
         config.ShowGizmos         = json.value("ShowGizmos",          true);
         config.ShowPostProcessing = json.value("ShowPostProcessing",  true);
@@ -128,7 +209,19 @@ namespace Engine {
             return false;
         }
 
-        config = Deserialize(root);
+        // 类型错误不是"缺省值"级别的轻微问题：拒绝加载，而不是伪造一份配置
+        if (!ValidateConfig(root)) {
+            return false;
+        }
+
+        try {
+            config = Deserialize(root);
+        } catch (const nlohmann::json::type_error&) {
+            // ValidateConfig 之后的兜底：语义上已不可达，
+            // 但保证 type_error 永远不会穿出到调用方
+            s_Log.Error("Unexpected type error while deserializing viewport config");
+            return false;
+        }
         return true;
     }
 
@@ -196,6 +289,11 @@ namespace Engine {
         }
 
         for (auto it = root.begin(); it != root.end(); ++it) {
+            // 逐条校验：畸形 preset 被跳过并记日志，而不是抛异常或静默写成默认值
+            if (!ValidateConfig(it.value())) {
+                s_Log.Warn("Skipping malformed preset: {}", it.key());
+                continue;
+            }
             presets[it.key()] = Deserialize(it.value());
         }
 
@@ -353,6 +451,13 @@ namespace Engine {
             file >> root;
         } catch (const nlohmann::json::parse_error& e) {
             s_Log.Error("Parse error in editor settings: {}", e.what());
+            EditorSettings defaults;
+            defaults.viewports.push_back(ViewportConfig{});
+            defaults.viewports.back().Name = "Viewport";
+            return defaults;
+        } catch (const nlohmann::json::type_error& e) {
+            // 语法合法但字段类型不符：与 parse_error 同等对待
+            s_Log.Error("Type error in editor settings: {}", e.what());
             EditorSettings defaults;
             defaults.viewports.push_back(ViewportConfig{});
             defaults.viewports.back().Name = "Viewport";

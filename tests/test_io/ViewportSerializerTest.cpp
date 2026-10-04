@@ -22,11 +22,13 @@
 //   隐式进程状态（同 test_pick_transport 的 manifest 问题）。
 //   不为了制造确定性而在本单元测试里操纵 CWD；该依赖记为 observation。
 //
-// 关于 json.value() 的类型行为 —— 详见文件末尾"characterization"一节：
-//   下面 3 个用例用 EXPECT_THROW 记录**当前**行为（未捕获 type_error），
-//   它们是缺陷的可执行证据，不是期望契约。修复后会改写为 EXPECT_FALSE。
-//   另：Deserialize 对缺失 "Camera" 走 const operator[]，属未定义行为，
-//   因此本文件**不**为该情况写可执行用例 —— UB 不能被测试固化成契约。
+// 关于 json.value() 的类型行为：
+//   下方"标量类型校验契约"一节的用例全部使用 EXPECT_FALSE —— 即修复后的
+//   正式契约。修复前三个 loader 只捕获 parse_error，Deserialize 的
+//   json.value(key, default) 在"键存在但类型不符"时会抛 type_error 并穿出
+//   loader；缺失 "Camera" 更会走 const operator[] 进入未定义行为。
+//   下面只对**已定义**的行为写断言：Deserialize 自身在缺失 Camera 时退回
+//   CameraConfig 结构体默认值（无 UB），失败信号由 LoadFromFile 承担。
 #include <gtest/gtest.h>
 
 #include <filesystem>
@@ -585,35 +587,85 @@ TEST(ViewportSerializerTest, LoadFromFile_ValidTypes_StillSucceed)
     EXPECT_EQ(c.GridSubdivision, 3);
 }
 
-// ── characterization：当前行为是未捕获 type_error（缺陷证据，非契约）──
+// ── 标量类型校验契约 ──────────────────────────────────────────────────
 //
-// 三个 loader 的 try/catch 只覆盖 file >> root（JSON 语法解析），
-// 而 Deserialize 使用 json.value(key, default)，它在"键存在但类型不符"时
-// 抛 nlohmann::json::type_error，且调用发生在 catch 之外 —— 于是异常
-// 直接穿出 loader 抛给调用方，而不是返回 false。
-// 这与 JsonSerializer 在 cf1570c 修复的缺陷同类。
-// 下面用例用 EXPECT_THROW 让该缺陷成为可执行、可复现的证据；
-// 修复落地后应改写为 EXPECT_FALSE(...)，并且不保留 EXPECT_THROW。
+// 三个 loader 过去只捕获 file >> root 的 parse_error，而 Deserialize 用
+// json.value(key, default) 取值 —— 键存在但类型不符时抛 type_error，且
+// 调用发生在 catch 之外，于是异常直接穿出 loader 抛给调用方。
+// 修复后的契约与 JsonSerializer（cf1570c）一致：
+//     JSON 语法错误 → false
+//     标量类型错误 → false（缺失 Camera 同样 → false）
+//     合法 JSON     → 正常加载
+// 不做 std::exception 一网打尽，也不把"存在但类型错"的字段静默换成本地值。
 
-TEST(ViewportSerializerTest, Characterization_LoadFromFile_WrongTypedName_ThrowsTypeError)
+TEST(ViewportSerializerTest, LoadFromFile_WrongTypedName_ReturnsFalse)
 {
     TempViewportFile f("wrong_name");
     f.writeText(R"({"Name":123,"Camera":{}})");
     ViewportConfig c;
-    EXPECT_THROW(ViewportSerializer::LoadFromFile(c, f.path()), nlohmann::json::type_error);
+    EXPECT_FALSE(ViewportSerializer::LoadFromFile(c, f.path()));
 }
 
-TEST(ViewportSerializerTest, Characterization_LoadFromFile_WrongTypedBool_ThrowsTypeError)
+TEST(ViewportSerializerTest, LoadFromFile_WrongTypedBool_ReturnsFalse)
 {
     TempViewportFile f("wrong_bool");
     f.writeText(R"({"ShowGrid":"yes","Camera":{}})");
     ViewportConfig c;
-    EXPECT_THROW(ViewportSerializer::LoadFromFile(c, f.path()), nlohmann::json::type_error);
+    EXPECT_FALSE(ViewportSerializer::LoadFromFile(c, f.path()));
 }
 
-TEST(ViewportSerializerTest, Characterization_LoadPresetsFromFile_WrongTypedField_ThrowsTypeError)
+TEST(ViewportSerializerTest, LoadFromFile_WrongTypedCameraField_ReturnsFalse)
 {
+    TempViewportFile f("wrong_cam");
+    f.writeText(R"({"Camera":{"FOV":"wide"}})");
+    ViewportConfig c;
+    EXPECT_FALSE(ViewportSerializer::LoadFromFile(c, f.path()));
+}
+
+TEST(ViewportSerializerTest, LoadFromFile_MissingCamera_ReturnsFalse)
+{
+    // 旧代码走 const operator[] 取缺失键，属未定义行为；
+    // 契约是明确的失败，而不是编造一份默认相机配置。
+    TempViewportFile f("no_camera");
+    f.writeText(R"({"Name":"no_cam"})");
+    ViewportConfig c = MakeConfig("untouched");
+    EXPECT_FALSE(ViewportSerializer::LoadFromFile(c, f.path()));
+    EXPECT_EQ(c.Name, "untouched");
+}
+
+TEST(ViewportSerializerTest, LoadFromFile_CameraWrongType_ReturnsFalse)
+{
+    TempViewportFile f("cam_not_object");
+    f.writeText(R"({"Camera":42})");
+    ViewportConfig c;
+    EXPECT_FALSE(ViewportSerializer::LoadFromFile(c, f.path()));
+}
+
+TEST(ViewportSerializerTest, LoadFromFile_RootNotAnObject_ReturnsFalse)
+{
+    TempViewportFile f("root_array");
+    f.writeText(R"([1,2,3])");
+    ViewportConfig c;
+    EXPECT_FALSE(ViewportSerializer::LoadFromFile(c, f.path()));
+}
+
+TEST(ViewportSerializerTest, Deserialize_MissingCamera_IsDefinedAndDoesNotCrash)
+{
+    // Deserialize 本身没有失败返回通道，因此缺失 Camera 时必须至少是
+    // **已定义**行为（退回 CameraConfig 结构体默认值），绝不能是 UB。
+    const auto c = ViewportSerializer::Deserialize(nlohmann::json::object());
+    EXPECT_EQ(c.Name, "Viewport");
+    EXPECT_FLOAT_EQ(c.Camera.FOV, 60.0f);
+}
+
+TEST(ViewportSerializerTest, LoadPresetsFromFile_WrongTypedEntry_IsSkippedNotFatal)
+{
+    // LoadPresetsFromFile 返回 PresetMap 而非 bool，没有失败通道；
+    // 因此畸形条目被跳过并记日志，而不是抛异常。
     TempViewportFile f("wrong_preset");
-    f.writeText(R"({"p":{"Name":42,"Camera":{}}})");
-    EXPECT_THROW(ViewportSerializer::LoadPresetsFromFile(f.path()), nlohmann::json::type_error);
+    f.writeText(R"({"bad":{"Name":42,"Camera":{}},"good":{"Name":"ok","Camera":{}}})");
+    const auto p = ViewportSerializer::LoadPresetsFromFile(f.path());
+    EXPECT_EQ(p.size(), 1u);
+    ASSERT_TRUE(p.contains("good"));
+    EXPECT_EQ(p.at("good").Name, "ok");
 }
