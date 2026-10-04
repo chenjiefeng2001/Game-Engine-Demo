@@ -270,7 +270,10 @@ TEST(F2ColliderPhysics, Rebuild_DestroyThenRecreate_ParamsFromComponent) {
 
     IPhysicsBody* body2 = adapter.GetBody(*collider);
     ASSERT_NE(body2, nullptr);
-    EXPECT_NE(body, body2);   // 旧 body 已销毁，新 body 取代
+    // 不断言 body != body2：Rebuild 内部为 Unbind+Bind（DestroyBody + erase 后 CreateBody），
+    // 旧对象已释放，分配器合法复用同一地址，指针相等并不代表未重建。
+    // IPhysicsBody 无 generation/handle，"重建"与"原地改参"在当前 API 下不可区分，
+    // 因此此处只断言可观察契约：新参数生效 + body 数量不增长。
     float hx = 0.0f, hy = 0.0f;
     BoxHalfExtents(body2, &hx, &hy);
     EXPECT_FLOAT_EQ(hx, 3.0f);
