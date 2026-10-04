@@ -11,6 +11,9 @@ on:
       - '**.cxx'
       - 'CMakeLists.txt'
       - '**.cmake'
+      - '**/*.cs'
+      - '**/*.axaml'
+      - '**/*.csproj'
       - 'third_party/**'
       - '.github/workflows/**'
 
@@ -22,6 +25,9 @@ on:
       - '**.hpp'
       - 'CMakeLists.txt'
       - '**.cmake'
+      - '**/*.cs'
+      - '**/*.axaml'
+      - '**/*.csproj'
       - 'third_party/**'
 
   workflow_dispatch:
@@ -72,8 +78,8 @@ jobs:
         sudo apt-get update
         sudo apt-get install -y \
           libx11-dev libxrandr-dev libxinerama-dev libxcursor-dev libxi-dev \
-          libgl1-mesa-dev libwayland-dev wayland-protocols libxkbcommon-dev \
-          pkg-config
+          libgl1-mesa-dev libgl1-mesa-dri libwayland-dev wayland-protocols \
+          libxkbcommon-dev xvfb pkg-config
 
     - name: Set reusable strings
       id: strings
@@ -87,15 +93,36 @@ jobs:
         -DCMAKE_CXX_COMPILER=${{ matrix.cpp_compiler }}
         -DCMAKE_C_COMPILER=${{ matrix.c_compiler }}
         -DCMAKE_BUILD_TYPE=${{ matrix.build_type }}
+        -DENABLE_TESTS=ON
         -Wno-dev
         -S ${{ github.workspace }}
 
     - name: Build
       run: cmake --build ${{ steps.strings.outputs.build-output-dir }} --config ${{ matrix.build_type }}
 
-    - name: Test
+    # 基础验证面 = 全量 target + 全量 CTest。
+    # HRC 专项证据通过下方 receipt 上传识别，但**不替代**基础面：
+    # 若在此收窄 target/test 列表，仓库内已关闭的测试面（如 test_io / test_audio）
+    # 在 CI 层面等于不存在。
+    - name: Test (full suite)
+      shell: bash
       working-directory: ${{ steps.strings.outputs.build-output-dir }}
-      run: ctest --build-config ${{ matrix.build_type }}
+      run: |
+        if [[ "${{ runner.os }}" == "Linux" ]]; then
+          xvfb-run -a -s "-screen 0 1280x800x24" \
+            env LIBGL_ALWAYS_SOFTWARE=1 XDG_SESSION_TYPE=x11 \
+            ctest --build-config ${{ matrix.build_type }}
+        else
+          ctest --build-config ${{ matrix.build_type }}
+        fi
+
+    - name: Upload HRC test receipt
+      if: always()
+      uses: actions/upload-artifact@v4
+      with:
+        name: HRC-Receipt-${{ matrix.os }}-${{ matrix.c_compiler }}-${{ github.sha }}
+        path: ${{ steps.strings.outputs.build-output-dir }}/Testing/Temporary/LastTest.log
+        if-no-files-found: warn
 
     # ═══════════════════════════════════════════════════════════════
     # 打包构建产物：收集可执行文件 + 依赖资源
