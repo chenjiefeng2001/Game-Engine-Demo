@@ -1,7 +1,7 @@
 # 待决事项说明（Decision Brief）
 
-> **状态**: 评审已完成 —— 两项决策均**已接受**（2026-10-04）；B4 已实施，A0 已实现待整合，A1 冻结
-> **最后更新**: 2026-10-04
+> **状态**: 评审已完成 —— 两项决策均**已接受**（2026-10-04）；B4 已实施，A0 已实现待整合，A1 冻结；**新增 §8 CI dependency/build-boundary = OPEN**
+> **最后更新**: 2026-10-06
 > **用途**: 记录决策**做出前**需要回答的问题、选项空间与决策依据。结论见各 ADR §0.5（Accepted），本文档的选项分析仅作决策留痕
 > **不重复** ADR 内容 —— 事实、选项、后果详见 `docs/ADR-Audio-Canonical-Stack.md` 与 `docs/ADR-B4-ECS-Registration.md`
 > **本文档不含架构结论**。技术事实已穷尽，剩余判断依赖产品/架构意图
@@ -27,14 +27,18 @@ B4 registration migration | `89d58dc`、`734a9bd`（`InitializeComponentRegistry
 committed TimeTest 的 HEAD 自洽性 | `a6e788c`（移出 7 个依赖未提交 HRC API 的用例；纯 HEAD 首次可独立构建） |
 `OpenALAudioBuffer` destructor context guard | `8f15827` |
 
-**当前工程基线**（三配置 Debug / Release / RelWithDebInfo）：
+**当前工程基线**（逐配置记录，**不跨配置外推**）：
 
-| 范围 | build | suite |
-|---|---|---|
-**纯 HEAD**（`a6e788c` 起可独立构建） | `0 error` | **13/13** |
-主工作树（含 HRC-3 未提交工作） | `0 error` | **16/16** = 13 committed + 3 HRC |
+| 范围 | 配置 | build | suite |
+|---|---|---|---|
+| **纯 HEAD**（`a6e788c` 起可独立构建，clean worktree） | Debug | `0 error` | **13/13** |
+| **纯 HEAD** | Release | `0 error` | **13/13** |
+| **纯 HEAD** | RelWithDebInfo | 未在 clean worktree 验证 | 未验证 |
+| 主工作树（含 HRC-3 未提交工作） | Debug / Release / RelWithDebInfo | `0 error` | **16/16** = 13 committed + 3 HRC |
 
-**已知验证缺口**（非 defect，独立 OPEN）：`.gitignore:88-89` 排除 `*.scene` / `*.manifest.json`，fresh checkout 缺少被忽略的本地夹具时 suite 为 **10/13**，补齐后恢复 13/13。是否将夹具纳入版本控制尚未决定。
+**更正记录（2026-10-06）**：本表此前将纯 HEAD 记为"三配置 `0 error` / 13/13"。实际仅 clean worktree 的 **Debug 与 Release** 被独立验证；**纯 HEAD 的 RelWithDebInfo 13/13 属外推，无直接证据**（含 HRC-3 的主工作树三配置 16/16 是另一回事，不能替代）。该行旧表述已作废。
+
+**已知验证缺口**（非 defect，独立 OPEN）：`.gitignore:88-89` 排除 `*.scene` / `*.manifest.json`，fresh checkout 缺少被忽略的本地夹具时 suite 为 **10/13**，补齐后恢复 13/13。是否将夹具纳入版本控制尚未决定。**另见 §8：最新一次 CI run 4/4 失败于 Build，未产生任何 suite 结果。**
 
 **Audio Phase A**：A0 provisioning 已实现（`239cc5c`，**已验证但未进主线** —— 与 HRC-3 `Application.h/.cpp` 存在确定性同文件冲突，禁止 hunk 级整合）；A1 ownership migration **冻结**（`AudioAssetManager` 属 Stack 1 归属、`AudioClipManager` fallback 策略两项决策未决）。详见 `docs/Audio-Migration-Design-Freeze.md` §6.7。
 
@@ -151,6 +155,8 @@ Audio A1 ownership migration | 冻结：需 `AudioAssetManager`（Stack 1 归属
 清理音频绕过路径 | 需先完成 Audio A1（Stack 2 决策已接受） |
 引入 RelWithDebInfo/macOS/Linux-ASan CI 覆盖 | 需独立决策（当前 CI 已覆盖 Windows RelWithDebInfo+ASan，刻意未扩 macOS 与 Linux ASan） |
 
+| 修复 CI Build 失败（`vulkan.h` / `spirv_cross.hpp`） | **需先完成 §8 的 CI dependency strategy 决策**；在此之前不得改动代码、依赖声明或 include 路径 |
+
 ---
 
 ## 7. 本文档不做的事
@@ -160,3 +166,85 @@ Audio A1 ownership migration | 冻结：需 `AudioAssetManager`（Stack 1 归属
 - 不把"应显式注册"或"应自动注册"写成技术事实
 - 不把观察项升级为 defect
 - 不修改任何代码
+
+---
+
+## 8. CI dependency / build-boundary —— **OPEN（只记录，不实现）**
+
+**状态**：OPEN。本节仅记录事实与待决问题，**不含任何已批准的修复方案**。对应决策待 HRC-3 收口后单独召开。
+
+**来源**：CI run `37339412587`（Advanced C++ CI，head `1a066ed`，push 到 `master`）。
+
+| job | 失败步骤 |
+|---|---|
+| ubuntu-latest, Release, gcc | **Build** |
+| ubuntu-latest, Release, clang | **Build** |
+| windows-latest, Release, cl | **Build** |
+| windows-latest, RelWithDebInfo, cl, ASan | **Build ASan RelWithDebInfo shaderc artifact** |
+
+**关键含义：该 run 未产生任何 suite 结果。** 4 个 job 全部止步于 Build / 依赖准备，`Test (full suite)` 一步都未执行。因此本次 CI **没有验证任何代码改动**，Linux/GCC 构建状态亦未被证明。
+
+### 8.1 两条独立的缺口（不可合并为单一「依赖修复」）
+
+**(a) `vulkan/vulkan.h` 缺失 —— 环境依赖未入库**
+
+- 仓库无 `Vulkan-Headers` submodule（`.gitmodules` 声明 16 个 submodule，不含它）
+- 无 vendored 副本；`git check-ignore` 亦不匹配 —— 即并非「被忽略的本地夹具」，而是根本不在版本控制内
+- 成功构建依赖本机 `VULKAN_SDK`；CI 无该 SDK → 失败
+
+**(b) `spirv_cross/spirv_cross.hpp` 布局不匹配 —— 仓库 pin 与 include 约定冲突**
+
+- 代码 include `<spirv_cross/spirv_cross.hpp>`（`engine/src/Rendering/ShaderReflection.cpp:10`）
+- pinned SPIRV-Cross `81fc2ea` 的头文件位于**仓库根目录**（26 个 root-level `spirv_*`）
+- `include/spirv_cross/` 仅含 6 个文件，**不含 `spirv_cross.hpp`**
+- include 目录 `third_party/spirv-cross` 下**不存在 `spirv_cross/` 包装层**，故该 include 无法解析
+
+(a) 与 (b) 是**两个独立问题**，任一单独修复都不足以让 CI 通过。
+
+### 8.2 未解释的矛盾（当前不实施修复的直接理由）
+
+本地主工作树 `build/Debug` 曾成功产出 `ShaderReflection.obj`，时间戳不早于源文件（非陈旧产物），即 MSVC **确实**解析过 (b) 的 include。
+
+但现有 CMake include-dir 集合逐个探测，`spirv_cross/spirv_cross.hpp` **全部为 False**：
+
+```
+third_party/box2d/include
+third_party/spirv-cross
+third_party/shaderc/libshaderc/include
+third_party
+```
+
+即：**CMake 声明的 include 路径无法解释本地这次成功。** 成因未定（未复现 MSVC 预处理器的实际解析路径）。
+
+> 在此矛盾解释清楚之前，改 include path 或调整 pin **都属于猜测**，不得实施。
+
+### 8.3 已定性的越界位置（事实记录，非方案）
+
+`engine/src/Vulkan/*.cpp` 已被 `if(Vulkan_FOUND)` 正确守卫（`engine/CMakeLists.txt:131-134`）。越界的是**不在 Vulkan 目录下的文件无条件 include Vulkan 头**：
+
+- `engine/include/Engine/Core/RHI/BindlessDescriptor.h:12`
+- `engine/include/Engine/Vulkan/VulkanCommon.h:12`、`VulkanDeferredDeletion.h:15`、`VulkanFrameResource.h:12`
+- `engine/src/Vulkan/VulkanDevice.cpp:20`（`vulkan_win32.h`）
+
+`BindlessDescriptor.h` 位于 `Engine/Core/RHI/` 而非 `Engine/Vulkan/`，提示这里可能存在**更广泛的 RHI 头文件边界问题**。
+
+### 8.4 明确未批准的方向（记录时不选）
+
+| 方向 | 未批准的理由 |
+|---|---|
+| 补依赖声明（加 `Vulkan-Headers` submodule） | 只解决 (a)；(b) 是独立的 pin/layout 问题。且 §8.2 矛盾未解释前，改 include path 属猜测 |
+| 调整 SPIRV-Cross pin 或仓库 layout | 同上；矛盾解释清楚前，无法判断该改 pin、改 layout，还是改代码 include |
+| 加 capability guard（缺依赖时移除/退化相关源码） | 这改变**编译语义** —— 「缺依赖时这些源码是否应从目标中消失」。需先有 Vulkan/RHI 的产品构建策略，而非 CI 层面的修补 |
+
+**以上任一方案均未获批准，不得默认采用。**
+
+### 8.5 明确禁止的临时手段
+
+不得为了使 CI 变绿而：复制本机 SDK 内容进仓库、引入隐式环境依赖、手工改 include path，或以任何方式把**未经解释的本地行为差异**编码进仓库。
+
+### 8.6 待决问题（待架构 / 构建策略决策）
+
+1. 仓库是否应自带 Vulkan-Headers（submodule / vendored / 声明为外部前置）？
+2. SPIRV-Cross 应按 upstream 真实布局引用，还是调整仓库 pin / layout，还是改代码 include 路径？
+3. 哪些非 Vulkan 路径的源文件需要 capability guard？`BindlessDescriptor.h` 的存在是否意味着 RHI 头文件边界需重新界定？
+4. （前置）§8.2 的本地成功与 include 路径矛盾，成因是什么？
