@@ -280,6 +280,9 @@ void BackendTest::ReportResult(const char* name, bool passed) {
 // 主运行函数
 // ═══════════════════════════════════════════════════════
 void BackendTest::Run() {
+    // B4：内置 ECS 组件必须在任何 EntityManager 使用之前显式注册
+    InitializeComponentRegistry();
+
     std::cout << "\n=== Backend Verification Test ===" << std::endl;
     std::cout << " Vulkan / D3D12 / OpenGL RHI + ECS Integration" << std::endl;
     std::cout << "==========================================" << std::endl;
