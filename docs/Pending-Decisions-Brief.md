@@ -1,6 +1,6 @@
 # 待决事项说明（Decision Brief）
 
-> **状态**: 评审已完成 —— 两项决策均**已接受**（2026-10-04）；本文档转为**实施前的最后确认清单**
+> **状态**: 评审已完成 —— 两项决策均**已接受**（2026-10-04）；B4 已实施，A0 已实现待整合，A1 冻结
 > **最后更新**: 2026-10-04
 > **用途**: 记录决策**做出前**需要回答的问题、选项空间与决策依据。结论见各 ADR §0.5（Accepted），本文档的选项分析仅作决策留痕
 > **不重复** ADR 内容 —— 事实、选项、后果详见 `docs/ADR-Audio-Canonical-Stack.md` 与 `docs/ADR-B4-ECS-Registration.md`
@@ -21,9 +21,22 @@ Serializer sweep | `a0f7d99`、`cf1570c`、`4c3133a`、`48d2d52`、`1503804` |
 Stage 2 headless 盘点 | `eb73f08` |
 Time Stage 3 | `4277f28`、`9033610` |
 B4 §3 runtime-safety follow-up | `629ea47`（未注册类型不再经 Release SEH 进入未定义失败） |
-ECS internal location bookkeeping defect | `b8d7243`（swap-with-back 后同步 `m_Locations`） | |
+ECS internal location bookkeeping defect | `b8d7243`（swap-with-back 后同步 `m_Locations`） |
+B4 registration migration | `89d58dc`、`734a9bd`（`InitializeComponentRegistry` + `Joint3DComponent`；`test_ecs` 21/21） |
+`Core`/`core` `Application.cpp` case collision | `1b83d95`（F1 CLOSED：case-sensitive checkout 干净 + canonical source build 通过） |
+committed TimeTest 的 HEAD 自洽性 | `a6e788c`（移出 7 个依赖未提交 HRC API 的用例；纯 HEAD 首次可独立构建） |
+`OpenALAudioBuffer` destructor context guard | `8f15827` |
 
-**当前工程基线**：Debug / Release / RelWithDebInfo 三配置全量 build 0 error；全量 suite 均 **16/16**，`test_ecs` 18/18。
+**当前工程基线**（三配置 Debug / Release / RelWithDebInfo）：
+
+| 范围 | build | suite |
+|---|---|---|
+**纯 HEAD**（`a6e788c` 起可独立构建） | `0 error` | **13/13** |
+主工作树（含 HRC-3 未提交工作） | `0 error` | **16/16** = 13 committed + 3 HRC |
+
+**已知验证缺口**（非 defect，独立 OPEN）：`.gitignore:88-89` 排除 `*.scene` / `*.manifest.json`，fresh checkout 缺少被忽略的本地夹具时 suite 为 **10/13**，补齐后恢复 13/13。是否将夹具纳入版本控制尚未决定。
+
+**Audio Phase A**：A0 provisioning 已实现（`239cc5c`，**已验证但未进主线** —— 与 HRC-3 `Application.h/.cpp` 存在确定性同文件冲突，禁止 hunk 级整合）；A1 ownership migration **冻结**（`AudioAssetManager` 属 Stack 1 归属、`AudioClipManager` fallback 策略两项决策未决）。详见 `docs/Audio-Migration-Design-Freeze.md` §6.7。
 
 ---
 
@@ -132,9 +145,10 @@ Audio §4 未决问题 5：是否存在把音频从 GameObject/Component 模型�
 |---|---|
 推进 Time 之外的 Stage 3 | 无条件可做，但阶段 2 已判定无其它值得进入的 Category 1 面 |
 确定 ECS 注册模型（决策二） | **已完成** —— 2026-10-04 接受显式受控 registration；bootstrap 边界同时裁定为不依赖 HRC-3 |
-实施 B4 registration migration（已接受决策的第一个 slice） | 无前置条件：bootstrap 边界不依赖 HRC-3，可独立落地 |
-Audio migration design freeze（`AudioClip` ownership、`AudioSourceComponent` engine context、bypass 收敛） | 决策本身已接受；实施排在 B4 迁移与三配置回归之后 |
-清理音频绕过路径 | 需先完成 Audio migration design freeze（Stack 2 决策已接受） |
+实施 B4 registration migration（已接受决策的第一个 slice） | **已完成** —— `89d58dc` + `734a9bd`，`test_ecs` 21/21 |
+将 A0 provisioning（`239cc5c`）整合进主线 | 需 HRC-3 先收口：`Application.h/.cpp` 同文件确定性冲突，由 HRC owner 整合，**禁止 hunk 级整合** |
+Audio A1 ownership migration | 冻结：需 `AudioAssetManager`（Stack 1 归属）与 `AudioClipManager`（fallback 策略）两项决策；且 A0 需先进主线 |
+清理音频绕过路径 | 需先完成 Audio A1（Stack 2 决策已接受） |
 引入 RelWithDebInfo/macOS/Linux-ASan CI 覆盖 | 需独立决策（当前 CI 已覆盖 Windows RelWithDebInfo+ASan，刻意未扩 macOS 与 Linux ASan） |
 
 ---

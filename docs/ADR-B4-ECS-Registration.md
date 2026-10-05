@@ -302,8 +302,12 @@ Position 无 ComponentMeta（未注册）
 - `629ea47` —— 未注册类型不再经 Release SEH 进入未定义失败，改为确定且可诊断的拒绝（`AddComponentRaw` 入口守卫 + `AddComponent<T>` 不再解引用 nullptr）。守卫**不自动注册**。
 - `b8d7243` —— 随后暴露的 `Chunk::RemoveRow` swap-with-back 位置簿记缺陷已修复，覆盖 `DestroyEntity` / `MigrateEntity` / `RemoveComponentRaw` 三条路径。
 
-`test_ecs` 现为 **18/18**，三配置全量 suite 均 **16/16**，无失败项。
+`test_ecs` 现为 **21/21**（B4 registration migration 后），三配置全量 suite 均 **16/16**，无失败项。
 
-**已接受，待实施**：§0.5 的显式受控 registration 已于 2026-10-04 接受（含 bootstrap 边界裁定）。实施尚未开始 —— 迁移面为 `Joint3DComponent` 一处真实未注册生产类型 + `PhysicsComponents.cpp` 5 处 static-init 注册改写 + 5 处错误注释修正，详见 §0.5 Implementation Constraints。
+**已实施并验证**：§0.5 的显式受控 registration（含 bootstrap 边界裁定）由 `89d58dc` 落地、`734a9bd` 补测试。`InitializeComponentRegistry()` 落在 clean 且已提交的 `ComponentRegistry.h/.cpp`，5 处 static-init 注册全部改写，`Joint3DComponent` 补齐，调用点为三个构造 `EntityManager` 的已提交启动路径。三配置 full build `0 error`、full suite `16/16`、`test_ecs` 21/21。详见 `docs/B4-Migration-Plan.md`。
+
+**后续修正**：`a6e788c` 移除了 `9033610` 中 7 个依赖未提交 HRC API（`Time::Shutdown` / `Time::IsInitialized`）的用例，使**纯 HEAD 首次可独立构建**（13/13）。这些用例属 HRC-specific coverage，待 HRC-3 落地后重新加入。
+
+**仍 OPEN（独立）**：`.gitignore:88-89` 排除的 `*.scene` / `*.manifest.json` 测试夹具不在可重建 checkout 内，导致 fresh checkout suite 为 10/13；是否纳入版本控制待决，未修改 `.gitignore`。
 
 **仍 OPEN**：§6 的 ECS / GameObject 两套模型是否收敛 —— 本决策明确**不要求**收敛，需独立产品/架构决定。
