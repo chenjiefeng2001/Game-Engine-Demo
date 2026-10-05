@@ -1,9 +1,11 @@
 # B4 Migration Plan（ECS 显式 registration）
 
-> **状态**: 已冻结的实施计划
+> **状态**: **已实施并验证**（`89d58dc` + `734a9bd`，`test_ecs` 21/21）
 > **上游**: `docs/ADR-B4-ECS-Registration.md` §0.5（Accepted, 2026-10-04）
 > **范围**: 仅 B4。Audio 另立，且需先做 design freeze
 > **本文档不是 ADR**，只记录执行顺序与验收条件
+
+**实施结果**：`InitializeComponentRegistry()` 落在 `ComponentRegistry.h/.cpp`（clean、已提交、与 HRC-3 无重叠），5 处 static-init registration 全部改写并补齐 `Joint3DComponent`；调用点为三个构造 `EntityManager` 的已提交启动路径（ECSTest / BackendTest / Rendering3DTest）。三配置 full build `0 error`、full suite `16/16`、`test_ecs` 21/21，location regression 与 `TenThousandEntities` 均保留通过。
 
 ---
 
