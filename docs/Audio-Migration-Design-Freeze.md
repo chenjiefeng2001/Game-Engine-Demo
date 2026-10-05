@@ -1,6 +1,6 @@
 # Audio Migration Design Freeze（Stack 2 ownership 冻结）
 
-> **状态**: 设计冻结（Design Frozen）— 只读审计产物，**未实施**
+> **状态**: 设计冻结（Design Frozen）— 只读审计产物。**Phase A 暂停中**（见 §6）
 > **上游**: `docs/ADR-Audio-Canonical-Stack.md` §0.5（Accepted, 2026-10-04）
 > **性质**: 本文只冻结 ownership / provenance 决策，**不含任何代码改动**
 > **本文档不是 ADR**，是实施前的设计定稿
@@ -18,6 +18,9 @@
 1. `AudioClip` ownership | **canonical buffer = `AudioClip` 持有 `shared_ptr<IAudioBuffer>`**；PCM 仅作上传中间态，不长期保留 |
 2. `AudioSourceComponent` engine context | **构造期注入 `IAudioEngine&`，不引入 singleton**；现有 `PlayOneShot(engine, clip)` 已证明该形态可行 |
 3. bypass 收敛边界 | 27 处 native 调用分类完成（见 §3），canonical backend 13 处保留，其余 14 处分四类处置 |
+4. `IAudioEngine` 注入边界（§6，架构评审追加） | **必须在 `ResourceManager` 资源创建边界显式提供**；拒绝 AudioClip setter 隐式注入，拒绝 Resource 层直接实例化 backend |
+
+> **Phase A 当前暂停**：§6 的只读 boundary audit 证明，已提交代码中不存在可用的注入入口 —— `ResourceManager::Init` 的唯一调用点 `Application.cpp:76` 属 HRC-3。详见 §6.5。
 
 ---
 
@@ -224,20 +227,87 @@ if (clip && clip->IsValid()) {
 
 ---
 
-## 6. 实施前仍需确认的一项
+## 6. Phase A 前置决策：`IAudioEngine` 的注入边界（Architecture Review 追加冻结）
 
-§1.3 的 context 释放顺序有 (a)/(b) 两个可行路径，本文档倾向 **(b) 补 context 检查**。此项是**实现细节**，不改变 ownership 决策，但**必须在 Phase A 开始前确认**，因为它决定 `OpenALAudioBuffer` 析构是否需要修改。
+> 本节为架构评审追加冻结， supersedes 原 §6。Phase A **保持暂停**。
 
-**若此项无法在实施前确定，则停在设计冻结阶段** —— 不用代码试错替架构做决定。
+### 6.1 原冻结遗漏的层级
+
+§1 的创建链写作：
+
+```
+AudioLoader → PCM → injected IAudioEngine::CreateBuffer() → AudioClip.m_Buffer
+```
+
+实施前的只读追查证明，这条链**缺少一层前置契约**。`AudioClip` 是 `Resource` 子类，生产创建路径为：
+
+```
+ResourceManager::Load<AudioClip>(path)          ResourceManager.h:108
+  → LoadByType<AudioClip>(path)                 ResourceManager.cpp:117
+      → make_shared<AudioClip>(path)            ← 无 engine 参数
+      → clip->LoadFromFile(path)                ← 内部直接 alGenBuffers
+```
+
+`ResourceManager` **不持有任何音频依赖**：`Init(IGraphicsFactory&)`（`ResourceManager.h:89`）是唯一初始化入口，且**全仓唯一调用点是 `Application.cpp:76`** —— 属 HRC-3 未提交改动（`+338/−12`）。
+
+因此 §1 写下的"injected `IAudioEngine`"在当前结构下**没有可注入的位置**。这是原冻结遗漏的**架构级 ownership / dependency-boundary 决策**，不是实现细节。
+
+### 6.2 冻结结论
+
+> **`AudioClip` 的 `IAudioEngine` 依赖必须在 `ResourceManager` 的资源创建边界显式提供。**
+>
+> **不得**通过 `AudioClip` setter 的隐式时序注入。
+> **不得**让 Resource 层直接实例化 OpenAL backend。
+
+### 6.3 三个候选方案的处置
+
+| 方案 | 处置 | 理由 |
+|---|---|---|
+**A. `ResourceManager` 显式注入 `IAudioEngine&`** | **倾向的长期方向** | `ResourceManager` 本就是资源创建边界；显式依赖比隐式 setter 更易形成确定契约。**当前不实施** |
+**B. `AudioClip::SetAudioEngine()` + load 前注入** | **拒绝** | 把"可独立加载的 Resource"变成"必须先满足隐式时序才能加载的 Resource"；全仓 17 处 `AudioClip` 创建/加载点极易漏注入 |
+**C. `AudioClip` 内部直接构造 `OpenALAudioBuffer`** | **拒绝** | 会让 Resource 层直接知道 OpenAL backend，**反向破坏已接受的 Stack 2 canonical 决策** |
+
+### 6.4 只读 boundary audit 结论
+
+审计目标是：是否存在**已提交、不依赖 HRC-3** 的 bootstrap / resource initialization 点，可合法成为 `ResourceManager → IAudioEngine` 的注入入口。
+
+**结论：不存在。**
+
+| 候选 | 判定 |
+|---|---|
+`ResourceManager::Init` 的第二/第三调用点 | **不存在**。全仓仅 `Application.cpp:76`（HRC-3） |
+`Application::InitializeHeadless()`（`Application.h:80`） | 在 `Application.cpp`（HRC-3）内，且**不**初始化 `ResourceManager` |
+`SubsystemManager::Initialize()` | clean 文件，但其唯一实质使用者是 `Application`（HRC-3） |
+已提交的其它 `Init()` 静态函数 | 均与资源创建无关（`FileSystem` / `JobSystem` / `Log` / `SceneManager` / `AssetMetaDb` …） |
+
+已核查 `ResourceManager.h` 现有公开接口：`Init` / `Shutdown` / `Get` / `SetBudget` / `GetFileWatcher`，**没有任何可复用的依赖注入 setter**。新增注入点必然改动 `Init` 签名或其调用方。
+
+### 6.5 正式前置条件
+
+> **Phase A 暂停，直到 `ResourceManager` 的 dependency injection boundary 可以在不吸收 HRC-3 工作区的前提下落地。**
+>
+> 顺序：**HRC-3 提供稳定 bootstrap boundary → 接受方案 A → 再开 Phase A。**
+
+不得为了推进而临时塞入方案 B，也不得让方案 C 悄悄破坏已接受的架构决策。
+
+### 6.6 不受影响的部分
+
+| 项 | 状态 |
+|---|---|
+`8f15827`（`OpenALAudioBuffer` destructor context guard） | **保持已关闭，不回滚** |
+§1.3 context 释放顺序 | 已由 `8f15827` 落地（原倾向 (b)） |
+`AudioClip` 当前 `m_BufferID` compatibility contract | **保持不变**，直到注入边界确定 |
+§5 全部 compatibility API | 保持 |
+§3 bypass 分类与 `AudioClip.h` 注释 cleanup | 保持为独立低风险 cleanup |
 
 ---
 
 ## 7. 本次审计不做的事
 
-- 不修改任何代码
+- 不修改任何代码（`8f15827` 是 §6 前置决策落地前的唯一例外，已单独提交并验证）
 - 不创建任何测试目标
 - 不删除或改变 §5 中任何 compatibility contract
-- 不启动 Phase A / B / C / D
+- **不启动 Phase A** —— §6.5 的前置条件未满足；Phase B / C / D 一并顺延
 - 不触碰 HRC-3 工作区
 - 不重新打开 B4（已关闭）
 - 不把 OpenAL null-driver / headless policy 混入本设计（独立的 backend/CI 决策）
