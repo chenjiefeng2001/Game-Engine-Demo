@@ -59,9 +59,17 @@ static-init registrations 改写 | 5 | `PhysicsComponents.cpp:17-21` |
 真实未注册生产类型补齐 | 1 | `Joint3DComponent`（`PhysicsComponents.h:112` 定义） |
 错误注释修正（声称 static init 自动注册） | 5 | `ComponentRegistry.h:7`、`PhysicsComponents.cpp:3`、`:5` |
 
-### 3.1 一处必须记录的行为变化
+### 3.1 一处影响评估（实施后修正）
 
-`PhysicsSyncSystem.cpp:59` 取 `Joint3DComponent` 并在 `:61` 正确判空。由于该类型从未注册，该判空**恒为假**，joint 清理逻辑实际从未执行。注册后清理会**开始真正生效** —— 这是修正而非回归，但属于运行时行为变化，需在迁移提交中说明。
+`PhysicsSyncSystem.cpp:59` 取 `Joint3DComponent` 并在 `:61` 正确判空。由于该类型从未注册，该判空**恒为假**，joint 清理逻辑实际从未执行。注册后清理会开始生效。
+
+**但这是潜在而非活跃的行为变化**：实施期只读核查确认 `PhysicsSyncSystem` 在全仓**没有任何构造点**（0 处实例化），因此该路径当前不可达。注册 `Joint3DComponent` 只是消除一个潜伏缺口，不改变任何现行运行行为。
+
+### 3.2 边界调用点的必要性验证
+
+全仓 `AddComponent<...>` 使用这 5 个内置组件的位置**只有** `sandbox/src/ECSTest/ECSTest.cpp:271/277/282`。因此 §2.2 中只有 ECSTest 是当前必需的调用点；另两个（BackendTest、Rendering3DTest）是为其自身构造 `EntityManager` 的路径预置边界，避免将来新增 ECS 用法时再次依赖隐式注册。
+
+没有任何测试文件使用这些内置组件（0 命中），故移除 static-init 不会使 `16/16` 退步。
 
 ---
 

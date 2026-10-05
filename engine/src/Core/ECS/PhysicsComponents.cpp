@@ -7,19 +7,10 @@
  */
 
 #include "Engine/Core/ECS/PhysicsComponents.h"
-#include "Engine/Core/ECS/ComponentRegistry.h"
 
 namespace Engine {
 
-// ── 静态注册：程序初始化时自动调用 ──
-// 每个组件类型调用 RegisterComponentType<T>() 使其元信息进入全局注册表
-static bool s_Registered = []() {
-    RegisterComponentType<RigidBody3DComponent>();
-    RegisterComponentType<PhysicsRuntimeComponent>();
-    RegisterComponentType<BoxCollider3DComponent>();
-    RegisterComponentType<SphereCollider3DComponent>();
-    RegisterComponentType<CapsuleCollider3DComponent>();
-    return true;
-}();
+// 3D 物理组件类型的注册已移至 ComponentRegistry.cpp 的
+// InitializeComponentRegistry()，由启动路径显式调用，不再依赖 static init。
 
 } // namespace Engine

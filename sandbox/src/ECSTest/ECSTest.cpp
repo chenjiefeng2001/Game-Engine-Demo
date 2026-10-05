@@ -380,6 +380,9 @@ void ECSTest::PrintHelp() {
 // 主循环
 // ═══════════════════════════════════════════════════════
 void ECSTest::Run() {
+    // B4：内置 ECS 组件必须在任何 EntityManager 使用之前显式注册
+    InitializeComponentRegistry();
+
     m_LastFrameTime = Time::GetTime();
 
     std::cout << "\n=== RHI Render Loop ===" << std::endl;

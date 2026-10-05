@@ -14,6 +14,7 @@
  */
 
 #include "Rendering3DTest.h"
+#include "Engine/Core/ECS/ComponentRegistry.h"
 #include <clocale>
 #include <cstring>
 #ifdef _WIN32
@@ -26,6 +27,9 @@ int main(int argc, char* argv[]) {
     SetConsoleCP(CP_UTF8);
 #endif
     std::setlocale(LC_ALL, "en_US.UTF-8");
+
+    // B4：内置 ECS 组件必须在任何 EntityManager 使用之前显式注册
+    Engine::InitializeComponentRegistry();
 
     // Headless 后端验证（默认）
     Engine::Rendering3DTest test;
