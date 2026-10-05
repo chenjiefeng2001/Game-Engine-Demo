@@ -1,6 +1,6 @@
 # Audio Migration Design Freeze（Stack 2 ownership 冻结）
 
-> **状态**: 设计冻结（Design Frozen）— **Phase A 已解锁**，实施边界见 §6.7
+> **状态**: 设计冻结（Design Frozen）— **A0 已实现但未进主线**；**A1 冻结**（见 §6.7）
 > **上游**: `docs/ADR-Audio-Canonical-Stack.md` §0.5（Accepted, 2026-10-04）
 > **性质**: 本文只冻结 ownership / provenance 决策，**不含任何代码改动**
 > **本文档不是 ADR**，是实施前的设计定稿
@@ -20,7 +20,7 @@
 3. bypass 收敛边界 | 27 处 native 调用分类完成（见 §3），canonical backend 13 处保留，其余 14 处分四类处置 |
 4. `IAudioEngine` 注入边界（§6，架构评审追加） | **注入边界已存在于 committed `Application` subsystem registration**（`Resources` phase lambda）；**provisioning 冻结为 Platform phase + `Application` member + 扩展现有 `FakeAudioEngine`** |
 
-> **Phase A 已解锁**：§6.5 冻结三项 provisioning 决定，§6.7 给出实施边界。注入边界不需要 HRC-3 才存在 —— 初版"不存在注入入口"的结论已在 §6.4 更正。
+> **A0 provisioning 已实现**（`239cc5c`，VERIFIED / MAINLINE-BLOCKED）；**A1 ownership migration 冻结**。注入边界与 engine provisioning 均已冻结（§6.2 / §6.5）。
 
 ---
 
@@ -375,21 +375,63 @@ InitializeHeadless()
 
 Phase A 的 ownership 测试走**独立的 headless unit setup**，不依赖 HRC headless bootstrap。
 
-### 6.7 Phase A 实施边界
+### 6.7 Phase A 实施边界（已被 runtime provenance audit 重划）
 
-| 项 | 内容 |
+> **阶段已重划为 A0 / A1**。原"第一个 production commit = AudioClip ownership migration"的边界经审计证明过宽，见 §6.7b。
+
+| 阶段 | 内容 | 状态 |
+|---|---|---|
+**A0 — Audio provisioning** | `Application` 持有 `IAudioEngine`；Platform phase 创建/销毁（Window 先行）；`ResourceManager::Init(..., IAudioEngine*)` | **已实现：`239cc5c`，VERIFIED / MAINLINE-BLOCKED**（见 §6.7c） |
+**A1 — `AudioClip` ownership migration** | `m_BufferID → shared_ptr<IAudioBuffer>`；`IsValid()` 语义；不保留 PCM | **冻结**，等 §6.7b 两个归属决策 |
+
+| 项 | 范围 |
 |---|---|
-第一个 production commit | `AudioClip m_BufferID → shared_ptr<IAudioBuffer>`；`ResourceManager` 显式获得 `IAudioEngine&` |
-**不夹带** | Phase B 的 8 处 bypass 迁移；Stack 1 退休；`AudioClip.h` 注释 cleanup；null-driver policy |
-提交划分 | production ownership migration → tests/cleanup → 三配置 full build + full suite |
-**不做偷渡项目** | `Core`/`core` `Application.cpp` case collision 属独立 repo-integrity decision |
+**A0 排除** | `AudioClip` ownership、`AudioSystem`、`AudioSourceComponent`、Stack 1、`AudioClip.h` 注释 cleanup、null-driver policy、`Core`/`core` case collision |
+**A1 排除** | 同上，另加 sandbox 注入 |
+提交划分 | A0 单个 production commit（已完成）；A1 待定 |
 
-### 6.8 两项待纠正的记录（不在本次处理）
+### 6.7b A1 冻结原因：runtime provenance audit
+
+实施前的审计发现 `AudioClip` 新增"必须先注入 `IAudioEngine`"这一前置条件后，9 个构造点中有两类真实回归：
+
+| 路径 | 性质 | 结论 |
+|---|---|---|
+`AudioAssetManager::ImportAsset`（`AudioAssetManager.cpp:48`）与 hot reload（`:286`） | **必然回归** —— 直接 `make_shared` 后 `LoadFromFile`，无 `ResourceManager` 委托；该类声明在 **Stack 1 头文件** `Engine/Audio/AudioEngine.h` 内，`IAudioEngine` 引用数为 0 | 给待退休的 Stack 1 类注入 `IAudioEngine`，等于新增长期耦合 —— **归属决策** |
+`AudioClipManager` 的 `ResourceManager == nullptr` 兜底分支（`:21` / `:94`） | **条件性回归** —— 主路径走 `rm->LoadAudio()` 安全，仅兜底分支直接构造并加载 | 消除 fallback / 改走统一 ResourceManager / 保留兼容 —— **归属决策** |
+4 个 sandbox 构造点 | 需补注入，但各自已持有 `IAudioEngine`，不涉设计选择 | 暂缓，随 A1 或后续处理 |
+
+`test_audio` 现有用例只覆盖扩展名校验、空路径、缺失文件、hot-reload 默认关闭，**没有任何一个期望 clip 加载成功**，因此测试全绿无法捕捉上述回归。
+
+**结论**：A1 不得为通过阶段编号而把架构未决问题编码进生产代码。选项 A（保留旧 `alGenBuffers` 兜底）会形成两条 provenance path，违反 §1；选项 B（给 Stack 1 加注入）会形成第三种 hybrid ownership。因此 A1 暂停。
+
+### 6.7c A0 当前状态：`239cc5c` VERIFIED / MAINLINE-BLOCKED
+
+> `239cc5c` is verified off-mainline; integration is blocked by **intentional** overlap with HRC-3 `Application.h/.cpp`. **No hunk-level integration is permitted.**
+
+| 项 | 值 |
+|---|---|
+commit | `239cc5c`，可达于 `refs/remotes/a0/provisioning` |
+父提交 | `a6e788c`（当前 main HEAD） |
+范围 | 4 文件：`Application.h` `+9/−0`、`Application.cpp` `+23/−1`、`ResourceManager.h` `+13/−2`、`ResourceManager.cpp` `+7/−3` |
+验证 | clean worktree committed-state Debug full build `0 error`；full suite `13/13`；`git diff --check` 无 whitespace 错误 |
+行尾 | 原始 bytes 计数与 `git ls-files --eol` 双证据：`i/lf w/crlf attr/text=auto`，无 lone LF/CR |
+排除项 | `AudioClip`、`AudioClipManager`、`AudioAssetManager`、`AudioSystem`、`AudioSourceComponent`、Stack 1 `AudioSource`、`OpenALAudioBuffer`、sandbox、`tests/CMakeLists.txt` 全部 clean |
+
+**为何未进主线**：A0 修改的 4 个文件中，`Application.h` 与 `Application.cpp` 同时是 HRC-3 未提交改动（分别 `+78/−4`、`+338/−12`），且冲突区域正是 `Application` 构造函数的 subsystem 注册段 —— 这是**确定的语义冲突**，不是理论风险。快进会覆盖 HRC-3 本地改动，git 会拒绝。
+
+**HRC-3 收口时的消费纪律**：
+
+- 将 `239cc5c` 视为**待消费的独立变更**，不得手工复制 patch 或摘取其中的行
+- 由 HRC owner 基于最终 HRC-3 代码重新整合 `HRC lifecycle + A0 AudioEngine provisioning`，随后重跑完整验证
+- **不得**：当前工作树 hunk surgery、从 `239cc5c` 复制几行、把 A0 标记为已 merge、为绕开冲突而重新设计 provisioning
+
+### 6.8 独立待处理记录（不在本次处理）
 
 | 项 | 状态 |
 |---|---|
-`16/16` 基线口径 | 实为 **13 committed + 3 HRC = 16/16**；纯 HEAD 为 **13/13**。标记为 evidence correction required，待 HRC 收口文档统一更正 |
-`Core`/`core` `Application.cpp` case collision | 标记为 HRC landing prerequisite / 独立 repo-integrity decision，暂不修 |
+`16/16` 基线口径 | 实为 **13 committed + 3 HRC = 16/16**；纯 HEAD 为 **13/13**（`a6e788c` 起可独立构建，见 `a6e788c`）。标记为 evidence correction required，待 HRC 收口文档统一更正 |
+**ignored test fixtures 不可重建** | `.gitignore:88-89` 排除 `*.scene` / `*.manifest.json`，导致 fresh checkout 无夹具时 suite 为 **10/13**；补齐本地 ignored `assets/` 后恢复 13/13。**OPEN / intent pending** —— 这些夹具是否应版本化尚未决定；未修改 `.gitignore` |
+`Core`/`core` `Application.cpp` case collision | **已解决**：`1b83d95` 删除 lowercase 路径（case-sensitive 环境落地并验证）。F1 已 CLOSED |
 
 ### 6.9 不受影响的部分
 
