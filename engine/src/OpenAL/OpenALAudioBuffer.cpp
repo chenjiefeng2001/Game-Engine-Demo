@@ -9,6 +9,15 @@ namespace {
 #include <AL/al.h>
 #include <AL/alc.h>
 
+// 与 AudioClip::Release() 采用同一安全语义：context 不存在时不调用
+// alDeleteBuffers。IAudioBuffer 由 shared_ptr 持有，析构发生在最后一个
+// owner 消失时，此时 context 可能已被销毁；无 context 下的
+// alDeleteBuffers 是未定义行为。
+static bool HasALContext()
+{
+    return alcGetCurrentContext() != nullptr;
+}
+
 namespace Engine {
 
     OpenALAudioBuffer::OpenALAudioBuffer() {
@@ -20,10 +29,15 @@ namespace Engine {
     }
 
     OpenALAudioBuffer::~OpenALAudioBuffer() {
-        if (m_BufferID) {
+        if (!m_BufferID) return;
+
+        if (HasALContext()) {
             alDeleteBuffers(1, &m_BufferID);
-            m_BufferID = 0;
+        } else {
+            s_Log.Trace(
+                "Skipping OpenAL buffer delete - no context");
         }
+        m_BufferID = 0;
     }
 
     void OpenALAudioBuffer::Load(const void* pcmData, int32 dataSize,
