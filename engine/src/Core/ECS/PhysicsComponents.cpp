@@ -1,9 +1,10 @@
 /**
  * @file PhysicsComponents.cpp
- * @brief ECS 3D 物理组件注册 — 在 static init 阶段自动注册到 ComponentRegistry
+ * @brief ECS 3D 物理组件类型定义
  *
- * 所有 3D 物理相关的 ECS 组件的类型在此注册。
- * 注册后才能被 EntityManager 用于 Archetype 创建和 Query 匹配。
+ * 所有 3D 物理相关的 ECS 组件类型声明于 PhysicsComponents.h。
+ * 注册不再在此处发生：见 ComponentRegistry.cpp 的
+ * InitializeComponentRegistry()，由启动路径显式调用。
  */
 
 #include "Engine/Core/ECS/PhysicsComponents.h"

@@ -10,6 +10,7 @@
  */
 #include <gtest/gtest.h>
 #include "Engine/Core/ECS/ECS.h"
+#include "Engine/Core/ECS/PhysicsComponents.h"
 #include <memory>
 
 using namespace Engine;
@@ -329,6 +330,50 @@ TEST_F(ECSBasicTest, AddUnregisteredComponent_DoesNotAutoRegister) {
         GetComponentMetaByTypeID(ComponentType<UnregisteredComponent>::ID()),
         nullptr
     );
+    em.AddComponent<UnregisteredComponent>(e);
+    EXPECT_FALSE(em.HasComponent<UnregisteredComponent>(e));
+}
+
+// ── B4 registration boundary ──────────────────────────────
+// InitializeComponentRegistry() 是 B4 决策指定的唯一 registration 入口。
+// 以下用例固定它的三条契约：覆盖全部内置类型、幂等、不引入自动注册。
+
+TEST_F(ECSBasicTest, InitializeComponentRegistry_RegistersAllBuiltinTypes) {
+    InitializeComponentRegistry();
+
+    // 含 Joint3DComponent：它与已注册的五种同属 PhysicsComponents.h，此前被遗漏。
+    EXPECT_NE(GetComponentMetaByTypeID(ComponentType<RigidBody3DComponent>::ID()), nullptr);
+    EXPECT_NE(GetComponentMetaByTypeID(ComponentType<PhysicsRuntimeComponent>::ID()), nullptr);
+    EXPECT_NE(GetComponentMetaByTypeID(ComponentType<BoxCollider3DComponent>::ID()), nullptr);
+    EXPECT_NE(GetComponentMetaByTypeID(ComponentType<SphereCollider3DComponent>::ID()), nullptr);
+    EXPECT_NE(GetComponentMetaByTypeID(ComponentType<CapsuleCollider3DComponent>::ID()), nullptr);
+    EXPECT_NE(GetComponentMetaByTypeID(ComponentType<Joint3DComponent>::ID()), nullptr);
+}
+
+TEST_F(ECSBasicTest, InitializeComponentRegistry_IsIdempotent) {
+    InitializeComponentRegistry();
+    const ComponentMeta* first =
+        GetComponentMetaByTypeID(ComponentType<Joint3DComponent>::ID());
+    ASSERT_NE(first, nullptr);
+
+    // 重复调用不得改变已注册集合，也不得崩溃。
+    InitializeComponentRegistry();
+    InitializeComponentRegistry();
+
+    EXPECT_EQ(GetComponentMetaByTypeID(ComponentType<Joint3DComponent>::ID()), first);
+}
+
+TEST_F(ECSBasicTest, InitializeComponentRegistry_DoesNotRegisterAnythingElse) {
+    InitializeComponentRegistry();
+
+    // 调用边界不得使任意组件类型变为可用：未注册类型仍然没有 meta。
+    EXPECT_EQ(
+        GetComponentMetaByTypeID(ComponentType<UnregisteredComponent>::ID()),
+        nullptr
+    );
+
+    EntityManager em;
+    EntityHandle e = em.CreateEntity();
     em.AddComponent<UnregisteredComponent>(e);
     EXPECT_FALSE(em.HasComponent<UnregisteredComponent>(e));
 }
