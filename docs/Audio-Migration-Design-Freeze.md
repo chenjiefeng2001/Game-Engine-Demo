@@ -1,6 +1,6 @@
 # Audio Migration Design Freeze（Stack 2 ownership 冻结）
 
-> **状态**: 设计冻结（Design Frozen）— 只读审计产物。**Phase A 暂停中**（见 §6）
+> **状态**: 设计冻结（Design Frozen）— **Phase A 已解锁**，实施边界见 §6.7
 > **上游**: `docs/ADR-Audio-Canonical-Stack.md` §0.5（Accepted, 2026-10-04）
 > **性质**: 本文只冻结 ownership / provenance 决策，**不含任何代码改动**
 > **本文档不是 ADR**，是实施前的设计定稿
@@ -18,9 +18,9 @@
 1. `AudioClip` ownership | **canonical buffer = `AudioClip` 持有 `shared_ptr<IAudioBuffer>`**；PCM 仅作上传中间态，不长期保留 |
 2. `AudioSourceComponent` engine context | **构造期注入 `IAudioEngine&`，不引入 singleton**；现有 `PlayOneShot(engine, clip)` 已证明该形态可行 |
 3. bypass 收敛边界 | 27 处 native 调用分类完成（见 §3），canonical backend 13 处保留，其余 14 处分四类处置 |
-4. `IAudioEngine` 注入边界（§6，架构评审追加） | **必须在 `ResourceManager` 资源创建边界显式提供**；拒绝 AudioClip setter 隐式注入，拒绝 Resource 层直接实例化 backend |
+4. `IAudioEngine` 注入边界（§6，架构评审追加） | **注入边界已存在于 committed `Application` subsystem registration**（`Resources` phase lambda）；**provisioning 冻结为 Platform phase + `Application` member + 扩展现有 `FakeAudioEngine`** |
 
-> **Phase A 当前暂停**：§6 的只读 boundary audit 证明，已提交代码中不存在可用的注入入口 —— `ResourceManager::Init` 的唯一调用点 `Application.cpp:76` 属 HRC-3。详见 §6.5。
+> **Phase A 已解锁**：§6.5 冻结三项 provisioning 决定，§6.7 给出实施边界。注入边界不需要 HRC-3 才存在 —— 初版"不存在注入入口"的结论已在 §6.4 更正。
 
 ---
 
@@ -229,7 +229,8 @@ if (clip && clip->IsValid()) {
 
 ## 6. Phase A 前置决策：`IAudioEngine` 的注入边界（Architecture Review 追加冻结）
 
-> 本节为架构评审追加冻结， supersedes 原 §6。Phase A **保持暂停**。
+> 本节为架构评审追加冻结， supersedes 原 §6。
+> **Phase A 已解锁**：注入边界与 engine provisioning 均已冻结（§6.2 / §6.6b）。
 
 ### 6.1 原冻结遗漏的层级
 
@@ -267,30 +268,130 @@ ResourceManager::Load<AudioClip>(path)          ResourceManager.h:108
 **B. `AudioClip::SetAudioEngine()` + load 前注入** | **拒绝** | 把"可独立加载的 Resource"变成"必须先满足隐式时序才能加载的 Resource"；全仓 17 处 `AudioClip` 创建/加载点极易漏注入 |
 **C. `AudioClip` 内部直接构造 `OpenALAudioBuffer`** | **拒绝** | 会让 Resource 层直接知道 OpenAL backend，**反向破坏已接受的 Stack 2 canonical 决策** |
 
-### 6.4 只读 boundary audit 结论
+### 6.4 只读 boundary audit 结论（**已更正**）
 
-审计目标是：是否存在**已提交、不依赖 HRC-3** 的 bootstrap / resource initialization 点，可合法成为 `ResourceManager → IAudioEngine` 的注入入口。
+> **更正**：本节初版结论为"不存在已提交的注入入口"。该表述在**签名层面正确，但在结构层面过强** —— 它把"没有 engine 可传"误述为"没有入口可传"。
 
-**结论：不存在。**
+**注入边界本身已存在于已提交代码中**：`ResourceManager::Init(m_Factory)` 是 `Application` 注册的一个 `SubsystemManager` 条目，位于 `SubsystemPhase::Resources`(4)，HEAD `Application.cpp:53-59`：
 
-| 候选 | 判定 |
+```cpp
+m_SubsystemManager.Add(
+    "ResourceManager", SubsystemPhase::Resources,
+    [this]() {
+      ResourceManager::Init(m_Factory);
+      return ResourceManager::Get() != nullptr;
+    },
+    []() { ResourceManager::Shutdown(); });
+```
+
+因此：
+
+| 事实 | 结论 |
 |---|---|
-`ResourceManager::Init` 的第二/第三调用点 | **不存在**。全仓仅 `Application.cpp:76`（HRC-3） |
-`Application::InitializeHeadless()`（`Application.h:80`） | 在 `Application.cpp`（HRC-3）内，且**不**初始化 `ResourceManager` |
-`SubsystemManager::Initialize()` | clean 文件，但其唯一实质使用者是 `Application`（HRC-3） |
-已提交的其它 `Init()` 静态函数 | 均与资源创建无关（`FileSystem` / `JobSystem` / `Log` / `SceneManager` / `AssetMetaDb` …） |
+`ResourceManager` 注入边界是否需要 HRC-3 才出现 | **不需要**。已存在于 committed `Application` subsystem registration |
+`ResourceManager::Init` 是否有第二/第三调用点 | 无，仅此一处（HEAD `Application.cpp:56`） |
+`ResourceManager` 是否持有可复用的注入 setter | 无。现有接口仅 `Init` / `Shutdown` / `Get` / `SetBudget` / `GetFileWatcher` |
+`ResourceManager::Init` 是否还缺其它外部依赖 | **无**。核查其全部行为（`ResourceManager.cpp:24-38`）：构造单例、设预算、`InitPools()`、打日志 |
 
-已核查 `ResourceManager.h` 现有公开接口：`Init` / `Shutdown` / `Get` / `SetBudget` / `GetFileWatcher`，**没有任何可复用的依赖注入 setter**。新增注入点必然改动 `Init` 签名或其调用方。
+**真正未决的是 engine provisioning**：committed 代码中没有任何 `IAudioEngine` owner，且 `Resources`(4) 之前没有任何 subsystem 创建音频 engine。已提交的 `OpenALAudioEngine` 构造点**全部在 sandbox**（`AudioTestApp.cpp:27`、`AudioPhysicsSandboxApp.cpp:378`、`CollisionAudioTestApp.cpp:167`、`MarioDemoApp.cpp:29`），形态一致：`shared_ptr` 持有 + `Init()` 失败即中止 —— 这是现成的 owner 模式参照。
 
-### 6.5 正式前置条件
+`Application.h:17` 的 `make_shared<OpenALAudioEngine>()` 是 `AudioSourceComponent` 的**文档注释**，非代码。
 
-> **Phase A 暂停，直到 `ResourceManager` 的 dependency injection boundary 可以在不吸收 HRC-3 工作区的前提下落地。**
->
-> 顺序：**HRC-3 提供稳定 bootstrap boundary → 接受方案 A → 再开 Phase A。**
+### 6.5 Phase A 解锁：三项 provisioning 决定（架构评审冻结）
 
-不得为了推进而临时塞入方案 B，也不得让方案 C 悄悄破坏已接受的架构决策。
+#### 决定一：`IAudioEngine` owner 置于 **Platform phase**
 
-### 6.6 不受影响的部分
+不置于 `Core`，不新增 phase taxonomy。
+
+依据：`SubsystemManager::Initialize()` 以 `std::stable_sort` 按 phase 升序（`SubsystemManager.cpp:44-47`），且同 phase 内**按注册顺序**执行（stable）。已验证 phase 顺序 `Platform(1) → Graphics(2) → Input(3) → Resources(4)`。
+
+**实施约束（必须显式保证，不得依赖当前巧合）**：
+
+> **`Window` 必须先于 Audio engine 注册。**
+
+OpenAL 需要 device/context，而 `Window` 在同一 `Platform` phase 创建（HEAD `Application.cpp:42`）。只有 `Window` 注册在前，Audio engine 才能在 context 就绪后构造。该顺序必须写成显式约束并有测试或注释固定，**不得成为"碰巧现在先后如此"**。
+
+#### 决定二：engine 存放在 **`Application` member**
+
+```cpp
+Application
+  └─ Platform phase（Window 之后）
+       └─ 创建并持有 IAudioEngine
+             ↓
+  Resources phase
+       └─ ResourceManager::Init(m_Factory, *m_AudioEngine)
+```
+
+| 约束 | 说明 |
+|---|---|
+不做 subsystem singleton | 不引入新的全局状态 |
+`ResourceManager` 不自行寻找 engine | 它只依赖 `IAudioEngine&`，**不知道 OpenAL** |
+sandbox 保留自建 engine | 4 个 sandbox 现有模式不受影响 |
+HRC headless 不需为 Audio 初始化 `ResourceManager` | 保持现状 |
+`Shutdown` 由 Platform subsystem 的 `onShutdown` 释放 | **不依赖 `Application` 析构顺序碰巧成立** |
+
+成员位置参照现有模式：`m_Factory` 已是 `IGraphicsFactory&` 成员（`Application.h:243`），且有 `GetFactory()` 访问器（`:125`）。
+
+#### 决定三：**扩展现有** test-local `FakeAudioEngine`
+
+不新建第二个 fake，不引入 production mock。
+
+`test_audio/ListenerTest.cpp:49` 已有 `class FakeAudioEngine : public IAudioEngine`，注释明确"无 OpenAL / 无音频设备"。扩展其 `CreateBuffer` 为返回 `FakeAudioBuffer`（实现 `IAudioBuffer`），并记录传入的 `dataSize` / `AudioClipInfo`，使 Phase A 可在**无 OpenAL、无 HRC headless、无真实 device** 的条件下验证：
+
+```
+AudioLoader → IAudioEngine::CreateBuffer() → AudioClip.m_Buffer
+```
+
+**测试边界**：`FakeAudioEngine` / `FakeAudioBuffer` 只服务 `test_audio`，**不进入 EngineCore**。
+
+**现状缺口**：`FakeAudioEngine::CreateBuffer` 当前直接返回 `nullptr`（`ListenerTest.cpp:55-57`），不足以验证 ownership。另经核查，**`AudioClip` 目前零直接测试覆盖** —— 全 tests 目录非注释的 `AudioClip` 行仅 2 处，且都是回调签名与 `AudioClipInfo` 参数，无任何测试构造或加载 `AudioClip`。
+
+### 6.6 Phase A 最终结构
+
+```
+Application
+  └─ Platform phase（Window 之后）
+       ├─ Window
+       └─ IAudioEngine owner
+             ↓
+  Resources phase
+       └─ ResourceManager::Init(factory, audioEngine)
+             ↓
+       AudioClip creation
+             ↓
+       AudioLoader → PCM → CreateBuffer()
+             ↓
+       AudioClip::m_Buffer
+             ↓
+       IAudioSource::Play(shared_ptr)
+```
+
+**HRC headless 保持不变**：
+
+```
+InitializeHeadless()
+    └─ skip ResourceManager
+```
+
+Phase A 的 ownership 测试走**独立的 headless unit setup**，不依赖 HRC headless bootstrap。
+
+### 6.7 Phase A 实施边界
+
+| 项 | 内容 |
+|---|---|
+第一个 production commit | `AudioClip m_BufferID → shared_ptr<IAudioBuffer>`；`ResourceManager` 显式获得 `IAudioEngine&` |
+**不夹带** | Phase B 的 8 处 bypass 迁移；Stack 1 退休；`AudioClip.h` 注释 cleanup；null-driver policy |
+提交划分 | production ownership migration → tests/cleanup → 三配置 full build + full suite |
+**不做偷渡项目** | `Core`/`core` `Application.cpp` case collision 属独立 repo-integrity decision |
+
+### 6.8 两项待纠正的记录（不在本次处理）
+
+| 项 | 状态 |
+|---|---|
+`16/16` 基线口径 | 实为 **13 committed + 3 HRC = 16/16**；纯 HEAD 为 **13/13**。标记为 evidence correction required，待 HRC 收口文档统一更正 |
+`Core`/`core` `Application.cpp` case collision | 标记为 HRC landing prerequisite / 独立 repo-integrity decision，暂不修 |
+
+### 6.9 不受影响的部分
 
 | 项 | 状态 |
 |---|---|
@@ -304,10 +405,11 @@ ResourceManager::Load<AudioClip>(path)          ResourceManager.h:108
 
 ## 7. 本次审计不做的事
 
-- 不修改任何代码（`8f15827` 是 §6 前置决策落地前的唯一例外，已单独提交并验证）
-- 不创建任何测试目标
-- 不删除或改变 §5 中任何 compatibility contract
-- **不启动 Phase A** —— §6.5 的前置条件未满足；Phase B / C / D 一并顺延
-- 不触碰 HRC-3 工作区
+- 不修改 HRC-3 工作区
 - 不重新打开 B4（已关闭）
 - 不把 OpenAL null-driver / headless policy 混入本设计（独立的 backend/CI 决策）
+- 不为纠正 §6.8 的基线口径而改动 HRC 文档
+- 不把 `Core`/`core` case collision 作为 Phase A 的偷渡项目
+- 不在 Phase A 中夹带 Phase B 的 bypass 迁移
+
+> 本文档为设计记录。Phase A 的代码实施由 §6.7 的提交边界约束，单独进行。
