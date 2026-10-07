@@ -27,18 +27,42 @@ B4 registration migration | `89d58dc`、`734a9bd`（`InitializeComponentRegistry
 committed TimeTest 的 HEAD 自洽性 | `a6e788c`（移出 7 个依赖未提交 HRC API 的用例；纯 HEAD 首次可独立构建） |
 `OpenALAudioBuffer` destructor context guard | `8f15827` |
 
-**当前工程基线**（逐配置记录，**不跨配置外推**）：
+**Committed test baseline：`16c029b`**（Phase 5.0 实测，clean worktree，零 HRC-3 污染）
 
-| 范围 | 配置 | build | suite |
-|---|---|---|---|
-| **纯 HEAD**（`a6e788c` 起可独立构建，clean worktree） | Debug | `0 error` | **13/13** |
-| **纯 HEAD** | Release | `0 error` | **13/13** |
-| **纯 HEAD** | RelWithDebInfo | 未在 clean worktree 验证 | 未验证 |
-| 主工作树（含 HRC-3 未提交工作） | Debug / Release / RelWithDebInfo | `0 error` | **16/16** = 13 committed + 3 HRC |
+| 口径 | 结果 |
+|---|---|
+| **committed test targets** | **13/13 build + 13/13 suite pass** |
+| 配置覆盖 | **Debug / Release / RelWithDebInfo + ASan**（三配置） |
+| gtest case | **699** 全部实跑通过 |
+| HRC-3 的 3 个 targets | **不计入** committed baseline |
 
-**更正记录（2026-10-06）**：本表此前将纯 HEAD 记为"三配置 `0 error` / 13/13"。实际仅 clean worktree 的 **Debug 与 Release** 被独立验证；**纯 HEAD 的 RelWithDebInfo 13/13 属外推，无直接证据**（含 HRC-3 的主工作树三配置 16/16 是另一回事，不能替代）。该行旧表述已作废。
+> **措辞说明**：本基线**不是**"三配置 full build `0 error`"。已验证的是 13 个 committed test targets 全部成功构建并运行；`sandbox/SpirVTest` 存在既有 linker mismatch（`6302c9d` / `510fefb` 已有专门记录），该已知限制与本表述相容，不在此重复。
+
+**Fresh baseline verification 需要的仓库既有外部前置**（本次已 provision，因此本结果应读作 *"committed source + required fixture set"*，**不是**裸 fresh checkout）：
+
+- **12 个 gitignored fixture**：`assets/gp01/Main.scene` + `dogfood0{1,2,3,5,6,7}.{scene,manifest.json}`（`.gitignore:88-89` 排除）
+- **本机 Vulkan SDK** —— §8 已记录的未声明机器本地依赖
+- **`510fefb` 的可复现 shaderc 预编译产物**（Debug / Release / RelWithDebInfo-ASan 三配置）
+
+**更正记录（2026-10-06 / 2026-10-07 两次）**：
+1. 本表此前将纯 HEAD 记为"三配置 `0 error` / 13/13"。实际仅 Debug 与 Release 经独立验证；**RelWithDebInfo 13/13 属外推，无直接证据**。该行旧表述已作废。
+2. 上表整体已被 `a6e788c` 时期的记录取代 —— 其后有 **2 个 commit 改动 engine 源码**（`f32d113` 崩溃报告 JSON、`f9cf7db` JobSystem 自死锁），其中 `f32d113` 此前**从未被任何 suite 覆盖**（Debug/Debug 子系统无测试 target）。Phase 5.0 已为其补齐三配置全量构建 + 全量 suite 证据。
 
 **已知验证缺口**（非 defect，独立 OPEN）：`.gitignore:88-89` 排除 `*.scene` / `*.manifest.json`，fresh checkout 缺少被忽略的本地夹具时 suite 为 **10/13**，补齐后恢复 13/13。是否将夹具纳入版本控制尚未决定。**另见 §8：最新一次 CI run 4/4 失败于 Build，未产生任何 suite 结果。**
+
+**Windowed production rendering contract：dynamically verified**（Phase 5.2，`f25d4cb`）。在上述 committed baseline 上实跑 `EditorDemo`：真实窗口 + GL context + GP01 场景，viewport 实际渲染出非空像素，resize A→B→A 往返幂等。证据与边界见 `docs/Architecture-Runtime-Integration-Inventory.md` §4.7。
+
+> **措辞边界**：此处**不**等于 renderer subsystem 已完成。PBR / shadow / formal RHI / backend switching **仍未接入产品路径**。另注：frame ownership 的严格阶段划分（`OnUpdate` → `Render3DScene` → `OnImGui`）**仍属 source reading**，动态证据仅覆盖"viewport 逐帧更新"与"SwapBuffers 生效"。
+
+**当前门控不变**（本次不因 5.0 / 5.2 结果改变任何一项）：
+
+| 项 | 状态 |
+|---|---|
+| formal RHI adoption decision | **仍待决策** —— Phase 5.2 之后的下一步，但不预先承诺结论 |
+| GL46 11 个空方法 | **不自动转为 defect**（UNREACHABLE，处置属"是否接通"的架构决策）|
+| headless → Avalonia presentation | 仍 **HRC-only / 断链**（§4.4），**不重开 P2** |
+| Audio A1 | **冻结**（`AudioAssetManager` / `AudioClipManager` 归属未决）|
+| HRC-3 | **不动**（scope / merge 由 owner 决定）|
 
 **Audio Phase A**：A0 provisioning 已实现（`239cc5c`，**已验证但未进主线** —— 与 HRC-3 `Application.h/.cpp` 存在确定性同文件冲突，禁止 hunk 级整合）；A1 ownership migration **冻结**（`AudioAssetManager` 属 Stack 1 归属、`AudioClipManager` fallback 策略两项决策未决）。详见 `docs/Audio-Migration-Design-Freeze.md` §6.7。
 
