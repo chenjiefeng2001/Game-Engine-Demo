@@ -179,7 +179,7 @@ Audio A1 ownership migration | 冻结：需 `AudioAssetManager`（Stack 1 归属
 清理音频绕过路径 | 需先完成 Audio A1（Stack 2 决策已接受） |
 引入 RelWithDebInfo/macOS/Linux-ASan CI 覆盖 | 需独立决策（当前 CI 已覆盖 Windows RelWithDebInfo+ASan，刻意未扩 macOS 与 Linux ASan） |
 
-| 修复 CI Build 失败（`vulkan.h` / `spirv_cross.hpp`） | **需先分别完成 §8.7-A 与 §8.7-B 两个决策**；在此之前不得改动代码、依赖声明或 include 路径 |
+| 修复 CI Build 失败（`vulkan.h` / `spirv_cross.hpp`） | **spirv_cross 侧已完成**（`387c66f`，§8.7.5）；**Vulkan 侧仍需 §8.7-A 决策**，在此之前不得改动 Vulkan 相关代码、依赖声明或 include 路径 |
 | 决定 formal RHI 是否成为 canonical rendering architecture | **已完成（2026-10-07）** —— **否决**。`Core/RHI` 定位为 sandbox / alternate backend surface，不扩展为默认生产路径。详见 §9 |
 | 实现 GL46 空 command methods / 补 `ShadowMapper` 子类 / 补 `CSMShadowMapper` header | **明确不做**（§9.4）—— 即使成本低也不做；不得以"追绿"或"未来会接入"为由启动 |
 
@@ -346,6 +346,36 @@ pin `81fc2ea` 实际布局 | 根目录 **13** 个 `spirv_*.hpp`（含上述两�
 - **B 决定 SPIRV-Cross 的 source/include contract**（影响 3 处 include 与 10 个被编译源）
 
 **证据显示 B 存在不需要 SDK 的解**（变体 D），因此 **B 不必等待 A 的结论**；A 也不应因 B 而顺带决定。
+
+### 8.7.5 B —— **DECIDED：B1「代码契约对齐 pin」（2026-10-07）→ 已实施并验证**
+
+**裁定**：接受 **B1** —— 把代码 include 由 `spirv_cross/spirv_cross.hpp` 改为 pin 实际提供的 `spirv_cross.hpp`；**pin 保持不变**，不再以 Vulkan SDK 的同名头作为补偿来源。
+
+**依据**：变体 D 已直接证明零 SDK 可行；pin 本身自足，无理由为维持前缀而换 pin；保持 pin 不变避免引入新版本变化；**消除 pin `.cpp` + SDK 头混用**这一最危险状态；影响面（3 处 include）小于换 pin 或统一到另一 contract；不依赖 A 的裁定。
+
+**明确排除（确保 B 的修改只解决 B）**：不加 SDK include path ／ 不改 SPIRV-Cross pin ／ 不复制 SDK 头 ／ 不加兼容 wrapper ／ 不顺手处理 Vulkan-Headers provenance。
+
+**实施**（`387c66f`，2 文件 **3 行**，仅 include）：
+
+| 位置 | 变更 |
+|---|---|
+`engine/src/Rendering/ShaderReflection.cpp:10` | `<spirv_cross/spirv_cross.hpp>` → `<spirv_cross.hpp>` |
+`engine/src/Vulkan/VulkanPipelineLayoutCache.cpp:9` | `<spirv_cross/spirv_cross.hpp>` → `<spirv_cross.hpp>` |
+`engine/src/Vulkan/VulkanPipelineLayoutCache.cpp:10` | `<spirv_cross/spirv_glsl.hpp>` → `<spirv_glsl.hpp>` |
+
+**关闭门槛核验**：
+
+| # | 门槛 | 结果 |
+|---|---|---|
+1 | 三处生产 include 已统一到 pin 真实 contract | **PASS** —— 全仓已无 `include <spirv_cross/`（0 处）|
+2 | `third_party/spirv-cross` 仍是唯一 SPIRV-Cross source | **PASS** —— pin 未改动（`81fc2ea`），未新增任何 source |
+3 | SPIRV-Cross 编译在**无 SDK 头参与**下成功 | **PASS** —— 变体 E（pin `/I` + SDK `/external:I` **同时存在**，即真实构建条件）`/showIncludes` 报告命中 `third_party\spirv-cross\spirv_cross.hpp`，且 include trace 中 **VulkanSDK 路径数为 0** |
+4 | 不再出现 pin `.cpp` / SDK header 混用 | **PASS** —— 且**结构性消除**：SDK 提供的是 `spirv_cross\spirv_cross.hpp`（前缀形式），**无法**满足无前缀 `<spirv_cross.hpp>` |
+5 | A 的 Vulkan-Headers 缺口仍单独保持 OPEN | **PASS** —— 未被本次改动掩盖，见下 |
+
+**回归**：三配置（Debug / Release / RelWithDebInfo+ASan）构建 **0 error**；Debug **13/13** 全量 suite 通过，Release 与 RelWithDebInfo 各 5 个代表性 target **100% 通过**。
+
+**A 未被掩盖（仍然 OPEN）**：7 处 committed 位置仍需真 Vulkan API 头；`include/Engine/Vulkan/*.h` 仍在 `engine/CMakeLists.txt:66` **无条件 glob**；`VulkanCommon.h` 仍被 **16** 个 committed 文件 include；无 SDK 时 `EngineCore` 仍无法编译；`.github/` 仍**零** vulkan 声明。
 
 ---
 
