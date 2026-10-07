@@ -184,39 +184,50 @@ Audio A1 ownership migration | 冻结：需 `AudioAssetManager`（Stack 1 归属
 
 **关键含义：该 run 未产生任何 suite 结果。** 4 个 job 全部止步于 Build / 依赖准备，`Test (full suite)` 一步都未执行。因此本次 CI **没有验证任何代码改动**，Linux/GCC 构建状态亦未被证明。
 
-### 8.1 两条独立的缺口（不可合并为单一「依赖修复」）
+### 8.1 单一根因：两个缺失头同源于未声明的机器本地 Vulkan SDK
 
-**(a) `vulkan/vulkan.h` 缺失 —— 环境依赖未入库**
+**本节已于 2026-10-06 更正**（见下方更正记录）。原先记为「两条独立缺口」，**该判断错误**。
 
-- 仓库无 `Vulkan-Headers` submodule（`.gitmodules` 声明 16 个 submodule，不含它）
-- 无 vendored 副本；`git check-ignore` 亦不匹配 —— 即并非「被忽略的本地夹具」，而是根本不在版本控制内
-- 成功构建依赖本机 `VULKAN_SDK`；CI 无该 SDK → 失败
+**(a) 与 (b) 并非独立 —— 两者由同一个来源提供：**
 
-**(b) `spirv_cross/spirv_cross.hpp` 布局不匹配 —— 仓库 pin 与 include 约定冲突**
+| 缺失头 | 实际解析来源 | 路径 |
+|---|---|---|
+| `vulkan/vulkan.h` | 本机 Vulkan SDK | `C:/VulkanSDK/1.4.350.0/Include/vulkan/vulkan.h` |
+| `spirv_cross/spirv_cross.hpp` | **同一个** Vulkan SDK | `C:/VulkanSDK/1.4.350.0/Include/spirv_cross/spirv_cross.hpp` |
 
-- 代码 include `<spirv_cross/spirv_cross.hpp>`（`engine/src/Rendering/ShaderReflection.cpp:10`）
+两者均经 `engine/CMakeLists.txt:145` 的 `target_include_directories(EngineCore PRIVATE "${Vulkan_INCLUDE_DIRS}")` 进入编译行（该行在 `if(Vulkan_FOUND)` 内，见 `:131-134`）。权威证据：`build/Debug/CMakeCache.txt:958` `Vulkan_INCLUDE_DIR:PATH=C:/VulkanSDK/1.4.350.0/Include`；102 个 `.tlog` 含 `VulkanSDK`。
+
+**因此：仅补 `Vulkan-Headers` submodule 不足以修复 CI** —— 它只解决 (a)，而 (b) 同样依赖该 SDK。
+
+**(b) 本身仍然成立的部分（与 SDK 无关的事实）：**
+
+- 代码 include `<spirv_cross/spirv_cross.hpp>`（`engine/src/Rendering/ShaderReflection.cpp:10`、`engine/src/Vulkan/VulkanPipelineLayoutCache.cpp:9`）
 - pinned SPIRV-Cross `81fc2ea` 的头文件位于**仓库根目录**（26 个 root-level `spirv_*`）
-- `include/spirv_cross/` 仅含 6 个文件，**不含 `spirv_cross.hpp`**
-- include 目录 `third_party/spirv-cross` 下**不存在 `spirv_cross/` 包装层**，故该 include 无法解析
+- `include/spirv_cross/` 仅含 6 个文件（`barrier.hpp` `external_interface.h` `image.hpp` `internal_interface.hpp` `sampler.hpp` `thread_group.hpp`），**不含 `spirv_cross.hpp`**
+- 仓库内**唯一**的 `spirv_cross/` 目录是 `third_party/spirv-cross/include/spirv_cross`，而**没有任何 CMakeLists 将它加入 include 路径**
 
-(a) 与 (b) 是**两个独立问题**，任一单独修复都不足以让 CI 通过。
+### 8.2 「未解释的矛盾」—— 已解决
 
-### 8.2 未解释的矛盾（当前不实施修复的直接理由）
+> **更正记录（2026-10-06）**：本节原标题为「未解释的矛盾（当前不实施修复的直接理由）」，并断言「CMake 声明的 include 路径无法解释本地这次成功」。**该断言错误，成因已查明。**
 
-本地主工作树 `build/Debug` 曾成功产出 `ShaderReflection.obj`，时间戳不早于源文件（非陈旧产物），即 MSVC **确实**解析过 (b) 的 include。
+**成因**：`spirv_cross/spirv_cross.hpp` 由 **Vulkan SDK 的 include 目录**提供，经 `engine/CMakeLists.txt:145` 进入编译行。
 
-但现有 CMake include-dir 集合逐个探测，`spirv_cross/spirv_cross.hpp` **全部为 False**：
+**原探测为何漏掉**：先前只逐一探测了 `target_include_directories` 那一块里的 4 个目录（`box2d/include`、`third_party/spirv-cross`、`third_party/shaderc/libshaderc/include`、`third_party`），**遗漏了 `:145` 单独添加的 `${Vulkan_INCLUDE_DIRS}`**。即探测不完整，而非仓库存在矛盾。
 
-```
-third_party/box2d/include
-third_party/spirv-cross
-third_party/shaderc/libshaderc/include
-third_party
-```
+**这同时推翻了「矛盾未解释 ⇒ 不得实施」的禁令前提。** 该禁令现仅保留其原始目的：不得在缺少 §8.4 决策的情况下改动依赖声明或编译语义。
 
-即：**CMake 声明的 include 路径无法解释本地这次成功。** 成因未定（未复现 MSVC 预处理器的实际解析路径）。
+### 8.2.1 新发现的次生问题：SPIRV-Cross 版本错配
 
-> 在此矛盾解释清楚之前，改 include path 或调整 pin **都属于猜测**，不得实施。
+头文件与被编译/链接的 `.cpp` 来自**两棵不同的树**：
+
+| 文件 | 大小 | SHA-256 (前 16) |
+|---|---|---|
+| `C:/VulkanSDK/1.4.350.0/Include/spirv_cross/spirv_cross.hpp`（`ShaderReflection.cpp` / `VulkanPipelineLayoutCache.cpp` 实际使用） | 53957 | `503AD44A4BB5A2E7…` |
+| `third_party/spirv-cross/spirv_cross.hpp`（`engine/CMakeLists.txt:170-181` 编译进 EngineCore 的 10 个 `.cpp` 所对应） | 55221 | `C8E4891D0F895A14…` |
+
+内容不同、相差 1264 字节。**是否 ABI 兼容未经验证。** 同一模式亦适用于 Vulkan：`src/Vulkan/*.cpp` 对着 SDK 头编译，而 `third_party/vma`（pinned `3aa9212`）同样取 `${Vulkan_INCLUDE_DIRS}`（`third_party/CMakeLists.txt:104`）。
+
+此项应并入 §8.6 的待决问题，不单独行动。
 
 ### 8.3 已定性的越界位置（事实记录，非方案）
 
@@ -232,8 +243,8 @@ third_party
 
 | 方向 | 未批准的理由 |
 |---|---|
-| 补依赖声明（加 `Vulkan-Headers` submodule） | 只解决 (a)；(b) 是独立的 pin/layout 问题。且 §8.2 矛盾未解释前，改 include path 属猜测 |
-| 调整 SPIRV-Cross pin 或仓库 layout | 同上；矛盾解释清楚前，无法判断该改 pin、改 layout，还是改代码 include |
+| 补依赖声明（加 `Vulkan-Headers` submodule） | **只解决 §8.1(a)；(b) 同样依赖该 SDK**，故单做此项不足以让 CI 通过 |
+| 调整 SPIRV-Cross pin 或仓库 layout | 在 §8.6 的版本错配问题有结论前，无法判断该改 pin、改 layout，还是改代码 include |
 | 加 capability guard（缺依赖时移除/退化相关源码） | 这改变**编译语义** —— 「缺依赖时这些源码是否应从目标中消失」。需先有 Vulkan/RHI 的产品构建策略，而非 CI 层面的修补 |
 
 **以上任一方案均未获批准，不得默认采用。**
@@ -244,7 +255,9 @@ third_party
 
 ### 8.6 待决问题（待架构 / 构建策略决策）
 
-1. 仓库是否应自带 Vulkan-Headers（submodule / vendored / 声明为外部前置）？
-2. SPIRV-Cross 应按 upstream 真实布局引用，还是调整仓库 pin / layout，还是改代码 include 路径？
+> §8.6 第 4 项（原「§8.2 矛盾成因」）**已解除**，成因见 §8.2。其余各项的选项空间因根因收敛而变化。
+
+1. **（新，优先）** 既然两个缺失头同源于未声明的机器本地 SDK，正确的声明方式是什么 —— 在 CI 中安装并声明 Vulkan SDK（provider / apt / action），还是把依赖入库（Vulkan-Headers submodule + 修正 SPIRV-Cross 引用）？两者对可复现性的含义不同。
+2. **（新）** §8.2.1 的 SPIRV-Cross 版本错配如何处置：统一到 SDK、还是统一到 pinned submodule？这决定 `engine/CMakeLists.txt:159,182` 加入的 `third_party/spirv-cross` 是否有意义。
 3. 哪些非 Vulkan 路径的源文件需要 capability guard？`BindlessDescriptor.h` 的存在是否意味着 RHI 头文件边界需重新界定？
-4. （前置）§8.2 的本地成功与 include 路径矛盾，成因是什么？
+4. （已解决，仅留痕）§8.2 的本地成功与 include 路径矛盾，成因是 `${Vulkan_INCLUDE_DIRS}` 经 `engine/CMakeLists.txt:145` 提供了 SDK 头。
