@@ -98,6 +98,14 @@ target_include_directories(EngineCore
 )
 target_link_libraries(EngineCore PUBLIC glad2 glfw stb box2d OpenAL::OpenAL imgui spdlog::spdlog freetype imguizmo Jolt)
 
+# Vulkan API 头的 provenance：来自仓库 pinned 的 Vulkan-Headers submodule，
+# 无条件链接 —— 与 host 是否安装 Vulkan SDK 无关。
+# 链接顺序刻意早于下方 if(Vulkan_FOUND) 内的 ${Vulkan_INCLUDE_DIRS}，
+# 使 pinned 头始终优先于 SDK 头，保持单一 source of truth。
+if(TARGET VulkanHeaders)
+    target_link_libraries(EngineCore PUBLIC VulkanHeaders)
+endif()
+
 # Jolt Physics: 仅在 Debug 构建启用调试渲染器
 # 注意：Jolt 使用 #ifdef 检查，所以非 Debug 配置必须完全不定义
 target_compile_definitions(EngineCore PRIVATE
