@@ -6,8 +6,8 @@
 #include "Engine/Vulkan/VulkanPipelineLayoutCache.h"
 #include "Engine/Core/RHI/VulkanIRHIDevice.h"
 
-#include <spirv_cross/spirv_cross.hpp>
-#include <spirv_cross/spirv_glsl.hpp>
+#include <spirv_cross.hpp>
+#include <spirv_glsl.hpp>
 
 #include <cstring>
 #include <vector>
