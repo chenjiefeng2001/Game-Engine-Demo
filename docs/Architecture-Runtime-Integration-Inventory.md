@@ -251,6 +251,57 @@ native `ReadPresentationPixels` | `EngineHost.cpp` 中仅 1 次出现 |
 
 `engine/src/Rendering/GPUParticleSystem.cpp:17` 由 `:31` 无条件 glob 编译，却 include `VulkanIRHIDevice.h` → `<vulkan/vulkan.h>`。因此 `if(Vulkan_FOUND)` 的"backend disabled"回退**并不能让 EngineCore 在无 SDK 时构建**。此项已在 `docs/Pending-Decisions-Brief.md` §8 记录为 OPEN，**本文档不重复给方案**。
 
+### 4.7 Phase 5.2 动态验证 —— windowed path **已动态验证**
+
+> **结论：Committed windowed path dynamically verified.**
+> **这证明 committed windowed rendering path，不证明 renderer subsystem 整体完成。** PBR / shadow / formal RHI / backend switching 仍未接入产品路径（见 §4.5、§5.4、§6）。
+
+§4.2 的 windowed 链路此前仅有 source reading 证据。Phase 5.2 在**干净 worktree、committed tree `16c029b`、零 HRC-3 污染**下实跑 `EditorDemo`（sandbox production path）取得动态证据。
+
+**运行环境（真实，非模拟）**
+
+| 项 | 值 |
+|---|---|
+commit / worktree | `16c029b`，tracked modified **0** |
+会话 | Session 1，console 交互式，explorer 运行中 |
+GPU | NVIDIA GeForce RTX 3070 Laptop |
+窗口 | `Window created 800x600`；GL context 成功 |
+AA | `OpenGLAntiAliasing created. Max samples: 32, CSAA: supported` |
+场景 | `GP01 project loaded: 10 objects, 33 assets`；`player.png` / `pad.png` / `wall.png` 绑定成功 |
+
+**① 完整 windowed path —— 通过**
+
+真实截图中 viewport 面板打开，**5 个 sprite 实际渲染**（青色 Player + 灰色 Wall/Pad），hierarchy 列出全部 10 个对象，viewport 自身状态栏显示 `FPS: 111 | Frame: 8.7ms`。viewport 区域像素采样（1680×1050，152 色）：
+
+| 颜色 | 数量 | 对应 |
+|---|---|---|
+| `31,31,38` | 70690 | viewport FBO clear `0.12,0.12,0.15`（`ViewportPanel.cpp:185`）|
+| `80,200,255` | 740 | Player sprite |
+| `127,140,141` | 406 | Wall / Pad sprite |
+
+**② Resize contract —— 通过**
+
+| 阶段 | 窗口 | 结果 |
+|---|---|---|
+A | 1680×1050 | viewport 全尺寸，5 sprite 正常 |
+B | 1200×760 | viewport 压缩为窄条，**sprite 仍正确渲染**，纵横比正确，**无旧尺寸/旧 texture 残留、无黑区** |
+C | 1680×1050 | **与 A 像素级一致** —— sprite 像素 `80,200,255`×740、`127,140,141`×406 完全相同，仅背景差 7 px |
+
+A→B→A 往返幂等，**FBO backing texture 与实际 viewport image 在 resize 后保持一致**。两条 resize 链（GLFW 回调 → `IRenderContext::OnResize`；`m_NeedsFBOUpdate` → FBO 重建）均生效。
+
+**③ Frame ownership —— 仅部分动态**
+
+- **动态可得**：viewport 面板**自带状态栏并逐帧更新**（`FPS: 111 | Frame: 8.7ms`），证明 `ViewportPanel::OnUpdate` 在帧内运行；`SwapBuffers` 生效（窗口实时刷新）。
+- **仍属 source reading**：`OnUpdate` → `Render3DScene` → `OnImGui` 的**严格阶段划分**（`OnImGui` 仅呈现、`InternalRender()` 不参与 EditorDemo 的 scene render）**无法在不改代码的前提下直接观测** —— 那需要插桩。本节不将其记为动态证据。
+
+**④ 一处不得误读的读数**
+
+状态栏 `DC: 0 | Tris: 0K` 在**存在可见像素时仍为 0**。像素是地面真相，因此**该读数不构成"未渲染"的否定证据** —— 它是 §4.5 已记录的未接线计数器（`GPUProfiler` 无调用方）。本文档既不据此推断 defect，也不把它当作渲染证据。
+
+**⑤ 工作区影响**
+
+EditorDemo 运行后 worktree **tracked modified 仍为 0**；仅新增 gitignored 产物：`logs/`、`content_scratch/`、`df08_scratch/`、`df09_scratch/`、`crashes/`（0 文件）。**未修改任何代码、未新增测试。**
+
 ---
 
 ## 5. Audio / Physics / Animation / Scripting
@@ -462,13 +513,14 @@ Lua 5.4（vendored，`third_party/lua`），sandbox 已裁剪 `io`/`package`/`re
 
 ## 10. 证据口径
 
-§4.2 / §4.3 / §4.4 的全部判定均来自 **source reading**：未构建、未运行、未截帧验证。链路的**存在性与接线位置**可由此确证，但**实际出图正确性未经动态验证**。
+- §4.2 / §4.3 / §4.4 的全部判定均来自 **source reading**：未构建、未运行、未截帧验证。链路的**存在性与接线位置**可由此确证，但**实际出图正确性未经动态验证**。
+- **§4.7 为例外** —— 该节为 Phase 5.2 的**动态验证**结果，含真实窗口、真实 GL context、真实像素与 resize 往返证据。
 
 与本文档其他章节的差异，已明确标注：
 
 - §5.3（PhysicsSync）有**动态 reachability 证据**（零赋值、零实例化、零测试引用）
 - §2 的 target 数量经 `git` 索引核对
-- §4 渲染链路为纯静态阅读，**无运行证据**
+- §4.2 / §4.3 / §4.4 渲染链路为纯静态阅读，**无运行证据**；§4.7 提供了其中 windowed path 的动态证据
 - §6.1 三项 characterization 为**静态核查**（源码 + grep 可达性），未构建、未运行。其结论是"良性 / 死代码 / 未完成实现"，均**不含**动态验证成分
 
 > **§6.1 记录的三次自我更正**均为**静态证据推翻静态初判**，不涉及运行验证。若日后有人复核，应注意这三处的"错误"是初判阶段未核对可达性与调用图所致，而非后续动态实验的结论。
