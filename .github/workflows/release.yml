@@ -72,5 +72,5 @@ jobs:
             Sandbox-linux-x64-*.tar.gz
           draft: true
           prerelease: ${{ inputs.prerelease }}
-      env:
-        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
