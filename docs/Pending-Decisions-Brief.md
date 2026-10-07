@@ -179,7 +179,7 @@ Audio A1 ownership migration | 冻结：需 `AudioAssetManager`（Stack 1 归属
 清理音频绕过路径 | 需先完成 Audio A1（Stack 2 决策已接受） |
 引入 RelWithDebInfo/macOS/Linux-ASan CI 覆盖 | 需独立决策（当前 CI 已覆盖 Windows RelWithDebInfo+ASan，刻意未扩 macOS 与 Linux ASan） |
 
-| 修复 CI Build 失败（`vulkan.h` / `spirv_cross.hpp`） | **需先完成 §8 的 CI dependency strategy 决策**；在此之前不得改动代码、依赖声明或 include 路径 |
+| 修复 CI Build 失败（`vulkan.h` / `spirv_cross.hpp`） | **需先分别完成 §8.7-A 与 §8.7-B 两个决策**；在此之前不得改动代码、依赖声明或 include 路径 |
 | 决定 formal RHI 是否成为 canonical rendering architecture | **已完成（2026-10-07）** —— **否决**。`Core/RHI` 定位为 sandbox / alternate backend surface，不扩展为默认生产路径。详见 §9 |
 | 实现 GL46 空 command methods / 补 `ShadowMapper` 子类 / 补 `CSMShadowMapper` header | **明确不做**（§9.4）—— 即使成本低也不做；不得以"追绿"或"未来会接入"为由启动 |
 
@@ -281,12 +281,73 @@ Audio A1 ownership migration | 冻结：需 `AudioAssetManager`（Stack 1 归属
 
 ### 8.6 待决问题（待架构 / 构建策略决策）
 
-> §8.6 第 4 项（原「§8.2 矛盾成因」）**已解除**，成因见 §8.2。其余各项的选项空间因根因收敛而变化。
+> §8.6 第 4 项（原「§8.2 矛盾成因」）**已关闭**，证据级别见 §8.7。第 1 / 2 项的选项空间因 §8.7 的实验结果而收窄。
 
-1. **（新，优先）** 既然两个缺失头同源于未声明的机器本地 SDK，正确的声明方式是什么 —— 在 CI 中安装并声明 Vulkan SDK（provider / apt / action），还是把依赖入库（Vulkan-Headers submodule + 修正 SPIRV-Cross 引用）？两者对可复现性的含义不同。
-2. **（新）** §8.2.1 的 SPIRV-Cross 版本错配如何处置：统一到 SDK、还是统一到 pinned submodule？这决定 `engine/CMakeLists.txt:159,182` 加入的 `third_party/spirv-cross` 是否有意义。
-3. 哪些非 Vulkan 路径的源文件需要 capability guard？`BindlessDescriptor.h` 的存在是否意味着 RHI 头文件边界需重新界定？
-4. （已解决，仅留痕）§8.2 的本地成功与 include 路径矛盾，成因是 `${Vulkan_INCLUDE_DIRS}` 经 `engine/CMakeLists.txt:145` 提供了 SDK 头。
+1. **（§8.7-A）Vulkan Headers provenance** —— 仓库是否应拥有**自身可声明、可复现**的 `Vulkan-Headers` 来源，还是正式把 host / CI 的 Vulkan SDK 定义为**外部前置依赖**。
+2. **（§8.7-B）SPIRV-Cross provenance** —— pin 的实际布局与代码 include contract 不一致，且存在版本错配（§8.2.1）。须统一到**一个明确且可重建**的 source/include contract。
+3. 哪些非 Vulkan 路径的源文件需要 capability guard？`BindlessDescriptor.h` 被 3 个 committed 文件 include，说明该问题不限于 `Engine/Vulkan/`。
+4. （**已关闭，仅留痕**）§8.2 的本地成功与 include 路径矛盾 —— **已观测并实验复现**，见 §8.7。
+
+### 8.7 §8.2 矛盾的关闭 + A / B 裁决准备
+
+> **§8.2 证据级别：CLOSED — observed and experimentally reproduced.**
+> `spirv_cross/spirv_cross.hpp` 的本地成功解析**唯一**依赖仓库外 Vulkan SDK 的 include 根；仓库 `third_party/spirv-cross` pin 的布局**无法**满足现有 include contract。
+>
+> **§8.2 已关闭 ≠ §8 已裁决。** 以下只提供决策依据，**不含推荐**。
+
+#### 8.7.1 关闭 §8.2 的受控实验
+
+同一探针（`#include <spirv_cross/spirv_cross.hpp>`）、同一套仓库内 include 目录，**只切换一个变量**：
+
+| 变体 | include 集合 | 结果 |
+|---|---|---|
+**A** | 仅仓库内 7 个目录 | **`fatal error C1083`** |
+**B** | A + `/external:I <SDK>/Include` | **EXIT=0**，`/showIncludes` 命中 `C:\VulkanSDK\1.4.350.0\Include\spirv_cross\spirv_cross.hpp` |
+**C** | A + `/I <SDK>/Include`（普通 `/I`） | EXIT=0 |
+**D** | 仅 `/I third_party/spirv-cross`，探针改为 `#include <spirv_cross.hpp>` | **EXIT=0，零 SDK 依赖** |
+
+**由此排除**：PCH（去掉 `/Yu` `/Fp` `/FI` 后 A 仍必现 `C1083`）、隐式环境 / response file（`/showIncludes` 给出绝对路径）、"只是搜索顺序误判"（A 中 `/I third_party/spirv-cross` 存在且无效）。
+
+**独立佐证**：MSBuild `EngineCore.tlog` 中 `SHADERREFLECTION.CPP` 的真实命令含 26 个 `/I` + **1 个 `/external:I C:/VulkanSDK/1.4.350.0/Include`**（即 `engine/CMakeLists.txt:145` 的 `${Vulkan_INCLUDE_DIRS}`）。
+
+#### 8.7.2 A —— Vulkan Headers provenance 的决策依据
+
+| 事实 | 值 |
+|---|---|
+需要**真** Vulkan API 头的 committed 位置 | **7 处**（`BindlessDescriptor.h:12`、`VulkanCommon.h:12`、`VulkanDeferredDeletion.h:15`×2、`VulkanFrameResource.h:12`、`VulkanDevice.cpp:20`、`RenderTestOffscreen.cpp:19`）|
+守卫状态 | **仅 `src/Vulkan/*.cpp` 被 `if(Vulkan_FOUND)` 守卫**（`engine/CMakeLists.txt:134`）；而 `include/Engine/Vulkan/*.h` 在 `:66` **无条件 glob** |
+传染面 | `VulkanCommon.h` 被 **16** 个 committed 文件 include，`VulkanFrameResource.h` **4** 个，`BindlessDescriptor.h` **3** 个 |
+后果 | **无 SDK 时 `EngineCore` 无法编译** —— `message(WARNING "Vulkan backend disabled")`（`:150`）与实际行为矛盾 |
+CI 现状 | `.github/` 中**无任何** `VULKAN_SDK` / vulkan 引用 |
+
+**选项空间**：仓库自带（`Vulkan-Headers` submodule / vendored）／ 正式声明 SDK 为 CI+host 前置 ／ 对越界 header 加 capability guard。
+
+> **已表达的倾向（记录，非本文档结论）**：倾向"仓库可声明、可复现的来源"，但须作为**正式决策**而非临时补 SDK。
+
+#### 8.7.3 B —— SPIRV-Cross provenance 的决策依据
+
+| 事实 | 值 |
+|---|---|
+代码 include contract | `<spirv_cross/spirv_cross.hpp>`、`<spirv_cross/spirv_glsl.hpp>`（**3 处**）|
+pin `81fc2ea` 实际布局 | 根目录 **13** 个 `spirv_*.hpp`（含上述两个）；`include/spirv_cross/` 仅 **6** 个文件（`barrier` / `external_interface` / `image` / `internal_interface` / `sampler` / `thread_group`），**不含**所需头 |
+被编译进 EngineCore 的 pin 源 | **10 个 `.cpp`**（`engine/CMakeLists.txt:169-181`）|
+当前混合状态 | **pin 的 `.cpp` + SDK 的头**被组合链接 —— 即 §8.2.1 的版本错配（SDK 53957 B vs pin 55221 B，SHA 不同，ABI 兼容性未验证）|
+**关键实验** | 变体 **D**：`<spirv_cross.hpp>` + 仅 `/I third_party/spirv-cross` → **EXIT=0，零 SDK 依赖**。即 **pin 本身自足**，是代码的 include 前缀把它绑到了 SDK |
+
+**选项空间**：把代码 include 对齐 pin 真实布局（`<spirv_cross.hpp>`）／ 调整 pin 到匹配现有 contract ／ 统一到某一个 source。
+
+> **明确排除的做法**：**"顺手加一个 include path"** —— 那会把未声明的 SDK 依赖固化为**隐式 source of truth**，且保留 pin-`.cpp` 与 SDK-头混用。
+
+#### 8.7.4 A 与 B 必须分离裁决
+
+二者是**独立 provenance 问题**，不得再打包为"缺依赖"：
+
+- **A 决定 Vulkan API 头的来源**（影响 7 处、含 25 处传递 include，以及 §8.3 的 capability guard 问题）
+- **B 决定 SPIRV-Cross 的 source/include contract**（影响 3 处 include 与 10 个被编译源）
+
+**证据显示 B 存在不需要 SDK 的解**（变体 D），因此 **B 不必等待 A 的结论**；A 也不应因 B 而顺带决定。
+
+---
 
 ## 9. Formal RHI adoption 决策 —— **Accepted：否决作为 canonical production architecture**
 
