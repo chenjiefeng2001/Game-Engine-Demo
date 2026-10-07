@@ -276,7 +276,7 @@ uint64 JobSystem::AllocateJob(JobFunc&& func,
         if (it != m_JobMap.end()) {
             it->second->dependents.push_back(id);
         } else {
-            std::lock_guard lock2(m_JobMapMutex);
+            // 外层已持有 m_JobMapMutex（不可重入），此处不可重复加锁
             auto jt = m_JobMap.find(id);
             if (jt != m_JobMap.end()) {
                 if (jt->second->unfinishedPrereqs.fetch_sub(1, std::memory_order_acq_rel) == 1) {
