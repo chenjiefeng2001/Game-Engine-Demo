@@ -115,16 +115,19 @@ sandbox/src/EditorDemo/main.cpp:44   Engine::EditorDemoApp app(factory)
   → OnStartup()
   → while (!ShouldClose())
       PollEvents → Time::UpdateDeltaTime
-      → InternalUpdate(dt) → OnUpdate(dt)          ← 虚拟 hook ①
+      → InternalUpdate(dt) → OnUpdate(dt)          ← 虚拟 hook ①（Render3DScene 在此驱动）
       → DispatchSubsystemUpdates(dt)
-      → OnImGui()                                 ← 虚拟 hook ②（实际渲染发生在这里）
-      → InternalRender() → OnRender()             ← 虚拟 hook ③
+      → OnImGui()                                 ← 虚拟 hook ②（呈现已渲染好的纹理）
+      → InternalRender() → OnRender()             ← 虚拟 hook ③（EditorDemo 下跳过）
       → SwapBuffers
 ```
 
 **两处与直觉相反的事实：**
 
-1. **EditorDemo 的 `OnRender()` 是空实现。** `m_RenderDefaultQuad=false` 使 `Application.cpp:558-582` 整段 FBO/clear/draw 被跳过。真实渲染发生在 **`OnImGui()` 内**，经 `SetSceneRenderInjector` 注入。`OnRender` hook 不在生产路径上。
+1. **EditorDemo 的 `OnRender()` 是空实现。** `m_RenderDefaultQuad=false` 使 `Application.cpp:558-582` 整段 FBO/clear/draw 被跳过。真实场景渲染由 **`OnUpdate` → `ViewportPanel::Render3DScene()`** 驱动（`ViewportPanel.cpp:161`）；`OnImGui` 不执行场景渲染，只用 `ImGui::Image` 把结果纹理贴出（`:296-301`）。`OnRender` hook 不在生产路径上。
+
+   > **更正记录（2026-10-06）**：本文档早期版本称"真实渲染发生在 `OnImGui()` 内"。该描述不准确 —— `Render3DScene()` 由 `OnUpdate` 驱动，`OnImGui` 仅负责呈现。详见 §4.2。
+
 2. **headless 下 `OnUpdate`/`OnRender` 双双失效。** `EngineHost.cpp:528` 实例化的是**基类** `Application` —— 而已验证：`engine/`、`bridge/`、`tests/` 下**不存在任何 `Application` 子类**（5 个全在 `sandbox/`）。因此 headless 渲染完全由 `EngineHost` 在 Application 帧之外编排。
 
 ### 3.3 headless frame 链路（HRC-ONLY，uncommitted）
@@ -175,18 +178,49 @@ capi: EngineHost_Create → InitializeRuntimeResources
 | `Rendering/` | **PARTIAL** | `AutoPipelineLayout` 返回 `0xDEADBEEF` |
 | ShaderReflection（两份） | **STUB + UNREACHABLE** | 一份有声明无定义，一份有实现无调用方 |
 
-### 4.2 windowed 渲染链路
+### 4.2 windowed 渲染链路 —— COMPLETE
 
 ```
 InitWindow → CreateWindow → glfwCreateWindow → CreateRenderContext
   → OpenGLContext → glfwMakeContextCurrent → gladLoadGLContext → Init() → GlfwWindow
-每帧 → ViewportPanel::Render3DScene()   bind FBO → clear → draw
-     → SwapBuffers → glfwSwapBuffers
+
+每帧:
+  OnUpdate → ViewportPanel::OnUpdate → Render3DScene()        ViewportPanel.cpp:161
+      BindFramebuffer(m_FBO_ID) → ClearColor/Clear → ClearBufferiv(GL_COLOR,1,-1)   :177-189
+      m_SceneRenderCallback(vp, camPos)                     :208
+      BindFramebuffer(GL_FRAMEBUFFER, 0)                    :219
+  OnImGui → ViewportPanel::OnImGui → ImGui::Image(m_ColorTexture)   :296-301
+  InternalRender()                                          Application.cpp:545
+  m_Window->OnUpdate() → SwapBuffers()                      GlfwWindow.cpp:231
+      AA ResolveToDefault → GPU timestamp 收集 → glfwSwapBuffers   OpenGLContext.cpp:45-82
 ```
 
-**backend 选择不存在。** `CreateRHI(RHI::Backend)` 返回 `nullptr`（注释："实际创建在引擎启动时由 GLFW 后端接管"），且无任何代码路径可路由到非 OpenGL factory。
+**该链路完整且产出像素。** 每一跳均有 committed 实现：MRT FBO 的 clear + pick-id 写入、场景回调、AA resolve、真实 `glQueryCounter` 计时、`glfwSwapBuffers`。resize 亦完整：`glfwSetFramebufferSizeCallback`（`GlfwWindow.cpp:40`）→ `GlfwWindow::OnResize:76` → `IRenderContext::OnResize`（`OpenGLContext.cpp:126`）→ `AntiAliasing::OnResize`；ViewPortPanel 另有独立的 FBO 重建（`m_NeedsFBOUpdate`，由 ImGui 显示尺寸驱动）。两套 resize 机制并存且各自连通。
 
-### 4.3 已定性的断点
+**`OnRender` 不参与渲染。** EditorDemo 设 `m_RenderDefaultQuad=false`，`InternalRender()` 的 clear+draw 整块位于 `Application.cpp:558-582` 的该条件内，故被跳过；`OnRender()` 为空实现。
+
+**fb0 的清理由 ImGui 后端承担，不是 `Application`。** `ImGuiUIManager.cpp:92-93` 在 `Renderer_RenderWindow` 回调中 clear color+depth。因此渲染链路的收尾环节隐式依赖 ImGui 回调 —— 这是职责转移，**不是缺陷**，但它意味着移除 ImGui 后端会同时移除默认帧缓冲的清理。
+
+### 4.3 backend 选择 —— STUB
+
+`CreateRHI(RHI::Backend)` 返回 `nullptr`（`RHIBackend.cpp:87`，注释："实际创建在引擎启动时由 GLFW 后端接管"），且无任何代码路径可路由到非 OpenGL factory。Vulkan / D3D12 路径**无法从生产 graphics factory 到达**（UNREACHABLE，详见 §6）。
+
+### 4.4 headless → Avalonia 呈现 —— 断于 native 导出边界
+
+| 环节 | 状态 |
+|---|---|
+native 渲染到 `m_PresentationFbo`（HRC-3，26 处引用） | 完整 |
+**native C ABI 导出 presentation frame** | **不存在** —— `capi.h` / `capi.cpp` 中无 `PresentationFrame` |
+managed 常量 `EngineHostOpGetPresentationFrame = 28` | 已声明（`EditorBridgeApi.cs:115`） |
+managed `TryFetchPresentationFrame` | 调用 op 28，native 侧无对应 handler |
+`ViewportFramePresenter.Present` | **代码完整** —— 逐行 `Marshal.Copy` 翻转、`WriteableBitmap`、`PixelFormat.Rgba8888` |
+native `ReadPresentationPixels` | `EngineHost.cpp` 中仅 1 次出现 |
+
+**定性：不是"未接线"，是"接线只完成一半，且另一半尚未进版本控制"。** managed 侧呈现代码真实且完整，但没有任何 native 导出能向它提供数据。整条链的 native 端 —— `bridge/src/EngineHost.cpp` / `.h` —— **仍为 untracked，不在 HEAD 中**。
+
+管理端已自认此边界：`EditorHostService.cs:251` 抛 `"presentation frame fetch is an EngineHost capability; the legacy backend has no presentation target"`；`P2ManagedFrameGate.cs:205` 与 `D3ManagedPickGate.cs:81` 把 `op == 28` 当作**待验证契约断言**检查，而非既成事实。**因此不得把 P2 描述为"已完成"。**
+
+### 4.5 已定性的断点
 
 | 断点 | 位置 | 性质 |
 |---|---|---|
@@ -200,7 +234,7 @@ InitWindow → CreateWindow → glfwCreateWindow → CreateRenderContext
 | allocator 层整体惰性 | `SetMemoryAllocator` 0 调用方；`CreateGPUMemoryAllocator` 0 调用方；`VmaAllocator` 无 `.cpp` | **UNREACHABLE** |
 | `RenderGraph` 仅测试使用 | 唯一引用 `tests/test_renderer/RenderGraphSG6Test.cpp` | **UNREACHABLE** |
 
-### 4.4 Vulkan build gating 的既有事实（已记入 §8，不在此重复处置）
+### 4.6 Vulkan build gating 的既有事实（已记入 Decision Brief §8，不在此重复处置）
 
 `engine/src/Rendering/GPUParticleSystem.cpp:17` 由 `:31` 无条件 glob 编译，却 include `VulkanIRHIDevice.h` → `<vulkan/vulkan.h>`。因此 `if(Vulkan_FOUND)` 的"backend disabled"回退**并不能让 EngineCore 在无 SDK 时构建**。此项已在 `docs/Pending-Decisions-Brief.md` §8 记录为 OPEN，**本文档不重复给方案**。
 
@@ -325,6 +359,7 @@ Lua 5.4（vendored，`third_party/lua`），sandbox 已裁剪 `io`/`package`/`re
 | `ECSBridge` 文档承诺的转发 | **UNREACHABLE** | header 描述的转发从未实现 |
 | `AssetPipeline` / `AssetMetaDb` / Core `AssetDatabase` | **UNREACHABLE** | 无生产调用方 |
 | `AutoPipelineLayout` | **STUB** | 返回哨兵指针 |
+| native presentation frame 导出（op 28） | **HRC-ONLY / 断链** | managed 侧常量与 fetch 逻辑齐备，native C ABI 导出不在 HEAD；`EngineHost.cpp/.h` 仍 untracked。详见 §4.4 |
 | `AudioSourceComponent` | **observation** | 从未挂到任何 GameObject（证据不足，不追） |
 | `SystemTestApp` 的 `debug_draw` CVar | **observation** | 无对应 `SetDebugDraw` 调用（证据不足，不追） |
 
@@ -365,4 +400,17 @@ Lua 5.4（vendored，`third_party/lua`），sandbox 已裁剪 `io`/`package`/`re
 - 不判定任何 subsystem 是否**应当**接入 runtime（属产品意图）
 - 不重复 Decision Brief 中已记录的 OPEN 项处置
 - 不修改任何代码
+- 不将 §4.4 的断链表述为"待恢复的任务"，也不重开 P2
+
+---
+
+## 10. 证据口径
+
+§4.2 / §4.3 / §4.4 的全部判定均来自 **source reading**：未构建、未运行、未截帧验证。链路的**存在性与接线位置**可由此确证，但**实际出图正确性未经动态验证**。
+
+与本文档其他章节的差异，已明确标注：
+
+- §5.3（PhysicsSync）有**动态 reachability 证据**（零赋值、零实例化、零测试引用）
+- §2 的 target 数量经 `git` 索引核对
+- §4 渲染链路为纯静态阅读，**无运行证据**
 - 不声称任何验证经过构建或运行
