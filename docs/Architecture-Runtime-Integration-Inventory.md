@@ -23,6 +23,19 @@
 
 **UNREACHABLE 是本文档新增的一级。** 它与 STUB 的区别：STUB 在可达路径上返回假值；UNREACHABLE 则是整条链路两端都没有调用方，因此**其行为不会被任何人观察到**，也就不能按 defect 处理。
 
+### 0.1 空函数体必须区分两类
+
+空函数体（`{}`）本身不是状态标记。扫描中发现的 41 处空 override 分为两类，**记录时必须分开**：
+
+| 类别 | 定义 | 处置 |
+|---|---|---|
+**可达的 no-op** | 被生产代码调用，但不做功 | **潜在缺陷面**，需 characterization 定性 |
+**不可达的空实现** | 无外部调用方 | 死代码面，不按 defect 处理 |
+
+这一区分来自 `PhysicsSyncSystem` 的教训：初判其为"真实运行时错误"，实为端到端不可达。**先核对可达性，再定性。**
+
+> **可达的 no-op 目前为空集。** 唯一曾被怀疑的 `JobSystem::PollCompleted`（`Application.cpp:790` 每帧调用）经核查为良性，见 §6.1。
+
 ---
 
 ## 1. 总体成熟度判断
@@ -228,7 +241,7 @@ native `ReadPresentationPixels` | `EngineHost.cpp` 中仅 1 次出现 |
 | GL46 swapchain 不呈现 | `GL46SwapChain.cpp:20` `Present(){}` | **STUB** |
 | GL46 命令回放为空 | `GL46SwapChain.cpp:29` → `GL46CommandList.cpp:337` `ExecuteOnMainThread(){}`，且全部记录型 draw 方法为 `{}` | **STUB** |
 | Vulkan descriptor 恒 no-op | `VulkanCommandList.cpp:308,324,348` 均 gate 于 `currentDescriptorSet != VK_NULL_HANDLE`，而该字段（`:39`）**从未被赋值** | **STUB** |
-| 自动 descriptor layout 返回哨兵值 | `AutoPipelineLayout.cpp:192` `reinterpret_cast<void*>(0xDEADBEEF)` | **STUB** |
+| 自动 descriptor layout 返回哨兵值 | `AutoPipelineLayout.cpp:185` `reinterpret_cast<void*>(0xDEADBEEF)` | **UNREACHABLE**（零调用方，详见 §6） |
 | `ExtractShaderReflection` 无定义 | `include/Engine/Rendering/ShaderReflection.h:189` 声明，全仓无定义（自身注释 `:187` 即写明"空桩"） | **STUB** |
 | `ReflectSPIRV` 有实现无调用方 | `src/Rendering/ShaderReflection.cpp:14`（实码），调用方为 0 | **UNREACHABLE** |
 | allocator 层整体惰性 | `SetMemoryAllocator` 0 调用方；`CreateGPUMemoryAllocator` 0 调用方；`VmaAllocator` 无 `.cpp` | **UNREACHABLE** |
@@ -345,6 +358,13 @@ Lua 5.4（vendored，`third_party/lua`），sandbox 已裁剪 `io`/`package`/`re
 | `Core/RHI` 三 backend device | **UNREACHABLE** | 无 engine 构造点 |
 | `ReflectSPIRV` | **UNREACHABLE** | 有实码，零调用方 |
 | `ExtractShaderReflection` | **STUB** | 有声明，无定义 |
+| `AutoPipelineLayout::CreatePipelineLayout` | **UNREACHABLE** | 返回 `0xDEADBEEF` 哨兵；`AutoPipelineLayoutCache` 亦零外部引用。注：全仓 5 处 `CreatePipelineLayout` 命中均为 Vulkan API `vkCreatePipelineLayout`，**同名不同符号** |
+| `GL46CommandList` 11 个空方法 | **UNREACHABLE** | `SetVertexBuffer`/`SetIndexBuffer`/`SetPrimitiveTopology`/`DrawIndexed`/`Draw`/`DrawIndexedIndirect`/`SetViewport`/`SetScissorRect`/`SetConstantBuffer`/`SetShaderResource`/`ExecuteOnMainThread` 全为 `{}`。见 §6.2 |
+| `InputManager::SaveBindings` / `LoadBindings` | **UNREACHABLE** | 两者外部调用方均为 0。`LoadBindings` 读完文件即打印 `"Full JSON parser not implemented in this demo."`（`InputManager.cpp:193`） |
+| `GPUMemoryAllocatorFallback::Defragment` | **UNREACHABLE** | `"not implemented"`；零外部引用 |
+| `LuaEngine` 8 个空方法 | **UNREACHABLE** | `SetGlobal`×4 / `RegisterFunction` / `RegisterSimpleFunction` / `WatchScript` / `SetAllowedAPIs` / `SetupBaseAPI` / `CheckStack`；精化查询后零外部调用 |
+| `PhysicsColliderAdapter::AttachWorld` | **UNREACHABLE** | no-op（`PhysicsColliderAdapter.h:109,113`）；零外部引用 |
+| `PropertyDrawer::DrawMixedValuePlaceholder` | **UNREACHABLE** | 零外部引用 |
 | `SetMemoryAllocator` / `CreateGPUMemoryAllocator` / `VmaAllocator` | **UNREACHABLE** | 无调用方 / 无 `.cpp` |
 | `RenderGraph` | **UNREACHABLE** | 仅测试引用 |
 | `PhysicsSystemManager` | **UNREACHABLE** | `CreateWorld3D`/`StepAll` 零调用方 |
@@ -358,10 +378,46 @@ Lua 5.4（vendored，`third_party/lua`），sandbox 已裁剪 `io`/`package`/`re
 | `EntityCommandBuffer` | **UNREACHABLE** | 仅 sandbox 使用 |
 | `ECSBridge` 文档承诺的转发 | **UNREACHABLE** | header 描述的转发从未实现 |
 | `AssetPipeline` / `AssetMetaDb` / Core `AssetDatabase` | **UNREACHABLE** | 无生产调用方 |
-| `AutoPipelineLayout` | **STUB** | 返回哨兵指针 |
 | native presentation frame 导出（op 28） | **HRC-ONLY / 断链** | managed 侧常量与 fetch 逻辑齐备，native C ABI 导出不在 HEAD；`EngineHost.cpp/.h` 仍 untracked。详见 §4.4 |
 | `AudioSourceComponent` | **observation** | 从未挂到任何 GameObject（证据不足，不追） |
 | `SystemTestApp` 的 `debug_draw` CVar | **observation** | 无对应 `SetDebugDraw` 调用（证据不足，不追） |
+
+---
+
+### 6.1 空实现的三项 characterization 结论（2026-10-06）
+
+对三处最可疑的空实现做了可达性与契约核查，**结论均为良性或死代码，不构成应修复的缺陷**。记录在此以免重复调查。
+
+### (a) `JobSystem::PollCompleted` —— 良性预留 no-op
+
+初判曾列为"唯一可达的 no-op 缺陷候选"。核查后**该判断被推翻**：
+
+- `OnJobCompleted:417` 在 job 完成时**同步** `m_JobMap.erase(it)` —— 不存在待回收的 job 引用
+- `TryPopLocal:452` 出队即 `pop_front()` —— 工作队列不留残余
+- `m_JobMap` 是 `JobSystem` 中**唯一**的 job 容器（`JobSystem.h:264`）
+
+即头文件承诺的"每帧清理已完成 Job 的引用"已在完成路径上做完，每帧轮询无事可做。**空实现是正确的。**
+
+`EndFrame` 同为空实现 + 不可达。其 doc 承诺回收 `FrameTransient` 分配（该类型真实存在于 `IGPUMemoryAllocator.h:255`），但 `JobSystem` 不涉及 transient 内存、不持有 allocator —— 属为未接线功能预留的接口。
+
+### (b) `InputManager::SaveBindings` / `LoadBindings` —— 死代码对
+
+初判曾表述为"`SaveBindings` 写出无人能读的 JSON"。**该表述不准确**：完整调用图显示**两者外部调用方均为 0**，只有声明与定义。不是"写得出读不回"，而是根本无人写、无人读。与既有结论一致：`InputManager` 从不被 `Application` 调用（§5 附近 Input 结论）。
+
+### (c) `GL46CommandList` 11 个空方法 —— 未完成的纯虚实现
+
+初判曾假设"可能是刻意 stub"。三后端对照推翻该假设：
+
+| | `SetPrimitiveTopology` | `DrawIndexed` |
+|---|---|---|
+`IRHICommandList.h:102` | **纯虚 `= 0`** | 纯虚 |
+**GL46** | `{}` | `{}` |
+**Vulkan** | 计算后**有意丢弃**（拓扑固化于 PSO，`:172-173`） | `vkCmdDrawIndexed`（`:183`） |
+**D3D12** | 有实现 | 有实现（`D3D12Device.cpp:179,189`） |
+
+接口要求必须实现，Vulkan 与 D3D12 均已实现，**仅 GL46 为空**。且 `GL46AZDODevice.h:8-17` 明确声明完整 AZDO 设计（DSA / Persistent Mapping / MultiDrawIndirect / Bindless），说明这些空方法是**对既定设计的未完成实现**。
+
+定性：UNREACHABLE + 未完成实现。接通 `IRHIDevice` 的 OpenGL 路径会得到一个静默不画的 command list（`GL46Queue::ExecuteCommandLists` 调 `ExecuteOnMainThread`，而它为空）。**风险定性成立，但处置属"是否接通"的架构决策，非缺陷修复。**
 
 ---
 
@@ -413,4 +469,7 @@ Lua 5.4（vendored，`third_party/lua`），sandbox 已裁剪 `io`/`package`/`re
 - §5.3（PhysicsSync）有**动态 reachability 证据**（零赋值、零实例化、零测试引用）
 - §2 的 target 数量经 `git` 索引核对
 - §4 渲染链路为纯静态阅读，**无运行证据**
+- §6.1 三项 characterization 为**静态核查**（源码 + grep 可达性），未构建、未运行。其结论是"良性 / 死代码 / 未完成实现"，均**不含**动态验证成分
+
+> **§6.1 记录的三次自我更正**均为**静态证据推翻静态初判**，不涉及运行验证。若日后有人复核，应注意这三处的"错误"是初判阶段未核对可达性与调用图所致，而非后续动态实验的结论。
 - 不声称任何验证经过构建或运行
