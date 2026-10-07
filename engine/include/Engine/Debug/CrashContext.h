@@ -16,6 +16,7 @@
  *   CrashContext::Register("AI/Behavior", []() { return aiTree->Dump(); });
  *
  *   // 崩溃时收集（由 CrashHandler 调用）
+ *   // 注意：返回的对象尚未闭合，调用方追加自己的成员后需自行补上结尾 '}'
  *   std::string report = CrashContext::CollectAll();
  * @endcode
  */

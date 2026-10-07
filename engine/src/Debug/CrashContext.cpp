@@ -127,7 +127,8 @@ std::string CrashContext::CollectAll() {
             oss << "\"<exception during data collection>\"";
         }
     }
-    oss << "\n  }\n}\n";
+    // 对象保持未闭合：调用方需继续追加成员（如 stackTrace）后自行闭合
+    oss << "\n  }";
 
     return oss.str();
 }
