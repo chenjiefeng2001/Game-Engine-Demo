@@ -1,0 +1,368 @@
+# 架构 / Runtime Integration Inventory（成熟度审计）
+
+> **性质**：全仓审计产出的**事实性清单**，记录每个 subsystem 的 runtime 接入状态与证据。
+> **不含**：架构建议、方案推荐、待决策项。决策与恢复条件见 `docs/Pending-Decisions-Brief.md`。
+> **审计方式**：source reading only —— 未构建、未运行任何 target。
+> **基线**：`HEAD 781fe59`（local `avalonia`，已 push）；`origin/master` = `1a066ed`
+> **工作区**：56 tracked modified + 70 untracked（HRC-3），全文逐处区分 COMMITTED / UNCOMMITTED
+> **日期**：2026-10-06
+
+---
+
+## 0. 阅读须知：本文档的状态词汇
+
+**"代码存在"不等于"产品功能完成"。** 本文所有结论按五级标注，且每级都带可复核证据：
+
+| 标记 | 含义 |
+|---|---|
+| **COMPLETE** | 有真实产品路径，且被驱动/被消费 |
+| **PARTIAL** | 主路径可用，但存在已记录的缺口或仅部分接线 |
+| **STUB** | 代码存在但返回占位值/空实现，链路在此断开 |
+| **UNREACHABLE** | 代码存在，但**无 producer 或无 consumer**，当前不可达 |
+| **HRC-ONLY** | 只存在于未提交的 HRC-3 工作区，committed baseline 无此能力 |
+
+**UNREACHABLE 是本文档新增的一级。** 它与 STUB 的区别：STUB 在可达路径上返回假值；UNREACHABLE 则是整条链路两端都没有调用方，因此**其行为不会被任何人观察到**，也就不能按 defect 处理。
+
+---
+
+## 1. 总体成熟度判断
+
+**仓库的成长模式是 breadth-first：subsystem 被独立实现并单元测试，然后从未接入产品 runtime。**
+
+具体表现为一个反复出现的同构模式：
+
+```
+[完整实现 + 真实测试]  →  [无 producer / 无 consumer / 无 coordinator]  →  [不在 Application 帧内]
+```
+
+ECS、Animation、`Core/RHI`、Scripting 四者都命中这个模式，且各自都有可观的测试覆盖。这一模式本身是成熟度信号，**不是缺陷清单**：这些 surface 的处置属于产品/架构意图，不应自动转为 integration 任务。
+
+**因此本文档不产生任何待办工程项。** 唯一例外已在 §5 完成定性（STUB / unreachable，无需修复）。
+
+---
+
+## 2. Test target 口径（严格区分两个状态）
+
+> **13 committed targets + 3 HRC targets = 工作区 16 个。**
+> 「16 targets」仅描述**当前 HRC 工作区事实**，不代表仓库 committed baseline。
+
+| 类别 | 数量 | targets |
+|---|---|---|
+| **COMMITTED**（`HEAD`） | **13** | `test_core` `test_ecs` `test_physics` `test_job` `test_renderer` `test_scripting` `test_content` `test_gp01` `test_e2e` `test_bridge` `test_animation` `test_audio` `test_io` |
+| **HRC-3 新增（uncommitted）** | **3** | `test_hrc` `test_pick` `test_pick_transport` |
+
+用例数（`TEST`/`TEST_F` 出现次数）：
+
+| target | 用例 | target | 用例 |
+|---|---|---|---|
+| `test_io` | 202 | `test_gp01` | 22 |
+| `test_audio` | 112 | `test_ecs` | 21 |
+| `test_animation` | 111 | `test_renderer` | 9 |
+| `test_content` | 60 | `test_e2e` | 6 |
+| `test_physics` | 54 | `test_job` | 4 |
+| `test_bridge` | 50 | `test_core` | 43※ |
+| `test_scripting` | 27 | `test_hrc`（HRC） | 15 |
+| `test_pick`（HRC） | 8 | `test_pick_transport`（HRC） | — |
+
+※ `test_core` 使用 `EXPECT_*`/`ASSERT_*` 而非 `CHECK`，按 TEST 宏统计为 43（`Vector3Test` 12 + `StackAllocatorTest` 8 + `TimeTest` 23）。
+
+**`test_physics` 的覆盖面值得注意**：54 个用例覆盖 physics 库本身，但 **`PhysicsSyncSystem` / `RouteCollisionEvents` / `CollisionListener` 在 tests 下零引用**（已验证）。
+
+---
+
+## 3. Core subsystem
+
+| Subsystem | 状态 | 决定性证据 |
+|---|---|---|
+| Application（windowed） | **COMPLETE** | 5 个子类覆盖全部 4 个 hook；EditorDemo 端到端启动 |
+| Application（headless） | **HRC-ONLY / PARTIAL** | 平行生命周期；**跳过 Profiler / JobSystem / SceneManager** |
+| ECS core | **COMPLETE** | 21 测试；B4 registration 契约 + swap-with-back 不变量已钉死 |
+| ECS integration | **UNREACHABLE** | `ISystem` 实现数为 0；ECSBridge 文档承诺的转发不存在 |
+| GameObject | **COMPLETE** | 生命周期、层级、listener、契约注册表均工作 |
+| GameObject 序列化 | **PARTIAL** | 8 个 component 中 4 个无可用路径 |
+| Time（committed） | **COMPLETE** | `steady_clock` + drift 校准 |
+| Time（`Shutdown`/`IsInitialized`） | **HRC-ONLY** | 未提交；7 个测试被刻意排除 |
+| Resources | **PARTIAL** | 不存在 `AssetManager` 类；`AssetPipeline`/`AssetMetaDb` 未接线 |
+| JsonSerializer | **COMPLETE** | 27 测试；宽松语义为刻意设计且已钉死 |
+
+### 3.1 COMMITTED `Application` 注册的 8 个 subsystem
+
+`Application` 构造函数（committed）注册的**全部**内容：
+
+| name | phase | init |
+|---|---|---|
+| Window | Platform | `InitWindow()` |
+| Camera | Graphics | `InitCamera()` |
+| UI | Graphics | `InitUI()` |
+| ResourceManager | Resources | — |
+| FileWatcher | Resources | — |
+| Shader | Resources | `InitShader()` |
+| Texture | Assets | — |
+| VertexData | Assets | `InitVertexData()` |
+
+**没有 audio、没有 physics、没有 scripting。** 这是本文档最重要的单一结构事实：三个 subsystem 的"已实现"状态与"已接入产品"状态完全脱钩。
+
+### 3.2 windowed frame 链路（COMMITTED）
+
+```
+sandbox/src/EditorDemo/main.cpp:44   Engine::EditorDemoApp app(factory)
+  → ctor 注册 8 subsystem
+  → Run()
+  → Log::Init / SetAllocator / CrashHandler::Init
+  → SubsystemManager.Initialize()      (按 SubsystemPhase 排序)
+  → InitWindow()                        CreateWindow → GLFW + GL context
+  → Time::Init / Profiler::Init / JobSystem::Init / SceneManager::Init
+  → OnStartup()
+  → while (!ShouldClose())
+      PollEvents → Time::UpdateDeltaTime
+      → InternalUpdate(dt) → OnUpdate(dt)          ← 虚拟 hook ①
+      → DispatchSubsystemUpdates(dt)
+      → OnImGui()                                 ← 虚拟 hook ②（实际渲染发生在这里）
+      → InternalRender() → OnRender()             ← 虚拟 hook ③
+      → SwapBuffers
+```
+
+**两处与直觉相反的事实：**
+
+1. **EditorDemo 的 `OnRender()` 是空实现。** `m_RenderDefaultQuad=false` 使 `Application.cpp:558-582` 整段 FBO/clear/draw 被跳过。真实渲染发生在 **`OnImGui()` 内**，经 `SetSceneRenderInjector` 注入。`OnRender` hook 不在生产路径上。
+2. **headless 下 `OnUpdate`/`OnRender` 双双失效。** `EngineHost.cpp:528` 实例化的是**基类** `Application` —— 而已验证：`engine/`、`bridge/`、`tests/` 下**不存在任何 `Application` 子类**（5 个全在 `sandbox/`）。因此 headless 渲染完全由 `EngineHost` 在 Application 帧之外编排。
+
+### 3.3 headless frame 链路（HRC-ONLY，uncommitted）
+
+```
+capi: EngineHost_Create → InitializeRuntimeResources
+  → make_unique<Engine::Application>(*factory, /*headless*/true)   ← 基类，非子类
+  → InitializeHeadless()      Log/Allocator/CrashHandler/subsystems（全部短路）+ Time::Init
+                              ⚠ 不初始化 Profiler / JobSystem / SceneManager
+  → OnStartup()               基类空实现，无 override
+每帧: EngineHost_PumpOneFrame
+  → RuntimeLoop（runtime thread）
+  → Application::PumpOneFrame(dt) → InternalUpdate(dt) → OnUpdate(dt)（空）
+                                  → DispatchSubsystemUpdates（JobSystem 为 nullptr → 串行退化）
+  → m_Session->RuntimeTick(dt)     ← 实际推进 gameplay 的不是 Application
+  → probe FBO Clear + ReadColorPixel 断言
+  → Application::RenderProductionFrame(...)   ← 渲染在帧外，由 EngineHost 编排
+```
+
+**结论：`Application` 的每帧契约在两条路径间不对称。** headless 不是 windowed 的子集，而是另一套更不完整的生命周期。该不对称已被测试固化为"预期行为"（`test_hrc` 断言 `sceneInitialized==0`、`jobSystemPresent==0`）。
+
+---
+
+## 4. Graphics subsystem
+
+### 4.1 核心发现：两套互不连接的图形抽象
+
+| | 生产抽象 | 形式 RHI 层 |
+|---|---|---|
+| 接口 | `IGraphicsFactory` / `IWindow` / `IRenderContext` | `IRHIDevice` / `IRHICommandList` / `IRHISwapChain` / `IRHICommandQueue` |
+| 位置 | `engine/include/Engine/Core/` | `engine/include/Engine/Core/RHI/`（46 header） |
+| 实现数 | **1**（仅 OpenGL，已 grep 验证 3 处命中全为 OpenGL） | **3**（GL46 / Vulkan / D3D12） |
+| 是否驱动像素 | **是** | **否** |
+| 调用方 | engine runtime | 仅 sandbox demo + unit test |
+
+已验证：`engine/src/Core`、`bridge`、`engine/src/Editor` 中**无任何 `GL46Device`/`VulkanDevice`/`D3D12Device` 构造点**（仅 `GPUPhysicsEngine.cpp` 一处注释提及 stub）。
+
+| Subsystem | 状态 | 决定性证据 |
+|---|---|---|
+| `IGraphicsFactory`/`IWindow`/`IRenderContext` | **PARTIAL** | 真接口，**仅 1 个实现** |
+| `Core/RHI` device RHI | **UNREACHABLE** | 3 backend 齐备，**0 处接入 engine** |
+| backend 选择 | **STUB** | `RHIBackend.cpp:87` `return nullptr;` |
+| `RHIWindow` | **UNREACHABLE** | 唯一调用方 `sandbox/src/RHIDemo` |
+| OpenGL（生产路径） | **COMPLETE** | factory / context / swapchain 均为实码 |
+| OpenGL（`GL46*` RHI 子路径） | **STUB** | `Present(){}`、全部 draw 方法 `{}` |
+| Vulkan | **PARTIAL** | device + Present 为实码；descriptor 绑定恒为 no-op |
+| D3D12 | **PARTIAL** | 最完整的非 GL backend；SRV 从未写入 |
+| `Rendering/` | **PARTIAL** | `AutoPipelineLayout` 返回 `0xDEADBEEF` |
+| ShaderReflection（两份） | **STUB + UNREACHABLE** | 一份有声明无定义，一份有实现无调用方 |
+
+### 4.2 windowed 渲染链路
+
+```
+InitWindow → CreateWindow → glfwCreateWindow → CreateRenderContext
+  → OpenGLContext → glfwMakeContextCurrent → gladLoadGLContext → Init() → GlfwWindow
+每帧 → ViewportPanel::Render3DScene()   bind FBO → clear → draw
+     → SwapBuffers → glfwSwapBuffers
+```
+
+**backend 选择不存在。** `CreateRHI(RHI::Backend)` 返回 `nullptr`（注释："实际创建在引擎启动时由 GLFW 后端接管"），且无任何代码路径可路由到非 OpenGL factory。
+
+### 4.3 已定性的断点
+
+| 断点 | 位置 | 性质 |
+|---|---|---|
+| backend 选择为硬 null | `Core/RHI/RHIBackend.cpp:87` | **STUB** |
+| GL46 swapchain 不呈现 | `GL46SwapChain.cpp:20` `Present(){}` | **STUB** |
+| GL46 命令回放为空 | `GL46SwapChain.cpp:29` → `GL46CommandList.cpp:337` `ExecuteOnMainThread(){}`，且全部记录型 draw 方法为 `{}` | **STUB** |
+| Vulkan descriptor 恒 no-op | `VulkanCommandList.cpp:308,324,348` 均 gate 于 `currentDescriptorSet != VK_NULL_HANDLE`，而该字段（`:39`）**从未被赋值** | **STUB** |
+| 自动 descriptor layout 返回哨兵值 | `AutoPipelineLayout.cpp:192` `reinterpret_cast<void*>(0xDEADBEEF)` | **STUB** |
+| `ExtractShaderReflection` 无定义 | `include/Engine/Rendering/ShaderReflection.h:189` 声明，全仓无定义（自身注释 `:187` 即写明"空桩"） | **STUB** |
+| `ReflectSPIRV` 有实现无调用方 | `src/Rendering/ShaderReflection.cpp:14`（实码），调用方为 0 | **UNREACHABLE** |
+| allocator 层整体惰性 | `SetMemoryAllocator` 0 调用方；`CreateGPUMemoryAllocator` 0 调用方；`VmaAllocator` 无 `.cpp` | **UNREACHABLE** |
+| `RenderGraph` 仅测试使用 | 唯一引用 `tests/test_renderer/RenderGraphSG6Test.cpp` | **UNREACHABLE** |
+
+### 4.4 Vulkan build gating 的既有事实（已记入 §8，不在此重复处置）
+
+`engine/src/Rendering/GPUParticleSystem.cpp:17` 由 `:31` 无条件 glob 编译，却 include `VulkanIRHIDevice.h` → `<vulkan/vulkan.h>`。因此 `if(Vulkan_FOUND)` 的"backend disabled"回退**并不能让 EngineCore 在无 SDK 时构建**。此项已在 `docs/Pending-Decisions-Brief.md` §8 记录为 OPEN，**本文档不重复给方案**。
+
+---
+
+## 5. Audio / Physics / Animation / Scripting
+
+| Subsystem | 状态 | 决定性证据 |
+|---|---|---|
+| Audio | **PARTIAL** | 两套栈并存且不一致，**零 engine 帧内接线** |
+| Physics | **PARTIAL** | Box2D 2D + Jolt 3D 均可用；coordinator 无调用方 |
+| Animation | **PARTIAL** | ~55 文件、111 测试，Scene/ECS/Application 内零引用 |
+| Scripting | **PARTIAL（engine）/ 已接入（editor bridge）** | engine 无接线；真实 host 是 uncommitted 的 `EngineHost.cpp` |
+
+### 5.1 Audio：两套栈
+
+| | Stack 1 | Stack 2 |
+|---|---|---|
+| 入口 | `AudioEngine`（`include/Engine/Audio/AudioEngine.h:34`），自持 ALC device/context | `IAudioEngine`（`include/Engine/Core/Audio/IAudioEngine.h:21`），header 无 OpenAL 类型 |
+| source 句柄 | `int AudioSourceHandle`（内部 map） | `shared_ptr<IAudioSource>` |
+| 特征 | 遮挡、空间 IR、aux send、cone | 显著更少 |
+
+**绕过路径被写在 header 里**：`AudioClip.h:21-24` 直接示范 `alSourcei(source, AL_BUFFER, clip->GetBufferHandle())`，`GetBufferHandle()`（`:80`）返回裸 `ALuint`。两处 live site 照此实现：`AudioSystem.cpp:45-66`、`AudioSourceComponent.cpp:38-54`。
+
+**`Application` 对 audio 的引用数为 0**（仅 `Application.h:181-182` doc-comment 中的示例代码）。真实逐帧驱动者全部在 sandbox。
+
+`test_audio` 的 112 个用例**全部无设备依赖**（纯逻辑）。`AudioClip`、`AudioClipManager`、两套栈本体、`OpenALAudioEngine` 均无覆盖。
+
+**A0 状态**：`239cc5c` 经 `git merge-base --is-ancestor` 验证为 **off-mainline**。它为 `Application` 注入 `shared_ptr<IAudioEngine>` 并在 Platform phase 注册 subsystem（失败软降级），**不改变任何音频行为**。A1 冻结条件见 Decision Brief。
+
+### 5.2 Physics
+
+2D/3D 分维度切分，**两者均不由 `Application` 驱动**。
+
+| Subsystem | 状态 | 证据 |
+|---|---|---|
+| Box2D 2D | **PARTIAL** | sandbox 内 3 处 consumer，链路完整 |
+| Jolt 3D | **PARTIAL** | 经 `PhysicsSyncSystem` 可达 |
+| `PhysicsSystemManager` | **UNREACHABLE** | `CreateWorld3D`/`StepAll` 外部调用方 **0**（已 grep 验证） |
+| `CreateWorld2D` | **STUB** | 打 warning 后 `return nullptr`，显式委托给 Box2D 旧路径 |
+| debug draw | **PARTIAL** | 两个 renderer 均存在且接线，但仅在 sandbox |
+
+实际 step 调用：2D `b2World_Step`（`Box2DPhysicsWorld.cpp:165`）；3D `m_PhysicsSystem.Update(...)`（`JoltPhysicsWorld.cpp:241-246`）。
+
+### 5.3 PhysicsSync contact-normal —— 最终定性：**STUB / unreachable，不是 defect**
+
+> 本项 characterization 已完成，**不另开任务，不需要生产 commit**。此处仅作证据留档。
+
+`PhysicsSyncSystem.cpp:312,320` 向 `onCollisionEnter` 传 `Vec3(0,0,0)`。追踪完整 producer→consumer 链（全部为 **committed clean** 代码，`git status engine/src/Core/ECS/` 为空）后定性：
+
+**1. 上游事件 schema 根本不携带法线。** `CollisionEvent`（`LockFreeEventQueue.h:28-45`）的 payload 仅 `type` / `bodyIDA` / `bodyIDB` / `totalImpulse`。**既无法线也无接触点字段**，而 callback 签名的参数名是 `const Vec3& point`（`PhysicsComponents.h:143`）。
+
+**2. 丢弃是 worker 线程边界的刻意设计。** Jolt 回调确实拿到 manifold（`JoltPhysicsWorld.cpp:112`），但只提取 `mPenetrationDepth` 存入 `totalImpulse`（`:119`）。`:110` 注释明写 *"只取 BodyID，不存 touch 点"* —— 因 worker 线程不可安全访问 `Body`。
+
+**3. 因此 `Vec3(0,0,0)` 是"上游有意丢弃 + 下游无值可转发"的诚实占位，而非错误传参。**
+
+**4. 决定性证据：整条链路无 reachability。**
+
+| 检查 | 结果 |
+|---|---|
+| 任何赋值 `onCollisionEnter` 的位置 | **0** |
+| 任何实例化 `PhysicsSyncSystem` 的位置 | **0**（仅 doc comment，及 `ComponentRegistry.cpp:46` 一条注记） |
+| `tests/` 下对 `PhysicsSyncSystem`/`RouteCollisionEvents`/`CollisionListener` 的引用 | **0** |
+| `CollisionListenerComponent` 的注册方 | 无（仅其自身查询代码） |
+
+**结论：`RouteCollisionEvents` 是端到端死代码。其行为不会被任何人观察到，因此按 STUB / unreachable 记录，不按 defect 处理。**
+
+> **更正记录**：本文档的早期 source-reading 阶段曾将此点标为"real defect"。该判断错误 —— 未检查 reachability。按"先 characterization 再定性"的纪律重新追踪后定为 stub。
+
+### 5.4 Animation
+
+最大代码面（约 55 文件）、测试覆盖良好（111 用例），**runtime 接入度最低**。
+
+存在且实现：skeleton、skinning、clip、blend tree、blend space 1D/2D、state machine、IK、constraint、retarget、compression。
+
+| 项 | 状态 | 证据 |
+|---|---|---|
+| `SkinningComponent` | **UNREACHABLE** | 唯一 `Component` 子类，**全仓零实例化**（已 grep 验证，仅自身定义/实现） |
+| `AnimationManager`/`Pipeline`/`Instance` | **UNREACHABLE** | 调用方仅自身文件与 `tests/test_animation` |
+| `Scene`/`ECS` 接入 | **无** | `Scene.h`/`Scene.cpp` 零 animation 引用；无 animation ECS bridge |
+| IK（`IK.h`） | **UNREACHABLE** | 实现完整（CCD 等），但**无 in-repo consumer**；demo 走 `ConstraintSolver` |
+| 逐帧驱动 | sandbox only | `AnimationDemoApp` 是**独立类**，非 `Application` 子类，自持 `Run()` 循环 |
+
+### 5.5 Scripting
+
+Lua 5.4（vendored，`third_party/lua`），sandbox 已裁剪 `io`/`package`/`require` 及危险 `os` 函数。
+
+| 项 | 状态 | 证据 |
+|---|---|---|
+| `Application` 接线 | **无** | `Application.h/.cpp` 零 scripting 引用 |
+| `PluginSystem` | **UNREACHABLE** | committed，但零 consumer |
+| editor bridge 集成 | **COMPLETE**（但依赖 uncommitted 文件） | Play/Reload/Stop 三态 + `_PERSIST` + 事件 + fault injection |
+
+真实 host 是 editor bridge：`EditorSession::RuntimeTick(dt)` → `m_Inst.OnUpdate(dt)`，gated on `IsPlaying()`。C ABI 经 `capi.cpp`，Avalonia 侧由 `MainWindow.axaml.cs` pump。
+
+**COMMITTED vs HRC-3 差异**：`ScriptInstance` 的 `OnCreate`/`OnUpdate`/`OnFixedUpdate` 由 `void` 改为 **`bool`**、`OnDestroy` 改为幂等、失败时拆除 VM 并记录 `m_LastError` —— 全部 **uncommitted**。`tests/test_scripting/ScriptingMVPTest.cpp` 已消费这些新 API，故该测试的通过依赖未提交代码。
+
+---
+
+## 6. UNREACHABLE surface 汇总
+
+以下 surface 均**实现存在但当前不可达**。它们的共同点是：既非缺陷（无人观察其行为），也非缺功能（代码已写），而是**处置权属于产品/架构意图**。
+
+| Surface | 状态 | 缺失的一端 |
+|---|---|---|
+| `CreateRHI(Backend)` | **STUB** | 返回 `nullptr`，无路由路径 |
+| `RHIWindow` | **UNREACHABLE** | 仅 sandbox 调用方 |
+| `Core/RHI` 三 backend device | **UNREACHABLE** | 无 engine 构造点 |
+| `ReflectSPIRV` | **UNREACHABLE** | 有实码，零调用方 |
+| `ExtractShaderReflection` | **STUB** | 有声明，无定义 |
+| `SetMemoryAllocator` / `CreateGPUMemoryAllocator` / `VmaAllocator` | **UNREACHABLE** | 无调用方 / 无 `.cpp` |
+| `RenderGraph` | **UNREACHABLE** | 仅测试引用 |
+| `PhysicsSystemManager` | **UNREACHABLE** | `CreateWorld3D`/`StepAll` 零调用方 |
+| `CreateWorld2D` | **STUB** | 返回 `nullptr` |
+| `PhysicsSyncSystem` / `RouteCollisionEvents` | **UNREACHABLE** | 零实例化，零 listener 注册 |
+| `SkinningComponent` | **UNREACHABLE** | 零实例化 |
+| `AnimationManager`/`Pipeline`/`Instance` | **UNREACHABLE** | 零调用方 |
+| `IK` | **UNREACHABLE** | 零 consumer |
+| `PluginSystem` | **UNREACHABLE** | 零 consumer |
+| `ISystem` | **UNREACHABLE** | 零实现 |
+| `EntityCommandBuffer` | **UNREACHABLE** | 仅 sandbox 使用 |
+| `ECSBridge` 文档承诺的转发 | **UNREACHABLE** | header 描述的转发从未实现 |
+| `AssetPipeline` / `AssetMetaDb` / Core `AssetDatabase` | **UNREACHABLE** | 无生产调用方 |
+| `AutoPipelineLayout` | **STUB** | 返回哨兵指针 |
+| `AudioSourceComponent` | **observation** | 从未挂到任何 GameObject（证据不足，不追） |
+| `SystemTestApp` 的 `debug_draw` CVar | **observation** | 无对应 `SetDebugDraw` 调用（证据不足，不追） |
+
+---
+
+## 7. 测试夹具缺口（与 Decision Brief §0 一致，此处仅留证据）
+
+`.gitignore:88-89` 排除 `*.scene` / `*.manifest.json`。实测：
+
+- `assets/gp01/Main.scene` —— **存在但未入库**（`git ls-files --error-unmatch` 失败）
+- `assets/gp01/manifest.json` —— **已入库**，且工作区 dirty（+169/−37）
+
+即 fresh checkout 会拿到一份**指向它并不拥有的 scene 文件**的 manifest。`EditorSession::OpenProject` 在缺 scene 时于 `EditorSession.cpp:131-132` 报 "scene load failed"。
+
+是否将夹具纳入版本控制**尚未决定**，见 Decision Brief。
+
+---
+
+## 8. 与 Decision Brief 的分工
+
+| 文档 | 职责 |
+|---|---|
+| `docs/Pending-Decisions-Brief.md` | 需要人决定的事项、选项空间、恢复条件、门控 |
+| **本文档** | runtime integration inventory、已接入/未接入/未可达 surface、成熟度证据 |
+
+**明确避免的误读**："实现了但未接入" **不是** "待决策缺陷"。
+
+- 需要人决定的事项 → Decision Brief（例：§8 CI dependency/build-boundary OPEN、A1 ownership）
+- 已实现但无接入方 → 本文档（例：§6 全部 UNREACHABLE surface）
+
+---
+
+## 9. 本文档不做的事
+
+- 不推荐任何架构选项或 integration 方案
+- 不把 UNREACHABLE surface 升级为 defect
+- 不把"已实现"等同于"产品功能完成"
+- 不判定任何 subsystem 是否**应当**接入 runtime（属产品意图）
+- 不重复 Decision Brief 中已记录的 OPEN 项处置
+- 不修改任何代码
+- 不声称任何验证经过构建或运行
