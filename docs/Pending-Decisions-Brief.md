@@ -58,8 +58,8 @@ committed TimeTest 的 HEAD 自洽性 | `a6e788c`（移出 7 个依赖未提交 
 
 | 项 | 状态 |
 |---|---|
-| formal RHI adoption decision | **仍待决策** —— Phase 5.2 之后的下一步，但不预先承诺结论 |
-| GL46 11 个空方法 | **不自动转为 defect**（UNREACHABLE，处置属"是否接通"的架构决策）|
+| formal RHI adoption decision | **已完成（2026-10-07）—— 否决**。`Core/RHI` 不作为 canonical production architecture，定位 sandbox / alternate backend surface（§9） |
+| GL46 11 个空方法 | **不作为生产 defect**，且**明确不实现**（§9.3 / §9.4）—— 非 production requirement |
 | headless → Avalonia presentation | 仍 **HRC-only / 断链**（§4.4），**不重开 P2** |
 | Audio A1 | **冻结**（`AudioAssetManager` / `AudioClipManager` 归属未决）|
 | HRC-3 | **不动**（scope / merge 由 owner 决定）|
@@ -180,7 +180,8 @@ Audio A1 ownership migration | 冻结：需 `AudioAssetManager`（Stack 1 归属
 引入 RelWithDebInfo/macOS/Linux-ASan CI 覆盖 | 需独立决策（当前 CI 已覆盖 Windows RelWithDebInfo+ASan，刻意未扩 macOS 与 Linux ASan） |
 
 | 修复 CI Build 失败（`vulkan.h` / `spirv_cross.hpp`） | **需先完成 §8 的 CI dependency strategy 决策**；在此之前不得改动代码、依赖声明或 include 路径 |
-| 决定 formal RHI 是否成为 canonical rendering architecture | **需先完成 §9 的 RHI adoption 决策**；在此之前不得实现 GL46 空方法、补 `ShadowMapper` 子类、处理 `CSMShadowMapper` header —— 那些都属提前选择方向 |
+| 决定 formal RHI 是否成为 canonical rendering architecture | **已完成（2026-10-07）** —— **否决**。`Core/RHI` 定位为 sandbox / alternate backend surface，不扩展为默认生产路径。详见 §9 |
+| 实现 GL46 空 command methods / 补 `ShadowMapper` 子类 / 补 `CSMShadowMapper` header | **明确不做**（§9.4）—— 即使成本低也不做；不得以"追绿"或"未来会接入"为由启动 |
 
 ---
 
@@ -287,41 +288,57 @@ Audio A1 ownership migration | 冻结：需 `AudioAssetManager`（Stack 1 归属
 3. 哪些非 Vulkan 路径的源文件需要 capability guard？`BindlessDescriptor.h` 的存在是否意味着 RHI 头文件边界需重新界定？
 4. （已解决，仅留痕）§8.2 的本地成功与 include 路径矛盾，成因是 `${Vulkan_INCLUDE_DIRS}` 经 `engine/CMakeLists.txt:145` 提供了 SDK 头。
 
-## 9. Formal RHI adoption 决策 —— **OPEN（待人裁定）**
+## 9. Formal RHI adoption 决策 —— **Accepted：否决作为 canonical production architecture**
 
-**状态**：OPEN。Phase 5.2 已完成 windowed path 动态验证，因此本决策的**证据前提已具备**，但**结论属产品/架构意图，不由技术证据消解**。本文档**不给出推荐**。
+**裁定（2026-10-07）**：**否决。** `Core/RHI` **不成为**本仓库的 canonical production rendering architecture。
 
-**要决定的问题**：`Core/RHI` 的形式 RHI 层，是否应成为本仓库的 canonical rendering architecture？
+**否决的准确含义**：**不是**"RHI 没价值"，而是 —— **"RHI 当前不承担 canonical production rendering architecture 的职责。"** 它保留为 **sandbox / alternate backend surface**，并且不再让它看起来像"只差几个 TODO 就会成为生产 renderer"。
+
+> **这是有意的架构收敛，不是语义削减。** 否决 formal RHI **不等于**获得 multi-backend support —— 后者仍是独立的产品/架构决策，且**不在本决策范围内**。当前生产路径继续是 **OpenGL**（`IGraphicsFactory` / `IRenderContext` / `IWindow`）。
 
 ### 9.1 决策前提（Phase 5.2 已入库）
 
-Windowed production path **已动态验证**（inventory §4.7）：真实窗口 + GL context + GP01 场景 + 非空像素 + resize 往返幂等。该路径走的是 `IGraphicsFactory` / `IWindow` / `IRenderContext`，**不是** `Core/RHI`。
+Windowed production path **已动态验证**（inventory §4.7，`f25d4cb`）：真实窗口 + GL context + GP01 场景 + 非空像素 + resize 往返幂等。该路径走的是 `IGraphicsFactory` / `IWindow` / `IRenderContext`，**不是** `Core/RHI`。
 
-### 9.2 两个分支各自的技术事实
+### 9.2 否决理由（技术事实，非代码质量评价）
 
-**若"接受"formal RHI 为 canonical**
-
-| 项 | 事实 |
+| 项 | 实测事实 |
 |---|---|
 契约规模 | `IRHIDevice` + `IRHICommandList` 共 **45 个纯虚函数** |
-GL46 完成度 | 声明 **50 个 override**，其中 GL46 RHI 文件内 **25 处为空体**；其中 command list 的 **11 个方法**（`SetVertexBuffer`/`SetIndexBuffer`/`SetPrimitiveTopology`/`DrawIndexed`/`Draw`/`DrawIndexedIndirect`/`SetViewport`/`SetScissorRect`/`SetConstantBuffer`/`SetShaderResource`/`ExecuteOnMainThread`）全空 |
-**呈现能力缺口** | `IRHISwapChain` 仅 5 个纯虚（`Present`/`Resize`/`GetBackBuffer`/…），**无 AA resolve、无 GPU timestamp、无窗口呈现**；而已验证的生产 `SwapBuffers` 做三件事：AA resolve + timestamp resolve + `glfwSwapBuffers`。`GL46SwapChain::Present(){}` 与 `Resize(){}` 均为空 —— **当前无法呈现** |
-迁移对象 | 生产路径（`Application`/`EngineEditor`/`ViewportPanel`/`bridge`）对 `Core/RHI` 的引用数为 **0** —— 即接受意味着**替换**一条已验证可用的抽象，而非扩展它 |
-既有规模 | `Core/RHI` 被 **175 个文件** include（95 header + 47 engine/src + 24 sandbox + 9 tests）|
+GL46 完成度 | 声明约 **50 个 override**，但 GL46 RHI 文件内约 **25 处为空体**；其中整个 command-list 核心操作有 **11 个空实现** |
+**呈现能力** | `IRHISwapChain` 仅 5 个纯虚，**无 AA resolve、无 GPU timestamp、无窗口呈现**；`GL46SwapChain::Present(){}` / `Resize(){}` 均为空 —— **当前无法呈现** |
+迁移性质 | 生产路径（`Application`/`EngineEditor`/`ViewportPanel`/`bridge`）对 `Core/RHI` 引用数为 **0** → 是**替换**一条已验证可用的抽象，而非接入缺失 |
+既有规模 | `Core/RHI` 被 **175 个文件** include |
 
-**若"否决"formal RHI 为 canonical**
+**结论依据**：接受 RHI 不是"补完几个 stub"，而是一条新的长期 rendering architecture migration；当前没有足够的产品收益证明应以一条尚未可生产的抽象替换一条已能真实出像素的抽象。
 
-| 项 | 后果 |
+### 9.3 否决后的处置（正式记录）
+
+| Surface | 处置 |
 |---|---|
-定位改写 | 明确标注 `Core/RHI` 为 sandbox / alternate backend surface，不再维持"看起来像 production backend"的假象 |
-`GL46` 11 空方法 | 随定位改写为**已知非生产实现**，**不按 defect 处理**（§7 原则） |
-`ShadowMapper` / `CSMShadowMapper` | 纯抽象类无子类、`CSMShadowMapper` 类定义在 `.cpp` 内且无 header → 归入同一非生产集合 |
-仍待回答 | 若日后仍需多后端（Vulkan / D3D12），否决 formal RHI 并不自动提供替代路径 —— 该问题**不在本决策范围内**，需另开 |
+GL46 11 个空 command methods | **不作为当前生产 defect**（§7 原则：不把 UNREACHABLE 升级为 defect） |
+`ShadowMapper` 无子类 | **非 production requirement** |
+`CSMShadowMapper` 无 header（类定义在 `.cpp` 内） | **非 production requirement** |
+Vulkan / D3D12 device 层 | **alternate / unreachable backend surface** |
+`Core/RHI` 整体 | sandbox / alternate backend surface，可保留但**不扩展为默认生产路径** |
 
-### 9.3 无论哪个分支都不改变的门控
+**并明确记录**：不再维持"未来默认会接入 production"的隐含承诺。
 
-`§0` 门控表全部维持：GL46 空方法不自动转 defect、headless → Avalonia presentation 仍 HRC-only / P2 不重开、Audio A1 冻结、HRC-3 不动、Animation / ECS / Scripting 的 runtime admission 不由本决策派生。
+### 9.4 由此解除的工作
 
-**建议参与方**：引擎架构 + 渲染负责人 + 使用方（editor / bridge / sandbox）。
+- **解除**：§6 中"等待 RHI 裁定"的门控（见 §6 该行更新）。
+- **明确不做**（即使成本低也不做）：
+  - 实现 GL46 那 11 个空 command methods 以"追绿"
+  - 为 formal RHI 补 `ShadowMapper` 子类
+  - 为 `CSMShadowMapper` 补 header
+  - 为 RHI 重做已验证的 windowed path
+
+### 9.5 仍维持不变的门控
+
+`§0` 门控表其余全部维持：headless → Avalonia presentation 仍 HRC-only / **P2 不重开**、Audio A1 **冻结**、HRC-3 **不动**、Animation / ECS / Scripting 的 runtime admission **不由本决策派生**、CI §8 仍 **OPEN**。
+
+**多后端需求**（若日后提出）须**另开独立决策**，不得由本决策自动派生。
+
+**参与方**：引擎架构 + 渲染负责人 + 使用方（editor / bridge / sandbox）。
 
 ---
