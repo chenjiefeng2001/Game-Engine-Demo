@@ -179,7 +179,7 @@ Audio A1 ownership migration | 冻结：需 `AudioAssetManager`（Stack 1 归属
 清理音频绕过路径 | 需先完成 Audio A1（Stack 2 决策已接受） |
 引入 RelWithDebInfo/macOS/Linux-ASan CI 覆盖 | 需独立决策（当前 CI 已覆盖 Windows RelWithDebInfo+ASan，刻意未扩 macOS 与 Linux ASan） |
 
-| 修复 CI Build 失败（`vulkan.h` / `spirv_cross.hpp`） | **spirv_cross 侧已完成**（`387c66f`，§8.7.5）；**Vulkan 侧仍需 §8.7-A 决策**，在此之前不得改动 Vulkan 相关代码、依赖声明或 include 路径 |
+| 修复 CI Build 失败（`vulkan.h` / `spirv_cross.hpp`） | **两个 provenance 决策均已关闭**（B1 `387c66f`、A1 `6f5582e`，见 §8.7.5 / §8.7.6）。**但 §8 尚未整体关闭**：`VulkanCommon.h:13` 的 `vk_mem_alloc.h` 仍受 `Vulkan_FOUND` 门控，无 SDK 时 EngineCore 仍失败（**§8.8 OPEN**）。在 §8.8 与第 3 项 capability guard 决定前，不得再改 Vulkan/VMA 相关接线 |
 | 决定 formal RHI 是否成为 canonical rendering architecture | **已完成（2026-10-07）** —— **否决**。`Core/RHI` 定位为 sandbox / alternate backend surface，不扩展为默认生产路径。详见 §9 |
 | 实现 GL46 空 command methods / 补 `ShadowMapper` 子类 / 补 `CSMShadowMapper` header | **明确不做**（§9.4）—— 即使成本低也不做；不得以"追绿"或"未来会接入"为由启动 |
 
@@ -195,9 +195,9 @@ Audio A1 ownership migration | 冻结：需 `AudioAssetManager`（Stack 1 归属
 
 ---
 
-## 8. CI dependency / build-boundary —— **OPEN（只记录，不实现）**
+## 8. CI dependency / build-boundary —— **PARTIALLY CLOSED（§8 整体仍 OPEN）**
 
-**状态**：OPEN。本节仅记录事实与待决问题，**不含任何已批准的修复方案**。对应决策待 HRC-3 收口后单独召开。
+**状态**：§8.7-B（B1）与 §8.7-A（A1）**均已关闭并实施**；但 **§8 整体未关闭** —— 关闭 host Vulkan discovery 后 `EngineCore` 仍在 VMA header 处失败（**§8.8 OPEN**）。本节记录事实与已完成的决策，**不含任何未获批准的方案**。
 
 **来源**：CI run `37339412587`（Advanced C++ CI，head `1a066ed`，push 到 `master`）。
 
@@ -281,12 +281,13 @@ Audio A1 ownership migration | 冻结：需 `AudioAssetManager`（Stack 1 归属
 
 ### 8.6 待决问题（待架构 / 构建策略决策）
 
-> §8.6 第 4 项（原「§8.2 矛盾成因」）**已关闭**，证据级别见 §8.7。第 1 / 2 项的选项空间因 §8.7 的实验结果而收窄。
+> §8.6 第 1 / 4 项**已关闭**（第 1 项见 §8.7.6，第 4 项见 §8.7）。第 2 项已随 §8.7.5 关闭。第 3 项与 §8.8 仍 OPEN。
 
-1. **（§8.7-A）Vulkan Headers provenance** —— 仓库是否应拥有**自身可声明、可复现**的 `Vulkan-Headers` 来源，还是正式把 host / CI 的 Vulkan SDK 定义为**外部前置依赖**。
-2. **（§8.7-B）SPIRV-Cross provenance** —— pin 的实际布局与代码 include contract 不一致，且存在版本错配（§8.2.1）。须统一到**一个明确且可重建**的 source/include contract。
-3. 哪些非 Vulkan 路径的源文件需要 capability guard？`BindlessDescriptor.h` 被 3 个 committed 文件 include，说明该问题不限于 `Engine/Vulkan/`。
-4. （**已关闭，仅留痕**）§8.2 的本地成功与 include 路径矛盾 —— **已观测并实验复现**，见 §8.7。
+1. ~~Vulkan Headers provenance~~ → **已完成（2026-10-07，A1）**，见 §8.7.6。
+2. ~~SPIRV-Cross provenance~~ → **已完成（2026-10-07，B1）**，见 §8.7.5。
+3. 哪些非 Vulkan 路径的源文件需要 capability guard？`BindlessDescriptor.h` 被 3 个 committed 文件 include，说明该问题不限于 `Engine/Vulkan/`。**仍 OPEN。**
+4. ~~§8.2 矛盾~~ → **已关闭**，见 §8.7。
+5. **（新）** VMA 是否应随公共 Vulkan header 边界无条件可见？见 **§8.8**，**OPEN**。
 
 ### 8.7 §8.2 矛盾的关闭 + A / B 裁决准备
 
@@ -347,7 +348,7 @@ pin `81fc2ea` 实际布局 | 根目录 **13** 个 `spirv_*.hpp`（含上述两�
 
 **证据显示 B 存在不需要 SDK 的解**（变体 D），因此 **B 不必等待 A 的结论**；A 也不应因 B 而顺带决定。
 
-### 8.7.5 B —— **DECIDED：B1「代码契约对齐 pin」（2026-10-07）→ 已实施并验证**
+#### 8.7.5 B —— **DECIDED：B1「代码契约对齐 pin」（2026-10-07）→ 已实施并验证**
 
 **裁定**：接受 **B1** —— 把代码 include 由 `spirv_cross/spirv_cross.hpp` 改为 pin 实际提供的 `spirv_cross.hpp`；**pin 保持不变**，不再以 Vulkan SDK 的同名头作为补偿来源。
 
@@ -376,6 +377,59 @@ pin `81fc2ea` 实际布局 | 根目录 **13** 个 `spirv_*.hpp`（含上述两�
 **回归**：三配置（Debug / Release / RelWithDebInfo+ASan）构建 **0 error**；Debug **13/13** 全量 suite 通过，Release 与 RelWithDebInfo 各 5 个代表性 target **100% 通过**。
 
 **A 未被掩盖（仍然 OPEN）**：7 处 committed 位置仍需真 Vulkan API 头；`include/Engine/Vulkan/*.h` 仍在 `engine/CMakeLists.txt:66` **无条件 glob**；`VulkanCommon.h` 仍被 **16** 个 committed 文件 include；无 SDK 时 `EngineCore` 仍无法编译；`.github/` 仍**零** vulkan 声明。
+
+#### 8.7.6 A —— **DECIDED：A1 仓库声明式 Vulkan-Headers（2026-10-07）→ 已实施；§8.7-A CLOSED**
+
+**裁定**：接受 **A1** —— 引入 pinned、可审计的 `Vulkan-Headers` source，使纯 Vulkan API headers 的 provenance 属于仓库声明的 dependency graph，而非依赖开发机恰好安装了某个 Vulkan SDK。
+
+**实施**（`6f5582e`，4 文件 +30 行）：
+
+| 项 | 值 |
+|---|---|
+pin | `8864cdc896bbc2a9b6eb36b3218fc9ef57908d77`，tag **v1.4.350**（**与项目开发所用 host SDK 同版本**，故 backend 启用时头/库零错配）|
+接线 | `third_party/CMakeLists.txt` 新增 `VulkanHeaders` INTERFACE target（沿用既有 `vma` / `d3d12ma` 模式）|
+消费 | `engine/CMakeLists.txt` **无条件**链到 `EngineCore`，且**刻意早于** `if(Vulkan_FOUND)` 内的 `${Vulkan_INCLUDE_DIRS}` → pinned 头始终优先于 SDK 头，保持单一 source of truth |
+
+**未做（严格遵守边界）**：未解除 VMA 的 `Vulkan_FOUND` 门控 ／ 未改 `if(Vulkan_FOUND)` 定义 ／ 未重构 `Engine/Vulkan/*.h` 的 public-private 边界 ／ 未改 loader/linking ／ 未修 Vulkan backend 功能 ／ 未改 SPIRV-Cross（`387c66f` 已 CLOSED）。
+
+**关闭门槛核验**（干净 worktree，`6f5582e`，`-DCMAKE_DISABLE_FIND_PACKAGE_Vulkan=ON` 强制无 SDK）：
+
+| # | 门槛 | 结果 |
+|---|---|---|
+1 | Clean checkout provenance | **PASS** —— pinned gitlink `8864cdc`，可从仓库 dependency graph 重建 |
+2 | No host-SDK dependency（**这些 Vulkan API 头**）| **PASS** —— 受控探针 `#include <vulkan/vulkan.h>` 仅用 pin：EXIT=0，include trace 中 **VulkanSDK 路径数 = 0** |
+3 | **Vulkan API header closure**（见下方语义收紧）| **PASS** |
+4 | No semantic widening | **PASS** —— 配置输出 `Vulkan SDK not found → Vulkan backend disabled`，backend 未被强行启用 |
+5 | Backend separation preserved | **PASS** —— headers available ≠ backend available |
+6 | Provenance documented | **PASS** —— pin / 来源 / 更新方式见本节与 `.gitmodules` |
+
+> **门槛 3 语义收紧（2026-10-07）**：原表述为「CI 不需要隐式安装的 host SDK 来通过 build boundary」，该表述**已作废**，因为它会诱使把 §8.8 的相邻失败读成 A1 未完成。
+>
+> **收紧为**：*Vulkan API header closure —— 在 Vulkan package discovery disabled 时，EngineCore 所需的 **Vulkan API headers** 可由仓库声明的 Vulkan-Headers provenance 解析，不依赖 host SDK。*
+>
+> 按此定义 A1 **PASS**：7 处 `vulkan/vulkan.h` 全部由 pin 解析成功，编译错误已**前移**至 `VulkanCommon.h:13` 的另一条 unconditional include。
+
+**§8.7-A 状态：CLOSED —— Vulkan API header provenance established.**
+
+Pinned Vulkan-Headers `8864cdc` is the declared repository source for Vulkan API headers. Controlled no-SDK probing resolves `vulkan/vulkan.h` from the pinned dependency with zero SDK trace. Vulkan backend remains disabled when Vulkan SDK/package discovery is unavailable.
+
+> **A1 关闭 ≠ 完整 Vulkan backend 可在无 SDK 环境构建。** 已证明的**仅是** API-header provenance。
+
+### 8.8 VMA build-boundary —— **OPEN（独立于 §8.7-A）**
+
+**不纳入 §8.7-A 关闭范围** —— 性质不同：`vulkan/vulkan.h` 是 **Vulkan API header provenance**（A 的对象）；`vk_mem_alloc.h` 是 **VMA 第三方 dependency header**。VMA 已有独立 pin `3aa9212`，其 provenance **不存在** host SDK 偷渡 source of truth 的问题。
+
+**事实**：`engine/include/Engine/Vulkan/VulkanCommon.h:13` **无条件** include `vk_mem_alloc.h`，而 VMA 的 include/link 接线仍受 `if(Vulkan_FOUND)` 门控（`engine/CMakeLists.txt:144`）。因此在关闭 host Vulkan discovery 后，`EngineCore` **仍在 VMA header 处继续失败**：
+
+```
+engine/include/Engine/Vulkan/VulkanCommon.h(13,1): error C1083: 无法打开包括文件: "vk_mem_alloc.h"
+```
+
+**待决问题**：VMA 是否应随公共 Vulkan header 边界**无条件可见**（即把 `vma` 与 `VulkanHeaders` 同构地无条件链接），还是该边界本应重新界定？
+
+**为何不在本轮决定**：解除该门控需要改变 `if(Vulkan_FOUND)` 的编译语义边界 —— 属本轮明确排除的架构/编译语义调整；且「再���一行就能绿」不构成扩大 A1 scope 的理由。
+
+**因此**：`EngineCore` 目前**尚未**达到 host-SDK-independent；不得如此宣称。
 
 ---
 
