@@ -96,6 +96,24 @@ if(EXISTS "${TRACY_SRC_DIR}/public/TracyClient.cpp")
 endif()
 
 # =============================================================================
+# Vulkan-Headers — 纯 Vulkan API 头（header-only，pinned submodule）
+#
+# 来源属于仓库声明的 dependency graph，而非开发机恰好安装了某个 Vulkan SDK。
+# 本 target 无条件存在：Vulkan API 头的 provenance 与 Vulkan backend 是否可用
+# 是两件事（backend 仍由 find_package(Vulkan) + if(Vulkan_FOUND) 决定）。
+#
+# pin: 8864cdc896bbc2a9b6eb36b3218fc9ef57908d77 (tag v1.4.350)
+# =============================================================================
+set(VULKAN_HEADERS_DIR "${CMAKE_CURRENT_SOURCE_DIR}/Vulkan-Headers")
+if(EXISTS "${VULKAN_HEADERS_DIR}/include/vulkan/vulkan.h")
+    add_library(VulkanHeaders INTERFACE)
+    target_include_directories(VulkanHeaders INTERFACE "${VULKAN_HEADERS_DIR}/include")
+    message(STATUS "Vulkan-Headers: integrated (pinned, unconditional)")
+else()
+    message(WARNING "Vulkan-Headers not found at ${VULKAN_HEADERS_DIR}/include/vulkan/vulkan.h")
+endif()
+
+# =============================================================================
 # VMA — Vulkan Memory Allocator（header-only）
 # =============================================================================
 set(VMA_DIR "${CMAKE_CURRENT_SOURCE_DIR}/vma")
