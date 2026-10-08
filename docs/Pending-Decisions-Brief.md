@@ -640,6 +640,76 @@ committed suite | **PASS** —— 连续 2 次 **13/13** |
 
 ---
 
+### 8.10 真实 CI 后续暴露的三个既有缺陷（§8.9 之后独立处理）
+
+真实 runner 证据见 §8.9.2 / §8.9.3。run `37794358097`（`fed4326`）中，**shaderc 整条链已在 Windows Release 上验证通过**（provisioning / configure / build / `Verify SPIR-V activation` 全部 success）。失败项全部是**此前从未被验证到的既有缺陷**，与 provenance 决策无关。
+
+| # | 缺陷 | 现象 | 状态 |
+|---|---|---|---|
+8.10.1 | `build_shaderc_asan_rwd.ps1` 硬编码 `Visual Studio 17 2022` | Windows RelWithDebInfo+ASan 止步于该步骤 | **已修** |
+8.10.2 | `engine/src/RHI/RHIWindow.cpp` 为结构性 Win32-only | Linux gcc/clang 止步于 `Build` | **OPEN（按硬门槛停止实施）** |
+8.10.3 | 3 个测试依赖的 fixture 无仓库内来源 | Windows Release `Test` 3 项失败 | **OPEN（(b) 在给定约束下不可实现）** |
+
+#### 8.10.1 ASan 脚本生成器 —— **已修并验证**
+
+与 §8.9.2 中 `build_shaderc_ci.ps1` **同一根因**（硬编码生成器版本），按同类修复移除 `-G`，交由 cmake 选默认生成器。**未**重新定义成 provenance 问题。
+
+验证（本地，`-SkipReconfigure`，与 CI 调用一致）：
+
+| 步骤 | 结果 |
+|---|---|
+脚本生成 RWD+ASan artifact | **PASS** —— exit=0，**257.8 MB**，脚本自带守卫确认 `__asan_*` 符号存在 |
+主工程 configure 消费该 artifact | **PASS** —— `RelWithDebInfo -> third_party/shaderc/build-asan-rwd/libshaderc/RelWithDebInfo/shaderc_combined.lib (/MD + ASan)` |
+RWD+ASan 构建 `SpirVTest` | **PASS** —— exit=0、0 error、**LNK2038=0**、exe 生成 |
+
+#### 8.10.2 RHI Linux 编译 —— **OPEN：按实施硬门槛停止，不强行换头**
+
+**硬门槛检查结果：不满足"只用了跨平台 API"的前提，故停止实施。**
+
+`engine/src/RHI/RHIWindow.cpp` 为**结构性 Win32-only**：
+
+| 行 | 内容 |
+|---|---|
+L22 | `#define GLFW_EXPOSE_NATIVE_WIN32` —— **无条件**，无 `#ifdef` |
+L23 | `#include <GLFW/glfw3native.h>` —— 无条件（Linux 下 L105 `#include <windows.h>` 直接编译终止）|
+L57 | `m_HWND = glfwGetWin32Window(m_Window);` —— **无条件**，该成员是 D3D12 swapchain 的 HWND |
+
+裁定明确禁止"为了过 Linux 强行换头"，并要求此时**停止在小修复上扩大范围**，记为 RHI sandbox 的独立平台缺陷，**不得偷偷引入新的平台抽象**。故本轮**未改动该文件**。
+
+> **后果（须明示）**：Linux gcc/clang 两个 job 在 `Build` 仍会失败，**本轮无法转绿**。这是既有 portability defect 的如实暴露，不是回退。
+> **不得**用 (a) 平台 guard 把它永久掩盖 —— 那会把"源文件能否编译"变成新的 guard 语义。
+
+#### 8.10.3 CI fixture provisioning —— **OPEN：(b) 在给定约束下不可实现**
+
+**裁定要求的约束**（原文）：*fixture 的内容来源在仓库中可追溯 / provisioning 确定 / fresh checkout 可独立重建 / **不依赖个人工作区、不依赖 HRC-3 未提交内容** / 缺失时 CI 明确失败*。
+
+**核查结果：这些 fixture 在仓库内既无副本、也无生成器。**
+
+| fixture | 状态 | 有无仓库内生成器 |
+|---|---|---|
+`assets/gp01/Main.scene` | gitignored + untracked | **无** |
+`assets/scenes/dogfood0{2,5,6,7}.scene` | gitignored + untracked | **无** |
+`assets/scenes/dogfood0X.manifest.json` | gitignored + untracked | **无** |
+`content_scratch/` | gitignored + untracked | **无** |
+
+已排除 `sandbox/AssetBakery`（只处理 `--shaders` / `--materials`，**不产出**上述任何一项）；全仓搜索无任何 committed 源码写入 `Main.scene` / `content_scratch`。
+
+**因此 (b) 无法满足"内容来源在仓库中可追溯"与"不依赖 HRC-3 未提交内容"** —— 这些内容的**唯一来源就是 HRC-3 的本地未提交工作区**。把它复制进 CI 步骤正是裁定所禁止的"把隐式依赖从 `assets/` 挪到 CI"。**故未实施。**
+
+**各测试实际缺失项（受控复现）**：
+
+| 测试 | 报告 |
+|---|---|
+`test_bridge` | `[EditorBridge] scene load failed: assets/gp01/Main.scene (cannot open file)` |
+`test_gp01` | `cannot open file: assets/gp01/Main.scene`（并连带触发 vector 断言）|
+`test_content` | `[FAILED] ContentRegistryManifest.R9_Manifest_SurvivesSessionRestart` |
+
+> **连带更正 —— §0 baseline 声明的适用范围**：§0 记录的 "committed baseline 13/13、699 cases" 是在**已 provision 12 个 ignored fixture 的工作区**中取得的。**committed tree 本身对上述 3 个测试不可自洽复现**，该 baseline 隐含依赖本地 fixture。§0 的数字**不可**被读作"fresh checkout 即可 13/13"。
+>
+> **归属**：这些 fixture 属 **HRC-3 的未提交交付内容**（`test_bridge`、`editor_avalonia`、`GP01EditorWorkflowTest` 均在 HRC 指纹内）。是否提交它们、或由谁提交，属 **HRC owner 决策**，不在本节范围。裁定已排除 (a)（"不要现在直接把 fixtures 塞进仓库"）与 (c)，故本项在当前约束下**无可执行方案**，须回到 owner。
+
+---
+
 ## 9. Formal RHI adoption 决策 —— **Accepted：否决作为 canonical production architecture**
 
 **裁定（2026-10-07）**：**否决。** `Core/RHI` **不成为**本仓库的 canonical production rendering architecture。
