@@ -106,8 +106,15 @@ jobs:
     #  2) Windows：VS 实例是否可被 cmake 发现 —— 区分"脚本选错生成器"与
     #     "runner 镜像找不到 VS"（前者归因于脚本，后者归因于环境）
     - name: Environment diagnostic (non-fatal)
+      continue-on-error: true
       shell: pwsh
       run: |
+        # pwsh 7.5 起 $PSNativeCommandUseErrorActionPreference 默认为 $true，
+        # 原生命令非零退出会抛异常；而 GitHub 的 pwsh shell 又预置
+        # $ErrorActionPreference='stop'。两者叠加会让"非致命诊断"直接终止 job
+        # —— 这正是上一轮诊断步骤在 Windows 上失败的原因。此处显式关闭。
+        $ErrorActionPreference = 'Continue'
+        $PSNativeCommandUseErrorActionPreference = $false
         Write-Host "== cmake =="
         (cmake --version) | Select-Object -First 1 | ForEach-Object { Write-Host "  $_" }
         Write-Host "== default generator =="
