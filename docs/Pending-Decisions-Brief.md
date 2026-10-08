@@ -179,7 +179,7 @@ Audio A1 ownership migration | 冻结：需 `AudioAssetManager`（Stack 1 归属
 清理音频绕过路径 | 需先完成 Audio A1（Stack 2 决策已接受） |
 引入 RelWithDebInfo/macOS/Linux-ASan CI 覆盖 | 需独立决策（当前 CI 已覆盖 Windows RelWithDebInfo+ASan，刻意未扩 macOS 与 Linux ASan） |
 
-| 修复 CI Build 失败（`vulkan.h` / `spirv_cross.hpp`） | **provenance 决策链已全部关闭**（B1 `387c66f`、A1 `6f5582e`、VMA boundary `999d219`，见 §8.7.5 / §8.7.6 / §8.8）。**no-SDK 受控验证已通过**：`EngineCore + 13 targets` Debug build 0 error、ctest 13/13。**但 §8 尚未整体关闭**：① §8.6-3 capability guard 仍 OPEN（§8.8.1 不预判）；② **尚未 push / 未在真实 Advanced CI 上验证**。在 §8.6-3 裁定与 CI 实跑前，不得再改 Vulkan / VMA 相关接线 |
+| 修复 CI Build 失败（`vulkan.h` / `spirv_cross.hpp`） | **决策面已清空**：B1 `387c66f`、A1 `6f5582e`、VMA boundary `999d219`、§8.6-3 关闭（均见 §8.7.5 / §8.7.6 / §8.8 / §8.8.1）。no-SDK 受控验证通过（13 targets build 0 error、ctest 13/13）。**验证面尚缺**：仍未 push、仍未在真实 Advanced CI 实跑（§8 唯一剩余项）。**push 需用户明确授权**；在真实 CI 出结果前不得宣称 §8 CLOSED |
 | 决定 formal RHI 是否成为 canonical rendering architecture | **已完成（2026-10-07）** —— **否决**。`Core/RHI` 定位为 sandbox / alternate backend surface，不扩展为默认生产路径。详见 §9 |
 | 实现 GL46 空 command methods / 补 `ShadowMapper` 子类 / 补 `CSMShadowMapper` header | **明确不做**（§9.4）—— 即使成本低也不做；不得以"追绿"或"未来会接入"为由启动 |
 
@@ -195,9 +195,19 @@ Audio A1 ownership migration | 冻结：需 `AudioAssetManager`（Stack 1 归属
 
 ---
 
-## 8. CI dependency / build-boundary —— **PROVENANCE CHAIN CLOSED；§8 整体仍 OPEN**
+## 8. CI dependency / build-boundary —— **DECISIONS ALL CLOSED；剩余唯一验证项 = 真实 Advanced CI**
 
-**状态**：**依赖 provenance 决策链已全部关闭并实施** —— §8.7-B（B1）、§8.7-A（A1）、§8.8（VMA public-header boundary），no-SDK 受控验证已通过（13 targets build 0 error、ctest 13/13）。**但 §8 整体未关闭**，剩余两项：① **§8.6-3 capability guard 仍 OPEN**（§8.8.1 记录相关新证据但不预判）；② **尚未 push，尚未在真实 Advanced CI 上验证**。
+**状态**：**全部依赖决策已关闭并实施** —— §8.7-B（B1 `387c66f`）、§8.7-A（A1 `6f5582e`）、§8.8（VMA public-header boundary `999d219`）、§8.8.1（§8.6-3 capability guard，`c17bc83` 后关闭，**未新增任何 guard**）。no-SDK 受控验证已通过：`EngineCore + 13 targets` build 0 error、ctest 13/13。
+
+**逻辑链**：
+
+> **Provenance chain CLOSED** → B1 SPIRV-Cross → A1 Vulkan-Headers → §8.8 VMA header boundary
+> **§8.6-3 CLOSED** → committed compile graph 中无独立 capability-guard defect
+> **剩余唯一验证项：真实 Advanced CI**
+
+**§8 自身仍未整体关闭。** 本节的**决策面**已清空，但**验证面**尚缺一项：`avalonia` 仍 **未 push**（`HEAD c17bc83`，ahead 18），**尚未在真实 Advanced C++ CI 上实跑**。技术裁决上下一步即为此项验证；**push 需用户明确授权**。
+
+> **不得预先宣称 §8 CLOSED。** CI 最终验证须以**实际失败原因**记录，不得因本地 3 次全 suite 通过而预判结论（见 §8.5：不得记录未选择、未执行的选项）。
 
 **来源**：CI run `37339412587`（Advanced C++ CI，head `1a066ed`，push 到 `master`）。
 
@@ -281,11 +291,11 @@ Audio A1 ownership migration | 冻结：需 `AudioAssetManager`（Stack 1 归属
 
 ### 8.6 待决问题（待架构 / 构建策略决策）
 
-> §8.6 第 1 / 2 / 4 / 5 项**均已关闭**（第 1 项见 §8.7.6，第 2 项见 §8.7.5，第 4 项见 §8.7，第 5 项见 §8.8）。**第 3 项仍 OPEN**。
+> **§8.6 全部 5 项已关闭（2026-10-07）**：第 1 项见 §8.7.6（A1），第 2 项见 §8.7.5（B1），第 3 项见 §8.8.1，第 4 项见 §8.7，第 5 项见 §8.8。
 
 1. ~~Vulkan Headers provenance~~ → **已完成（2026-10-07，A1）**，见 §8.7.6。
 2. ~~SPIRV-Cross provenance~~ → **已完成（2026-10-07，B1）**，见 §8.7.5。
-3. 哪些非 Vulkan 路径的源文件需要 capability guard？`BindlessDescriptor.h` 被 3 个 committed 文件 include，说明该问题不限于 `Engine/Vulkan/`。**仍 OPEN** —— §8.8 后的新证据见 §8.8.1，**不预判**。
+3. ~~哪些非 Vulkan 路径的源文件需要 capability guard~~ → **已关闭（2026-10-07）**：committed compile graph 中**未观察到独立 defect**，未新增任何 guard，见 §8.8.1。
 4. ~~§8.2 矛盾~~ → **已关闭**，见 §8.7。
 5. ~~VMA 是否应随公共 Vulkan header 边界无条件可见~~ → **已决策并实施（2026-10-07）**：header 无条件、backend 条件，见 §8.8。
 
@@ -448,11 +458,20 @@ backend linkage | **未动** —— `if(Vulkan_FOUND)` 内的 `target_link_libra
 
 > **边界重申（防止后续误读）**：VMA **header 可见性** 是无条件的；Vulkan **backend capability** 仍是条件化的。**VMA 头可见 ≠ Vulkan backend 可用 ≠ Vulkan backend 被启用。**
 
-#### 8.8.1 §8.6-3（capability guard）—— **仍 OPEN，不预判**
+#### 8.8.1 §8.6-3（capability guard）—— **CLOSED（2026-10-07）：committed compile graph 中未观察到独立的 capability-guard defect**
 
-§8.8 实施后新增一项**相关证据**，但**不构成**对该问题的裁定：no-SDK 条件下 13 个 committed targets **全量构建成功**，说明当前 committed 代码中**没有**非 Vulkan 源文件在编译期需要 Vulkan 头。
+**CLOSED — no independent capability-guard defect observed in the committed compile graph.**
+With Vulkan package discovery disabled and no host SDK available on the include path, EngineCore and all 13 committed targets build successfully and the full committed test suite passes. The previously identified `BindlessDescriptor.h` reachability concern does not manifest as an independent compile-boundary failure in the current committed graph. No capability guard was added because doing so would change compile semantics without a reproduced defect.
 
-该结果与 §8.6-3 原问题（「哪些非 Vulkan 路径的源文件需要 capability guard」）**方向相关但不等价** —— 原问题针对 `BindlessDescriptor.h` 被 3 个 committed 文件 include 所暴露的**头文件可达性**风险，而本次证据只覆盖**编译期**。**是否仍存在真实、独立的边界问题，留待专项裁定**，本节不作预判。
+**核心证据**：`CMAKE_DISABLE_FIND_PACKAGE_Vulkan=ON`、无 host SDK（cache 中 `Vulkan_*` 条目 0）的条件下，仍完成 **`EngineCore + 13 targets` build 0 error + ctest 13/13**（证据级别见 §8.8 门槛 4）。该证据强于任何单点探针：它覆盖的是**完整 committed compile graph**，而非孤立 TU。
+
+**判定原则**：
+
+* **存在 include ≠ 当前存在需要 guard 的错误边界。** `BindlessDescriptor.h` 被 3 个 committed 文件 include 是**结构性事实**，不是已复现的失败。
+* 此前所有观察到的 header failure（`vulkan/vulkan.h` → `vk_mem_alloc.h`）均已由 A1 / §8.8 的 **provenance 修复**消解，**未留下任何需要 guard 才能通过的残留边界**。
+* 现在新增 capability guard 将属于**为预防一个尚未被证实的未来边界而修改 compile semantics** —— 当前证据**不足以**支持这一步。
+
+> **边界重申（防止后续误读）**：本项关闭**并非**证明 Vulkan backend 无条件可用；它只证明**当前 committed compile graph 不需要**为了修复一个已观察到的 header failure 而新增 guard。Vulkan backend 的可用性仍取决于 host / CI 的 Vulkan package 前置条件，与 §8.7.6、§8.8 的 backend capability 门控一致。
 
 ---
 
