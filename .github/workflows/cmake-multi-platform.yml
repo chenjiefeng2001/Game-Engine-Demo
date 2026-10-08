@@ -100,7 +100,47 @@ jobs:
       run: |
         echo "build-output-dir=${{ github.workspace }}/build" >> "$GITHUB_OUTPUT"
 
-# ── Shaderc provisioning（§8.9）──────────────────────────────────────────
+# ── 环境诊断（§8.9 归因用；非功能性，不改变任何门控）──────────────────
+    # 目的：把"CI 失败归因于哪一层"从推断变成可审计证据。
+    #  1) cmake / 默认生成器 —— 记录 runner 镜像实际提供的工具链
+    #  2) Windows：VS 实例是否可被 cmake 发现 —— 区分"脚本选错生成器"与
+    #     "runner 镜像找不到 VS"（前者归因于脚本，后者归因于环境）
+    - name: Environment diagnostic (non-fatal)
+      shell: pwsh
+      run: |
+        Write-Host "== cmake =="
+        (cmake --version) | Select-Object -First 1 | ForEach-Object { Write-Host "  $_" }
+        Write-Host "== default generator =="
+        cmake -E capabilities 2>$null | Select-String -Pattern '^\s*generators' | Select-Object -First 1
+        try { Write-Host "  $((cmake --help | Select-String -Pattern 'Visual Studio|Ninja' | Select-Object -First 3 | Out-String).Trim())" } catch {}
+
+        if ("${{ runner.os }}" -eq 'Windows') {
+          $vswhere = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
+          Write-Host "== vswhere =="
+          Write-Host "  path exists: $(Test-Path $vswhere)"
+          if (Test-Path $vswhere) {
+            (& $vswhere -products * -latest -property installationPath) | ForEach-Object { Write-Host "  instance: $_" }
+          }
+          Write-Host "== trivial VS-generator configure probe =="
+          $probe = Join-Path $env:RUNNER_TEMP 'vsprobe'
+          Remove-Item -Recurse -Force $probe -ErrorAction SilentlyContinue
+          New-Item -ItemType Directory -Force -Path $probe | Out-Null
+          "cmake_minimum_required(VERSION 3.20)`nproject(vsprobe C)" |
+            Set-Content -Path (Join-Path $probe 'CMakeLists.txt') -Encoding utf8
+          & cmake -S $probe -B "$probe/build" -G 'Visual Studio 17 2022' -A x64
+          if ($LASTEXITCODE -eq 0) {
+            Write-Host '  RESULT: VS generator IS usable on this runner'
+          } else {
+            Write-Host '  RESULT: VS generator is NOT usable on this runner (exit ' $LASTEXITCODE ')'
+            Write-Host '  -> attribute to runner image / cmake version, not to the provisioning script'
+          }
+        } else {
+          Write-Host "== ninja =="
+          (ninja --version 2>&1) | ForEach-Object { Write-Host "  $_" }
+        }
+        Write-Host '== diagnostic complete (non-fatal) =='
+
+    # ── Shaderc provisioning（§8.9）──────────────────────────────────────────
     # engine/CMakeLists.txt 的 shaderc 激活门用 EXISTS() 求值，且要求 Debug 与
     # Release **同时**就位。这些产物在 shaderc submodule 的 .gitignore 覆盖范围内，
     # 不会随仓库分发 —— fresh checkout 必须先生成，否则 SPIR-V 编译被静默关闭而
