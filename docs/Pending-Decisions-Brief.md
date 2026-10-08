@@ -197,17 +197,20 @@ Audio A1 ownership migration | 冻结：需 `AudioAssetManager`（Stack 1 归属
 
 ## 8. CI dependency / build-boundary —— **DECISIONS ALL CLOSED；剩余唯一验证项 = 真实 Advanced CI**
 
-**状态**：**全部依赖决策已关闭并实施** —— §8.7-B（B1 `387c66f`）、§8.7-A（A1 `6f5582e`）、§8.8（VMA public-header boundary `999d219`）、§8.8.1（§8.6-3 capability guard，`c17bc83` 后关闭，**未新增任何 guard**）。no-SDK 受控验证已通过：`EngineCore + 13 targets` build 0 error、ctest 13/13。
+**状态**：**全部依赖决策已关闭并实施** —— §8.7-B（B1 `387c66f`）、§8.7-A（A1 `6f5582e`）、§8.8（VMA public-header boundary `999d219`）、§8.8.1（§8.6-3 capability guard，`c17bc83`）、**§8.9（Shaderc provisioning + activation gate，`a86694c`）**。
 
 **逻辑链**：
 
 > **Provenance chain CLOSED** → B1 SPIRV-Cross → A1 Vulkan-Headers → §8.8 VMA header boundary
 > **§8.6-3 CLOSED** → committed compile graph 中无独立 capability-guard defect
+> **§8.9 CLOSED** → artifact 可重建 + 激活可审计 + 缺失即硬失败 + LNK2038 消失
 > **剩余唯一验证项：真实 Advanced CI**
 
-**§8 自身仍未整体关闭。** 本节的**决策面**已清空，但**验证面**尚缺一项：`avalonia` 仍 **未 push**（`HEAD c17bc83`，ahead 18），**尚未在真实 Advanced C++ CI 上实跑**。技术裁决上下一步即为此项验证；**push 需用户明确授权**。
+**受控验证现状（no-SDK，`-DREQUIRE_SHADERC=ON`）**：`all`（全部 target 含 sandbox）exit=0 / 0 error；committed suite **13/13**；`sandbox/SpirVTest` 真实完成 GLSL→SPIR-V 编译并反射 **2/2 通过**。
 
-> **不得预先宣称 §8 CLOSED。** CI 最终验证须以**实际失败原因**记录，不得因本地 3 次全 suite 通过而预判结论（见 §8.5：不得记录未选择、未执行的选项）。
+**§8 自身仍未整体关闭。** 决策面已清空，但**验证面**尚缺：`avalonia` 仍 **未 push**（`HEAD a86694c`，ahead 21），**尚未在真实 Advanced C++ CI 上实跑**。技术裁决上下一步即为此项验证；**push 需用户明确授权**。
+
+> **不得预先宣称 §8 CLOSED。** CI 最终验证须以**实际失败原因**记录，不得因本地复跑全绿而预判结论（见 §8.5：不得记录未选择、未执行的选项）。
 
 **来源**：CI run `37339412587`（Advanced C++ CI，head `1a066ed`，push 到 `master`）。
 
@@ -509,6 +512,51 @@ CI 因此以 SPIR-V **静默禁用**通过 | 受控模拟：隐藏两个预编�
 4. **缺失 artifact 时 CI 明确失败**，而非降级；
 5. Windows **LNK2038 消失**；
 6. 留下**可审计的启用证据**。
+
+#### 8.9.1 §8.9 —— **已实施并验证（`a86694c`）；门槛 1–6 全部 PASS，§8.9 CLOSED**
+
+**LNK2038 根因（实证，非推测）**：
+
+| 侧 | 实际值 |
+|---|---|
+消费侧（`sandbox/SpirVTest` 等） | Debug=`MultiThreadedDebugDLL`(/MDd)、Release=`MultiThreadedDLL`(/MD) —— 与根 `CMakeLists.txt` 策略一致 ✓ |
+原预编译 shaderc | `CMAKE_MSVC_RUNTIME_LIBRARY:UNINITIALIZED=MultiThreadedDLL` —— **单值强制 /MD，Debug config 亦被覆盖** ✗ |
+
+即 Debug 消费者用 `/MDd` 而 Debug artifact 用 `/MD`。属**同一 artifact/configuration contract** 问题，已按裁定用**匹配重建**解决，**未**改动 `SpirVTest` 或链接逻辑。
+
+**实施**（`a86694c`，3 文件 +337/−3）：
+
+| 项 | 内容 |
+|---|---|
+Provisioning | 新增 `tools/build_shaderc_ci.ps1`（220 行）：按**各平台自身**配置生成 Debug+Release。Windows 启用 shared CRT 且**刻意不强制** `CMAKE_MSVC_RUNTIME_LIBRARY`，交由 multi-config 生成器逐配置取值；Linux **不套用** Windows CRT 概念，改用 Ninja Multi-Config 以保持相同目录布局 |
+Artifact 路径 | `engine/CMakeLists.txt` 改为 **platform-aware**（原为 Windows `.lib` 硬编码 → **任何其它平台该门永远无法满足**，SPIR-V 永久不可达）|
+Activation guard | 新增 `-DREQUIRE_SHADERC`（**缺省 OFF**，本地行为不变；CI 传 ON → 缺失即 `FATAL_ERROR`）|
+可审计证据 | configure 打印 activation 状态与**逐配置实际解析到的** artifact 路径 |
+CI 接线 | provisioning 前置于 configure（`EXISTS()` 在 configure 期求值）+ `actions/cache` + `-DREQUIRE_SHADERC=ON` + Build 之后新增 **Verify SPIR-V activation** 三重校验 |
+
+**门槛核验**（干净 worktree，`-DREQUIRE_SHADERC=ON`，无 host SDK）：
+
+| # | 门槛 | 结果 |
+|---|---|---|
+1 | artifact 在 CI 中可重建 | **PASS** —— 脚本 Debug 约 3–4 min、Release 约 6.5 min 生成，路径与门查找一致；**幂等**（复跑复用树，不重复构建）|
+2 | `ENGINE_HAS_SHADERC` 明确 enabled | **PASS** —— configure 输出 `Shaderc activation: ENABLED (REQUIRE_SHADERC=ON)` 并逐配置列出三条 artifact 路径 |
+3 | SPIR-V **实际**编译/链接 | **PASS** —— `sandbox/SpirVTest` **exit=0**，`[PASS] TestSpirvCrossReflection` + `[PASS] TestShaderCompileAndReflect`，**2 passed / 0 failed**，即真实完成 GLSL→SPIR-V 编译并反射 |
+4 | 缺失 artifact 时明确失败 | **PASS（已观测失败路径）** —— 仅备 Debug 时 configure **exit=1**，`FATAL_ERROR` 点名两个缺失路径并给出 provisioning 命令 |
+5 | Windows LNK2038 消失 | **PASS** —— `all`（含 `SpirVTest`）**exit=0，errors=0，LNK2038=0**；Debug artifact 现为 `MultiThreadedDebugDLL` |
+6 | 可审计启用证据 | **PASS** —— configure 输出 + CI `Verify SPIR-V activation` 三项断言 |
+
+**同轮通过的关联验证**：`all`（全部 target，含 sandbox）**exit=0 / 0 error**；committed suite **13/13**。
+
+> **门槛 3 的精确界定（避免后续误读）**：SPIR-V 编译**确由** `sandbox/SpirVTest` 在无 SDK 环境下真实执行并通过。但引擎自身的 `engine/src/Vulkan/ShaderCompiler.cpp` 仍位于 `if(Vulkan_FOUND)` 门控的 `src/Vulkan/` 内（`ShaderCompiler.obj` 在本次构建中计数 0），故**引擎管线内**的 SPIR-V 使用在 CI（无 Vulkan SDK）下**仍不被编译**。二者是不同层面，本项关闭的是 **artifact 取得 + 激活 + 实际编译/链接可验证**。
+
+**两次测试不稳定观察（非本项因果，留档）**：
+
+| 出现 | 结果 |
+|---|---|
+首轮 `test_content` 失败（§8.8 期间）| 复跑 3 次全 suite 13/13；隔离 6/6 通过 |
+本项首轮 `test_core` 失败 | 隔离 **43/43 通过**；复跑 2 次全 suite 均 13/13 |
+
+两次均为**首次运行失败、复跑全绿**的既有不稳定模式，**与 shaderc provisioning / activation 无因果关系**（SPIR-V 开关两种状态下 suite 结果相同，见 §8.9 事实表）。**留作观察项，不据此开启新缺陷**，但已记录为重复出现。
 
 ---
 
