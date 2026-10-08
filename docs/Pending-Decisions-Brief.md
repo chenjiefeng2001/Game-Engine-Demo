@@ -38,6 +38,12 @@ committed TimeTest 的 HEAD 自洽性 | `a6e788c`（移出 7 个依赖未提交 
 
 > **措辞说明**：本基线**不是**"三配置 full build `0 error`"。已验证的是 13 个 committed test targets 全部成功构建并运行；`sandbox/SpirVTest` 存在既有 linker mismatch（`6302c9d` / `510fefb` 已有专门记录），该已知限制与本表述相容，不在此重复。
 
+> **⚠️ 本基线为 provisioned verification baseline，不是 bare fresh-checkout baseline（2026-10-08 强化）**
+>
+> `13/13` 与 `699` cases 是在**已 provision 上述 ignored fixture 的工作区**中取得的。真实 CI（run `37794358097`，clean checkout）证明：**committed tree 对 `test_bridge` / `test_gp01` / `test_content` 这 3 个测试不可自洽复现** —— 它们所需的 fixture 既无 committed 副本、也无 committed generator。
+>
+> 这**不是**"验证环境小问题"，而是已改变 **fresh checkout 能否复现 committed baseline** 这一基本事实的 **committed-tree reproducibility 缺陷**。已正式立项并归 **HRC owner**，见 **§8.10.3**。因此上述数字**不得**被读作"clean checkout 即可 13/13"。
+
 **Fresh baseline verification 需要的仓库既有外部前置**（本次已 provision，因此本结果应读作 *"committed source + required fixture set"*，**不是**裸 fresh checkout）：
 
 - **12 个 gitignored fixture**：`assets/gp01/Main.scene` + `dogfood0{1,2,3,5,6,7}.{scene,manifest.json}`（`.gitignore:88-89` 排除）
@@ -179,7 +185,7 @@ Audio A1 ownership migration | 冻结：需 `AudioAssetManager`（Stack 1 归属
 清理音频绕过路径 | 需先完成 Audio A1（Stack 2 决策已接受） |
 引入 RelWithDebInfo/macOS/Linux-ASan CI 覆盖 | 需独立决策（当前 CI 已覆盖 Windows RelWithDebInfo+ASan，刻意未扩 macOS 与 Linux ASan） |
 
-| 修复 CI Build 失败（`vulkan.h` / `spirv_cross.hpp`） | **决策面已清空**：B1 `387c66f`、A1 `6f5582e`、VMA boundary `999d219`、§8.6-3 关闭（均见 §8.7.5 / §8.7.6 / §8.8 / §8.8.1）。no-SDK 受控验证通过（13 targets build 0 error、ctest 13/13）。**验证面尚缺**：仍未 push、仍未在真实 Advanced CI 实跑（§8 唯一剩余项）。**push 需用户明确授权**；在真实 CI 出结果前不得宣称 §8 CLOSED |
+| 修复 CI Build 失败（`vulkan.h` / `spirv_cross.hpp`） | **provenance chain CLOSED**：B1 `387c66f`、A1 `6f5582e`、VMA boundary `999d219`、capability guard `d14262a`、shaderc provisioning/activation `fed4326`（真实 runner 已验证）、ASan 生成器 `66349f2`（本地端到端已验证）。**但 §8 overall verification 仍 OPEN**，受**两个独立且已剥离出 provenance 门槛**的问题阻塞：① **RHI sandbox Linux portability defect**（§8.10.2，不阻塞 provenance closure，但 Linux CI 保持红）；② **committed-tree fixture reproducibility defect**（§8.10.3，归 **HRC owner**）。**push 与 §8 整体 CLOSED 均需用户另行授权** |
 | 决定 formal RHI 是否成为 canonical rendering architecture | **已完成（2026-10-07）** —— **否决**。`Core/RHI` 定位为 sandbox / alternate backend surface，不扩展为默认生产路径。详见 §9 |
 | 实现 GL46 空 command methods / 补 `ShadowMapper` 子类 / 补 `CSMShadowMapper` header | **明确不做**（§9.4）—— 即使成本低也不做；不得以"追绿"或"未来会接入"为由启动 |
 
@@ -195,22 +201,41 @@ Audio A1 ownership migration | 冻结：需 `AudioAssetManager`（Stack 1 归属
 
 ---
 
-## 8. CI dependency / build-boundary —— **DECISIONS ALL CLOSED；剩余唯一验证项 = 真实 Advanced CI**
+## 8. CI dependency / build-boundary —— **PROVENANCE CHAIN: CLOSED；OVERALL VERIFICATION: OPEN**
 
-**状态**：**全部依赖决策已关闭并实施** —— §8.7-B（B1 `387c66f`）、§8.7-A（A1 `6f5582e`）、§8.8（VMA public-header boundary `999d219`）、§8.8.1（§8.6-3 capability guard，`c17bc83`）、**§8.9（Shaderc provisioning + activation gate，`a86694c`）**。
+### 状态冻结（2026-10-07）
 
-**逻辑链**：
+> **§8 provenance chain：CLOSED**
+> SPIRV-Cross → Vulkan-Headers → VMA header boundary → shaderc provisioning/activation：均已通过各自门槛，其中 shaderc 整条链已在**真实 runner** 上验证（Windows Release：provisioning / configure / build / `Verify SPIR-V activation` 全部 success）。
+>
+> **§8 overall verification：OPEN**
+> 原因**不是** provenance，而是真实 CI 验证面仍受**两个独立问题**影响：
+> ① **RHI sandbox Linux portability defect**（§8.10.2）
+> ② **committed-tree fixture reproducibility defect**（§8.10.3）
 
-> **Provenance chain CLOSED** → B1 SPIRV-Cross → A1 Vulkan-Headers → §8.8 VMA header boundary
-> **§8.6-3 CLOSED** → committed compile graph 中无独立 capability-guard defect
-> **§8.9 CLOSED** → artifact 可重建 + 激活可审计 + 缺失即硬失败 + LNK2038 消失
-> **剩余唯一验证项：真实 Advanced CI**
+**已关闭的 provenance 决策（不再重开）**：
 
-**受控验证现状（本地，no-SDK，`-DREQUIRE_SHADERC=ON`）**：`all`（全部 target 含 sandbox）exit=0 / 0 error；committed suite **13/13**；`sandbox/SpirVTest` 真实完成 GLSL→SPIR-V 编译并反射 **2/2 通过**。
+| 决策 | 状态 | 关键证据 |
+|---|---|---|
+SPIRV-Cross provenance（B1）| **CLOSED** | `387c66f` / `60f5ecf` |
+Vulkan-Headers provenance（A1）| **CLOSED** | `6f5582e` / `9e6e5be` |
+VMA header boundary（§8.8）| **CLOSED** | `999d219` / `c17bc83` |
+capability guard（§8.6-3）| **CLOSED** | `d14262a`（未新增 guard）|
+shaderc provisioning / activation（§8.9）| **CLOSED** | `fed4326`，真实 runner 已验证 |
+ASan artifact 生成器（§8.10.1）| **CLOSED** | `66349f2`，本地端到端已验证 |
 
-**真实 CI 现状：RED。** run `37756712866` 4/4 job 止步于 `Provision shaderc artifacts`，根因收敛为**单一**项：**固定的 shaderc commit 不自包含其 SPIRV-Tools/glslang/spirv-Headers，且未声明为 submodule**，故 fresh checkout 无法从源码构建 shaderc（见 §8.9.2）。**待决**：shaderc 依赖来源。
+**剩余两个 OPEN 项的 owner / gate 关系**：
 
-**§8 自身仍未关闭。** 决策面除 §8.9 的 sourcing 子项外均已关闭；**验证面尚缺**，且当前为**负结果**：`avalonia` 已 push 至 `57d0ad4`，`master` 未动。
+| 项 | 性质 | Owner | 是否属 §8 provenance 关闭门槛 |
+|---|---|---|---|
+RHI sandbox Linux portability | sandbox / alternate-backend **portability defect** | 见 §8.10.2 | **否 —— 已正式剥离** |
+committed-tree fixture reproducibility | **repository reproducibility 缺陷** | **HRC owner** | **否 —— 但它是 §8 overall verification 转绿的前置** |
+
+> **不得**把上述任一项记作"§8 provenance 回退"；**也不得**在两项未决时宣称 §8 整体 CLOSED。
+
+**受控验证现状（本地，no-SDK，`-DREQUIRE_SHADERC=ON`，DEPS-pinned 依赖）**：`all`（全部 target 含 sandbox）exit=0 / 0 error；committed suite **13/13**（provisioned fixtures 下）；`sandbox/SpirVTest` **2/2**；RelWithDebInfo+ASan 下 `SpirVTest` exit=0 / LNK2038=0。
+
+**真实 CI 现状：RED**（run `37794358097`，`fed4326`）。`avalonia` 已 push 至 `fed4326`；ASan 修复 `66349f2` **尚未 push**。`master` 未动（`1a066ed`）。
 
 > **不得预先宣称 §8 CLOSED。** CI 最终验证须以**实际失败原因**记录，不得因本地复跑全绿而预判结论（见 §8.5：不得记录未选择、未执行的选项）。
 
@@ -662,11 +687,11 @@ committed suite | **PASS** —— 连续 2 次 **13/13** |
 主工程 configure 消费该 artifact | **PASS** —— `RelWithDebInfo -> third_party/shaderc/build-asan-rwd/libshaderc/RelWithDebInfo/shaderc_combined.lib (/MD + ASan)` |
 RWD+ASan 构建 `SpirVTest` | **PASS** —— exit=0、0 error、**LNK2038=0**、exe 生成 |
 
-#### 8.10.2 RHI Linux 编译 —— **OPEN：按实施硬门槛停止，不强行换头**
+#### 8.10.2 RHI sandbox Linux portability defect —— **OPEN；已从 §8 provenance 关闭标准中正式剥离**
 
-**硬门槛检查结果：不满足"只用了跨平台 API"的前提，故停止实施。**
+**性质**：**sandbox / alternate-backend portability defect**，由 §9 formal RHI 决策（否决 canonical 采纳、保留为 sandbox / alternate surface）定性。**不是**简单的 include 缺口或 CMake 缺口 —— 新核查证明它是**真正的 Win32-only 实现**。
 
-`engine/src/RHI/RHIWindow.cpp` 为**结构性 Win32-only**：
+**硬门槛检查结果（未通过，故未实施修复）**：`engine/src/RHI/RHIWindow.cpp` 无条件使用 native Win32：
 
 | 行 | 内容 |
 |---|---|
@@ -679,34 +704,31 @@ L57 | `m_HWND = glfwGetWin32Window(m_Window);` —— **无条件**，该成员�
 > **后果（须明示）**：Linux gcc/clang 两个 job 在 `Build` 仍会失败，**本轮无法转绿**。这是既有 portability defect 的如实暴露，不是回退。
 > **不得**用 (a) 平台 guard 把它永久掩盖 —— 那会把"源文件能否编译"变成新的 guard 语义。
 
-#### 8.10.3 CI fixture provisioning —— **OPEN：(b) 在给定约束下不可实现**
+**明确禁止的处置方式**（本轮均未做）：加 `#ifdef _WIN32` 把它"修绿"；换成跨平台 GLFW API 假装解决；为 CI 绿而删除或屏蔽该 target。
 
-**裁定要求的约束**（原文）：*fixture 的内容来源在仓库中可追溯 / provisioning 确定 / fresh checkout 可独立重建 / **不依赖个人工作区、不依赖 HRC-3 未提交内容** / 缺失时 CI 明确失败*。
+**正式剥离声明**：本项**不计入** §8 provenance chain 的关闭标准。它是独立于 §8 的 sandbox portability 缺陷，**不代表 Vulkan / shaderc provenance chain 回退**。
 
-**核查结果：这些 fixture 在仓库内既无副本、也无生成器。**
+> **独立 CI scope 决策（当前不做）**：是否把 RHI sandbox 从 `all`-targets gate 拆为非门禁 job，属**独立的 CI scope 决策**，**不在 §8 内顺手完成**。本轮**不**调整任何 gating。
+> Linux all-build 在此决策作出前应**继续诚实暴露**该缺陷。
 
-| fixture | 状态 | 有无仓库内生成器 |
-|---|---|---|
-`assets/gp01/Main.scene` | gitignored + untracked | **无** |
-`assets/scenes/dogfood0{2,5,6,7}.scene` | gitignored + untracked | **无** |
-`assets/scenes/dogfood0X.manifest.json` | gitignored + untracked | **无** |
-`content_scratch/` | gitignored + untracked | **无** |
+**Owner / gate 关系**：Owner = RHI sandbox surface 的归属方（随 §9 一并保留为 sandbox）；Gate = 不阻塞 §8 provenance closure；**但**在处置决定作出前，Linux CI 保持红。
 
-已排除 `sandbox/AssetBakery`（只处理 `--shaders` / `--materials`，**不产出**上述任何一项）；全仓搜索无任何 committed 源码写入 `Main.scene` / `content_scratch`。
+#### 8.10.3 committed-tree fixture reproducibility defect —— **OPEN；正式立项，归 HRC owner**
 
-**因此 (b) 无法满足"内容来源在仓库中可追溯"与"不依赖 HRC-3 未提交内容"** —— 这些内容的**唯一来源就是 HRC-3 的本地未提交工作区**。把它复制进 CI 步骤正是裁定所禁止的"把隐式依赖从 `assets/` 挪到 CI"。**故未实施。**
+**性质**：**repository reproducibility 缺陷**，**不是**验证环境小问题 —— 它已改变 **fresh checkout 能否复现 committed baseline** 这一基本事实。
 
-**各测试实际缺失项（受控复现）**：
+**已记录事实**：committed tree 中 `test_bridge`、`test_gp01`、`test_content` 所需的 12 个 ignored fixtures **既无 committed 副本、也无 committed generator**（`sandbox/AssetBakery` 只处理 `--shaders` / `--materials`，不产出其中任何一项；全仓无 committed 源码写入 `Main.scene` / `content_scratch`）。**因此 clean checkout 不能自洽复现此前的 13/13、699-case baseline。**
 
-| 测试 | 报告 |
-|---|---|
-`test_bridge` | `[EditorBridge] scene load failed: assets/gp01/Main.scene (cannot open file)` |
-`test_gp01` | `cannot open file: assets/gp01/Main.scene`（并连带触发 vector 断言）|
-`test_content` | `[FAILED] ContentRegistryManifest.R9_Manifest_SurvivesSessionRestart` |
+**明确拒绝的处置方式**：CI 步骤从 HRC 工作区复制 assets —— 那会把**隐式工作区状态伪装成 CI provisioning**，正是本项要消除的东西。
 
-> **连带更正 —— §0 baseline 声明的适用范围**：§0 记录的 "committed baseline 13/13、699 cases" 是在**已 provision 12 个 ignored fixture 的工作区**中取得的。**committed tree 本身对上述 3 个测试不可自洽复现**，该 baseline 隐含依赖本地 fixture。§0 的数字**不可**被读作"fresh checkout 即可 13/13"。
->
-> **归属**：这些 fixture 属 **HRC-3 的未提交交付内容**（`test_bridge`、`editor_avalonia`、`GP01EditorWorkflowTest` 均在 HRC 指纹内）。是否提交它们、或由谁提交，属 **HRC owner 决策**，不在本节范围。裁定已排除 (a)（"不要现在直接把 fixtures 塞进仓库"）与 (c)，故本项在当前约束下**无可执行方案**，须回到 owner。
+**§0 连带更正（保持）**：**13/13、699 cases 是 provisioned verification baseline，不是 bare fresh-checkout baseline。**
+
+**HRC owner 的合法关闭方向（仅此两类）**：
+
+1. 把这些 fixture 或**可追溯的生成机制**纳入 HRC 交付；
+2. 让这些 committed tests **不再依赖工作区外的 HRC-3 内容**。
+
+**归属**：这属于 **HRC ownership / repository reproducibility**，**不是** §8 dependency strategy 的临时修补。**本节不代为决定。**
 
 ---
 
