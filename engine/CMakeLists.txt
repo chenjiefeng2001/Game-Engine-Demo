@@ -106,6 +106,20 @@ if(TARGET VulkanHeaders)
     target_link_libraries(EngineCore PUBLIC VulkanHeaders)
 endif()
 
+# VMA header availability: unconditional，与 VulkanHeaders 同属公共 Vulkan header surface。
+#
+# 依据：VulkanCommon.h 无条件 include <vk_mem_alloc.h>，而该文件属于无条件 public
+# header 集合 —— 故 VMA 头必须在 Vulkan package discovery 关闭时仍可解析。
+# VMA 本身是仓库 pinned 依赖（3aa9212），此处不引入任何新依赖。
+#
+# 关键边界：本行**只**解 header 可见性。
+# Vulkan backend availability / implementation linkage 仍完全由下方
+# if(Vulkan_FOUND) 控制（Vulkan::Vulkan、src/Vulkan/*.cpp、ENGINE_HAS_VULKAN）。
+# 不得因 VMA 头可见而使 Vulkan backend 重新启用。
+if(TARGET vma)
+    target_link_libraries(EngineCore PUBLIC vma)
+endif()
+
 # Jolt Physics: 仅在 Debug 构建启用调试渲染器
 # 注意：Jolt 使用 #ifdef 检查，所以非 Debug 配置必须完全不定义
 target_compile_definitions(EngineCore PRIVATE
