@@ -93,20 +93,20 @@ Write-Ok "cmake $((& cmake --version | Select-Object -First 1) -replace '.*cmake
 # ── 2. 平台判定 ─────────────────────────────────────────────────────────────
 $isWindowsHost = $IsWindows
 if ($isWindowsHost) {
-    $generator = 'Visual Studio 17 2022'
     $arch      = 'x64'
-    # Shared CRT so that shaderc matches the consumer's dynamic runtime.
-    # The runtime value is intentionally left per configuration; see the
-    # header comment about the LNK2038 cause.
+    # 刻意**不指定** -G。此前硬编码 "Visual Studio 17 2022"，而 CI runner 镜像已迁移
+    # 到 Visual Studio 18 (2026)，该版本不再有对应实例，cmake 直接报
+    # "could not find any instance of Visual Studio"。交给 cmake 选默认生成器，
+    # 与主工程 configure（同样不传 -G）保持一致；VS 系列生成本身即 multi-config，
+    # 目录布局不变。
+    $generator = '(cmake default on this host)'
     $cmakeArgs = @(
-        '-G', $generator,
         "-A$arch",
         '-DSHADERC_ENABLE_SHARED_CRT=ON',
         '-DSHADERC_SKIP_TESTS=ON',
         '-DSHADERC_SKIP_EXAMPLES=ON',
         '-DSPIRV_SKIP_TESTS=ON',
-        '-DSPIRV_SKIP_EXECUTABLES=ON',
-        '-DCMAKE_POLICY_DEFAULT_CMP0091=NEW'
+        '-DSPIRV_SKIP_EXECUTABLES=ON'
     )
     $artifact = { param($c) Join-Path $libDir "$c/shaderc_combined.lib" }
 } else {
@@ -161,10 +161,22 @@ if (Test-Path $cachePath) {
 
 if (-not (Test-Path $cachePath)) {
     Write-Step "Configuring shaderc into $buildDir"
-    & cmake -S $shadercSrc -B $buildDir @cmakeArgs
+    $cfgOut = & cmake -S $shadercSrc -B $buildDir @cmakeArgs 2>&1
+    $cfgOut | ForEach-Object { Write-Host "  $_" }
     if ($LASTEXITCODE -ne 0) {
-        Write-Fail "configure failed with exit $LASTEXITCODE"
-        exit $LASTEXITCODE
+        # 镜像升级会改变默认生成器；此时缓存里的生成器与当前默认不符，cmake 会
+        # 直接拒绝重新配置。丢弃后重试一次，而不是把这个失败原样抛出。
+        $text = ($cfgOut | Out-String)
+        if ($text -match 'generator.*does not match|CMake Error: Generator') {
+            Write-Info "cached generator no longer matches this host's default; discarding and retrying"
+            Remove-Item -Recurse -Force $buildDir
+            $cfgOut = & cmake -S $shadercSrc -B $buildDir @cmakeArgs 2>&1
+            $cfgOut | ForEach-Object { Write-Host "  $_" }
+        }
+        if ($LASTEXITCODE -ne 0) {
+            Write-Fail "configure failed with exit $LASTEXITCODE"
+            exit $LASTEXITCODE
+        }
     }
 } else {
     Write-Step "Reusing existing shaderc build tree"
