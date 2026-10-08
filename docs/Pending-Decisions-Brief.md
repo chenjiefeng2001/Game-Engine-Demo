@@ -206,9 +206,11 @@ Audio A1 ownership migration | 冻结：需 `AudioAssetManager`（Stack 1 归属
 > **§8.9 CLOSED** → artifact 可重建 + 激活可审计 + 缺失即硬失败 + LNK2038 消失
 > **剩余唯一验证项：真实 Advanced CI**
 
-**受控验证现状（no-SDK，`-DREQUIRE_SHADERC=ON`）**：`all`（全部 target 含 sandbox）exit=0 / 0 error；committed suite **13/13**；`sandbox/SpirVTest` 真实完成 GLSL→SPIR-V 编译并反射 **2/2 通过**。
+**受控验证现状（本地，no-SDK，`-DREQUIRE_SHADERC=ON`）**：`all`（全部 target 含 sandbox）exit=0 / 0 error；committed suite **13/13**；`sandbox/SpirVTest` 真实完成 GLSL→SPIR-V 编译并反射 **2/2 通过**。
 
-**§8 自身仍未整体关闭。** 决策面已清空，但**验证面**尚缺：`avalonia` 仍 **未 push**（`HEAD a86694c`，ahead 21），**尚未在真实 Advanced C++ CI 上实跑**。技术裁决上下一步即为此项验证；**push 需用户明确授权**。
+**真实 CI 现状：RED。** run `37756712866` 4/4 job 止步于 `Provision shaderc artifacts`，根因收敛为**单一**项：**固定的 shaderc commit 不自包含其 SPIRV-Tools/glslang/spirv-Headers，且未声明为 submodule**，故 fresh checkout 无法从源码构建 shaderc（见 §8.9.2）。**待决**：shaderc 依赖来源。
+
+**§8 自身仍未关闭。** 决策面除 §8.9 的 sourcing 子项外均已关闭；**验证面尚缺**，且当前为**负结果**：`avalonia` 已 push 至 `57d0ad4`，`master` 未动。
 
 > **不得预先宣称 §8 CLOSED。** CI 最终验证须以**实际失败原因**记录，不得因本地复跑全绿而预判结论（见 §8.5：不得记录未选择、未执行的选项）。
 
@@ -557,6 +559,29 @@ CI 接线 | provisioning 前置于 configure（`EXISTS()` 在 configure 期求�
 本项首轮 `test_core` 失败 | 隔离 **43/43 通过**；复跑 2 次全 suite 均 13/13 |
 
 两次均为**首次运行失败、复跑全绿**的既有不稳定模式，**与 shaderc provisioning / activation 无因果关系**（SPIR-V 开关两种状态下 suite 结果相同，见 §8.9 事实表）。**留作观察项，不据此开启新缺陷**，但已记录为重复出现。
+
+#### 8.9.2 真实 CI 归因（run `37754073786` / `37756712866`）—— **两个根因已修，第三个 OPEN**
+
+**前提更正**：§8.9.1 的"门槛 1–6 全部 PASS"其准确范围是**本地 Windows + 本地 cmake 3.30.3 + 已填充的 shaderc 树**，**不可外推到 runner**。以下为真实 runner 证据。
+
+**run `37754073786`（`f2b49bf`）**：4/4 job **全部**止步于 `Provision shaderc artifacts`，`Configure`/`Build`/`Test` **一次都未执行**。两个不同根因：
+
+| 平台 | 现象 | 根因 | 状态 |
+|---|---|---|---|
+Linux (gcc/clang) | `SPIRV-Tools was not found - required for compilation`（shaderc `third_party/CMakeLists.txt:85`）| **误判已更正**：原以为是"嵌套 submodule 未 init"，故提议 `git submodule update --init --recursive`。**该提议会是 no-op** —— shaderc `7060a66` **无 `.gitmodules`**，其 index 中 spirv-tools/glslang/spirv-headers **只有 LICENSE 文件、无 gitlink**。本地之所以从未暴露，是那些目录**此前已被填充**（本地一直在用 shaderc）| **OPEN（sourcing 决策）** |
+Windows (2 jobs) | `Generator Visual Studio 17 2022 → could not find any instance of Visual Studio` | 脚本**硬编码** `-G "Visual Studio 17 2022"`；runner 镜像已迁移，**默认生成器为 `Visual Studio 18 2026`**，`vswhere` 仅返回 `C:\Program Files\Microsoft Visual Studio\18\Enterprise`。即硬编码的工具链版本，不是工具链本身的问题 | **已修（`57d0ad4`）**：不再传 `-G`，交由 cmake 选默认（与主工程 configure 一致；VS 系仍 multi-config，目录布局不变）|
+
+**同轮修复**：诊断步骤自身在 Windows 上变成 fatal —— pwsh 7.5 起 `$PSNativeCommandUseErrorActionPreference` 默认 `$true`，叠加 GitHub `pwsh` shell 预置的 `$ErrorActionPreference='stop'`，使原生命令非零退出会终止 job。已显式关闭两者并加 `continue-on-error`（`57d0ad4`）。
+
+**run `37756712866`（`57d0ad4`）**：诊断步骤 4/4 通过；4/4 仍止步于 provisioning，但**错误已收敛为单一根因**：
+
+```
+SPIRV-Tools was not found - required for compilation
+```
+
+Windows 日志确认 `-- Building for: Visual Studio 18 2026`、`cl.exe 14.51.36231` **成功选定** —— 生成器问题确已解除，不再掩盖后续失败。**四个 job 现在因同一原因失败**。
+
+**因此 §8.9 的"门槛 1–6 全部 PASS"必须撤回为"本地条件通过，runner 未通过"**，并新增 OPEN 决策项：**shaderc 依赖来源（sourcing）** —— 固定的 shaderc commit 并不自包含，其 SPIRV-Tools / glslang / spirv-Headers **既不在该 commit 内、也未声明为 submodule**，故 fresh checkout **无法从源码构建 shaderc**。
 
 ---
 
