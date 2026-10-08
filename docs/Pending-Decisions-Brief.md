@@ -185,7 +185,7 @@ Audio A1 ownership migration | 冻结：需 `AudioAssetManager`（Stack 1 归属
 清理音频绕过路径 | 需先完成 Audio A1（Stack 2 决策已接受） |
 引入 RelWithDebInfo/macOS/Linux-ASan CI 覆盖 | 需独立决策（当前 CI 已覆盖 Windows RelWithDebInfo+ASan，刻意未扩 macOS 与 Linux ASan） |
 
-| 修复 CI Build 失败（`vulkan.h` / `spirv_cross.hpp`） | **provenance chain CLOSED**：B1 `387c66f`、A1 `6f5582e`、VMA boundary `999d219`、capability guard `d14262a`、shaderc provisioning/activation `fed4326`（真实 runner 已验证）、ASan 生成器 `66349f2`（本地端到端已验证）。**但 §8 overall verification 仍 OPEN**，受**两个独立且已剥离出 provenance 门槛**的问题阻塞：① **RHI sandbox Linux portability defect**（§8.10.2，不阻塞 provenance closure，但 Linux CI 保持红）；② **committed-tree fixture reproducibility defect**（§8.10.3，归 **HRC owner**）。**push 与 §8 整体 CLOSED 均需用户另行授权** |
+| 修复 CI Build 失败（`vulkan.h` / `spirv_cross.hpp`） | **provenance chain CLOSED**：B1 `387c66f`、A1 `6f5582e`、VMA boundary `999d219`、capability guard `d14262a`、shaderc provisioning/activation `fed4326`、ASan 生成器 `66349f2`（**真实 runner 已验证**）。**但 §8 overall verification 仍 OPEN**，受**三个独立且已剥离出 provenance 门槛**的问题阻塞：① RHI sandbox Linux portability（§8.10.2，保留 all-target 红灯）；② committed-tree fixture reproducibility（§8.10.3，归 **HRC owner**）；③ MSVC ASan Windows interception failure（§8.10.4，**工具链/环境缺陷，不修仓库**）。**push 与 §8 整体 CLOSED 均需用户另行授权** |
 | 决定 formal RHI 是否成为 canonical rendering architecture | **已完成（2026-10-07）** —— **否决**。`Core/RHI` 定位为 sandbox / alternate backend surface，不扩展为默认生产路径。详见 §9 |
 | 实现 GL46 空 command methods / 补 `ShadowMapper` 子类 / 补 `CSMShadowMapper` header | **明确不做**（§9.4）—— 即使成本低也不做；不得以"追绿"或"未来会接入"为由启动 |
 
@@ -209,9 +209,10 @@ Audio A1 ownership migration | 冻结：需 `AudioAssetManager`（Stack 1 归属
 > SPIRV-Cross → Vulkan-Headers → VMA header boundary → shaderc provisioning/activation：均已通过各自门槛，其中 shaderc 整条链已在**真实 runner** 上验证（Windows Release：provisioning / configure / build / `Verify SPIR-V activation` 全部 success）。
 >
 > **§8 overall verification：OPEN**
-> 原因**不是** provenance，而是真实 CI 验证面仍受**两个独立问题**影响：
+> 原因**不是** provenance，而是真实 CI 验证面仍受**三个独立问题**影响：
 > ① **RHI sandbox Linux portability defect**（§8.10.2）
 > ② **committed-tree fixture reproducibility defect**（§8.10.3）
+> ③ **MSVC ASan Windows interception failure**（§8.10.4，工具链/环境缺陷，不修仓库）
 
 **已关闭的 provenance 决策（不再重开）**：
 
@@ -222,20 +223,21 @@ Vulkan-Headers provenance（A1）| **CLOSED** | `6f5582e` / `9e6e5be` |
 VMA header boundary（§8.8）| **CLOSED** | `999d219` / `c17bc83` |
 capability guard（§8.6-3）| **CLOSED** | `d14262a`（未新增 guard）|
 shaderc provisioning / activation（§8.9）| **CLOSED** | `fed4326`，真实 runner 已验证 |
-ASan artifact 生成器（§8.10.1）| **CLOSED** | `66349f2`，本地端到端已验证 |
+ASan artifact 生成器（§8.10.1）| **CLOSED — VALIDATED ON REAL RUNNER** | `66349f2`；artifact 生成 + configure + build 均成功 |
 
-**剩余两个 OPEN 项的 owner / gate 关系**：
+**剩余三个 OPEN 项的 owner / gate 关系**：
 
 | 项 | 性质 | Owner | 是否属 §8 provenance 关闭门槛 |
 |---|---|---|---|
-RHI sandbox Linux portability | sandbox / alternate-backend **portability defect** | 见 §8.10.2 | **否 —— 已正式剥离** |
-committed-tree fixture reproducibility | **repository reproducibility 缺陷** | **HRC owner** | **否 —— 但它是 §8 overall verification 转绿的前置** |
+RHI sandbox Linux portability | sandbox / alternate-backend **portability defect** | RHI sandbox surface 归属方 | **否 —— 已正式剥离** |
+committed-tree fixture reproducibility | **repository reproducibility 缺陷** | **HRC owner** | **否** |
+MSVC ASan interception failure | **工具链 / 环境缺陷** | toolchain / runner 环境 | **否** |
 
-> **不得**把上述任一项记作"§8 provenance 回退"；**也不得**在两项未决时宣称 §8 整体 CLOSED。
+> **不得**把上述任一项记作"§8 provenance 回退"；**也不得**在三项未决时宣称 §8 整体 CLOSED。
 
-**受控验证现状（本地，no-SDK，`-DREQUIRE_SHADERC=ON`，DEPS-pinned 依赖）**：`all`（全部 target 含 sandbox）exit=0 / 0 error；committed suite **13/13**（provisioned fixtures 下）；`sandbox/SpirVTest` **2/2**；RelWithDebInfo+ASan 下 `SpirVTest` exit=0 / LNK2038=0。
+**受控验证现状（本地，no-SDK，`-DREQUIRE_SHADERC=ON`，DEPS-pinned 依赖）**：`all`（全部 target 含 sandbox）exit=0 / 0 error；committed suite **13/13**（provisioned fixtures 下）；`sandbox/SpirVTest` **2/2**；RelWithDebInfo+ASan 下 `SpirVTest` **构建** exit=0 / LNK2038=0（**执行**受 §8.10.4 阻塞）。
 
-**真实 CI 现状：RED**（run `37794358097`，`fed4326`）。`avalonia` 已 push 至 `fed4326`；ASan 修复 `66349f2` **尚未 push**。`master` 未动（`1a066ed`）。
+**真实 CI 现状：RED。** 最新 run `37824159441`（`4f803a6`，已 push，ahead 0）。逐 job 归因：ubuntu gcc/clang → `Build`（§8.10.2）；windows Release → `Test`（§8.10.3）；windows RWD+ASan → `Verify SPIR-V activation`（§8.10.4）。**`66349f2` 已验证成功，不因整体红而回改。** `master` 未动（`1a066ed`）。
 
 > **不得预先宣称 §8 CLOSED。** CI 最终验证须以**实际失败原因**记录，不得因本地复跑全绿而预判结论（见 §8.5：不得记录未选择、未执行的选项）。
 
@@ -671,9 +673,10 @@ committed suite | **PASS** —— 连续 2 次 **13/13** |
 
 | # | 缺陷 | 现象 | 状态 |
 |---|---|---|---|
-8.10.1 | `build_shaderc_asan_rwd.ps1` 硬编码 `Visual Studio 17 2022` | Windows RelWithDebInfo+ASan 止步于该步骤 | **已修** |
+8.10.1 | `build_shaderc_asan_rwd.ps1` 硬编码 `Visual Studio 17 2022` | Windows RelWithDebInfo+ASan 止步于该步骤 | **已修（`66349f2`，真实 runner 已验证）** |
 8.10.2 | `engine/src/RHI/RHIWindow.cpp` 为结构性 Win32-only | Linux gcc/clang 止步于 `Build` | **OPEN（按硬门槛停止实施）** |
-8.10.3 | 3 个测试依赖的 fixture 无仓库内来源 | Windows Release `Test` 3 项失败 | **OPEN（(b) 在给定约束下不可实现）** |
+8.10.3 | 3 个测试依赖的 fixture 无仓库内来源 | Windows Release `Test` 3 项失败 | **OPEN（归 HRC owner）** |
+8.10.4 | MSVC ASan Windows interception failure | Windows RelWithDebInfo+ASan 止步于 `Verify SPIR-V activation` | **OPEN（定性为工具链/环境缺陷，不修仓库）** |
 
 #### 8.10.1 ASan 脚本生成器 —— **已修并验证**
 
@@ -730,10 +733,41 @@ L57 | `m_HWND = glfwGetWin32Window(m_Window);` —— **无条件**，该成员�
 
 **归属**：这属于 **HRC ownership / repository reproducibility**，**不是** §8 dependency strategy 的临时修补。**本节不代为决定。**
 
+#### 8.10.4 MSVC ASan Windows interception failure —— **OPEN；定性为工具链 / 环境缺陷，不修仓库**
+
+> **⚠️ 定性更正（2026-10-08）**：本项此前被定性为「**ASan runtime deployment 缺失**」，并曾提议部署 `clang_rt.asan_dynamic-x86_64.dll`。该定性**已被直接实验推翻**，现更正为 interception failure。
+
+**事实链（真实 runner，run `37824159441` / `4f803a6`）**：`66349f2` 修好 generator 后，**RWD+ASan artifact 成功生成 → CMake configure 成功 → Build 成功**；`Verify SPIR-V activation` 的**前两项亦通过**（`REQUIRE_SHADERC=ON` 已记录；Debug 467.0 MB / Release 194.1 MB 均在）。失败仅在**第 3 项执行 `SpirVTest.exe`**：
+
+```
+interception_win: unhandled instruction at 0x7fffaf8928c0: 80 3a 00 4c 8b d1 75 04
+AddressSanitizer: CHECK failed: interception_win.cpp:193
+  "(("Interception failure, stopping early ... && 0)) != (0)"
+```
+
+**有界只读调查的三个答案**：
+
+| 问题 | 答案 | 证据 |
+|---|---|---|
+**Q1** 是否由宿主注入模块 / 加载顺序触发 | **是（环境侧）** —— ASan 在**初始化期**无法 hook 某个系统模块。`probe.exe` 与 `SpirVTest.exe` 的 fault address **完全相同**（`0x7fffaf8928c0`，落在系统 DLL 地址区间），说明二者命中**同一个未被 hook 的系统模块**，与可执行体自身无关 |
+**Q2** 同一 toolchain 下最小独立 ASan exe 是否重现 | **是，稳定重现** —— 3 行 `main`、**零仓库代码 / 零 shaderc / 零 engine / 零第三方**，同一 MSVC **14.44.35207**、`/MD /fsanitize=address`，报**一字不差**的同一 interception CHECK 失败。**故仓库侧被排除** |
+**Q3** 是否只出现在 runner/CI 沙箱，而非仓库构建产物 | **不是仓库产物问题** —— 失败发生在 **`main()` 之前**（probe 未打印 `PROBE_REACHED_MAIN`），即 ASan runtime/interception 初始化期。任何仓库代码都无法影响该阶段 |
+
+**结论（按裁定分叉的第一支）**：
+
+> **最小 probe 亦稳定失败 → 定性为工具链 / runner 环境缺陷，OPEN，不修仓库。**
+
+**边界遵守**：调查全程**只读**。未部署任何 DLL（实验用 DLL 已删除，`clang_rt` 计数复原为 0）；未 CI 化旁路；未禁用 ASan；未改链接 flags；未改验证语义；**本节不含任何源码或 CI 改动**。
+
+**保留的诊断事实（禁止 CI 化）**：`ASAN_WIN_CONTINUE_ON_INTERCEPTION_FAILURE=1` 下程序可继续执行，并打印 `SPIRV-Cross: integrated` / `Shaderc: LINKED` —— 证明 **Shaderc / SPIR-V / Reflection 本身正常**。但该变量**关闭 ASan 自身的保护守卫**，把红变绿的同时降低真实检查强度，**只能作为诊断证据，禁止作为 CI 修复**。
+
+**调查的一处诚实限制**：最小 probe 在**本地主机 + 同一 toolset** 上执行，**未**直接在 GitHub runner 上运行（调查期间不改 CI）。但由 Q1/Q2/Q3 组合可确定：**仓库侧已被排除**，无论 runner 侧的具体注入来源为何。
+
+**`66349f2` 状态：VALIDATED ON REAL RUNNER** —— 其目标缺陷（VS17→VS18 generator）已被 artifact 生成 + configure + build 实际证明。**不回改。**
+
 ---
 
 ## 9. Formal RHI adoption 决策 —— **Accepted：否决作为 canonical production architecture**
-
 **裁定（2026-10-07）**：**否决。** `Core/RHI` **不成为**本仓库的 canonical production rendering architecture。
 
 **否决的准确含义**：**不是**"RHI 没价值"，而是 —— **"RHI 当前不承担 canonical production rendering architecture 的职责。"** 它保留为 **sandbox / alternate backend surface**，并且不再让它看起来像"只差几个 TODO 就会成为生产 renderer"。
