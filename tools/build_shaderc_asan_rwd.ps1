@@ -77,7 +77,11 @@ if (-not (Test-Path -LiteralPath $shadercSrc)) {
 $cfgArgs = @(
     '-S', $shadercSrc
     '-B', $asanBuild
-    '-G', 'Visual Studio 17 2022'
+    # No -G: pinning a Visual Studio generator version breaks whenever the
+    # runner image moves to a newer one, and cmake then reports that it cannot
+    # find any instance. The default is also what the main project configure
+    # uses. Visual Studio generators are multi configuration, so the
+    # RelWithDebInfo artifact path below is unchanged.
     "-DSHADERC_ABSL_DIR=$tpDir/abseil_cpp"
     "-DSHADERC_EFFCEE_DIR=$tpDir/effcee"
     "-DSHADERC_GLSLANG_DIR=$tpDir/glslang"
