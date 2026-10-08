@@ -100,7 +100,29 @@ jobs:
       run: |
         echo "build-output-dir=${{ github.workspace }}/build" >> "$GITHUB_OUTPUT"
 
-# B5-RD：RelWithDebInfo+ASan 需要 /MD + ASan 的 shaderc 产物。
+# ── Shaderc provisioning（§8.9）──────────────────────────────────────────
+    # engine/CMakeLists.txt 的 shaderc 激活门用 EXISTS() 求值，且要求 Debug 与
+    # Release **同时**就位。这些产物在 shaderc submodule 的 .gitignore 覆盖范围内，
+    # 不会随仓库分发 —— fresh checkout 必须先生成，否则 SPIR-V 编译被静默关闭而
+    # CI 仍然绿灯（committed suite 在开/关两种状态下结果完全相同，无法察觉）。
+    #
+    # 按各平台自身配置生成：Windows 逐配置匹配 CRT（Debug=/MDd、其它=/MD），
+    # 与消费侧根 CMakeLists.txt 的 CMAKE_MSVC_RUNTIME_LIBRARY 一致；Linux 不套用
+    # Windows 的 CRT 概念。**不得**在此单值强制 CMAKE_MSVC_RUNTIME_LIBRARY ——
+    # 那正是 sandbox/SpirVTest 报 LNK2038 的原因。
+    - name: Cache shaderc artifacts
+      uses: actions/cache@v4
+      with:
+        path: third_party/shaderc/build
+        key: shaderc-${{ runner.os }}-${{ matrix.c_compiler }}-${{ hashFiles('tools/build_shaderc_ci.ps1', 'third_party/shaderc/CMakeLists.txt') }}
+        restore-keys: |
+          shaderc-${{ runner.os }}-${{ matrix.c_compiler }}-
+
+    - name: Provision shaderc artifacts (SPIR-V activation)
+      shell: pwsh
+      run: pwsh -NoProfile -File tools/build_shaderc_ci.ps1
+
+    # B5-RD：RelWithDebInfo+ASan 需要 /MD + ASan 的 shaderc 产物。
     # 该产物位于 git submodule 内，并被其 .gitignore 的 `build-*/` 覆盖，
     # 因此不会随仓库分发 —— fresh checkout 必须先生成。否则 RelWithDebInfo 会
     # 回退到非 ASan 的 Release shaderc，sandbox/SpirVTest 链接报 LNK2038。
@@ -110,6 +132,8 @@ jobs:
       shell: pwsh
       run: pwsh -NoProfile -File tools/build_shaderc_asan_rwd.ps1 -SkipReconfigure
 
+    # REQUIRE_SHADERC=ON：artifact 缺失时**硬失败**，杜绝静默降级后仍绿灯。
+    # 缺省（本地开发）保持 OFF + WARNING，不改变既有本地行为。
     - name: Configure CMake
       run: >
         cmake -B ${{ steps.strings.outputs.build-output-dir }}
@@ -118,11 +142,55 @@ jobs:
         -DCMAKE_BUILD_TYPE=${{ matrix.build_type }}
         -DENABLE_TESTS=ON
         -DENABLE_ASAN=${{ matrix.enable_asan }}
+        -DREQUIRE_SHADERC=ON
         -Wno-dev
         -S ${{ github.workspace }}
 
     - name: Build
       run: cmake --build ${{ steps.strings.outputs.build-output-dir }} --config ${{ matrix.build_type }}
+
+    # 可审计的启用证据（§8.9）：确认 SPIR-V 路径**确实**参与构建，而不是仅
+    # 因 artifact 缺失而降级。三项都通过才允许后续 Test 步骤给出绿灯。
+    - name: Verify SPIR-V activation
+      shell: pwsh
+      run: |
+        $ErrorActionPreference = 'Stop'
+        $log = "${{ steps.strings.outputs.build-output-dir }}/CMakeFiles/CMakeOutput.log"
+        if (-not (Test-Path $log)) { $log = "${{ steps.strings.outputs.build-output-dir }}/CMakeCache.txt" }
+
+        # 1) configure 必须记录 activation 为 ENABLED
+        $cache = Get-Content "${{ steps.strings.outputs.build-output-dir }}/CMakeCache.txt" -Raw
+        if ($cache -notmatch 'REQUIRE_SHADERC:BOOL=ON') {
+          throw 'REQUIRE_SHADERC is not ON in the cache; the activation guard was bypassed.'
+        }
+        Write-Host 'OK  REQUIRE_SHADERC=ON recorded in cache'
+
+        # 2) shaderc artifact 必须存在且非空
+        $libDir = "${{ github.workspace }}/third_party/shaderc/build/libshaderc"
+        $wanted = if ("${{ runner.os }}" -eq 'Windows') {
+          @('Debug/shaderc_combined.lib', 'Release/shaderc_combined.lib')
+        } else {
+          @('Debug/libshaderc_combined.a', 'Release/libshaderc_combined.a')
+        }
+        foreach ($rel in $wanted) {
+          $p = Join-Path $libDir $rel
+          if (-not (Test-Path $p)) { throw "missing shaderc artifact: $p" }
+          if ((Get-Item $p).Length -le 0) { throw "empty shaderc artifact: $p" }
+          Write-Host ("OK  {0,-30} {1:N1} MB" -f $rel, ((Get-Item $p).Length / 1MB))
+        }
+
+        # 3) SpirVTest 必须在该配置下真正完成一次 GLSL→SPIR-V 编译并反射成功。
+        #    这是「SPIR-V 路径实际参与」的运行时证据，而不只是链接成功。
+        #    产物名按平台不同：Windows 为 SpirVTest.exe，其余为 SpirVTest。
+        $spirvDir = "${{ steps.strings.outputs.build-output-dir }}/sandbox/SpirVTest"
+        $spirv = Get-ChildItem -Path $spirvDir -Recurse -File -ErrorAction SilentlyContinue |
+                 Where-Object { $_.Name -eq 'SpirVTest.exe' -or $_.Name -eq 'SpirVTest' } |
+                 Select-Object -First 1
+        if (-not $spirv) { throw "SpirVTest executable was not produced under $spirvDir" }
+        Write-Host "OK  SpirVTest: $($spirv.FullName)"
+        & $spirv.FullName
+        if ($LASTEXITCODE -ne 0) { throw "SpirVTest failed with exit $LASTEXITCODE" }
+        Write-Host 'OK  SPIR-V compile + reflection verified at runtime'
 
     # 基础验证面 = 全量 target + 全量 CTest。
     # HRC 专项证据通过下方 receipt 上传识别，但**不替代**基础面：

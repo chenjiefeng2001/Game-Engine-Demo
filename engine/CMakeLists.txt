@@ -210,8 +210,32 @@ endif()
 # Shaderc 库 — GLSL/HLSL → SPIR-V 编译
 # ════════════════════════════════════════════════════════
 # 检测预编译的 shaderc_combined.lib（Debug / Release / RelWithDebInfo 三个配置）
-set(SHADERC_RELEASE_LIB "${PROJECT_SOURCE_DIR}/third_party/shaderc/build/libshaderc/Release/shaderc_combined.lib")
-set(SHADERC_DEBUG_LIB "${PROJECT_SOURCE_DIR}/third_party/shaderc/build/libshaderc/Debug/shaderc_combined.lib")
+# Activation guard（§8.9）：CI 用 REQUIRE_SHADERC=ON 把「artifact 缺失」从静默降级
+# 变成硬失败。缺省 OFF，保持本地开发既有行为不变。
+option(REQUIRE_SHADERC
+    "Hard-fail when the shaderc artifact is missing instead of silently disabling SPIR-V compilation"
+    OFF)
+
+# Shaderc artifact 路径解析（platform-aware）。
+#
+# MSVC multi-config 生成器产出按配置分子目录；其它平台由 provisioning 脚本同样
+# 使用 multi-config 生成器（Ninja Multi-Config），因此**目录布局在所有平台一致**，
+# 仅**文件名**不同（Windows 无 lib 前缀）。
+#
+# 由 tools/build_shaderc_ci.ps1 按**各平台自身**的配置生成：
+#   Windows：Debug=/MDd、Release=/MD —— 必须与根 CMakeLists.txt 的
+#            CMAKE_MSVC_RUNTIME_LIBRARY 逐配置一致，否则 SpirVTest 链接出 LNK2038。
+#   Linux  ：按自身构建配置匹配，**不套用** Windows 的 CRT 概念。
+function(shaderc_artifact _config _out)
+    set(_d "${PROJECT_SOURCE_DIR}/third_party/shaderc/build/libshaderc/${_config}")
+    if(MSVC)
+        set(${_out} "${_d}/shaderc_combined.lib" PARENT_SCOPE)
+    else()
+        set(${_out} "${_d}/libshaderc_combined.a" PARENT_SCOPE)
+    endif()
+endfunction()
+shaderc_artifact(Release SHADERC_RELEASE_LIB)
+shaderc_artifact(Debug    SHADERC_DEBUG_LIB)
 # B5-RD: RelWithDebInfo 是**有意启用 ASan** 的配置（见根 CMakeLists.txt 的
 # /fsanitize=address genex），但原先磁盘上只有 Debug(/MDd+ASan) 与
 # Release(/MD, 无 ASan) 两个产物；optimized 回退到 Release 会让 ASan 目标
@@ -270,7 +294,29 @@ if(EXISTS "${SHADERC_RELEASE_LIB}" AND EXISTS "${SHADERC_DEBUG_LIB}")
     # EngineCore 链接 shaderc，ShaderCompiler.cpp 真正可用
     target_link_libraries(EngineCore PUBLIC shaderc_wrapper)
     message(STATUS "Shaderc wrapper: linked to EngineCore")
+    # 可审计的启用证据：记录**实际解析到**的 artifact 路径与配置映射。
+    message(STATUS "Shaderc activation: ENABLED (REQUIRE_SHADERC=${REQUIRE_SHADERC})")
+    message(STATUS "  Debug           -> ${SHADERC_DEBUG_LIB}")
+    if(SHADERC_HAVE_RELWITHDEBINFO)
+        message(STATUS "  RelWithDebInfo  -> ${SHADERC_RELWITHDEBINFO_LIB} (/MD + ASan)")
+    else()
+        message(STATUS "  RelWithDebInfo  -> ${SHADERC_RELEASE_LIB} (fallback, no ASan)")
+    endif()
+    message(STATUS "  Release         -> ${SHADERC_RELEASE_LIB}")
+    message(STATUS "  ENGINE_HAS_SHADERC defined PUBLIC on EngineCore")
 else()
+    # Activation guard：CI 必须能区分「artifact 缺失」与「artifact 已就位」。
+    # 缺省（本地开发）保持 WARNING + 静默降级；REQUIRE_SHADERC=ON（CI）改为硬失败，
+    # 杜绝 SPIR-V 路径未被验证却仍然绿灯。
+    if(REQUIRE_SHADERC)
+        message(FATAL_ERROR
+            "REQUIRE_SHADERC=ON, but the shaderc artifact is missing:\n"
+            "  Debug   : ${SHADERC_DEBUG_LIB}\n"
+            "  Release : ${SHADERC_RELEASE_LIB}\n"
+            "SPIR-V compilation would be silently disabled and CI would pass without\n"
+            "ever exercising the SPIR-V path. Provision the artifact first:\n"
+            "  pwsh -File tools/build_shaderc_ci.ps1")
+    endif()
     message(WARNING "Shaderc lib not found — GLSL→SPIR-V compilation disabled")
 endif()
 
