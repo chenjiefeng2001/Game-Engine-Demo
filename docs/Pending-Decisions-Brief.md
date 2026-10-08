@@ -583,6 +583,61 @@ Windows 日志确认 `-- Building for: Visual Studio 18 2026`、`cl.exe 14.51.36
 
 **因此 §8.9 的"门槛 1–6 全部 PASS"必须撤回为"本地条件通过，runner 未通过"**，并新增 OPEN 决策项：**shaderc 依赖来源（sourcing）** —— 固定的 shaderc commit 并不自包含，其 SPIRV-Tools / glslang / spirv-Headers **既不在该 commit 内、也未声明为 submodule**，故 fresh checkout **无法从源码构建 shaderc**。
 
+#### 8.9.3 B → B′ 决策更正 —— **B 字面形式不可实现；B′ 已接受并实施**
+
+**B（原定义）**：把 shaderc 重新 pin 到**自带 `.gitmodules`**、可由 recursive-submodule 机制完整重建的 commit。
+
+**静态审计结论：不存在这样的 commit。** `google/shaderc` 的 `.gitmodules` 在**所有**相关 ref 均不存在：
+
+| ref | `.gitmodules` |
+|---|---|
+`main` / `master` | 不存在 |
+`v2023.5` / `v2024.4` / `v2025.1` | 不存在 |
+当前 pin `7060a66` | 不存在 |
+
+**shaderc 上游从不使用 git submodule 承载这三个依赖。** 实际机制是 committed **`DEPS`** 清单 + **`utils/git-sync-deps`**（与 SPIRV-Tools/glslang 同一模式）。
+
+**B′（已接受）**：**保持 shaderc pin `7060a66` 不变**，以其 committed `DEPS` + `utils/git-sync-deps` 作为 transitive dependency provenance 与 fresh-checkout materialization contract。
+
+标准并非放宽，而是**从"使用 submodule"纠正为真正目标**：
+
+> **dependency provenance 必须由上游仓库的 committed manifest 声明，并可由 fresh checkout 按固定 revision 重建。**
+
+`DEPS` 中的固定 revision：
+
+```
+spirv_tools_revision:   f589ef005c49f6f19c8e78eb5269104ba293beb4
+glslang_revision:       2ee090f606ace31e07f584b1c1b9ddf4909ce202
+spirv_headers_revision: 942fe4b988359a0750b79f0ae7ed735994d3147d
+```
+
+**满足"否决 A 的理由"**：pin 的 owner 是 **shaderc 自身**，我们的脚本**不含任何 revision**，只调用上游已提交的同步器 —— 因此 `repo pin → committed DEPS → upstream tool → 固定 revision` 的 provenance 链可审计，与 §8.7-A / §8.8 的"依赖由仓库声明"原则同构。
+
+**审计中发现的 provenance 缺陷（必须作废旧证据）**：本地 `spirv-tools`/`glslang`/`spirv-headers` 的 revision 与 `DEPS` **全部不一致**：
+
+| 依赖 | 本地（旧环境） | `DEPS` pin |
+|---|---|---|
+spirv-tools | `d5bbf95d87dd` | `f589ef005c49` |
+glslang | `ce138e2c2d69` | `2ee090f606ace` |
+spirv-headers | `daa093dd29aa` | `942fe4b98835` |
+
+故 §8.9.1 的门槛证据属**旧环境证据，不得迁移**。
+
+**实施**（`build_shaderc_ci.ps1`）：configure 之前**调用上游 `utils/git-sync-deps`**，并**先丢弃**既有 transitive 依赖与 build 产物，从 `DEPS` pin 做 fresh materialization；随后校验三个依赖目录确实生成并打印其 HEAD revision。**未**改 shaderc pin、**未**在脚本写入任何 revision、**未**加 system shaderc fallback、**未**改 `REQUIRE_SHADERC`、**未**改 consumer API、**未**动 Vulkan/VMA 接线。
+
+**B′ 验证链（从 clean `DEPS` 状态重跑，不继承旧证据）**：
+
+| 步骤 | 结果 |
+|---|---|
+fresh materialization | **PASS** —— 三个依赖落到 `DEPS` 精确 revision（`f589ef005c49` / `2ee090f606ac` / `942fe4b98835`）|
+重建 Debug/Release | **PASS** —— 462.2 MB / 66.2 MB（与旧环境 458.1 / 65.5 MB **不同**，佐证依赖图确已更换）|
+CRT contract | **PASS** —— Debug=`MultiThreadedDebugDLL`(/MDd)、Release/MinSizeRel/RelWithDebInfo=`MultiThreadedDLL`(/MD) |
+`all` 构建（含 `SpirVTest`） | **PASS** —— exit=0、0 error、**LNK2038=0** |
+`SpirVTest` | **PASS** —— exit=0，`[PASS] TestSpirvCrossReflection` + `[PASS] TestShaderCompileAndReflect`，**2/2** |
+committed suite | **PASS** —— 连续 2 次 **13/13** |
+
+> **验证环境事故留档（非代码缺陷）**：本轮验证 worktree 曾在长时构建中途消失，导致后续命令静默回落到主仓库，并在主仓库生成 `build/bp-prime`（已删除）。首轮 suite 出现 `test_content` / `test_gp01` / `test_bridge` 三项失败，经查为**该 worktree 未 provision 12 个 gitignored fixtures**，补齐后三者均通过且全 suite 13/13。**与 pinned 依赖图无因果关系**。另有一处环境失误：`robocopy /XD build` 大小写不敏感，误排除 `JoltPhysics/**Build**/`，导致 Jolt 目标未生成 —— 已改为精确排除路径。**两处均属验证环境问题，已修正，未进入任何 commit。**
+
 ---
 
 ## 9. Formal RHI adoption 决策 —— **Accepted：否决作为 canonical production architecture**
