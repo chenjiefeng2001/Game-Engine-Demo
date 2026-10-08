@@ -473,6 +473,43 @@ With Vulkan package discovery disabled and no host SDK available on the include 
 
 > **边界重申（防止后续误读）**：本项关闭**并非**证明 Vulkan backend 无条件可用；它只证明**当前 committed compile graph 不需要**为了修复一个已观察到的 header failure 而新增 guard。Vulkan backend 的可用性仍取决于 host / CI 的 Vulkan package 前置条件，与 §8.7.6、§8.8 的 backend capability 门控一致。
 
+### 8.9 Shaderc provisioning + activation gate —— **OPEN（独立于 Vulkan/VMA provenance；2026-10-07 新开）**
+
+> **本项不是 Vulkan/VMA provenance 的延伸。** §8.7-A / §8.8 关闭的是 **header provenance 与 header 可见性**；本项是 **third-party artifact 的取得（provisioning）与激活（activation）**，两者性质不同、失效模式不同。
+
+**问题定性**：CI 的验证面**静默偏离**本地，且**无人察觉**。
+
+**已观测事实**：
+
+| 事实 | 证据 |
+|---|---|
+CI `Build` 步骤无 `--target` → 构建 `all` | `cmake-multi-platform.yml:124-125` |
+本地 `all` 构建失败 LNK2038 | `shaderc_combined.lib(shaderc.obj)` 值 1 vs `SpirVTestApp.obj` 值 0 |
+但 **CI 不会**撞上 LNK2038 | `engine/CMakeLists.txt:240` 要求 Debug **与** Release 预编译 shaderc **同时**存在才启用 shaderc；二者被 gitignore（shaderc submodule 的 `build/`）|
+**无任何 committed 脚本或 CI 步骤产出该二者** | `tools/` 下仅有 `build_shaderc_asan_rwd.ps1`，它只产出 `build-asan-rwd/RelWithDebInfo`（且仅 Windows）|
+Linux 亦无 shaderc | `cmake-multi-platform.yml:88-95` 的 apt 列表不含 shaderc；CMake 用硬编码路径，`find_package` 不参与 |
+CI 因此以 SPIR-V **静默禁用**通过 | 受控模拟：隐藏两个预编译 lib → `Shaderc lib not found → GLSL→SPIR-V compilation disabled` |
+**且 suite 无法察觉该能力丢失** | 受控模拟：**13 targets build 0 error + ctest 13/13** —— 与 shaderc **开启**时结果**相同** |
+
+**关键含义**：CI 绿灯**不代表**验证了 SPIR-V 编译路径。当前 SPIR-V 前置条件既**不明确**也**未被满足**，与 §8 的原始目标（*deterministic fresh checkout + 明确依赖前置，不依赖隐式搜索*）相悖。
+
+**裁定（2026-10-07）—— 选 (c)，接受 CI 时长成本**：
+
+* **Provisioning**：CI 必须实际取得与**消费端配置匹配**的 shaderc。
+* **Activation guard**：CI **不得**允许 shaderc 缺失后静默退化为 `ENGINE_HAS_SHADERC=OFF` 仍然绿灯。
+* **验证目标**：CI 绿灯必须**证明** SPIR-V 路径被启用并实际参与构建/验证。
+* **LNK2038**：属**同一 artifact/configuration contract** 问题，用**匹配的 shaderc 重建**解决；**不**单独改 `SpirVTest` 或链接逻辑。
+* **平台实现**：Windows 按 Debug/Release 的 CRT/配置匹配；Linux 按其对应构建配置匹配，**不机械复制** `/MDd`/`/MD`。
+
+**关闭门槛**（至少）：
+
+1. shaderc artifact 在 CI 中**可重建**；
+2. `ENGINE_HAS_SHADERC` **明确 enabled**；
+3. SPIR-V target **实际编译/链接**；
+4. **缺失 artifact 时 CI 明确失败**，而非降级；
+5. Windows **LNK2038 消失**；
+6. 留下**可审计的启用证据**。
+
 ---
 
 ## 9. Formal RHI adoption 决策 —— **Accepted：否决作为 canonical production architecture**
