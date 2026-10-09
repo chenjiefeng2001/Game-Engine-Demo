@@ -23,11 +23,12 @@ layout(location = 3) in vec3 a_Tangent;
 layout(location = 4) in ivec4 a_BoneIndices;
 layout(location = 5) in vec4  a_BoneWeights;
 
-layout(std140, binding = 0) uniform Matrices {
-    mat4 u_ViewProjection;
-    // 骨骼矩阵数组。容量固定，便于着色器内循环边界为编译期常量。
-    mat4 u_BoneMatrices[64];
-};
+// 刻意使用**普通 uniform**而非 std140 uniform block。
+// uniform block 内的成员无法通过 glGetUniformLocation 按名字寻址
+// （实测返回 -1），因此 Shader::SetMat4 / SetMat4Array 无法驱动它们。
+// 引擎既有的 uniform（如 u_ViewProjection）同样按名字设置，此处保持一致。
+uniform mat4 u_ViewProjection;
+uniform mat4 u_BoneMatrices[64];
 
 layout(location = 0) out vec3 v_WorldPos;
 layout(location = 1) out vec3 v_Normal;
