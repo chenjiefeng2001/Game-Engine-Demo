@@ -1,4 +1,6 @@
-#version 430 core
+#version 330 core
+// 与顶点着色器一致：330 下带 location 的片元输出同样需要该扩展。
+#extension GL_ARB_separate_shader_objects : enable
 
 // GPU 蒙皮片元着色器（生产路径）
 //
