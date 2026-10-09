@@ -1,0 +1,72 @@
+name: OpenGL capability probe
+
+# Answers one environment question by measurement: can a Linux runner with
+# software rendering create the OpenGL context the production render path
+# requires?
+#
+# This is a standalone workflow on purpose. The engine build is currently
+# blocked on Linux by an unrelated RHI portability defect, and that defect must
+# not be worked around to obtain a green GPU job. This job compiles only GLFW
+# and probes the driver, so it produces evidence regardless of that blocker and
+# cannot affect any existing build or test gate.
+#
+# Results are reported, never asserted: the workflow stays green even when a
+# context cannot be created, because "this runner cannot provide GL" is a valid
+# and useful answer.
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - master
+    paths:
+      - '.github/workflows/gl-capability-probe.yml'
+      - 'tools/gl_capability_probe.cpp'
+
+jobs:
+  probe:
+    name: Probe OpenGL under Xvfb + Mesa software rendering
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install GLFW and Xvfb
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            build-essential libglfw3-dev xvfb mesa-utils
+
+      - name: Record the Mesa stack actually installed
+        run: |
+          echo "Mesa packages:"; dpkg -l | grep -Ei 'mesa|libgl1-mesa' | awk '{print "  " $2, $3}'
+          echo "glxinfo (default display):"
+          glxinfo -B 2>&1 | head -20 || echo "  glxinfo unavailable"
+
+      - name: Build the probe
+        run: |
+          g++ -std=c++17 -O1 tools/gl_capability_probe.cpp -o "$RUNNER_TEMP/glprobe" \
+            $(pkg-config --cflags --libs glfw3)
+
+      - name: Probe with an explicit software renderer
+        env:
+          LIBGL_ALWAYS_SOFTWARE: '1'
+          GALLIUM_DRIVER: llvmpipe
+        run: |
+          xvfb-run -a -s "-screen 0 1280x800x24" \
+            env LIBGL_ALWAYS_SOFTWARE=1 GALLIUM_DRIVER=llvmpipe XDG_SESSION_TYPE=x11 \
+            "$RUNNER_TEMP/glprobe" 2>&1 | tee "$RUNNER_TEMP/probe-llvmpipe.txt"
+
+      - name: Probe with the runner default driver selection
+        env:
+          LIBGL_ALWAYS_SOFTWARE: '1'
+        run: |
+          xvfb-run -a -s "-screen 0 1280x800x24" \
+            env LIBGL_ALWAYS_SOFTWARE=1 XDG_SESSION_TYPE=x11 \
+            "$RUNNER_TEMP/glprobe" 2>&1 | tee "$RUNNER_TEMP/probe-default.txt"
+
+      - name: Upload probe output
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: GL-capability-probe-${{ github.sha }}
+          path: ${{ runner.temp }}/probe-*.txt
