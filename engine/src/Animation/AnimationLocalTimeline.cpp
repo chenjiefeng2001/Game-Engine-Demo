@@ -96,7 +96,7 @@ AnimationTrack& AnimationLocalTimeline::AddFloatTrack(const std::string& name) {
     return m_FloatTracks.back().track;
 }
 
-AnimationTrack* AnimationLocalTimeline::GetFloatTrack(const std::string& name) {
+    AnimationTrack* AnimationLocalTimeline::GetFloatTrack(const std::string& name) {
     for (auto& ft : m_FloatTracks) {
         if (ft.name == name) return &ft.track;
     }
@@ -110,8 +110,19 @@ const AnimationTrack* AnimationLocalTimeline::GetFloatTrack(const std::string& n
     return nullptr;
 }
 
-// ============================================================
-// 事件管理
+    const AnimationTrack* AnimationLocalTimeline::GetFloatTrackAt(size_t index) const {
+    if (index >= m_FloatTracks.size()) return nullptr;
+    return &m_FloatTracks[index].track;
+}
+
+    const std::string& AnimationLocalTimeline::GetFloatTrackNameAt(size_t index) const {
+    static const std::string kEmpty;
+    if (index >= m_FloatTracks.size()) return kEmpty;
+    return m_FloatTracks[index].name;
+}
+
+    // ============================================================
+    // 事件管理
 // ============================================================
 
 void AnimationLocalTimeline::AddEvent(const AnimationEvent& evt) {

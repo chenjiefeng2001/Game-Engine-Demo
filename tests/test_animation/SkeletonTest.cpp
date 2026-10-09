@@ -259,6 +259,8 @@ TEST(SkeletonTest, SkeletonIsNonCopyableButMovable)
 #include "Engine/Animation/AnimationKeyFrame.h"
 #include "Engine/Core/GameObject/GameObject.h"
 #include "Engine/Core/Scene/Scene.h"
+#include "Engine/Core/GameObject/ComponentRegistry_Go.h"
+#include <nlohmann/json.hpp>
 
 namespace {
 
@@ -390,4 +392,149 @@ TEST(SkinningRuntimeReachability, ComponentCacheMatchesSkeletonAfterUpdate)
         }
     }
     EXPECT_GT(cached[0](1, 3), 0.0f) << "pose must actually have moved off the bind pose";
+}
+// ===========================================================================
+// 契约组件克隆保真（Skinning）
+//
+// 这些测试走的是生产克隆路径：CaptureScene 只收编带稳定类型名的组件，
+// InstantiateScene 只重建已注册契约组件。任何一步缺失都会表现为克隆体
+// 没有蒙皮能力，而不是"JSON 看起来对"。
+// ===========================================================================
+
+namespace {
+
+// 构造带蒙皮网格的 rig，让克隆后仍能验证网格数据确实被搬运。
+std::shared_ptr<SkinnedMesh> MakeSkinnedMesh()
+{
+    std::vector<SkinnedVertex> verts;
+    verts.resize(2);
+    verts[0].position = Vec3(0.0f, 0.0f, 0.0f);
+    verts[1].position = Vec3(1.0f, 0.0f, 0.0f);
+    verts[0].boneIndices[0] = 0;
+    verts[0].boneWeights[0] = 1.0f;
+    verts[1].boneIndices[0] = 0;
+    verts[1].boneWeights[0] = 1.0f;
+    return std::make_shared<SkinnedMesh>(verts, std::vector<uint32>{ 0, 1, 0 });
+}
+
+}  // namespace
+
+// 1) 契约身份：没有稳定类型名，CaptureScene 会直接跳过该组件。
+TEST(SkinningContractClone, HasStableContractTypeName)
+{
+    SkinningComponent skin;
+    const char* tn = skin.GetComponentTypeName();
+    ASSERT_NE(tn, nullptr);
+    EXPECT_STREQ(tn, "Skinning");
+}
+
+// 2) 注册：没有注册，InstantiateScene 会报 unknown type 并跳过。
+TEST(SkinningContractClone, IsRegisteredAndCreatableByTypeName)
+{
+    EXPECT_TRUE(ComponentRegistryGo::IsRegistered("Skinning"));
+
+    std::shared_ptr<Component> made = ComponentRegistryGo::Create("Skinning");
+    ASSERT_NE(made, nullptr);
+    auto* skin = dynamic_cast<SkinningComponent*>(made.get());
+    ASSERT_NE(skin, nullptr) << "registry factory must produce a SkinningComponent";
+    EXPECT_STREQ(skin->GetComponentTypeName(), "Skinning");
+}
+
+// 3) 克隆不是共享：两个组件必须持有各自独立的骨架 / 网格 / 时间线。
+TEST(SkinningContractClone, RoundTripRebuildsIndependentStateNotSharedPointers)
+{
+    AnimatedSkinRig rig = MakeAnimatedRig();
+    auto mesh = MakeSkinnedMesh();
+
+    auto src = std::make_shared<GameObject>("src");
+    SkinningComponent* a = src->AddComponent<SkinningComponent>();
+    ASSERT_NE(a, nullptr);
+    a->SetSkeleton(rig.skeleton);
+    a->SetSkinnedMesh(mesh);
+    a->SetAnimation(rig.timeline);
+
+    nlohmann::json blob;
+    a->Serialize(blob);
+    ASSERT_FALSE(blob.empty());
+    ASSERT_TRUE(blob.contains("skeleton"));
+    ASSERT_TRUE(blob.contains("skinnedMesh"));
+    ASSERT_TRUE(blob.contains("animation"));
+
+    // 走生产路径：按类型名创建组件并反序列化
+    std::shared_ptr<Component> made = ComponentRegistryGo::Create("Skinning");
+    ASSERT_NE(made, nullptr);
+    auto* b = dynamic_cast<SkinningComponent*>(made.get());
+    ASSERT_NE(b, nullptr);
+    ASSERT_TRUE(b->Deserialize(blob));
+
+    // 骨架被重建，但必须是新对象
+    ASSERT_NE(b->GetSkeleton(), nullptr);
+    EXPECT_NE(b->GetSkeleton().get(), a->GetSkeleton().get())
+        << "clone must not share the source skeleton object";
+    EXPECT_EQ(b->GetSkeleton()->GetBoneCount(), a->GetSkeleton()->GetBoneCount());
+
+    // 蒙皮网格被重建，同样是新对象
+    ASSERT_NE(b->GetSkinnedMesh(), nullptr);
+    EXPECT_NE(b->GetSkinnedMesh().get(), a->GetSkinnedMesh().get())
+        << "clone must not share the source skinned mesh object";
+    EXPECT_EQ(b->GetSkinnedMesh()->GetVertexCount(), mesh->GetVertexCount());
+    EXPECT_EQ(b->GetSkinnedMesh()->GetIndexCount(), mesh->GetIndexCount());
+
+    // 动画时间线被重建
+    ASSERT_NE(b->GetAnimation(), nullptr);
+    EXPECT_NE(b->GetAnimation().get(), a->GetAnimation().get())
+        << "clone must not share the source timeline object";
+    EXPECT_FLOAT_EQ(b->GetAnimation()->GetDuration(),
+                    a->GetAnimation()->GetDuration());
+}
+
+// 4) 克隆体必须能继续推进动画，并产出有效蒙皮矩阵。
+TEST(SkinningContractClone, ClonedComponentContinuesAnimationAndProducesMatrices)
+{
+    AnimatedSkinRig rig = MakeAnimatedRig();
+    auto mesh = MakeSkinnedMesh();
+
+    auto src = std::make_shared<GameObject>("src");
+    SkinningComponent* a = src->AddComponent<SkinningComponent>();
+    a->SetSkeleton(rig.skeleton);
+    a->SetSkinnedMesh(mesh);
+    a->SetAnimation(rig.timeline);
+
+    nlohmann::json blob;
+    a->Serialize(blob);
+
+    auto cloned = std::make_shared<GameObject>("clone");
+    SkinningComponent* b = cloned->AddComponent<SkinningComponent>();
+    ASSERT_NE(b, nullptr);
+    ASSERT_TRUE(b->Deserialize(blob));
+
+    // 克隆体立即拥有与源一致的蒙皮矩阵数量
+    EXPECT_EQ(b->GetMatrixCount(), a->GetMatrixCount());
+    EXPECT_GT(b->GetMatrixCount(), 0u);
+
+    // 关键：克隆体挂进场景后能被场景帧更新驱动，产生变化的蒙皮矩阵
+    Scene scene;
+    scene.AddObject(cloned);
+
+    const float before = b->GetSkinningMatrices()[0](1, 3);
+    scene.Update(0.5f);
+    const float after = b->GetSkinningMatrices()[0](1, 3);
+
+    EXPECT_NE(before, after)
+        << "cloned component must keep animating off the bind pose";
+    EXPECT_GT(after, before)
+        << "root bone should keep moving along +Y after cloning";
+
+    // 矩阵必须仍然自洽（组件缓存 == 骨架真值）
+    const auto& cached = b->GetSkinningMatrices();
+    const auto& truth  = b->GetSkeleton()->GetSkinningMatrices();
+    ASSERT_EQ(cached.size(), truth.size());
+    for (size_t i = 0; i < cached.size(); ++i) {
+        for (int r = 0; r < 4; ++r) {
+            for (int c = 0; c < 4; ++c) {
+                EXPECT_NEAR(cached[i](r, c), truth[i](r, c), 1e-6f)
+                    << "cloned cache diverged from its own skeleton at bone " << i;
+            }
+        }
+    }
 }
