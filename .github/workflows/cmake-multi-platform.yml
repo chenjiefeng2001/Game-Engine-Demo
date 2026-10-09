@@ -343,3 +343,63 @@ jobs:
         name: Sandbox-${{ matrix.os }}-${{ matrix.c_compiler }}-${{ github.sha }}
         path: ${{ env.PACKAGE_PATH }}
         if-no-files-found: warn
+
+  # OpenGL capability probe.
+  #
+  # Deciding whether a Linux runner can host the GPU pixel verification needs
+  # measurement, not a version claim: a Mesa feature list is not evidence that a
+  # given context request succeeds on a given runner. This job compiles only
+  # GLFW and the system loader, so it produces evidence even while the engine
+  # build is blocked on Linux by the unrelated RHI portability defect. It works
+  # around nothing: it simply does not depend on that defect, and it changes no
+  # existing build or test gate.
+  #
+  # Two facts are recorded separately and must not be conflated: what a default
+  # context reports, and whether explicit 4.5 / 4.6 core contexts can be
+  # created. Only the second settles the question, because the production render
+  # window requests 4.6 core while the engine's highest real call requirement
+  # (DSA entry points on the buffer path) is 4.5.
+  #
+  # Results are reported rather than asserted, so "this runner cannot provide
+  # GL" is a usable answer rather than a failed job. Dispatch-only, so pushing
+  # to master does not gain any new CI time.
+  gl-capability-probe:
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install GLFW and Xvfb
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            build-essential libglfw3-dev xvfb mesa-utils
+
+      - name: Record the Mesa stack actually installed
+        run: |
+          echo "Mesa packages:"
+          dpkg -l | grep -Ei 'mesa|libgl1-mesa' | awk '{print "  " $2, $3}'
+
+      - name: Build the probe
+        run: |
+          g++ -std=c++17 -O1 tools/gl_capability_probe.cpp -o "$RUNNER_TEMP/glprobe" \
+            $(pkg-config --cflags --libs glfw3)
+
+      - name: Probe under Xvfb with Mesa llvmpipe
+        run: |
+          xvfb-run -a -s "-screen 0 1280x800x24" \
+            env LIBGL_ALWAYS_SOFTWARE=1 GALLIUM_DRIVER=llvmpipe XDG_SESSION_TYPE=x11 \
+            "$RUNNER_TEMP/glprobe" 2>&1 | tee "$RUNNER_TEMP/probe-llvmpipe.txt"
+
+      - name: Probe under Xvfb with default driver selection
+        run: |
+          xvfb-run -a -s "-screen 0 1280x800x24" \
+            env LIBGL_ALWAYS_SOFTWARE=1 XDG_SESSION_TYPE=x11 \
+            "$RUNNER_TEMP/glprobe" 2>&1 | tee "$RUNNER_TEMP/probe-default.txt"
+
+      - name: Upload probe output
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: GL-capability-probe-${{ github.sha }}
+          path: ${{ runner.temp }}/probe-*.txt
