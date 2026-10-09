@@ -20,6 +20,7 @@
 #include <Engine/Core/GameObject/MeshRendererComponent.h>
 #include <Engine/Core/GameObject/LightComponent.h>
 #include <Engine/Animation/SkinningComponent.h>
+#include <Engine/Animation/SkinnedMeshDraw.h>
 #include <Engine/Animation/Skeleton.h>
 #include <Engine/Animation/AnimationLocalTimeline.h>
 #include <Engine/Animation/AnimationKeyFrame.h>
@@ -388,6 +389,7 @@ protected:
     }
 
     // 从骨骼矩阵绘制一次。矩阵数量不足时不绘制，避免用未初始化数据出图。
+    // 绘制步骤本身走 DrawSkinnedMeshIndexed，与 headless 验证共用同一份实现。
     void RenderSkinnedGameObject(const std::shared_ptr<Mesh>& mesh,
                                  const Material& material,
                                  const Engine::SkinningComponent& skin,
@@ -397,25 +399,25 @@ protected:
         const auto& matrices = skin.GetSkinningMatrices();
         if (matrices.empty() || mesh->IndexCount == 0) return;
 
-        auto& shader = *material.ShaderProgram;
-        shader.Bind();
+        auto* oglCtx = static_cast<OpenGLContext*>(GetRenderContext());
+        if (!oglCtx) return;
+        auto& gl = oglCtx->GetGL();
 
         // 骨骼矩阵在模型空间生效，物体变换随后由 u_ViewProjection 施加。
         const glm::mat4 vpModel = vp * model;
-        shader.SetMat4("u_ViewProjection", glm::value_ptr(vpModel));
-
-        // 真实上传当前姿势矩阵，count 与实际骨骼数一致。
-        shader.SetMat4Array("u_BoneMatrices",
-                            matrices[0].Data(),
-                            static_cast<uint32>(matrices.size()));
-
-        mesh->VAO->Bind();
-        auto* oglCtx = static_cast<OpenGLContext*>(GetRenderContext());
-        if (oglCtx) {
-            oglCtx->GetGL().DrawElements(GL_TRIANGLES,
-                                         static_cast<int>(mesh->IndexCount),
-                                         GL_UNSIGNED_INT, nullptr);
+        Engine::Mat4 vpMat;
+        for (int col = 0; col < 4; ++col) {
+            for (int row = 0; row < 4; ++row) {
+                vpMat(row, col) = vpModel[col][row];
+            }
         }
+
+        Engine::DrawSkinnedMeshIndexed(
+            *material.ShaderProgram, *mesh->VAO, mesh->IndexCount, matrices, vpMat,
+            [this, &gl](uint32 indexCount) {
+                gl.DrawElements(GL_TRIANGLES, static_cast<int>(indexCount),
+                                GL_UNSIGNED_INT, nullptr);
+            });
     }
 
     void RenderGameObject(GameObject* obj,
