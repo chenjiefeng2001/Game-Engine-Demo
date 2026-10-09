@@ -19,6 +19,10 @@
 #include <Engine/Core/GameObject/SpriteComponent.h>
 #include <Engine/Core/GameObject/MeshRendererComponent.h>
 #include <Engine/Core/GameObject/LightComponent.h>
+#include <Engine/Animation/SkinningComponent.h>
+#include <Engine/Animation/Skeleton.h>
+#include <Engine/Animation/AnimationLocalTimeline.h>
+#include <Engine/Animation/AnimationKeyFrame.h>
 #include <Engine/Core/RenderResources/Shader.h>
 #include <Engine/Core/RenderResources/VertexArray.h>
 #include <Engine/Core/RenderResources/VertexBuffer.h>
@@ -84,7 +88,8 @@ protected:
                                       "assets/gp01/Main.scene");
             if (!gp01) m_Scene.reset();       // 回退演示场景
         }
-        if (!gp01) BuildTestScene();
+          if (!gp01) BuildTestScene();
+          AttachAnimatedSkinningActor();
 
         // S1 双 PIE 合一：菜单/工具栏的 Play/Stop 一律走 GP01 内容管线，
         // 引擎内置 PIE 从 UI 不可达（GP-DX-010 R1 三层叠加风险消除）
@@ -360,7 +365,59 @@ protected:
     // 场景构建
     // ═══════════════════════════════════════════════════════════════
 
-    void BuildTestScene() {
+    // ═══════════════════════════════════════════════════════════════
+    // Animation runtime 可达性（§8.10 之后的最小纵向切片）
+    // ═══════════════════════════════════════════════════════════════
+    //
+    // Animation 子系统此前在 engine 与 sandbox 中零外部引用。这里把一个
+    // **已完整实现**的 SkinningComponent 挂进演示场景，使既有链路真正被驱动：
+    //
+    //   EditorDemoApp::OnUpdate(dt)
+    //     -> EngineEditor::OnUpdate(dt)        （既有，未改动）
+    //       -> Scene::Update(dt)               （Play 状态下）
+    //         -> GameObject::Update(dt)
+    //           -> SkinningComponent::OnUpdate
+    //             -> 时间线推进 / 姿势求值 / 蒙皮矩阵缓存
+    //
+    // 本方法只负责**装配**，不新增任何逐帧调用 —— 驱动完全由既有 Play 路径完成。
+    //
+    // 边界：这里只让**姿势求值与蒙皮矩阵计算**进入产品帧循环。
+    // **骨骼网格的 GPU 蒙皮与渲染未接通**，不做任何相关声明。
+
+    void AttachAnimatedSkinningActor()
+    {
+        if (!m_Scene || m_AnimatedSkinActor) return;
+
+        auto skeleton = std::make_shared<Engine::Skeleton>();
+        {
+            Engine::Mat4 bind;
+            skeleton->AddRootBone("root", bind);
+            skeleton->AddBone("mid", "root", bind);
+            skeleton->AddBone("tip", "mid", bind);
+        }
+
+        auto timeline = std::make_shared<Engine::AnimationLocalTimeline>("EditorDemoLift");
+        auto& track = timeline->AddFloatTrack("root.position");
+        track.SetPropertyType(Engine::AnimationPropertyType::Vec3);
+        track.AddKeyFrame(Engine::KeyFrameVec3{ 0.0f, Engine::Vec3(0.0f, 0.0f, 0.0f) });
+        track.AddKeyFrame(Engine::KeyFrameVec3{ 1.0f, Engine::Vec3(0.0f, 0.5f, 0.0f) });
+        timeline->SetDuration(1.0f);
+        timeline->Play();
+
+        auto obj = std::make_shared<GameObject>("AnimatedSkinActor");
+        auto* skin = obj->AddComponent<SkinningComponent>();
+        if (!skin) return;
+        skin->SetSkeleton(skeleton);
+        skin->SetAnimation(timeline);
+
+        m_Scene->AddObject(obj);
+        m_AnimatedSkinActor      = obj;
+        m_AnimatedSkinSkeleton   = skeleton;
+        m_AnimatedSkinTimeline   = timeline;
+    }
+
+    void BuildTestScene()
+    {
         m_Scene = std::make_shared<Scene>("EditorDemoScene");
 
         // ── 方向光 ──
@@ -535,6 +592,10 @@ protected:
 private:
     EngineEditor m_Editor;
     std::shared_ptr<Scene> m_Scene;
+    // Animation runtime 可达性切片所持有的资源（须由 App 持有，避免被回收）
+    std::shared_ptr<GameObject>                m_AnimatedSkinActor;
+    std::shared_ptr<Engine::Skeleton>          m_AnimatedSkinSkeleton;
+    std::shared_ptr<Engine::AnimationLocalTimeline> m_AnimatedSkinTimeline;
 
     std::shared_ptr<Shader> m_SimpleShader;
     std::shared_ptr<Shader> m_BillboardShader;  // Billboard 着色器

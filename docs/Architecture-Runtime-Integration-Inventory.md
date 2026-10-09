@@ -70,7 +70,7 @@ ECS、Animation、`Core/RHI`、Scripting 四者都命中这个模式，且各自
 |---|---|---|---|
 | `test_io` | 202 | `test_gp01` | 22 |
 | `test_audio` | 112 | `test_ecs` | 21 |
-| `test_animation` | 111 | `test_renderer` | 9 |
+| `test_animation` | 114（原 111 + 本次新增 3，见 §5） | `test_renderer` | 9 |
 | `test_content` | 60 | `test_e2e` | 6 |
 | `test_physics` | 54 | `test_job` | 4 |
 | `test_bridge` | 50 | `test_core` | 43※ |
@@ -376,8 +376,8 @@ EditorDemo 运行后 worktree **tracked modified 仍为 0**；仅新增 gitignor
 
 | 项 | 状态 | 证据 |
 |---|---|---|
-| `SkinningComponent` | **UNREACHABLE** | 唯一 `Component` 子类，**全仓零实例化**（已 grep 验证，仅自身定义/实现） |
-| `AnimationManager`/`Pipeline`/`Instance` | **UNREACHABLE** | 调用方仅自身文件与 `tests/test_animation` |
+| `SkinningComponent` | **PARTIAL（本次变更）** | **已接入产品帧循环**：`EditorDemoApp::AttachAnimatedSkinningActor()` 实例化并挂入 `m_Scene`，由既有 `EngineEditor::OnUpdate → Scene::Update → GameObject::Update → OnUpdate` 在 Play 态驱动。**但仅姿势求值 + 蒙皮矩阵计算**；GPU 蒙皮/骨骼网格渲染**未接通**，不作声明 |
+| `AnimationManager`/`Pipeline`/`Instance` | **UNREACHABLE** | 调用方仅自身文件与 `tests/test_animation`；本次切片**未触及**这三个类（走的是 `AnimationLocalTimeline` + `SkinningComponent` 路径） |
 | `Scene`/`ECS` 接入 | **无** | `Scene.h`/`Scene.cpp` 零 animation 引用；无 animation ECS bridge |
 | IK（`IK.h`） | **UNREACHABLE** | 实现完整（CCD 等），但**无 in-repo consumer**；demo 走 `ConstraintSolver` |
 | 逐帧驱动 | sandbox only | `AnimationDemoApp` 是**独立类**，非 `Application` 子类，自持 `Run()` 循环 |
@@ -395,6 +395,43 @@ Lua 5.4（vendored，`third_party/lua`），sandbox 已裁剪 `io`/`package`/`re
 真实 host 是 editor bridge：`EditorSession::RuntimeTick(dt)` → `m_Inst.OnUpdate(dt)`，gated on `IsPlaying()`。C ABI 经 `capi.cpp`，Avalonia 侧由 `MainWindow.axaml.cs` pump。
 
 **COMMITTED vs HRC-3 差异**：`ScriptInstance` 的 `OnCreate`/`OnUpdate`/`OnFixedUpdate` 由 `void` 改为 **`bool`**、`OnDestroy` 改为幂等、失败时拆除 VM 并记录 `m_LastError` —— 全部 **uncommitted**。`tests/test_scripting/ScriptingMVPTest.cpp` 已消费这些新 API，故该测试的通过依赖未提交代码。
+
+### 5.1 Animation runtime 可达性切片（本次变更，2026-10-08）
+
+**动机**：Animation 有 6,634 LOC / 111 测试，但 `SkinningComponent`、`AnimationManager`、`AnimationPipeline`、`AnimationInstance` 在 engine 与 sandbox 中**零外部引用**。这类"已实现且已测试、但产品路径不经过"的面积是本审计的主要矛盾，故选它作为最小纵向切片。
+
+**逐跳核验结论：链路本身早已完整，断点只有一处 —— 从未实例化。**
+
+| 跳 | 位置 | 状态 |
+|---|---|---|
+Scene 帧更新 | `engine/src/Core/Scene/Scene.cpp:174` `obj->Update(dt)` | 既有 |
+GameObject 组件派发 | `engine/src/Core/GameObject/GameObject.cpp:155-163` → `comp->OnUpdate(dt)` | 既有 |
+`Component::OnUpdate` | `engine/include/Engine/Core/GameObject/Component.h:74` virtual | 既有 |
+`SkinningComponent::OnUpdate` | `engine/src/Animation/SkinningComponent.cpp` → `AdvanceAnimation` → `EvaluatePose` | **既有完整实现** |
+姿势求值 | `AnimationPose::EvaluateFromTimeline`（轨道契约 `"<Bone>.position"`）| 既有 |
+蒙皮矩阵 | `Skeleton::UpdateWorldPoses` → `GetSkinningMatrices`，组件缓存同步 | 既有 |
+**实例化** | —— | **原本缺失，本次补上** |
+
+**实施（2 文件）**：
+
+* `sandbox/src/EditorDemo/EditorDemoApp.h` —— 新增 `AttachAnimatedSkinningActor()`：构建 3 骨骼链 + `root.position` 时间线，挂 `SkinningComponent` 进 `m_Scene`。**只装配，不新增任何逐帧调用** —— 驱动完全由既有 `EngineEditor::OnUpdate → Scene::Update`（Play 态）完成，因此未触碰 HRC-3 拥有的 `EngineEditor.cpp` / `Application.cpp`。
+* `tests/test_animation/SkeletonTest.cpp` —— 新增 3 个行为用例（`SkinningRuntimeReachability.*`）。
+
+**测试断言的是行为，不是"构造成功"**：
+
+| 用例 | 断言 |
+|---|---|
+`PoseStaysAtBindPoseWithoutSceneUpdate` | 组件已挂进 Scene 但**未被驱动**时，姿势必须停在绑定姿势、时间线 localTime 为 0 —— 证明 Scene 是唯一推进来源 |
+`SceneUpdateDrivesPoseAndSkinningMatrices` | 逐帧 `Scene::Update` 后，时间线 localTime == 帧号×dt，root 蒙皮矩阵 Y 平移 == `t×5`（**真实跟随时间线数值**），子骨骼**刚性继承**父级位移（断言增量而非绝对常量，以免把测试绑死在 bind/inverse-bind 矩阵约定上）|
+`ComponentCacheMatchesSkeletonAfterUpdate` | 组件缓存矩阵与骨架逐元素一致，且 root 已离开绑定姿势 |
+
+**验证结果**：`all` 构建 exit=0 / 0 error / LNK2038=0；`test_animation` **114/114**（原 111 全绿 + 新增 3）；committed suite **13/13 连续两次**；gtest 总数 **699 → 702**。
+
+**边界（明确不宣称）**：
+
+* **未**接通骨骼网格的 **GPU 蒙皮 / 骨骼渲染** —— 本次只让姿势求值与蒙皮矩阵**计算**进入产品帧循环；上传与绘制仍是独立缺口。
+* **未**触及 `AnimationManager` / `AnimationPipeline` / `AnimationInstance` —— 它们**仍为 UNREACHABLE**，本切片走的是 `AnimationLocalTimeline` + `SkinningComponent` 路径。
+* **未**新增 capability guard，**未**改动 HRC-3 任何文件，**未**改动画语义或渲染语义。
 
 ---
 
@@ -421,7 +458,7 @@ Lua 5.4（vendored，`third_party/lua`），sandbox 已裁剪 `io`/`package`/`re
 | `PhysicsSystemManager` | **UNREACHABLE** | `CreateWorld3D`/`StepAll` 零调用方 |
 | `CreateWorld2D` | **STUB** | 返回 `nullptr` |
 | `PhysicsSyncSystem` / `RouteCollisionEvents` | **UNREACHABLE** | 零实例化，零 listener 注册 |
-| `SkinningComponent` | **UNREACHABLE** | 零实例化 |
+| `SkinningComponent` | **PARTIAL（本次变更）** | 已接入产品帧循环；GPU 蒙皮仍未接通（详见 §5） |
 | `AnimationManager`/`Pipeline`/`Instance` | **UNREACHABLE** | 零调用方 |
 | `IK` | **UNREACHABLE** | 零 consumer |
 | `PluginSystem` | **UNREACHABLE** | 零 consumer |
