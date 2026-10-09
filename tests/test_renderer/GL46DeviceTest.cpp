@@ -32,6 +32,8 @@
 #include "Engine/Core/RenderResources/VertexArray.h"
 #include "Engine/Core/RenderResources/VertexBuffer.h"
 #include "Engine/Core/RenderResources/IndexBuffer.h"
+#include "Engine/Animation/SkinnedMeshDraw.h"
+#include "Engine/Core/GameObject/MeshRendererComponent.h"
 #include "Engine/OpenGL/OpenGLGraphicsFactory.h"
 #include "Engine/OpenGL/OpenGLContext.h"
 
@@ -707,4 +709,106 @@ TEST(GLRunnerCapabilityProbe, ReportRunnerOpenGLCapability)
 
     std::fflush(stdout);
     glfwTerminate();
+}
+// ===========================================================================
+// 产品绘制分支的 headless 像素验证
+//
+// 这里**不复制**一份绘制流程，而是调用 EditorDemo 生产路径所用的同一个
+// Engine::DrawSkinnedMeshIndexed。区别只在于 indexed draw 的具体 GL 调用
+// 由本测试注入（生产环境由 OpenGLContext 提供），着色器绑定、uniform 上传
+// 与顶点数组绑定全部走产品函数。
+//
+// 证据边界：这里手动指定骨骼矩阵，因此只证明**渲染接入**（产品绘制分支能
+// 画出随骨骼姿势变化的正确像素），不证明 EditorDemo 的动画帧驱动已闭环。
+// ===========================================================================
+TEST_F(GPUSkinningPixelTest, ProductDrawBranchChangesPixelsWithPose)
+{
+    // 复用同一套 GPU fixture（真实 context + 离屏 FBO + 真实读回）
+    Rig rig = BuildRig();
+    ASSERT_NE(rig.shader, nullptr);
+    ASSERT_NE(rig.vao, nullptr);
+    ASSERT_NE(rig.shader->GetNativeHandle(), 0u)
+        << "skinned_lit must compile and link for the product draw path";
+
+    auto& gl = static_cast<OpenGLContext*>(s_Context.get())->GetGL();
+
+    // 走生产构建资源的那条路：Mesh 持有 VAO 与索引数
+    Engine::Mesh mesh(rig.vao, 6);
+
+    // 两根骨骼：0 号承载几何，1 号保持单位阵
+    const auto makeBones = [](float boneX, std::vector<Engine::Mat4>& out) {
+        out.assign(2, Engine::Mat4());
+        for (int i = 0; i < 16; ++i) {
+            out[0].Data()[i] = 0.0f;
+            out[1].Data()[i] = 0.0f;
+        }
+        out[0].Data()[0] = out[1].Data()[0] = 1.0f;
+        out[0].Data()[5] = out[1].Data()[5] = 1.0f;
+        out[0].Data()[10] = out[1].Data()[10] = 1.0f;
+        out[0].Data()[15] = out[1].Data()[15] = 1.0f;
+        out[0].Data()[12] = boneX;
+    };
+
+    const auto drawViaProductPath = [&](float boneX, GpuCapture& cap) -> bool {
+        glfwMakeContextCurrent(s_Window);
+        if (!EnsureFbo()) return false;
+        cap.w = FboWidth();
+        cap.h = FboHeight();
+        gl.BindFramebuffer(GL_FRAMEBUFFER, s_Fbo);
+        gl.Viewport(0, 0, cap.w, cap.h);
+        gl.ClearColor(0.0f, 0.0f, 0.0f, 1.0f);
+        gl.ClearDepth(0.0);
+        gl.Clear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+        gl.Enable(GL_DEPTH_TEST);
+
+        std::vector<Engine::Mat4> bones;
+        makeBones(boneX, bones);
+
+        Engine::Mat4 vp;
+        for (int i = 0; i < 16; ++i) vp.Data()[i] = 0.0f;
+        vp.Data()[0] = vp.Data()[5] = vp.Data()[10] = vp.Data()[15] = 1.0f;
+
+        // ↓↓↓ 产品绘制分支：EditorDemo 的 RenderSkinnedGameObject 调用的就是这个函数
+        const bool issued = Engine::DrawSkinnedMeshIndexed(
+            *rig.shader, *mesh.VAO, mesh.IndexCount, bones, vp,
+            [&gl](uint32 indexCount) {
+                gl.DrawElements(GL_TRIANGLES, static_cast<int>(indexCount),
+                                GL_UNSIGNED_INT, nullptr);
+            });
+        // ↑↑↑
+
+        gl.Finish();
+        cap.px.assign(static_cast<size_t>(cap.w) * cap.h * 4, 0);
+        gl.ReadPixels(0, 0, cap.w, cap.h, GL_RGBA, GL_UNSIGNED_BYTE, cap.px.data());
+        gl.BindFramebuffer(GL_FRAMEBUFFER, 0);
+        return issued;
+    };
+
+    GpuCapture bindPose;
+    ASSERT_TRUE(drawViaProductPath(0.0f, bindPose)) << "product draw must issue a draw";
+
+    GpuCapture movedPose;
+    ASSERT_TRUE(drawViaProductPath(0.5f, movedPose)) << "product draw must issue a draw";
+
+    const auto centreLit = [](const GpuCapture& c) {
+        int n = 0;
+        for (int y = 16; y < 48; ++y) {
+            for (int x = 16; x < 48; ++x) {
+                const size_t o = (static_cast<size_t>(y) * c.w + x) * 4;
+                if (c.px[o] + c.px[o + 1] + c.px[o + 2] > 30) ++n;
+            }
+        }
+        return n;
+    };
+
+    EXPECT_GT(centreLit(bindPose), 0) << "bind pose must cover the centre band";
+    EXPECT_GT(centreLit(movedPose), 0) << "moved pose must still cover the centre band";
+
+    // 姿态变化必须真实反映到像素上：整体像素必须不同
+    bool differs = false;
+    for (size_t i = 0; i < bindPose.px.size() && !differs; ++i) {
+        if (bindPose.px[i] != movedPose.px[i]) { differs = true; }
+    }
+    EXPECT_TRUE(differs)
+        << "product draw branch must produce different pixels for different poses";
 }
