@@ -22,6 +22,9 @@
 #include <vector>
 #include <filesystem>
 #include <string>
+// Runner OpenGL capability probe. glad/gl.h (not glad/glad.h) is what this
+// project vendors, and it provides the GladGLContext plus gladLoadGL.
+#include <glad/gl.h>
 // GPU skinning pixel verification uses the production graphics contract.
 #include "Engine/Core/IGraphicsFactory.h"
 #include "Engine/Core/IRenderContext.h"
@@ -587,4 +590,121 @@ TEST_F(GPUSkinningPixelTest, SkinnedProgramIsInUseAndBackgroundIsStable)
         }
     }
     EXPECT_TRUE(stable) << "background must be byte identical between the two draws";
+}
+
+// ---------------------------------------------------------------------------
+// Runner OpenGL capability probe.
+//
+// Reports what the runner can actually do, so the GLAD loader version question
+// is decided by measurement instead of by inference. Two facts are recorded
+// separately and must not be conflated:
+//
+//   1. what a default (no version hint) context reports, and
+//   2. whether an explicit 4.5 core context can be created at all.
+//
+// A default context reporting 4.5 does NOT prove a 4.5 core context can be
+// created. The probe never fails the build on capability grounds: it is a
+// measurement, and it must stay runnable on machines without a usable driver.
+// ---------------------------------------------------------------------------
+namespace glcap {
+
+static const char* SafeGetString(GladGLContext& gl, GLenum name)
+{
+    if (!gl.GetString) return "<no glGetString>";
+    const GLubyte* s = gl.GetString(name);
+    return s ? reinterpret_cast<const char*>(s) : "<null>";
+}
+
+// Returns true only if a core context of the requested version was created.
+static bool TryCreateCoreContext(int major, int minor, GLFWwindow** outWindow)
+{
+    glfwDefaultWindowHints();
+    glfwWindowHint(GLFW_CLIENT_API, GLFW_OPENGL_API);
+    glfwWindowHint(GLFW_CONTEXT_VERSION_MAJOR, major);
+    glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, minor);
+    glfwWindowHint(GLFW_OPENGL_PROFILE, GLFW_OPENGL_CORE_PROFILE);
+    glfwWindowHint(GLFW_VISIBLE, GLFW_FALSE);
+    GLFWwindow* w = glfwCreateWindow(64, 64, "GL capability probe", nullptr, nullptr);
+    if (!w) return false;
+    if (outWindow) *outWindow = w;
+    return true;
+}
+
+} // namespace glcap
+
+TEST(GLRunnerCapabilityProbe, ReportRunnerOpenGLCapability)
+{
+    if (!glfwInit()) {
+        std::printf("[GLPROBE] glfwInit failed; cannot probe\n");
+        GTEST_SKIP() << "glfwInit failed";
+    }
+
+    // --- Fact 1: what a default context reports -------------------------
+    glfwDefaultWindowHints();
+    glfwWindowHint(GLFW_CLIENT_API, GLFW_OPENGL_API);
+    glfwWindowHint(GLFW_VISIBLE, GLFW_FALSE);
+    GLFWwindow* defWindow = glfwCreateWindow(64, 64, "GL default probe", nullptr, nullptr);
+    if (!defWindow) {
+        std::printf("[GLPROBE] default context: CREATE FAILED\n");
+    } else {
+        glfwMakeContextCurrent(defWindow);
+        // Load into a local table the same way the engine does; glad/gl.h here
+        // is GLAD2, which exposes GladGLContext rather than global symbols.
+        GladGLContext probeGl;
+        std::memset(&probeGl, 0, sizeof(probeGl));
+        if (gladLoadGLContext(&probeGl, glfwGetProcAddress) == 0) {
+            std::printf("[GLPROBE] gladLoadGLContext returned 0 on the default context\n");
+        }
+        std::printf("[GLPROBE] === default context report ===\n");
+        std::printf("[GLPROBE] GL_VERSION                  = %s\n", glcap::SafeGetString(probeGl, GL_VERSION));
+        std::printf("[GLPROBE] GL_VENDOR                   = %s\n", glcap::SafeGetString(probeGl, GL_VENDOR));
+        std::printf("[GLPROBE] GL_RENDERER                 = %s\n", glcap::SafeGetString(probeGl, GL_RENDERER));
+        std::printf("[GLPROBE] GL_SHADING_LANGUAGE_VERSION = %s\n", glcap::SafeGetString(probeGl, GL_SHADING_LANGUAGE_VERSION));
+
+        GLint profileMask = 0;
+        // GetIntegerv returns void; a zeroed mask means the query did not
+        // produce a profile bit, which covers both "not queryable" and
+        // "reported no profile".
+        if (probeGl.GetIntegerv) {
+            probeGl.GetIntegerv(GL_CONTEXT_PROFILE_MASK, &profileMask);
+        }
+        if (profileMask != 0) {
+            const bool core   = (profileMask & GL_CONTEXT_CORE_PROFILE_BIT) != 0;
+            const bool compat = (profileMask & GL_CONTEXT_COMPATIBILITY_PROFILE_BIT) != 0;
+            std::printf("[GLPROBE] GL_CONTEXT_PROFILE_MASK     = 0x%x (%s%s)\n",
+                        profileMask,
+                        core ? "core" : "",
+                        compat ? " compatibility" : "");
+        } else {
+            std::printf("[GLPROBE] GL_CONTEXT_PROFILE_MASK     = <not queryable>\n");
+        }
+
+        // --- Fact 2: can an explicit 4.5 core context be created? --------
+        // The engine's GL46Device.cpp calls GL 4.5 DSA entry points
+        // (CreateBuffers, NamedBufferStorage, MapNamedBufferRange,
+        // NamedBufferSubData), so a 4.5 loader is the real lower bound and
+        // 4.5 creation is the fact that decides the handoff.
+        GLFWwindow* w45 = nullptr;
+        if (glcap::TryCreateCoreContext(4, 5, &w45)) {
+            glfwMakeContextCurrent(w45);
+            std::printf("[GLPROBE] 4.5 core context: CREATED, reports GL_VERSION = %s\n",
+                        glcap::SafeGetString(probeGl, GL_VERSION));
+            glfwDestroyWindow(w45);
+        } else {
+            std::printf("[GLPROBE] 4.5 core context: CREATE FAILED\n");
+        }
+        GLFWwindow* w46 = nullptr;
+        if (glcap::TryCreateCoreContext(4, 6, &w46)) {
+            std::printf("[GLPROBE] 4.6 core context: CREATED\n");
+            glfwDestroyWindow(w46);
+        } else {
+            std::printf("[GLPROBE] 4.6 core context: CREATE FAILED\n");
+        }
+
+        glfwMakeContextCurrent(nullptr);
+        glfwDestroyWindow(defWindow);
+    }
+
+    std::fflush(stdout);
+    glfwTerminate();
 }
