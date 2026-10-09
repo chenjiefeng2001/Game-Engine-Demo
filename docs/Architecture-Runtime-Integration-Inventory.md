@@ -3,9 +3,9 @@
 > **性质**：全仓审计产出的**事实性清单**，记录每个 subsystem 的 runtime 接入状态与证据。
 > **不含**：架构建议、方案推荐、待决策项。决策与恢复条件见 `docs/Pending-Decisions-Brief.md`。
 > **审计方式**：source reading only —— 未构建、未运行任何 target。
-> **基线**：`HEAD 781fe59`（local `avalonia`，已 push）；`origin/master` = `1a066ed`
+> **基线**：`HEAD 7d623ed`（local `avalonia`，已 push）；`origin/master` = `1a066ed`
 > **工作区**：56 tracked modified + 70 untracked（HRC-3），全文逐处区分 COMMITTED / UNCOMMITTED
-> **日期**：2026-10-06
+> **日期**：2026-10-06 建立；**2026-10-08 最小差异校准**（仅更新基线 SHA 与两处已变更的决策状态引用；判定本身未重审，`test_*` 用例数 699 仍以**实跑**为准，不按 grep 计数改写）
 
 ---
 
@@ -481,7 +481,7 @@ Lua 5.4（vendored，`third_party/lua`），sandbox 已裁剪 `io`/`package`/`re
 
 即 fresh checkout 会拿到一份**指向它并不拥有的 scene 文件**的 manifest。`EditorSession::OpenProject` 在缺 scene 时于 `EditorSession.cpp:131-132` 报 "scene load failed"。
 
-是否将夹具纳入版本控制**尚未决定**，见 Decision Brief。
+是否将夹具纳入版本控制**已正式立项并归 HRC owner**，见 Decision Brief **§8.10.3**（committed-tree fixture reproducibility defect）。
 
 ---
 
@@ -494,7 +494,7 @@ Lua 5.4（vendored，`third_party/lua`），sandbox 已裁剪 `io`/`package`/`re
 
 **明确避免的误读**："实现了但未接入" **不是** "待决策缺陷"。
 
-- 需要人决定的事项 → Decision Brief（例：§8 CI dependency/build-boundary OPEN、A1 ownership）
+- 需要人决定的事项 → Decision Brief（例：§8 CI dependency/build-boundary 的 **overall verification** 仍 OPEN，但其 **provenance chain 已 CLOSED**；committed-tree fixture reproducibility 已归 **HRC owner**）
 - 已实现但无接入方 → 本文档（例：§6 全部 UNREACHABLE surface）
 
 ---
