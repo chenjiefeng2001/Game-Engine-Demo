@@ -58,6 +58,19 @@
 
 `ebdddc3` 修复的正是 Animation 案例中"产品可达性"那一格，且刻意不新增逐帧调用 —— 由既有 `EngineEditor::OnUpdate → Scene::Update → GameObject::Update → OnUpdate` 完成驱动。
 
+**Animation 案例随后连续推进三格**（`a1e962a` → `748cc68` → `982d9ff`），当前状态：
+
+| 维度 | 状态 | 证据 |
+|---|---|---|
+| 实现 | ✅ 完整 | 姿势求值、蒙皮矩阵、GPU shader 均已存在 |
+| 产品可达性 | ✅ 组件可被生产场景持有 | `ebdddc3` 装配 `SkinningComponent`；`a1e962a` 使其进入**生产克隆契约** |
+| 输出消费 | ✅ **骨骼网格经产品路径绘制** | `748cc68` 在 `RenderGameObject()` 增加骨骼分支；`982d9ff` 抽出共用 `DrawSkinnedMeshIndexed` |
+| 行为验证 | ⚠️ **渲染接入已验证，帧驱动未闭环** | headless 产品路径像素证据通过（`test_renderer` 14/14）|
+
+**已验证的部分**：`SkinningComponent` 现在具备稳定契约身份并注册进 `ComponentRegistryGo`，Play 场景克隆不再丢弃蒙皮组件（`a1e962a`）；骨骼网格通过产品 `RenderGameObject()` 绘制，矩阵取自 `GetSkinningMatrices()`（`748cc68`）；产品与 headless 测试**共用同一份绘制实现**，真实 OpenGL context + 离屏 FBO 下区域级像素断言通过 —— 绑定姿势与位移姿势均有中心带覆盖且像素确实不同（`982d9ff`）。普通网格路径未回归。
+
+**仍未闭环的部分**：完整动画帧驱动。上述像素证据中的骨骼矩阵**由测试手动指定**，不来自 EditorDemo 的场景帧更新。因此"产品在真实编辑器视口中随时间播放动画"**不能标记为端到端完成**。阻断点属 HRC 所属的场景生命周期接线，见 §5.3。
+
 **该模型的使用方式**：审计时**逐维推进到最早断点**，然后做**最小纵向切片**把断点接上，而不是把所有未接线的类罗列成待办清单。接上之后该格的判定必须**改写**，并在 §5 记录证据。
 
 ---
@@ -94,7 +107,7 @@ ECS、Animation、`Core/RHI`、Scripting 四者都命中这个模式，且各自
 |---|---|---|---|
 | `test_io` | 202 | `test_gp01` | 22 |
 | `test_audio` | 112 | `test_ecs` | 21 |
-| `test_animation` | 114（原 111 + 本次新增 3，见 §5） | `test_renderer` | 9 |
+| `test_animation` | 118（原 111 + 3 可达性 + 4 克隆契约，见 §5） | `test_renderer` | 14 |
 | `test_content` | 60 | `test_e2e` | 6 |
 | `test_physics` | 54 | `test_job` | 4 |
 | `test_bridge` | 50 | `test_core` | 43※ |
@@ -400,7 +413,7 @@ EditorDemo 运行后 worktree **tracked modified 仍为 0**；仅新增 gitignor
 
 | 项 | 状态 | 证据 |
 |---|---|---|
-| `SkinningComponent` | **PARTIAL（本次变更）** | **已接入产品帧循环**：`EditorDemoApp::AttachAnimatedSkinningActor()` 实例化并挂入 `m_Scene`，由既有 `EngineEditor::OnUpdate → Scene::Update → GameObject::Update → OnUpdate` 在 Play 态驱动。**但仅姿势求值 + 蒙皮矩阵计算**；GPU 蒙皮/骨骼网格渲染**未接通**，不作声明 |
+| `SkinningComponent` | **PARTIAL → 渲染接入已验证，帧驱动未闭环** | 已接入产品帧循环（`ebdddc3`）；进入生产组件克隆契约（`a1e962a`）；骨骼网格经产品 `RenderGameObject()` 绘制（`748cc68`），与 headless 像素测试共用 `DrawSkinnedMeshIndexed`（`982d9ff`）。**完整动画帧驱动仍 OPEN** —— 像素证据中的骨骼矩阵由测试手动指定，不来自场景帧更新，见 §5.6 |
 | `AnimationManager`/`Pipeline`/`Instance` | **UNREACHABLE** | 调用方仅自身文件与 `tests/test_animation`；本次切片**未触及**这三个类（走的是 `AnimationLocalTimeline` + `SkinningComponent` 路径） |
 | `Scene`/`ECS` 接入 | **无** | `Scene.h`/`Scene.cpp` 零 animation 引用；无 animation ECS bridge |
 | IK（`IK.h`） | **UNREACHABLE** | 实现完整（CCD 等），但**无 in-repo consumer**；demo 走 `ConstraintSolver` |
@@ -503,6 +516,31 @@ OpenGLGraphicsFactory（加载 glad）→ CreateRenderContext → Init → OnRes
 #### 5.2.3 方法论印证
 
 本节是 §0.2 四维模型的直接应用：`04d9215` 在**实现**维度为真，但在**输出消费**与**行为验证**两维度为零。**只有强制"失败而不跳过"，shader 才第一次被真正编译** —— 走 SKIP 路径时它连编译机会都没有。同理，三个根因全部是"验证层前置条件"，而非生产缺陷，这一区分避免了把测试环境的坑记成产品缺陷。
+
+---
+
+### 5.6 产品绘制接入与残留的帧驱动接缝（`a1e962a` → `748cc68` → `982d9ff`）
+
+**接线链（全部在 clean 文件内完成）**：
+
+| 阶段 | 内容 |
+|---|---|
+`a1e962a` | `SkinningComponent` 获得稳定契约类型名、实现 `Serialize`/`Deserialize`、注册进 `ComponentRegistryGo`。此前 `CaptureScene` 因无类型名直接跳过该组件，`InstantiateScene` 亦不重建 —— **Play 克隆出的场景没有骨架、蒙皮网格与时间线** |
+`748cc68` | `EditorDemoApp::RenderGameObject()` 增加骨骼网格分支，矩阵取自 `GetSkinningMatrices()`；骨骼顶点布局走**独立 VAO**，不改变普通 `Mesh` 语义 |
+`982d9ff` | 抽出 `Engine::DrawSkinnedMeshIndexed`，`RenderSkinnedGameObject()` 与 headless 像素测试**共用同一份绘制实现**（着色器绑定、uniform 上传、VAO 绑定均在共用函数内；indexed draw 因需 GL 上下文而注入） |
+
+**已验证**：真实 OpenGL context + 离屏 FBO + 区域级像素断言下，产品绘制分支在绑定姿势与位移姿势均有中心带覆盖且像素确实不同。`test_renderer` 14/14，committed suite 13/13，普通网格无回归。
+
+**证据边界**：测试**手动指定骨骼矩阵**，因此这只证明**渲染接入**，不证明帧驱动。
+
+**仍 OPEN —— 场景生命周期接缝（HRC 所属，未修改）**：
+
+| 模式 | 当前更新场景 | 当前绘制场景 |
+|---|---|---|
+Edit | **不调用** `Scene::Update` | `m_EditScene` |
+Play | `m_EditScene` | `m_Runtime` |
+
+后果：Edit 态可见网格但姿势不动；Play 态动画推进与画面绘制分属两个场景对象。修复需改动 HRC-dirty 的 `EngineEditor.cpp`（`OnUpdate` 的 scene 来源与播放门控）。**不得**简单地把 `Scene::Update(dt)` 无条件加入 Edit 模式 —— 它会同时驱动脚本、物理等系统，改变编辑器既有语义。正确语义由 owner 裁定，详见 `docs/Handoff-Scene-Lifecycle-For-Animation.md`。
 
 ---
 
