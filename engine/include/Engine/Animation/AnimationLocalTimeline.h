@@ -117,6 +117,13 @@ namespace Engine {
         AnimationTrack* GetFloatTrack(const std::string& name);
         const AnimationTrack* GetFloatTrack(const std::string& name) const;
 
+        // ── 命名轨道枚举 ──
+        // 契约组件序列化需要按序遍历全部命名轨道；此前只有按名查找，
+        // 导致外部无法完整还原时间线（只能凭名字猜）。
+        size_t GetFloatTrackCount() const noexcept { return m_FloatTracks.size(); }
+        const AnimationTrack* GetFloatTrackAt(size_t index) const;
+        const std::string& GetFloatTrackNameAt(size_t index) const;
+
         // ── 事件管理 ──
         void AddEvent(const AnimationEvent& evt);
         void ClearEvents();

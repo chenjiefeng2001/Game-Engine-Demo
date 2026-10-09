@@ -120,6 +120,16 @@ namespace Engine {
         void SetVisible(bool visible) noexcept { m_Visible = visible; }
         bool IsVisible() const noexcept { return m_Visible; }
 
+        // ── 契约组件持久化身份 ──
+        // 参与 SceneSerializerV1 的组件克隆：没有稳定类型名时 CaptureScene
+        // 会直接跳过该组件，Play 克隆出来的场景就没有蒙皮能力。
+        const char* GetComponentTypeName() const override { return "Skinning"; }
+        void Serialize(nlohmann::json& json) const override;
+        bool Deserialize(const nlohmann::json& json) override;
+
+        /** 注册到 ComponentRegistryGo，供 InstantiateScene 重建（.cpp 内定义） */
+        static void Register();
+
     private:
         std::shared_ptr<Skeleton>                m_Skeleton;
         std::shared_ptr<SkinnedMesh>             m_SkinnedMesh;
