@@ -233,3 +233,161 @@ TEST(SkeletonTest, SkeletonIsNonCopyableButMovable)
                   "Skeleton must be movable");
     SUCCEED();
 }
+
+// ═══════════════════════════════════════════════════════════════
+// P5: SkinningComponent 的 runtime 可达性（Scene 驱动的纵向切片）
+// ═══════════════════════════════════════════════════════════════
+//
+// 背景：Animation 子系统 6634 LOC / 111 测试，但 AnimationManager /
+// Pipeline / Instance / SkinningComponent 在 engine 与 sandbox 中
+// **零外部引用**（UNREACHABLE）。本组用例锁定的是那条**已经存在、
+// 只是从不被触发**的链路：
+//
+//   Scene::Update(dt)            engine/src/Core/Scene/Scene.cpp:174
+//     -> GameObject::Update(dt)  engine/src/Core/GameObject/GameObject.cpp:155
+//       -> Component::OnUpdate(dt)
+//         -> SkinningComponent::OnUpdate -> AdvanceAnimation
+//           -> timeline.AdvanceTime -> EvaluateFromTimeline
+//             -> Skeleton::UpdateWorldPoses -> GetSkinningMatrices
+//
+// 断言依据是**行为**而非"构造成功"：同一时间线在**不驱动** Scene 时
+// 骨骼姿势必须保持绑定姿势；只有 Scene::Update 推进后，蒙皮矩阵才必须
+// 真实跟随时间线数值变化。缺了后半句，这个用例就退化成"能构造"。
+
+#include "Engine/Animation/SkinningComponent.h"
+#include "Engine/Animation/AnimationLocalTimeline.h"
+#include "Engine/Animation/AnimationKeyFrame.h"
+#include "Engine/Core/GameObject/GameObject.h"
+#include "Engine/Core/Scene/Scene.h"
+
+namespace {
+
+// 构造 3 骨骼链 root -> mid -> tip，并让 root 在 1 秒内沿 +Y 从 0 移到 5。
+struct AnimatedSkinRig {
+    std::shared_ptr<Skeleton>       skeleton;
+    std::shared_ptr<AnimationLocalTimeline> timeline;
+};
+
+AnimatedSkinRig MakeAnimatedRig()
+{
+    AnimatedSkinRig rig;
+
+    auto skel = std::make_shared<Skeleton>();
+    skel->AddRootBone("root", Translation(0, 0, 0));
+    skel->AddBone("mid", "root", Translation(0, 1, 0));
+    skel->AddBone("tip", "mid", Translation(0, 1, 0));
+    rig.skeleton = skel;
+
+    auto tl = std::make_shared<AnimationLocalTimeline>("lift");
+    // 轨道命名契约见 AnimationPose::EvaluateFromTimeline：
+    // "<BoneName>.position"，且按 Vec3 求值。
+    AnimationTrack& track = tl->AddFloatTrack("root.position");
+    track.SetPropertyType(AnimationPropertyType::Vec3);
+    track.AddKeyFrame(KeyFrameVec3{ 0.0f, Vec3(0.0f, 0.0f, 0.0f) });
+    track.AddKeyFrame(KeyFrameVec3{ 1.0f, Vec3(0.0f, 5.0f, 0.0f) });
+    tl->SetDuration(1.0f);
+    tl->Play();
+    rig.timeline = tl;
+
+    return rig;
+}
+
+}  // namespace
+
+// 1) 场景驱动是唯一的推进来源：不调用 Scene::Update，姿势必须停在绑定姿势。
+TEST(SkinningRuntimeReachability, PoseStaysAtBindPoseWithoutSceneUpdate)
+{
+    AnimatedSkinRig rig = MakeAnimatedRig();
+
+    auto obj = std::make_shared<GameObject>("animated");
+    SkinningComponent* attached = obj->AddComponent<SkinningComponent>();
+    ASSERT_NE(attached, nullptr);
+    attached->SetSkeleton(rig.skeleton);
+    attached->SetAnimation(rig.timeline);
+
+    Scene scene;
+    scene.AddObject(obj);
+
+    // 组件已挂进 Scene，但尚未有任何一帧被驱动。
+    ASSERT_EQ(scene.GetObjectCount(), 1u);
+    ASSERT_TRUE(attached->GetSkeleton() != nullptr);
+
+    const Mat4& m = rig.skeleton->GetSkinningMatrices()[0];
+    EXPECT_NEAR(m(1, 3), 0.0f, 1e-4f) << "root must remain at bind pose until the scene ticks";
+    EXPECT_NEAR(rig.timeline->GetLocalTime(), 0.0f, 1e-6f);
+}
+
+// 2) 核心行为：Scene::Update 真实推进动画，蒙皮矩阵跟随时间线数值。
+TEST(SkinningRuntimeReachability, SceneUpdateDrivesPoseAndSkinningMatrices)
+{
+    AnimatedSkinRig rig = MakeAnimatedRig();
+
+    auto obj = std::make_shared<GameObject>("animated");
+    SkinningComponent* skin = obj->AddComponent<SkinningComponent>();
+    ASSERT_NE(skin, nullptr);
+    skin->SetSkeleton(rig.skeleton);
+    skin->SetAnimation(rig.timeline);
+
+    Scene scene;
+    scene.AddObject(obj);
+
+    const float dt = 0.1f;
+    float prevRootY = 0.0f;
+    float prevTipY  = rig.skeleton->GetSkinningMatrices()[2](1, 3);
+
+    for (int frame = 1; frame <= 5; ++frame) {
+        scene.Update(dt);
+
+        const float expectedTime = static_cast<float>(frame) * dt;
+        EXPECT_NEAR(rig.timeline->GetLocalTime(), expectedTime, 1e-4f)
+            << "Scene::Update must advance the timeline on frame " << frame;
+
+        // 时间线为 0->5 的线性位移，故 root 的蒙皮矩阵 Y 平移应同步为 t*5。
+        const Mat4& m = rig.skeleton->GetSkinningMatrices()[0];
+        const float rootY = m(1, 3);
+        EXPECT_NEAR(rootY, expectedTime * 5.0f, 1e-3f)
+            << "skinning matrix must track the timeline, not just exist";
+
+        // 子骨骼必须同样离开绑定姿势，并且**刚性地**继承父级位移：
+        // 每帧增量与 root 的增量相同。这里刻意断言增量而非绝对常量 ——
+        // 绝对值取决于 bind/inverse-bind 的矩阵约定，断言它会把测试
+        // 绑死在约定细节上；增量才是"层级组合确实发生了"的证据。
+        const Mat4& tip = rig.skeleton->GetSkinningMatrices()[2];
+        const float tipY = tip(1, 3);
+        EXPECT_NEAR(tipY - prevTipY, rootY - prevRootY, 1e-3f)
+            << "child bone must inherit parent motion rigidly on frame " << frame;
+
+        prevRootY = rootY;
+        prevTipY  = tipY;
+    }
+}
+
+// 3) 组件缓存必须与骨架一致（EvaluatePose 的最后一步是同步缓存）。
+TEST(SkinningRuntimeReachability, ComponentCacheMatchesSkeletonAfterUpdate)
+{
+    AnimatedSkinRig rig = MakeAnimatedRig();
+
+    auto obj = std::make_shared<GameObject>("animated");
+    SkinningComponent* skin = obj->AddComponent<SkinningComponent>();
+    ASSERT_NE(skin, nullptr);
+    skin->SetSkeleton(rig.skeleton);
+    skin->SetAnimation(rig.timeline);
+
+    Scene scene;
+    scene.AddObject(obj);
+    scene.Update(0.25f);
+
+    const auto& cached = skin->GetSkinningMatrices();
+    const auto& truth  = rig.skeleton->GetSkinningMatrices();
+    ASSERT_EQ(cached.size(), truth.size());
+    ASSERT_FALSE(cached.empty());
+    for (size_t i = 0; i < cached.size(); ++i) {
+        for (int r = 0; r < 4; ++r) {
+            for (int c = 0; c < 4; ++c) {
+                EXPECT_NEAR(cached[i](r, c), truth[i](r, c), 1e-6f)
+                    << "component cache diverged from skeleton at bone " << i;
+            }
+        }
+    }
+    EXPECT_GT(cached[0](1, 3), 0.0f) << "pose must actually have moved off the bind pose";
+}
