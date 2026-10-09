@@ -1,4 +1,9 @@
-#version 430 core
+#version 330 core
+// GLSL 330 不允许在顶点着色器输入上使用 layout(location=)，
+// 需要显式启用 ARB_separate_shader_objects（或改用 #version 410）。
+// 本 shader 用到的能力（uniform 数组、四骨骼加权、属性 location、离屏绘制）
+// 全部在 3.3 可用，故保留 330 并启用该扩展，而不是抬到 410/430。
+#extension GL_ARB_separate_shader_objects : enable
 
 // GPU 蒙皮顶点着色器（生产路径）
 //

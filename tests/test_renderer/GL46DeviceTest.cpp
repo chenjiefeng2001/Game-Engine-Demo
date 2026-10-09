@@ -20,6 +20,7 @@
 #include <cstdio>
 #include <cstddef>
 #include <vector>
+#include <filesystem>
 #include <string>
 // GPU skinning pixel verification uses the production graphics contract.
 #include "Engine/Core/IGraphicsFactory.h"
@@ -39,8 +40,14 @@ protected:
     static void SetUpTestSuite() {
         if (!glfwInit()) { return; }
         glfwWindowHint(GLFW_VISIBLE, GLFW_FALSE);
-        glfwWindowHint(GLFW_CONTEXT_VERSION_MAJOR, 4);
-        glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, 6);
+        // Deliberately requests 3.3 core rather than 4.6 with a fallback.
+        // Nothing in this verification needs a 4.6 feature: the uniform array,
+        // the four bone weighted blend, explicit attribute locations and the
+        // offscreen draw are all available at 3.3. Asking for the minimum keeps
+        // the local and CI execution paths identical, and the runner was
+        // observed refusing a 4.6 core context outright.
+        glfwWindowHint(GLFW_CONTEXT_VERSION_MAJOR, 3);
+        glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, 3);
         glfwWindowHint(GLFW_OPENGL_PROFILE, GLFW_OPENGL_CORE_PROFILE);
         s_Window = glfwCreateWindow(1, 1, "GL46Test", nullptr, nullptr);
         if (!s_Window) { glfwTerminate(); return; }
@@ -323,6 +330,23 @@ protected:
             << "render context creation failed; GPU skinning verification cannot be skipped";
     }
 
+    // Locates the repository asset root so the shaders resolve whether the
+    // process runs from the repo root or from the CMake test binary directory
+    // (CI runs ctest with the working directory set to the build output dir).
+    static std::string ResolveShaderPath(const char* relative)
+    {
+        std::error_code ec;
+        std::filesystem::path dir = std::filesystem::current_path(ec);
+        for (int i = 0; i < 8 && !dir.empty(); ++i) {
+            std::filesystem::path candidate = dir / relative;
+            if (std::filesystem::exists(candidate)) {
+                return candidate.string();
+            }
+            dir = dir.parent_path();
+        }
+        return std::string(relative);
+    }
+
     struct Rig {
         std::shared_ptr<Shader>      shader;
         std::shared_ptr<VertexArray> vao;
@@ -348,8 +372,8 @@ protected:
         }
         uint32 idx[6] = { 0, 1, 2, 2, 3, 0 };
 
-        rig.shader = s_Factory->CreateShader("assets/shaders/skinned_lit.vert",
-                                             "assets/shaders/skinned_lit.frag");
+        rig.shader = s_Factory->CreateShader(ResolveShaderPath("assets/shaders/skinned_lit.vert"),
+                                             ResolveShaderPath("assets/shaders/skinned_lit.frag"));
         auto vb = s_Factory->CreateVertexBuffer(
             reinterpret_cast<float*>(verts.data()),
             static_cast<uint32>(verts.size() * sizeof(GpuSkinVertex)));
@@ -457,8 +481,8 @@ protected:
         EXPECT_NE(rig.shader, nullptr);
         if (rig.shader && rig.shader->GetNativeHandle() == 0u) {
             GpuDumpShaderLogs(static_cast<OpenGLContext*>(s_Context.get())->GetGL(),
-                              "assets/shaders/skinned_lit.vert",
-                              "assets/shaders/skinned_lit.frag");
+                              ResolveShaderPath("assets/shaders/skinned_lit.vert").c_str(),
+                              ResolveShaderPath("assets/shaders/skinned_lit.frag").c_str());
         }
         // Shader failure must FAIL the test, not pass quietly.
         EXPECT_NE(rig.shader ? rig.shader->GetNativeHandle() : 0u, 0u)
