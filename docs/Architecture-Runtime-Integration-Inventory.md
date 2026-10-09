@@ -459,6 +459,53 @@ GameObject 组件派发 | `engine/src/Core/GameObject/GameObject.cpp:155-163` �
 
 ---
 
+### 5.2 GPU 蒙皮像素验证（`04d9215` → `eff794d`，2026-10-08）
+
+`04d9215` 只提供了渲染契约（矩阵数组 uniform + skinned shader 对），**shader 从未被编译、从未被绘制**。`eff794d` 用真实像素证据闭合该缺口。
+
+**验证链（全程生产路径）**：
+
+```
+OpenGLGraphicsFactory（加载 glad）→ CreateRenderContext → Init → OnResize
+  → CreateShader(skinned_lit.vert/.frag)
+  → CreateVertexBuffer / CreateIndexBuffer / CreateVertexArray
+  → VertexArray::AddVertexBuffer(自定义布局) + SetIndexBuffer
+  → Shader::SetMat4Array("u_BoneMatrices", …)
+  → IRenderContext::DrawIndexed
+  → 离屏 FBO 读回 → 区域级像素断言
+```
+
+**像素证据**（本机 RTX，64×64 离屏）：
+
+| 姿势 | centre | left | right | total |
+|---|---|---|---|---|
+绑定姿势 | **784** | **0** | **0** | 784 |
+骨骼 +X 位移后 | 140 | **0** | **448** | 588 |
+
+绑定姿势下几何只在中央带；位移后**右侧带出现 448 个亮像素、左侧带保持 0、中央带由 784 降至 140** —— 骨骼位移改变了几何覆盖区域，而非无关渲染差异。
+
+**三级验收**：三个用例分别断言区域基线、区域变化、以及**排除假阳性**（解析 `u_BoneMatrices` uniform 与 `a_BoneWeights` attribute 确认 skinned program 确实在用；背景在两帧间逐字节相同）。**拿不到 context / shader 编译失败 / readback 不可用一律 FAIL，不 SKIP。**
+
+#### 5.2.1 三个根因的分类（性质不同，不可混为一谈）
+
+| 根因 | 分类 | 证据与处置 |
+|---|---|---|
+**`u_BoneMatrices` 放在 `std140` uniform block 内** | **已修复的生产 shader 契约缺陷** | uniform block 成员**无法按名寻址** —— `GetUniformLocation` 实测返回 **-1**，导致 `SetMat4Array` 静默无效、什么都不画。改为普通 uniform（`fd767fa`），与引擎既有 `u_ViewProjection` 一致 |
+**GL 操作要求有 context 处于 current** | **OpenGL 生命周期 / 调用前置条件** | factory 构造函数创建并销毁自己的临时 context 以加载 glad，之后**无 context current**，所有 GL 调用静默 no-op —— 表现为**合法 shader 报 0 字节日志**。属**测试 fixture 未建立状态**；生产路径由 `GlfwWindow` 持有 current context，未发现生产链漏建 |
+**`OpenGLContext` 尺寸依赖 `OnResize`，未设置时 readback/viewport 为 0** | **生命周期与尺寸初始化契约** | 未调用时 viewport 与 readback 均为 **0×0**，像素全零。**生产路径已保证初始化**：`GlfwWindow.cpp:80` 在 resize 时调用 `ctx->OnResize`，`EngineEditor.cpp:161` 同样调用。**故这是 fixture 未建立状态，不是生产缺陷** —— 不因测试需要调用 `OnResize` 就判定生产链有缺陷 |
+
+#### 5.2.2 附带发现：隐藏窗口的默认帧缓冲不可用于确定性验证
+
+读取隐藏窗口的 framebuffer 0 时，**未被绘制覆盖的区域返回未初始化内存**，表现为"亮像素"在每一列均匀分布（16 列带 → 154、32 列带 → 308），与真实几何无法区分。因此验证改用**私有 FBO**：`CaptureFrameBuffer` 内部强制 `BindFramebuffer(GL_FRAMEBUFFER, 0)`，不适用于离屏目标，读回改由测试直接对 FBO 执行。
+
+> **这不是 `CaptureFrameBuffer` 的缺陷** —— 它服务于"从默认后备缓冲读 UI 合成结果"这一既定用途，强制 framebuffer 0 是正确行为。仅当把它当作通用离屏读回接口使用时才不适用。
+
+#### 5.2.3 方法论印证
+
+本节是 §0.2 四维模型的直接应用：`04d9215` 在**实现**维度为真，但在**输出消费**与**行为验证**两维度为零。**只有强制"失败而不跳过"，shader 才第一次被真正编译** —— 走 SKIP 路径时它连编译机会都没有。同理，三个根因全部是"验证层前置条件"，而非生产缺陷，这一区分避免了把测试环境的坑记成产品缺陷。
+
+---
+
 ## 6. UNREACHABLE surface 汇总
 
 以下 surface 均**实现存在但当前不可达**。它们的共同点是：既非缺陷（无人观察其行为），也非缺功能（代码已写），而是**处置权属于产品/架构意图**。
