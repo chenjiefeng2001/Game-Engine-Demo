@@ -217,15 +217,76 @@ local-only check. Two decisions are now separable.
 
 ### RHI owner — make the Linux build boundary correct
 
-Decide how to handle `RHIWindow.cpp`'s Windows-only dependency so the Linux build
-can produce `test_renderer`. Either guard the Win32 include and the native window
-access, or split `src/RHI/*.cpp` per platform in `engine/CMakeLists.txt` the way
-`src/D3D12/*.cpp` already is.
-
 This is a build boundary fix, not a way to make a GPU job green. `RHIWindow`
 cannot function on Linux today, and the OpenGL path the pixel tests use is
-unaffected by it. Files involved: `engine/src/RHI/RHIWindow.cpp`,
-`engine/CMakeLists.txt`.
+unaffected by it.
+
+#### Scope is exactly one file, and it is the only unguarded one
+
+Nine files inside the `EngineCore` source globs include `windows.h` or
+`GLFW/glfw3native.h`. **Eight of them are already guarded**, including
+`src/Platform/GlfwWindow.cpp`, which uses this pattern:
+
+```cpp
+#ifdef _WIN32
+#define GLFW_EXPOSE_NATIVE_WIN32
+#include <GLFW/glfw3native.h>
+#define NOMINMAX
+#include <windows.h>
+#endif
+```
+
+`src/RHI/RHIWindow.cpp` is the **only** one without such a guard. The fix
+therefore follows an existing convention in this codebase rather than
+introducing a new one. `engine/CMakeLists.txt` needs no change, and no source
+file is excluded: `src/RHI/*.cpp` stays compiled into `EngineCore` on every
+platform.
+
+#### The native handle contract is already portable
+
+No header change is required. `RHIWindow.h:63` declares
+`void* GetHWND() const noexcept` and `RHIWindow.h:75` declares
+`void* m_HWND = nullptr`. The Windows-ness lives only in the acquisition, and
+the acquisition has exactly one site.
+
+#### Patch
+
+In `engine/src/RHI/RHIWindow.cpp`, near lines 22–23, guard only the Win32-only
+symbols. Do **not** move the generic `GLFW/glfw3.h` include inside the guard.
+
+```cpp
+#if defined(_WIN32)
+#define GLFW_EXPOSE_NATIVE_WIN32
+#include <GLFW/glfw3native.h>
+#endif
+```
+
+Near line 57, guard the acquisition. Keep the explicit `#else` so the
+non-Windows value does not depend on member initialisation happening to apply:
+
+```cpp
+#if defined(_WIN32)
+    m_HWND = glfwGetWin32Window(m_Window);
+#else
+    m_HWND = nullptr;
+#endif
+```
+
+`GetHWND()` and the `m_HWND` type stay unchanged, so D3D12 consumers see no
+behavioural difference on Windows.
+
+#### Acceptance for the owner
+
+1. Linux from-scratch build of the full `all` target from a clean checkout, with
+   no reliance on a previous `EngineCore`.
+2. The four GPU pixel cases actually execute and pass under Xvfb plus Mesa
+   llvmpipe. A probe reporting success, a SKIP, or a `0 ms` failure does not
+   count.
+3. Windows regression: `glfwGetWin32Window()` still populates `m_HWND` and the
+   D3D12 usage of it is unchanged.
+4. Source boundary: the change is applied inside the owner's own working tree. It
+   must not pull unrelated uncommitted RHI work into the commit, and must not
+   change `RHIWindow.h`, CMake, or the all-target gate.
 
 ### Verification environment owner — run the pixel tests once the build works
 
