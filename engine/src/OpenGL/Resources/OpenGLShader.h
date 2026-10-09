@@ -19,6 +19,7 @@ namespace Engine {
 		virtual void Bind() const override;
 		virtual void Unbind() const override;
 		virtual void SetMat4(const std::string& name, const float32* data) override;
+		virtual void SetMat4Array(const std::string& name, const float32* data, int count) override;
 		virtual void SetVec2(const std::string& name, const float32* data) override;
 		virtual void SetVec3(const std::string& name, const float32* data) override;
 		virtual void SetVec4(const std::string& name, const float32* data) override;

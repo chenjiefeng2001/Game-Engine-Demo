@@ -256,6 +256,13 @@ namespace Engine {
             m_GL.UniformMatrix4fv(location, 1, GL_FALSE, data);
     }
 
+void OpenGLShader::SetMat4Array(const std::string& name, const float* data, int count) {
+    if (count <= 0) return;
+    GLint location = m_GL.GetUniformLocation(m_RendererID, name.c_str());
+    if (location != -1)
+        m_GL.UniformMatrix4fv(location, count, GL_FALSE, data);
+}
+
     void OpenGLShader::SetVec2(const std::string& name, const float* data) {
         GLint location = m_GL.GetUniformLocation(m_RendererID, name.c_str());
         if (location != -1)
