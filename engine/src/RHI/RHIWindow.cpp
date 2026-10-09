@@ -17,8 +17,10 @@
 #include <GLFW/glfw3.h>
 #include <cstdio>
 
+#if defined(_WIN32)
 #define GLFW_EXPOSE_NATIVE_WIN32
 #include <GLFW/glfw3native.h>
+#endif
 
 namespace Engine { namespace RHI {
 
@@ -48,7 +50,12 @@ RHIWindow::RHIWindow(int width, int height, const std::string& title, RHIBackend
         return;
     }
 
-    m_HWND = glfwGetWin32Window(m_Window);
+#if defined(_WIN32)
+        m_HWND = glfwGetWin32Window(m_Window);
+#else
+        // 非 Windows 平台没有 Win32 句柄。显式置空，不依赖成员初始化。
+        m_HWND = nullptr;
+#endif
 
     std::printf("  [RHIWindow] Created %dx%d window (backend=%d)\n",
                 width, height, static_cast<int>(backend));
