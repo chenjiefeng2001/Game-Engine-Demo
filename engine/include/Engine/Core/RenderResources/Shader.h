@@ -37,6 +37,10 @@ namespace Engine {
 
         // ⚠️ RHI 原则：使用 float* 传递矩阵，彻底隔离第三方库
         virtual void SetMat4(const std::string& name, const float* data) = 0;
+
+    // Uniform 数组（如 GPU 蒙皮的骨骼矩阵 u_BoneMatrices[N]）。
+    // SetMat4 固定按 count=1 上传，无法表达数组；骨骼蒙皮必须一次送入整组矩阵。
+    virtual void SetMat4Array(const std::string& name, const float* data, int count) = 0;
         virtual void SetVec2(const std::string& name, const float* data) = 0;
         virtual void SetVec3(const std::string& name, const float* data) = 0;
         virtual void SetVec4(const std::string& name, const float* data) = 0;
