@@ -317,6 +317,107 @@ protected:
         }
     }
 
+    // ═══════════════════════════════════════════════════════════════
+    // GPU 蒙皮绘制分支
+    //
+    // 顶点布局与 assets/shaders/skinned_lit.* 一致（location 0..5）。
+    // skinned_lit 的顶点着色器没有 u_Model，蒙皮在模型空间完成，因此
+    // 这里把物体变换预先乘进 u_ViewProjection，避免改动已验证的 shader。
+    // ═══════════════════════════════════════════════════════════════
+
+    // 与 GPU 像素测试一致的交错的骨骼顶点布局。
+    struct GpuSkinVertex {
+        float position[3];
+        float normal[3];
+        float texCoord[2];
+        float tangent[3];
+        int   boneIndices[4];
+        float boneWeights[4];
+    };
+
+    // 由 SkinnedMesh 构建 GPU 顶点数组；顶点布局在此固化。
+    void BuildSkinnedMeshResource(const Engine::SkinnedMesh& src,
+                                  std::shared_ptr<Mesh>& outMesh,
+                                  uint32& outIndexCount) {
+        outMesh.reset();
+        outIndexCount = 0;
+        if (!src.IsValid()) return;
+
+        std::vector<GpuSkinVertex> verts(src.GetVertexCount());
+        for (size_t i = 0; i < src.GetVertexCount(); ++i) {
+            const Engine::SkinnedVertex& v = src.GetVertices()[i];
+            GpuSkinVertex& g = verts[i];
+            g.position[0] = v.position.x; g.position[1] = v.position.y;
+            g.position[2] = v.position.z;
+            g.normal[0]   = v.normal.x;   g.normal[1]   = v.normal.y;
+            g.normal[2]   = v.normal.z;
+            g.texCoord[0] = v.texCoord.x; g.texCoord[1] = v.texCoord.y;
+            g.tangent[0]  = v.tangent.x;  g.tangent[1]  = v.tangent.y;
+            g.tangent[2]  = v.tangent.z;
+            for (int k = 0; k < 4; ++k) {
+                g.boneIndices[k] = static_cast<int>(v.boneIndices[k]);
+                g.boneWeights[k] = v.boneWeights[k];
+            }
+        }
+
+        const auto& indices = src.GetIndices();
+        auto vb = m_Factory.CreateVertexBuffer(
+            reinterpret_cast<float*>(verts.data()),
+            static_cast<uint32>(verts.size() * sizeof(GpuSkinVertex)));
+        // CreateIndexBuffer 接受非 const 指针，因此用本地副本，
+        // 避免改动 SkinnedMesh 的只读契约。
+        std::vector<uint32> indexCopy(indices.begin(), indices.end());
+        auto ib = m_Factory.CreateIndexBuffer(indexCopy.data(),
+                                              static_cast<uint32>(indexCopy.size()));
+        auto vao = m_Factory.CreateVertexArray();
+
+        const uint32 stride = static_cast<uint32>(sizeof(GpuSkinVertex));
+        VertexAttribute attrs[6] = {
+            { 0, 3, stride, offsetof(GpuSkinVertex, position)   },
+            { 1, 3, stride, offsetof(GpuSkinVertex, normal)     },
+            { 2, 2, stride, offsetof(GpuSkinVertex, texCoord)   },
+            { 3, 3, stride, offsetof(GpuSkinVertex, tangent)    },
+            { 4, 4, stride, offsetof(GpuSkinVertex, boneIndices) },
+            { 5, 4, stride, offsetof(GpuSkinVertex, boneWeights) },
+        };
+        vao->AddVertexBuffer(vb, attrs, 6);
+        vao->SetIndexBuffer(ib);
+
+        outIndexCount = static_cast<uint32>(indices.size());
+        outMesh = std::make_shared<Mesh>(vao, outIndexCount);
+    }
+
+    // 从骨骼矩阵绘制一次。矩阵数量不足时不绘制，避免用未初始化数据出图。
+    void RenderSkinnedGameObject(const std::shared_ptr<Mesh>& mesh,
+                                 const Material& material,
+                                 const Engine::SkinningComponent& skin,
+                                 const glm::mat4& vp,
+                                 const glm::mat4& model) {
+        if (!mesh || !material.ShaderProgram) return;
+        const auto& matrices = skin.GetSkinningMatrices();
+        if (matrices.empty() || mesh->IndexCount == 0) return;
+
+        auto& shader = *material.ShaderProgram;
+        shader.Bind();
+
+        // 骨骼矩阵在模型空间生效，物体变换随后由 u_ViewProjection 施加。
+        const glm::mat4 vpModel = vp * model;
+        shader.SetMat4("u_ViewProjection", glm::value_ptr(vpModel));
+
+        // 真实上传当前姿势矩阵，count 与实际骨骼数一致。
+        shader.SetMat4Array("u_BoneMatrices",
+                            matrices[0].Data(),
+                            static_cast<uint32>(matrices.size()));
+
+        mesh->VAO->Bind();
+        auto* oglCtx = static_cast<OpenGLContext*>(GetRenderContext());
+        if (oglCtx) {
+            oglCtx->GetGL().DrawElements(GL_TRIANGLES,
+                                         static_cast<int>(mesh->IndexCount),
+                                         GL_UNSIGNED_INT, nullptr);
+        }
+    }
+
     void RenderGameObject(GameObject* obj,
                           const glm::mat4& vp,
                           const glm::vec3& lightDir,
@@ -327,10 +428,21 @@ protected:
         auto* mr = obj->GetComponent<MeshRendererComponent>();
         if (!mr->TargetMesh || !mr->TargetMaterial) return;
 
+        glm::mat4 model = glm::make_mat4(obj->GetTransform().GetWorldMatrix().Data());
+
+        // ── 骨骼网格分支 ──
+        // 存在 SkinningComponent 时走 GPU 蒙皮：顶点先被骨骼矩阵变换，
+        // 再套用物体变换与视图投影。矩阵来自场景更新后的真实姿势，
+        // 这里不推进任何动画时间。
+        if (auto* skin = obj->GetComponent<Engine::SkinningComponent>()) {
+            RenderSkinnedGameObject(mr->TargetMesh, *mr->TargetMaterial, *skin,
+                                    vp, model);
+            return;
+        }
+
         auto& shader = *mr->TargetMaterial->ShaderProgram;
         shader.Bind();
 
-        glm::mat4 model = glm::make_mat4(obj->GetTransform().GetWorldMatrix().Data());
         shader.SetMat4("u_MVP", glm::value_ptr(vp * model));
         shader.SetMat4("u_Model", glm::value_ptr(model));
 
@@ -409,6 +521,38 @@ protected:
         if (!skin) return;
         skin->SetSkeleton(skeleton);
         skin->SetAnimation(timeline);
+
+        // 骨骼网格：确定性的四边形，完全绑定到 root 骨骼，
+        // 因此 root 沿 +Y 位移时整个网格随之移动。
+        std::vector<Engine::SkinnedVertex> verts;
+        verts.resize(4);
+        const float quad[4][2] = { {-0.45f, -0.45f}, { 0.45f, -0.45f},
+                                   { 0.45f,  0.45f}, {-0.45f,  0.45f} };
+        for (int i = 0; i < 4; ++i) {
+            verts[i].position = Engine::Vec3(quad[i][0], quad[i][1], 0.0f);
+            verts[i].normal   = Engine::Vec3(0.0f, 0.0f, 1.0f);
+            verts[i].tangent  = Engine::Vec3(1.0f, 0.0f, 0.0f);
+            verts[i].texCoord = Engine::Vec2(static_cast<float>(i), 0.0f);
+            verts[i].boneIndices[0] = 0;
+            verts[i].boneWeights[0] = 1.0f;
+        }
+        const std::vector<uint32> skinnedIdx = { 0, 1, 2, 2, 3, 0 };
+        auto skinnedMesh = std::make_shared<Engine::SkinnedMesh>(verts, skinnedIdx);
+        skin->SetSkinnedMesh(skinnedMesh);
+
+        // GPU 资源 + skinned_lit 材质（沿用同一套 VertexBuffer/VAO 接口）。
+        if (!m_SkinnedShader) {
+            m_SkinnedShader = m_Factory.CreateShader("assets/shaders/skinned_lit.vert",
+                                                     "assets/shaders/skinned_lit.frag");
+        }
+        uint32 skinnedIndexCount = 0;
+        BuildSkinnedMeshResource(*skinnedMesh, m_SkinnedMesh, skinnedIndexCount);
+        if (m_SkinnedMesh && m_SkinnedShader) {
+            m_SkinnedMaterial = std::make_shared<Material>(m_SkinnedShader);
+            auto* mr = obj->AddComponent<MeshRendererComponent>();
+            mr->TargetMesh = m_SkinnedMesh;
+            mr->TargetMaterial = m_SkinnedMaterial;
+        }
 
         m_Scene->AddObject(obj);
         m_AnimatedSkinActor      = obj;
@@ -602,6 +746,10 @@ private:
     std::shared_ptr<Mesh> m_BillboardMesh;       // Billboard 四边形网格
     std::shared_ptr<Mesh> m_CubeMesh;
     std::shared_ptr<Material> m_DefaultMaterial;
+    // GPU 蒙皮资源：skinned_lit shader + 由 SkinnedMesh 构建的顶点数组
+    std::shared_ptr<Shader> m_SkinnedShader;
+    std::shared_ptr<Mesh> m_SkinnedMesh;
+    std::shared_ptr<Material> m_SkinnedMaterial;
 
     SceneHierarchyPanel m_HierarchyPanel;
     InspectorPanel m_InspectorPanel;
