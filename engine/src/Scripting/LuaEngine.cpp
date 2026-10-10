@@ -52,9 +52,14 @@ namespace Engine { namespace Scripting {
             std::error_code ec;
             auto ftime = std::filesystem::last_write_time(path, ec);
             if (ec) return 0;
+            // file_clock 的 epoch 由实现决定：直接调用 to_utc 只在提供该成员的
+            // 实现上可用（MSVC 提供，libstdc++ 不提供）。clock_cast 是标准为这类
+            // 实现差异提供的通用转换接口，因此这里用它换算到 system_clock，
+            // 再取 Unix 秒，保持热重载与资产元数据的时间语义不变。
+            const auto sysTime = std::chrono::clock_cast<std::chrono::system_clock>(ftime);
             return std::chrono::duration_cast<std::chrono::seconds>(
                 std::chrono::time_point_cast<std::chrono::seconds>(
-                    std::chrono::file_clock::to_utc(ftime)).time_since_epoch()).count();
+                    sysTime).time_since_epoch()).count();
         }
     }
 
