@@ -31,12 +31,29 @@ namespace Engine { namespace Scripting {
 
     class LuaEngine;
 
+    namespace detail {
+    /**
+     * 脚本实例配置。
+     *
+     * 定义在命名空间作用域而不是 ScriptInstance 内部：外围类定义中的默认实参
+     * 属于该外围类的 complete-class context，而嵌套类型的默认成员初始化器
+     * 不属于外围类的 complete-class context。因此把 Config 连同其默认成员
+     * 初始化器留在类内时，`Initialize(..., config = {})` 在要求该完整性规则的
+     * 前端上不成立。该规则由 GCC 88165 与 Clang 36032 跟踪。
+     *
+     * 提到命名空间作用域后，默认实参在所有前端上均为良构；类内通过别名保持
+     * `ScriptInstance::Config` 的源码调用形式不变。
+     */
+    struct ScriptInstanceConfig {
+        uint64_t instructionBudget = 20000000ull;  ///< 每次回调的 VM 指令上限
+        bool     sandbox           = true;
+    };
+    } // namespace detail
+
     class ScriptInstance {
     public:
-        struct Config {
-            uint64_t instructionBudget = 20000000ull;  ///< 每次回调的 VM 指令上限
-            bool     sandbox           = true;
-        };
+        /// 源码 API 保持 `ScriptInstance::Config` 不变。
+        using Config = detail::ScriptInstanceConfig;
 
         ScriptInstance() = default;
         ~ScriptInstance();
