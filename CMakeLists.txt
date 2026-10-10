@@ -98,3 +98,35 @@ if(ENABLE_TESTS)
     enable_testing()
     add_subdirectory(tests)
 endif()
+
+# ── 被链入共享库的静态库需要 position-independent 目标文件 ──
+#
+# bridge/CMakeLists.txt 把 EngineCore 链进 libEditorBridge.so（SHARED），
+# 而 EngineCore 又 PUBLIC 传递链接下列静态库。静态库目标文件若不是 PIC，
+# x86-64 链接器会拒绝其中的 R_X86_64_TPOFF32 重定位：
+#   "can not be used when making a shared object; recompile with -fPIC"
+#
+# EngineCore 自身已在 engine/CMakeLists.txt 中启用 PIC；这里补齐它 PUBLIC
+# 传递出去、且已确认为 STATIC 且参与该共享库链接的静态库。设置放在所有
+# add_subdirectory 之后，因此作用于已创建的真实目标，无需修改 vendored
+# 第三方目录下的 CMakeLists，也不使用全局编译标志。
+#
+# 收录标准：有明确的链接证据，或自身声明就是 STATIC。
+#   - stb  : 真实 CI 已报出 libstb.a(stb_image_impl.c.o) 的非 PIC 重定位
+#   - glad2 : EngineCore PUBLIC 列表中的 STATIC 目标
+#   - lua   : EngineCore PUBLIC 列表中的 STATIC 目标
+#   - imguizmo: EngineCore PUBLIC 列表中的 STATIC 目标
+#
+# 暂不收录：box2d / glfw / freetype 的库类型由变量或默认值决定（STATIC 还是
+# SHARED 取决于配置），在未确认前不改；imgui 声明在 box2d/samples 下，受
+# if(BOX2D_SAMPLES) 控制、不在构建图内；tracy 没有出现在该共享库的链接证据中。
+# 若后续链接诊断指向它们，再按实际证据逐个补入。
+foreach(_pic_target
+        glad2
+        lua
+        stb
+        imguizmo)
+    if(TARGET ${_pic_target})
+        set_target_properties(${_pic_target} PROPERTIES POSITION_INDEPENDENT_CODE ON)
+    endif()
+endforeach()
