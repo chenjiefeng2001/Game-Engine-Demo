@@ -121,11 +121,16 @@ endif()
 #   imguizmo third_party/imguizmo            STATIC
 #   spdlog   third_party/spdlog              STATIC 分支（SPDLOG_BUILD_SHARED 未开），
 #            命名空间别名 spdlog::spdlog 的真实目标，且已有真实链接器诊断
+#   imgui    third_party/imgui_build         STATIC，实际链接行证实为
+#            third_party/imgui_build/libimgui.a，非 PIC 时报
+#            R_X86_64_PC32 against symbol `GImGui'
+#            （注意：box2d/samples 下另有一个同名 imgui 声明，但该目录受
+#              if(BOX2D_SAMPLES) 控制、不在构建图内；真正参与链接的是
+#              imgui_build 这一份）
 #
 # 明确排除：
 #   - fmt：spdlog 的 bundled fmt 以 header-only 方式参与，没有独立的
 #     libfmt.a 目标，target 属性对它无意义。
-#   - imgui：声明在 box2d/samples 下，受 if(BOX2D_SAMPLES) 控制，不在构建图内。
 #   - box2d / glfw / freetype：库类型由变量或默认值决定（STATIC 或 SHARED 取决于
 #     配置），未确认前不改；若后续链接诊断指向它们，再按实际证据补入。
 #   - tracy / Jolt / vma / shaderc_wrapper：目前没有进入该共享库链接的证据。
@@ -134,7 +139,8 @@ foreach(_pic_target
         lua
         stb
         imguizmo
-        spdlog)
+        spdlog
+        imgui)
     if(TARGET ${_pic_target})
         set_target_properties(${_pic_target} PROPERTIES POSITION_INDEPENDENT_CODE ON)
     endif()
