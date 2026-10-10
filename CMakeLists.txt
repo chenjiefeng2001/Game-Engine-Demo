@@ -111,21 +111,30 @@ endif()
 # add_subdirectory 之后，因此作用于已创建的真实目标，无需修改 vendored
 # 第三方目录下的 CMakeLists，也不使用全局编译标志。
 #
-# 收录标准：有明确的链接证据，或自身声明就是 STATIC。
-#   - stb  : 真实 CI 已报出 libstb.a(stb_image_impl.c.o) 的非 PIC 重定位
-#   - glad2 : EngineCore PUBLIC 列表中的 STATIC 目标
-#   - lua   : EngineCore PUBLIC 列表中的 STATIC 目标
-#   - imguizmo: EngineCore PUBLIC 列表中的 STATIC 目标
+# 收录标准：EngineCore 的 PUBLIC/PRIVATE 链接中确为静态目标、且由本仓库从
+# 源码构建（不是预编译 archive）的库。目标名取自 add_library 的真实名称，
+# 命名空间别名（spdlog::spdlog → spdlog、box2d::box2d → box2d）已还原。
 #
-# 暂不收录：box2d / glfw / freetype 的库类型由变量或默认值决定（STATIC 还是
-# SHARED 取决于配置），在未确认前不改；imgui 声明在 box2d/samples 下，受
-# if(BOX2D_SAMPLES) 控制、不在构建图内；tracy 没有出现在该共享库的链接证据中。
-# 若后续链接诊断指向它们，再按实际证据逐个补入。
+#   glad2    third_party/CMakeLists.txt     STATIC
+#   lua      engine/CMakeLists.txt           STATIC
+#   stb      third_party/stb                 STATIC，且已有真实链接器诊断
+#   imguizmo third_party/imguizmo            STATIC
+#   spdlog   third_party/spdlog              STATIC 分支（SPDLOG_BUILD_SHARED 未开），
+#            命名空间别名 spdlog::spdlog 的真实目标，且已有真实链接器诊断
+#
+# 明确排除：
+#   - fmt：spdlog 的 bundled fmt 以 header-only 方式参与，没有独立的
+#     libfmt.a 目标，target 属性对它无意义。
+#   - imgui：声明在 box2d/samples 下，受 if(BOX2D_SAMPLES) 控制，不在构建图内。
+#   - box2d / glfw / freetype：库类型由变量或默认值决定（STATIC 或 SHARED 取决于
+#     配置），未确认前不改；若后续链接诊断指向它们，再按实际证据补入。
+#   - tracy / Jolt / vma / shaderc_wrapper：目前没有进入该共享库链接的证据。
 foreach(_pic_target
         glad2
         lua
         stb
-        imguizmo)
+        imguizmo
+        spdlog)
     if(TARGET ${_pic_target})
         set_target_properties(${_pic_target} PROPERTIES POSITION_INDEPENDENT_CODE ON)
     endif()
