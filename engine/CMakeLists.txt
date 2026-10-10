@@ -72,6 +72,15 @@ add_library(EngineCore STATIC
     ${ENGINE_HEADERS}
 )
 
+# EngineCore 会被链进 Linux 上的共享库（bridge/libEditorBridge.so），因此它的
+# 目标文件必须是 position-independent 的，否则 x86-64 链接器会拒绝
+# R_X86_64_TPOFF32 重定位（"can not be used when making a shared object;
+# recompile with -fPIC"）。
+#
+# 用 target 级属性而非全局 CMAKE_POSITION_INDEPENDENT_CODE：只影响这个会被
+# 链进 .so 的静态库，不改动其他目标的编译语义。
+set_target_properties(EngineCore PROPERTIES POSITION_INDEPENDENT_CODE ON)
+
 # ── Shader 单一真理源嵌入（v3.0 Phase 1）──
 # assets/shaders/*.comp.glsl 为唯一来源；修改着色器后重新构建即生效。
 # 生成器为纯 CMake 脚本，零外部依赖；fail-fast 不静默回退。
