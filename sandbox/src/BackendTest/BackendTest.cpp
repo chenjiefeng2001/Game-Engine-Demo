@@ -2,6 +2,11 @@
 #include <cstring>
 #include <iostream>
 #include <cstdlib>
+#ifdef _WIN32
+// GetConsoleWindow 此前靠 BackendTest.h 的传递 include 拿到声明，这是不稳定的：
+// include 图一改就会断。与 main.cpp 的既有做法一致，在此显式引入。
+#include <windows.h>
+#endif
 
 namespace Engine {
 
@@ -147,7 +152,15 @@ bool BackendTest::TestSwapChainCreation() {
     scDesc.height = 720;
     scDesc.format = RHI::Format::BGRA8_UNorm;
     scDesc.bufferCount = 2;
+#ifdef _WIN32
     scDesc.windowHandle = GetConsoleWindow();
+#else
+    // headless 模式：nullptr 是 IRHIDevice 文档化的合法输入，且 GL46 的
+    // CreateSwapChain 根本不消费该字段（其签名为 unnamed parameter）。
+    // 这不表示创建了真实窗口或 swapchain —— 本测试在没有真实 GL 上下文时
+    // 同样预期 null 并判为通过。
+    scDesc.windowHandle = nullptr;
+#endif
 
     auto sc = device.CreateSwapChain(scDesc);
     if (!sc) {
