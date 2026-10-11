@@ -8,6 +8,7 @@
  * 着色器中通过 ResourceDescriptorHeap[index] 直接访问。
  */
 
+#include <atomic>
 #include "Engine/Types.h"
 #include <vulkan/vulkan.h>
 

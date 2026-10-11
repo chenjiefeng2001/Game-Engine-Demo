@@ -13,6 +13,8 @@
  *   - SceneManagerErrorCode（容错错误码）
  */
 
+#include <algorithm>
+#include <atomic>
 #include "Engine/Types.h"
 #include <string>
 #include <vector>

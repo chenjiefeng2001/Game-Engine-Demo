@@ -26,6 +26,7 @@
  * @endcode
  */
 
+#include <atomic>
 #include "Engine/Types.h"
 #include "Engine/Core/Resources/AssetDatabase.h"
 #include <string>
