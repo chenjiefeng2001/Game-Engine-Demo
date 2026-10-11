@@ -174,6 +174,17 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/JoltPhysics/Build/CMakeLists.txt")
     # Release，这是既定功能契约，**不通过关闭它来规避**。这里只为 Jolt 打开 RTTI，
     # 使 Jolt 与引擎的 RTTI 状态一致；与上方运行时库的处理方式同构。
     set(CPP_RTTI_ENABLED ON CACHE BOOL "" FORCE)
+    # IPO/LTO：Jolt 默认 INTERPROCEDURAL_OPTIMIZATION=ON，会给自身加上
+    # -flto（clang）/ -flto（gcc）。其 Build/CMakeLists.txt 先在 L304 调用
+    # SET_INTERPROCEDURAL_OPTIMIZATION() 把 CMAKE_INTERPROCEDURAL_OPTIMIZATION_RELEASE
+    # 置 ON，随后 L310 用 include() 引入 Jolt.cmake——include() 不新建作用域，
+    # 于是 L469 的 add_library(Jolt ...) 带着 IPO 生效，静态库里存的是 bitcode。
+    # gcc 下 GNU ld 自带 LTO 插件可处理 GIMPLE bitcode，所以能链通；
+    # clang 下 libJolt.a 里是 LLVM bitcode，而链接走的是 GNU ld（bfd），
+    # 没有 LLVMgold 插件，链接 RenderTest 时报：
+    #   libJolt.a: error adding symbols: file format not recognized
+    # 关掉 Jolt 的 IPO 即可，与上方两项同属“上游默认值需要对齐”的处理。
+    set(INTERPROCEDURAL_OPTIMIZATION OFF CACHE BOOL "" FORCE)
     add_subdirectory(JoltPhysics/Build JoltPhysicsBuild)
     
     # Jolt 默认关闭 RTTI，若引擎需要则开启
