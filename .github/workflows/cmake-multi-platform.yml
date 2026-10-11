@@ -403,3 +403,106 @@ jobs:
         with:
           name: GL-capability-probe-${{ github.sha }}
           path: ${{ runner.temp }}/probe-*.txt
+
+  # ── RenderTest 链接失败取证 ──
+  #
+  # 独立 job，不在 build 矩阵内：RenderTest 链接失败时 build job 会中止，
+  # 而本 job 必须仍能采集证据。已知失败现象：
+  #   undefined reference to `typeinfo for JPH::DebugRenderer`
+  # GitHub 展示日志会截断该行、丢失引用者 object 文件名，故此处采集原始证据。
+  #
+  # 本 job 只读取构建产物并运行 nm / make，不修改任何源码、宏、Jolt 选项或
+  # 构建门禁；不触发 main 工作流的 dispatch。
+  jolt-link-diagnose:
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Linux build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            build-essential cmake ninja-build pkg-config \
+            libglfw3-dev libx11-dev libxrandr-dev libxinerama-dev libxcursor-dev libxi-dev \
+            libvulkan-dev
+
+      - name: Configure and build until RenderTest
+        id: build
+        continue-on-error: true
+        run: |
+          cmake -B build -S . -DCMAKE_BUILD_TYPE=Release \
+            -DENABLE_TESTS=ON -DREQUIRE_SHADERC=OFF > cfg.log 2>&1 || { tail -30 cfg.log; exit 1; }
+          cmake --build build -j2 > build.log 2>&1 || true
+          echo "--- last 30 lines of build output ---"
+          tail -30 build.log
+          grep -n 'undefined reference' build.log || echo "no undefined reference found"
+
+      - name: Collect link and symbol evidence
+        if: always()
+        shell: bash
+        run: |
+          set +e
+          OUT="$RUNNER_TEMP/jolt-evidence"
+          mkdir -p "$OUT"
+          cd build || exit 0
+
+          echo "===== 1. RenderTest link command ====="
+          f=$(find . -path '*RenderTest.dir/link.txt' | head -1)
+          if [ -n "$f" ]; then cat "$f" | tee "$OUT/rendertest_link.txt"; else echo "link.txt NOT FOUND"; fi
+
+          echo "===== 2. JPH_DEBUG_RENDERER actual macro state ====="
+          for t in RenderTest EngineCore Jolt; do
+            f=$(find . -path "*${t}.dir/flags.make" | head -1)
+            echo "--- $t ($f) ---"
+            if [ -n "$f" ]; then grep -E '^CXX_DEFINES' "$f" | tee -a "$OUT/macros.txt"; else echo "flags.make NOT FOUND for $t"; fi
+          done
+
+          echo "===== 3. does Jolt DebugRenderer.cpp.o define the typeinfo? ====="
+          o=$(find . -name 'DebugRenderer.cpp.o' | head -1)
+          echo "object: ${o:-<not built>}"
+          if [ -n "$o" ]; then
+            nm -C "$o" > "$OUT/jolt_dr_nm.txt" 2>&1
+            grep -E 'typeinfo for JPH::DebugRenderer|vtable for JPH::DebugRenderer' "$OUT/jolt_dr_nm.txt" \
+              || echo "  -> NO typeinfo/vtable for JPH::DebugRenderer in this object"
+          fi
+
+          echo "===== 4. WHO requires the undefined typeinfo? ====="
+          found=0
+          for o in $(find . -name '*.o'); do
+            if nm -C "$o" 2>/dev/null | grep -q 'U .*typeinfo for JPH::DebugRenderer'; then
+              echo "  REFERENCES IT: $o"
+              nm -C "$o" 2>/dev/null | grep 'typeinfo for JPH::DebugRenderer' | sed 's/^/      /'
+              found=1
+            fi
+          done
+          [ "$found" -eq 0 ] && echo "  -> no object carries the undefined reference"
+
+          echo "===== 5. does libJolt.a carry it? ====="
+          la=$(find . -name 'libJolt.a' | head -1)
+          echo "archive: ${la:-<not found>}"
+          if [ -n "$la" ]; then
+            nm -C "$la" 2>/dev/null | grep -E 'typeinfo for JPH::DebugRenderer' | head -5 | tee "$OUT/libjolt_nm.txt" \
+              || echo "  -> libJolt.a has NO typeinfo for JPH::DebugRenderer"
+          fi
+
+          echo "===== 6. engine JoltDebugRenderer.cpp.o ====="
+          o2=$(find . -path '*EngineCore.dir*' -name 'JoltDebugRenderer.cpp.o' | head -1)
+          echo "object: ${o2:-<not built>}"
+          if [ -n "$o2" ]; then
+            nm -C "$o2" 2>&1 | grep -E 'typeinfo for JPH::DebugRenderer|typeinfo for Engine::JoltDebugRenderer' \
+              || echo "  -> no JPH::DebugRenderer typeinfo here"
+          fi
+
+          cd "$RUNNER_TEMP" || exit 0
+          tar czf jolt-evidence.tar.gz jolt-evidence 2>/dev/null
+          echo "===== archive contents ====="
+          tar tzf jolt-evidence.tar.gz
+
+      - name: Upload Jolt link evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: Jolt-link-evidence-${{ github.sha }}
+          path: ${{ runner.temp }}/jolt-evidence.tar.gz
+          if-no-files-found: warn
