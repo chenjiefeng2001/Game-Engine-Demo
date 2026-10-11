@@ -21,6 +21,7 @@
  * 所有权断言：Component 零物理引用；Body 为 Adapter 派生对象；无 Body→Component 反向。
  */
 
+#include <utility>
 #include <gtest/gtest.h>
 #include "Engine/Core/GameObject/ColliderComponent.h"
 #include "Engine/Core/GameObject/GameObject.h"

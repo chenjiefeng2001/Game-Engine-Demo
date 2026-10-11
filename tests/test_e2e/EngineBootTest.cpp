@@ -7,6 +7,7 @@
  * - GLFW 无窗口上下文创建
  * - 多个子系统并行初始化不冲突
  */
+#include <atomic>
 #include <gtest/gtest.h>
 #include "Engine/Core/JobSystem.h"
 #include "Engine/Core/Log.h"
