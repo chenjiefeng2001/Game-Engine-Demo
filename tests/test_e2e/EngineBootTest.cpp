@@ -11,8 +11,10 @@
 #include <gtest/gtest.h>
 #include "Engine/Core/JobSystem.h"
 #include "Engine/Core/Log.h"
+#include <glad/gl.h>
 #include <GLFW/glfw3.h>
 #include <memory>
+#include <cstring>
 
 using namespace Engine;
 
@@ -91,7 +93,17 @@ TEST_F(GLFWHeadlessTest, CreateAndDestroy) {
 
 TEST_F(GLFWHeadlessTest, GetGLVersion) {
     // 验证 GL 上下文版本
-    const char* version = (const char*)glGetString(GL_VERSION);
+    // 入口点必须经 glad 取：项目统一使用 GLAD2（GladGLContext），
+    // 且 EngineCore 不链接系统 OpenGL 库，裸调 glGetString 会在链接期报
+    // undefined reference。这里按引擎同样的方式把入口载入局部表。
+    GladGLContext gl;
+    std::memset(&gl, 0, sizeof(gl));
+    ASSERT_NE(gladLoadGLContext(&gl, glfwGetProcAddress), 0)
+        << "gladLoadGLContext failed on the current context";
+    if (!gl.GetString) {
+        GTEST_SKIP() << "gl.GetString unavailable after glad load";
+    }
+    const char* version = (const char*)gl.GetString(GL_VERSION);
     ASSERT_NE(version, nullptr);
     s_Log.Info("GL Version: {}", version);
 }
