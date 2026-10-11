@@ -247,12 +247,15 @@ jobs:
       shell: bash
       working-directory: ${{ steps.strings.outputs.build-output-dir }}
       run: |
+        # --output-on-failure：失败时必须能看到用例自身的输出。否则 test_renderer
+        # 之类的失败在日志里只有一行 ***Failed，无法区分是断言失败、SKIP 还是
+        # 段错误，等于没有诊断信息。
         if [[ "${{ runner.os }}" == "Linux" ]]; then
           xvfb-run -a -s "-screen 0 1280x800x24" \
             env LIBGL_ALWAYS_SOFTWARE=1 XDG_SESSION_TYPE=x11 \
-            ctest --build-config ${{ matrix.build_type }}
+            ctest --build-config ${{ matrix.build_type }} --output-on-failure
         else
-          ctest --build-config ${{ matrix.build_type }}
+          ctest --build-config ${{ matrix.build_type }} --output-on-failure
         fi
 
     - name: Upload HRC test receipt
