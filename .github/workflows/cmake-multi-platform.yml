@@ -417,22 +417,28 @@ jobs:
     if: always()
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout Code
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+          fetch-depth: 0
 
       - name: Install Linux build dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y --no-install-recommends \
-            build-essential cmake ninja-build pkg-config \
-            libglfw3-dev libx11-dev libxrandr-dev libxinerama-dev libxcursor-dev libxi-dev \
-            libvulkan-dev
+          sudo apt-get install -y \
+            libx11-dev libxrandr-dev libxinerama-dev libxcursor-dev libxi-dev \
+            libgl1-mesa-dev libgl1-mesa-dri libwayland-dev wayland-protocols \
+            libxkbcommon-dev xvfb pkg-config
 
       - name: Configure and build until RenderTest
         id: build
         continue-on-error: true
         run: |
-          cmake -B build -S . -DCMAKE_BUILD_TYPE=Release \
-            -DENABLE_TESTS=ON -DREQUIRE_SHADERC=OFF > cfg.log 2>&1 || { tail -30 cfg.log; exit 1; }
+          cmake -B build -DCMAKE_CXX_COMPILER=g++ -DCMAKE_C_COMPILER=gcc \
+            -DCMAKE_BUILD_TYPE=Release -DENABLE_TESTS=ON -DENABLE_ASAN=OFF \
+            -Wno-dev -S "${{ github.workspace }}" > cfg.log 2>&1 \
+            || { echo "=== CONFIGURE FAILED ==="; tail -30 cfg.log; exit 1; }
           cmake --build build -j2 > build.log 2>&1 || true
           echo "--- last 30 lines of build output ---"
           tail -30 build.log
