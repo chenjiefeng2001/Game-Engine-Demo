@@ -266,6 +266,38 @@ jobs:
           ctest --build-config ${{ matrix.build_type }} --output-on-failure
         fi
 
+    # ctest 只在失败时打印用例输出，而 SKIP 计入 Passed。因此上面一行
+    # "test_renderer ... Passed" **不能**被读成 GPU 像素已验证。此处单独重跑
+    # GPU 蒙皮用例并把 SKIP 原因打进日志，让"没验证"这件事在 CI 上显式可见，
+    # 而不是藏在一个绿色对勾后面。
+    - name: Report GPU skinning verification status
+      shell: bash
+      working-directory: ${{ steps.strings.outputs.build-output-dir }}
+      run: |
+        BIN=tests/test_renderer
+        if [[ ! -x "$BIN" ]]; then
+          echo "GPU-SKINNING-STATUS: $BIN not found; nothing was verified"
+          exit 0
+        fi
+        FILTER='GPUSkinningPixelTest.*'
+        if [[ "${{ runner.os }}" == "Linux" ]]; then
+          out=$(xvfb-run -a -s "-screen 0 1280x800x24" \
+            env LIBGL_ALWAYS_SOFTWARE=1 XDG_SESSION_TYPE=x11 GPU_SKINNING_NO_GL46=1 \
+            "$BIN" --gtest_filter="$FILTER" 2>&1) || true
+        else
+          out=$("$BIN" --gtest_filter="$FILTER" 2>&1) || true
+        fi
+        echo "$out" | grep -E '\[  SKIPPED \]|\[       OK \]|\[  FAILED  \]|DID NOT RUN|tests? from' || true
+        if grep -q 'DID NOT RUN' <<<"$out"; then
+          echo "GPU-SKINNING-STATUS: NOT VERIFIED on this runner (explicit skip above)."
+          echo "GPU-SKINNING-STATUS: pixel verification requires a GL 4.6 capable machine."
+        elif grep -q '\[  FAILED  \]' <<<"$out"; then
+          echo "GPU-SKINNING-STATUS: FAILED (see output above)."
+          exit 1
+        else
+          echo "GPU-SKINNING-STATUS: ran for real on this runner."
+        fi
+
     - name: Upload HRC test receipt
       if: always()
       uses: actions/upload-artifact@v4
