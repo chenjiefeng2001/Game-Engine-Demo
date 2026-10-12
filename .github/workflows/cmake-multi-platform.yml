@@ -372,16 +372,21 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Install GLFW and Xvfb
+      - name: Install GLFW, Xvfb and the software Vulkan stack
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
-            build-essential libglfw3-dev xvfb mesa-utils
+            build-essential libglfw3-dev xvfb mesa-utils \
+            mesa-vulkan-drivers libvulkan1 vulkan-tools
 
-      - name: Record the Mesa stack actually installed
+      - name: Record the Mesa and Vulkan stack actually installed
         run: |
           echo "Mesa packages:"
           dpkg -l | grep -Ei 'mesa|libgl1-mesa' | awk '{print "  " $2, $3}'
+          echo "Vulkan ICDs:"
+          ls -1 /usr/share/vulkan/icd.d/ 2>&1 | sed 's/^/  /'
+          echo "Mesa DRI drivers:"
+          ls -1 /usr/lib/x86_64-linux-gnu/dri/ 2>&1 | sed 's/^/  /'
 
       - name: Build the probe
         run: |
@@ -399,6 +404,48 @@ jobs:
           xvfb-run -a -s "-screen 0 1280x800x24" \
             env LIBGL_ALWAYS_SOFTWARE=1 XDG_SESSION_TYPE=x11 \
             "$RUNNER_TEMP/glprobe" 2>&1 | tee "$RUNNER_TEMP/probe-default.txt"
+
+      # 引擎要求 OpenGL 4.6，而 llvmpipe 最高只给 4.5。Zink 是 Mesa 的
+      # OpenGL-on-Vulkan 驱动，跑在 lavapipe（软件 Vulkan）之上时可以提供
+      # 真正的 4.6 core 上下文，从而让 GPU 像素用例在无 GPU 的 runner 上
+      # 真正跑起来。此处只做**取证**：记录两个驱动栈分别能给到什么版本，
+      # 不改任何门禁、不改引擎、不改测试。
+      - name: Confirm lavapipe is a usable Vulkan device
+        run: |
+          vulkaninfo --summary 2>&1 | tee "$RUNNER_TEMP/vulkaninfo.txt" | head -40 || true
+
+      - name: Probe under Xvfb with Zink on lavapipe
+        run: |
+          LAVAPIPE_ICD="$(ls -1 /usr/share/vulkan/icd.d/lvp_icd.*.json 2>/dev/null | head -1)"
+          echo "lavapipe ICD = ${LAVAPIPE_ICD:-<not found>}"
+          if [[ -z "$LAVAPIPE_ICD" ]]; then
+            echo "lavapipe ICD not found; Zink cannot be exercised" \
+              | tee "$RUNNER_TEMP/probe-zink-lavapipe.txt"
+            exit 0
+          fi
+          xvfb-run -a -s "-screen 0 1280x800x24" \
+            env MESA_LOADER_DRIVER_OVERRIDE=zink \
+                VK_DRIVER_FILES="$LAVAPIPE_ICD" \
+                VK_ICD_FILENAMES="$LAVAPIPE_ICD" \
+                LP_NUM_THREADS=4 \
+                XDG_SESSION_TYPE=x11 \
+            "$RUNNER_TEMP/glprobe" 2>&1 | tee "$RUNNER_TEMP/probe-zink-lavapipe.txt"
+
+      - name: Probe under Xvfb with Zink and LIBGL_KOPPER_DRI2
+        run: |
+          LAVAPIPE_ICD="$(ls -1 /usr/share/vulkan/icd.d/lvp_icd.*.json 2>/dev/null | head -1)"
+          if [[ -z "$LAVAPIPE_ICD" ]]; then
+            echo "lavapipe ICD not found; skipping kopper variant" \
+              | tee "$RUNNER_TEMP/probe-zink-kopper.txt"
+            exit 0
+          fi
+          xvfb-run -a -s "-screen 0 1280x800x24" \
+            env MESA_LOADER_DRIVER_OVERRIDE=zink \
+                LIBGL_KOPPER_DRI2=1 \
+                VK_DRIVER_FILES="$LAVAPIPE_ICD" \
+                VK_ICD_FILENAMES="$LAVAPIPE_ICD" \
+                XDG_SESSION_TYPE=x11 \
+            "$RUNNER_TEMP/glprobe" 2>&1 | tee "$RUNNER_TEMP/probe-zink-kopper.txt"
 
       - name: Upload probe output
         if: always()
