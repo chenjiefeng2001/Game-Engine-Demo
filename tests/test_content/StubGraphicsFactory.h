@@ -31,6 +31,12 @@
 #include <string>
 #include <vector>
 
+// IGraphicsFactory 把 IWindow / IRenderContext / IPrimitiveBatch / IUIManager /
+// GBuffer 等只前向声明在自己的命名空间里，各类型的真实定义分散在不同头文件。
+// 与其在这里逐个猜测并限定名字（一旦限定错就是 override 签名不匹配），
+// 不如直接沿用两个使用者 .cpp 里本就生效的名字解析方式。
+using namespace Engine;
+
 // Texture 是抽象类（Bind / GetWidth / GetHeight 为纯虚），需要一个具体实现。
 // 刻意不做任何 GPU 绑定：绑定契约不依赖它。
 class StubTexture : public Texture {
