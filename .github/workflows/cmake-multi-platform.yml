@@ -420,7 +420,7 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
             build-essential libglfw3-dev xvfb mesa-utils \
-            mesa-vulkan-drivers libvulkan1 libvulkan-dev vulkan-tools
+            mesa-vulkan-drivers libvulkan1 libvulkan-dev vulkan-tools glslang-tools
 
       - name: Record the Mesa and Vulkan stack actually installed
         run: |
@@ -491,6 +491,40 @@ jobs:
           if [[ "$PROBE_RC" -ne 0 ]]; then
             echo "vkprobe did not succeed (exit $PROBE_RC)"
           fi
+
+      # 设备可用 ≠ 能画出东西。上一支只到逻辑设备创建为止；这一支补上
+      # image / render pass / framebuffer / draw / copy-to-buffer / map 全链路，
+      # 并用像素断言收尾：clear 为黑，片元着色器输出固定色，
+      # 中心像素若等于该色，说明光栅化与回读都真实发生。
+      # 着色器用 printf 写入而非 heredoc —— heredoc 结束标记必须顶格，
+      # 会破坏 YAML 块标量的缩进。
+      - name: Rasterise a triangle offscreen on lavapipe and read it back
+        run: |
+          LAVAPIPE_ICD="$(ls -1 /usr/share/vulkan/icd.d/lvp_icd*.json 2>/dev/null | head -1)"
+          OUT="$RUNNER_TEMP/probe-vk-offscreen.txt"
+          if [[ -z "$LAVAPIPE_ICD" ]]; then
+            echo "lavapipe ICD not found; offscreen probe cannot run" | tee "$OUT"
+            exit 0
+          fi
+          printf "%s\n" "#version 450" \
+            "void main() {" \
+            "  vec2 p = vec2((gl_VertexIndex << 1) & 2, gl_VertexIndex & 2);" \
+            "  gl_Position = vec4(p * 2.0 - 1.0, 0.0, 1.0);" \
+            "}" > "$RUNNER_TEMP/probe.vert"
+          printf "%s\n" "#version 450" \
+            "layout(location = 0) out vec4 outColor;" \
+            "void main() { outColor = vec4(0.25, 0.5, 0.75, 1.0); }" > "$RUNNER_TEMP/probe.frag"
+          glslangValidator -V "$RUNNER_TEMP/probe.vert" -o "$RUNNER_TEMP/probe.vert.spv"
+          glslangValidator -V "$RUNNER_TEMP/probe.frag" -o "$RUNNER_TEMP/probe.frag.spv"
+          g++ -std=c++17 -O1 tools/vk_offscreen_probe.cpp -o "$RUNNER_TEMP/vkoffscreen" -lvulkan
+          RC=0
+          env VK_DRIVER_FILES="$LAVAPIPE_ICD" VK_ICD_FILENAMES="$LAVAPIPE_ICD" \
+            stdbuf -o0 -e0 "$RUNNER_TEMP/vkoffscreen" \
+              "$RUNNER_TEMP/probe.vert.spv" "$RUNNER_TEMP/probe.frag.spv" \
+              > "$OUT" 2>&1 || RC=$?
+          cat "$OUT"
+          echo "vkoffscreen exit = $RC" | tee -a "$OUT"
+          exit 0
       - name: Probe under Xvfb with Zink and no ICD restriction
         run: |
           xvfb-run -a -s "-screen 0 1280x800x24" \
