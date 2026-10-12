@@ -680,3 +680,53 @@ jobs:
           name: Jolt-link-evidence-${{ github.sha }}
           path: ${{ runner.temp }}/jolt-evidence.tar.gz
           if-no-files-found: warn
+# ── Vulkan 后端编译取证 ──
+  #
+  # 主构建 job 从未安装 libvulkan-dev，因此 find_package(Vulkan) 一直失败，
+  # "Vulkan SDK not found" 使 engine/src/Vulkan/ 的 15 个文件**从未被编译过**。
+  # 在给离屏设施接线之前，必须先知道这批代码能否编译——但不能拿主构建去试错。
+  # 本 job 独立、continue-on-error、always 上传日志，只回答"能否编译"。
+  vulkan-backend-compile:
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Install build dependencies including Vulkan headers
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            build-essential libx11-dev libxrandr-dev libxinerama-dev libxcursor-dev libxi-dev \
+            libgl1-mesa-dev libgl1-mesa-dri libwayland-dev wayland-protocols \
+            libxkbcommon-dev xvfb pkg-config \
+            libvulkan1 libvulkan-dev mesa-vulkan-drivers
+
+      - name: Configure with Vulkan enabled
+        run: |
+          cmake -B build -DCMAKE_BUILD_TYPE=Release -DENABLE_TESTS=OFF \
+                -DENABLE_ASAN=OFF -Wno-dev -S . 2>&1 | tee vulkan-cfg.log
+          echo "--- Vulkan lines from configure ---"
+          grep -iE "vulkan" vulkan-cfg.log | sed 's/^/  /' || echo "  (no Vulkan lines)"
+
+      - name: Build and record whether the Vulkan backend compiles
+        continue-on-error: true
+        run: |
+          set +e
+          cmake --build build -j > vulkan-build.log 2>&1
+          echo "build exit = $?"
+          echo "--- first errors, if any ---"
+          grep -E "error:" vulkan-build.log | head -20 | sed 's/^/  /' || echo "  (none)"
+          echo "--- tail ---"
+          tail -25 vulkan-build.log
+
+      - name: Upload Vulkan compile evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: vulkan-compile-${{ github.sha }}
+          path: |
+            vulkan-cfg.log
+            vulkan-build.log
+          if-no-files-found: warn
