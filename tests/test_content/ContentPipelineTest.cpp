@@ -102,6 +102,10 @@ TEST(ContentRegistryManifest, R9_Manifest_SurvivesSessionRestart) {
     ContentRegistry s1;
     auto tex = s1.Import("assets/textures/test.png", AssetType::Texture);
     auto scr = s1.Import("assets/scripts/dogfood_game.lua", AssetType::Script);
+    // SaveManifest 直接写 kDir/ 下的文件，不经过会建目录的 WriteFile 辅助函数，
+    // 所以目录必须由本用例自己保证存在。干净 CI 上它尚不存在；本地残留目录
+    // 曾掩盖这一点。
+    std::filesystem::create_directories(kDir);
     ASSERT_TRUE(s1.SaveManifest(manifest));
     ContentRegistry s2;
     ASSERT_TRUE(s2.LoadManifest(manifest));
@@ -417,6 +421,8 @@ TEST(ContentGolden, R13Golden_ProcessA_Save) {
     ContentRegistry reg;
     auto texG = reg.Import("assets/textures/test.png", AssetType::Texture);
     auto scrG = reg.Import("assets/scripts/sandbox_player.lua", AssetType::Script);
+    // 同 R9：kGM 指向 content_scratch/，目录需由本用例自行保证存在。
+    std::filesystem::create_directories(kDir);
     ASSERT_TRUE(reg.SaveManifest(kGM));
     auto snap = MakePlayerCube(texG, scrG);
     ASSERT_TRUE(SaveSnapshotToFile(snap, kGS));
@@ -517,6 +523,8 @@ TEST(TextureGoldenPath, T3_Reload_PreservesGuid) {
     std::string manifest = kDir + "/tex_manifest.json";
     ContentRegistry regA;
     auto guidA = regA.Import("assets/textures/test.png", AssetType::Texture);
+    // 同 R9：直接写 kDir/ 下的文件，目录不依赖其他用例的副作用。
+    std::filesystem::create_directories(kDir);
     ASSERT_TRUE(regA.SaveManifest(manifest));
 
     ContentRegistry regB;
