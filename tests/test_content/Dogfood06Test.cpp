@@ -5,6 +5,7 @@
  * 15 实体多类型战斗场景：加载 → handle 绑定 → 600 帧循环 → _PERSIST 校验
  */
 
+#include "../utils/TestAssets.h"
 #include <gtest/gtest.h>
 #include "Engine/Core/Content/ContentAsset.h"
 #include "Engine/Core/Content/SceneSerializerV1.h"
@@ -27,10 +28,10 @@ using namespace Engine::Scripting;
 
 TEST(Dogfood06, LoadAndRun) {
     ContentRegistry reg;
-    ASSERT_TRUE(reg.LoadManifest("assets/scenes/dogfood06.manifest.json"));
+    ASSERT_TRUE(reg.LoadManifest(ResolveTestAsset("assets/scenes/dogfood06.manifest.json"));
 
     SceneSnapshot snap; std::string err;
-    ASSERT_TRUE(LoadSnapshotFromFile("assets/scenes/dogfood06.scene", snap, err)) << err;
+    ASSERT_TRUE(LoadSnapshotFromFile(ResolveTestAsset("assets/scenes/dogfood06.scene"), snap, err)) << err;
 
     Engine::Scene scene;
     StubGraphicsFactory gfxF;

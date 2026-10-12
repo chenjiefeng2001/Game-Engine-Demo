@@ -3,6 +3,7 @@
  * @brief Dogfood-05 Arena Survival smoke test
  */
 
+#include "../utils/TestAssets.h"
 #include <gtest/gtest.h>
 #include "Engine/Core/Content/ContentAsset.h"
 #include "Engine/Core/Content/SceneSerializerV1.h"
@@ -26,10 +27,10 @@ using namespace Engine::Scripting;
 
 TEST(Dogfood05, LoadAndRun) {
     ContentRegistry reg;
-    ASSERT_TRUE(reg.LoadManifest("assets/scenes/dogfood05.manifest.json"));
+    ASSERT_TRUE(reg.LoadManifest(ResolveTestAsset("assets/scenes/dogfood05.manifest.json"));
 
     SceneSnapshot snap; std::string err;
-    ASSERT_TRUE(LoadSnapshotFromFile("assets/scenes/dogfood05.scene", snap, err)) << err;
+    ASSERT_TRUE(LoadSnapshotFromFile(ResolveTestAsset("assets/scenes/dogfood05.scene"), snap, err)) << err;
 
     Engine::Scene scene;
     StubGraphicsFactory gfxF;
