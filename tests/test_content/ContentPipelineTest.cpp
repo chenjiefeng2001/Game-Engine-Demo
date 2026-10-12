@@ -13,7 +13,6 @@
 #include "Engine/Scripting/GameplayAPI.h"
 #include "Engine/Scripting/ScriptAPI.h"
 #include "Engine/Scripting/ScriptInstance.h"
-#include "Engine/OpenGL/OpenGLGraphicsFactory.h"
 
 #include <nlohmann/json.hpp>
 #include <filesystem>
@@ -124,13 +123,48 @@ TEST(SceneRoundTrip, R10_R11_RoundTrip_SemanticEquality) {
     EXPECT_EQ(SerializeSnapshot(snapA).dump(), SerializeSnapshot(snapB).dump());
 }
 
+// === 无 GL 的图形工厂（供绑定/反序列化用例使用） ===
+//
+// 这组用例验证的是**绑定契约**：GUID 能否解析、缺失是否非致命、binding 是否
+// 如实记账。纹理是否真的上传到 GPU 与该契约无关——SpriteComponent::SetTexture
+// 只是接收 TextureManager::Load 的返回值（可为空），而 EntityContentBinding 的
+// spriteGuid/scriptGuid 记账是无条件写入的。
+//
+// 原先这里构造的是 OpenGLGraphicsFactory。在没有 OpenGL 上下文的 runner 上，
+// 它的构造函数请求 4.6 core 失败，m_GL 保持全零（函数指针一个都没加载），
+// 随后 CreateTexture 经空函数指针调用 OpenGL 直接段错误，R12 用例根本跑不到断言。
+//
+// 这里改用不触碰 GL 的工厂：CreateTexture 返回一个纯 CPU 侧的 Texture 对象，
+// TextureManager 的缓存路径照样被真实执行，而绑定用例在任何 runner 上都能跑。
+class StubGraphicsFactory : public IGraphicsFactory {
+public:
+    std::shared_ptr<Texture> CreateTexture(const std::string& path) override {
+        return std::make_shared<Texture>(path);
+    }
+    // 其余能力本组用例一律不涉及，显式不支持而不是静默假装可用。
+    std::unique_ptr<IWindow> CreateWindow(int, int, const std::string&) override { return nullptr; }
+    std::unique_ptr<IRenderContext> CreateRenderContext(void*) override { return nullptr; }
+    std::shared_ptr<Shader> CreateShader(const std::string&, const std::string&) override { return nullptr; }
+    std::shared_ptr<Shader> CreateShaderFromStages(const std::vector<ShaderStage>&) override { return nullptr; }
+    std::shared_ptr<VertexBuffer> CreateVertexBuffer(float*, uint32) override { return nullptr; }
+    std::shared_ptr<IndexBuffer> CreateIndexBuffer(uint32*, uint32) override { return nullptr; }
+    std::shared_ptr<VertexArray> CreateVertexArray() override { return nullptr; }
+    std::shared_ptr<RHI::IRHIVertexBuffer> CreateVertexBuffer_RHI(const void*, size_t, uint32) override { return nullptr; }
+    std::shared_ptr<RHI::IRHIIndexBuffer> CreateIndexBuffer_RHI(const uint32*, uint32) override { return nullptr; }
+    std::shared_ptr<RHI::IRHIVertexArray> CreateVertexArray_RHI() override { return nullptr; }
+    std::shared_ptr<ISpriteBatch> CreateSpriteBatch(IRenderContext&) override { return nullptr; }
+    std::unique_ptr<IPrimitiveBatch> CreatePrimitiveBatch(uint32) override { return nullptr; }
+    std::unique_ptr<GBuffer> CreateGBuffer(IRenderContext&) override { return nullptr; }
+    std::unique_ptr<IUIManager> CreateUIManager() override { return nullptr; }
+};
+
 // === Ring12: Adversarial ===
 
 TEST(SceneAdversarial, R12_MissingAsset_NonFatal) {
     ContentRegistry reg;
     auto snap = MakePlayerCube(ResourceGUID::Create(), ResourceGUID::Create());
     Engine::Scene scene;
-    OpenGLGraphicsFactory gfxF;
+    StubGraphicsFactory gfxF;
     Engine::TextureManager texMgr(gfxF);
     Scripting::GameplayAPI::Reset();
     Scripting::GameplayAPI::SetScene(&scene);
@@ -147,7 +181,7 @@ TEST(SceneAdversarial, R12_PresentAssets_BindFully) {
     auto scrG = reg.Import("assets/scripts/sandbox_player.lua", AssetType::Script);
     auto snap = MakePlayerCube(texG, scrG);
     Engine::Scene scene;
-    OpenGLGraphicsFactory gfxF;
+    StubGraphicsFactory gfxF;
     Engine::TextureManager texMgr(gfxF);
     Scripting::GameplayAPI::Reset();
     Scripting::GameplayAPI::SetScene(&scene);
@@ -422,7 +456,7 @@ TEST(ContentGolden, R13Golden_ProcessB_RestartLoadPlay) {
     SceneSnapshot snap; std::string err;
     ASSERT_TRUE(LoadSnapshotFromFile(kGS, snap, err)) << err;
     Engine::Scene scene;
-    OpenGLGraphicsFactory gfxF;
+    StubGraphicsFactory gfxF;
     Engine::TextureManager tm(gfxF);
     Scripting::GameplayAPI::Reset();
     Scripting::GameplayAPI::SetScene(&scene);
@@ -444,7 +478,7 @@ TEST(ContentRuntime, R14_LoadedScene_ScriptDrivesEntity) {
     SerializedEntity e; e.name = "Player"; e.scriptGuid = scrG; e.px = 5.f;
     snap.entities.push_back(e);
     Engine::Scene scene;
-    OpenGLGraphicsFactory gfxF;
+    StubGraphicsFactory gfxF;
     Engine::TextureManager tm(gfxF);
     Scripting::GameplayAPI::Reset();
     Scripting::GameplayAPI::SetScene(&scene);
@@ -472,7 +506,7 @@ TEST(GameplayAPIV2, M001_EntityFind_ByName) {
     SerializedEntity e2; e2.name = "Goal";
     snap.entities = { e1, e2 };
     Engine::Scene scene;
-    OpenGLGraphicsFactory gfxF;
+    StubGraphicsFactory gfxF;
     Engine::TextureManager tm(gfxF);
     Scripting::GameplayAPI::Reset();
     Scripting::GameplayAPI::SetScene(&scene);
@@ -548,7 +582,7 @@ TEST(TextureGoldenPath, T5_MissingTextureGuid_CleanFailure) {
     snap.entities.push_back(e);
 
     Engine::Scene scene;
-    OpenGLGraphicsFactory gfxF;
+    StubGraphicsFactory gfxF;
     Engine::TextureManager tm(gfxF);
     Scripting::GameplayAPI::Reset();
     Scripting::GameplayAPI::SetScene(&scene);
@@ -571,7 +605,7 @@ TEST(ContentDogfood, DF03_Smoke_LoadRunTimerExpire) {
     ASSERT_EQ(snap.entities.size(), 13u);
 
     Engine::Scene scene;
-    OpenGLGraphicsFactory gfxF;
+    StubGraphicsFactory gfxF;
     Engine::TextureManager tm(gfxF);
     Scripting::GameplayAPI::Reset();
     Scripting::GameplayAPI::SetScene(&scene);
@@ -631,7 +665,7 @@ TEST(ContentDogfood, DF03_EntityCount_MultiScript) {
     ASSERT_TRUE(LoadSnapshotFromFile("assets/scenes/dogfood03.scene", snap, err)) << err;
 
     Engine::Scene scene;
-    OpenGLGraphicsFactory gfxF;
+    StubGraphicsFactory gfxF;
     Engine::TextureManager tm(gfxF);
     Scripting::GameplayAPI::Reset();
     Scripting::GameplayAPI::SetScene(&scene);
