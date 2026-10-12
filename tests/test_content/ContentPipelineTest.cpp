@@ -13,6 +13,13 @@
 #include "Engine/Scripting/GameplayAPI.h"
 #include "Engine/Scripting/ScriptAPI.h"
 #include "Engine/Scripting/ScriptInstance.h"
+// StubGraphicsFactory 的 unique_ptr 返回值需要完整类型（否则默认 delete
+// 实例化会报 sizeof 不完整类型），这里显式包含。
+#include "Engine/Core/IWindow.h"
+#include "Engine/Core/IRenderContext.h"
+#include "Engine/Core/IUIManager.h"
+#include "Engine/Core/RHI/IPrimitiveBatch.h"
+#include "Engine/Core/RHI/GBuffer.h"
 
 #include <nlohmann/json.hpp>
 #include <filesystem>
@@ -136,10 +143,20 @@ TEST(SceneRoundTrip, R10_R11_RoundTrip_SemanticEquality) {
 //
 // 这里改用不触碰 GL 的工厂：CreateTexture 返回一个纯 CPU 侧的 Texture 对象，
 // TextureManager 的缓存路径照样被真实执行，而绑定用例在任何 runner 上都能跑。
+// Texture 是抽象类（Bind / GetWidth / GetHeight 为纯虚），工厂需要一个具体实现。
+// 这里刻意不做任何 GPU 绑定：绑定契约不依赖它，TextureManager 的缓存路径照样真实执行。
+class StubTexture : public Texture {
+public:
+    explicit StubTexture(const std::string& path) : Texture(path) {}
+    void Bind(uint32) const override {}
+    uint32 GetWidth() const override { return 1; }
+    uint32 GetHeight() const override { return 1; }
+};
+
 class StubGraphicsFactory : public IGraphicsFactory {
 public:
     std::shared_ptr<Texture> CreateTexture(const std::string& path) override {
-        return std::make_shared<Texture>(path);
+        return std::make_shared<StubTexture>(path);
     }
     // 其余能力本组用例一律不涉及，显式不支持而不是静默假装可用。
     std::unique_ptr<IWindow> CreateWindow(int, int, const std::string&) override { return nullptr; }
