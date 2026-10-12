@@ -32,7 +32,7 @@ using namespace Engine::Scripting;
 TEST(Dogfood07, LoadRunRestart) {
     // ── 1. 加载场景 + 脚本 ──
     ContentRegistry reg;
-    ASSERT_TRUE(reg.LoadManifest(ResolveTestAsset("assets/scenes/dogfood07.manifest.json"));
+    ASSERT_TRUE(reg.LoadManifest(ResolveTestAsset("assets/scenes/dogfood07.manifest.json")));
 
     SceneSnapshot snap; std::string err;
     ASSERT_TRUE(LoadSnapshotFromFile(ResolveTestAsset("assets/scenes/dogfood07.scene"), snap, err)) << err;
