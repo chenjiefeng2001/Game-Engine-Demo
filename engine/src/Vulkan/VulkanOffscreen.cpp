@@ -164,6 +164,60 @@ void VulkanOffscreenTarget::EndRendering(VkCommandBuffer cmd) const
     vkCmdEndRendering(cmd);
 }
 
+VkCommandBuffer VulkanOffscreenTarget::BeginOneShot() const
+{
+    VkCommandPool pool = m_Device->GetOrCreateThreadCommandPool();
+    if (pool == VK_NULL_HANDLE) return VK_NULL_HANDLE;
+
+    VkCommandBufferAllocateInfo ai{};
+    ai.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO;
+    ai.commandPool = pool;
+    ai.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
+    ai.commandBufferCount = 1;
+    VkCommandBuffer cmd = VK_NULL_HANDLE;
+    if (vkAllocateCommandBuffers(m_VkDevice, &ai, &cmd) != VK_SUCCESS) return VK_NULL_HANDLE;
+
+    VkCommandBufferBeginInfo bi{};
+    bi.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
+    bi.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
+    if (vkBeginCommandBuffer(cmd, &bi) != VK_SUCCESS) {
+        vkFreeCommandBuffers(m_VkDevice, pool, 1, &cmd);
+        return VK_NULL_HANDLE;
+    }
+    return cmd;
+}
+
+bool VulkanOffscreenTarget::EndSubmitAndWait(VkCommandBuffer cmd) const
+{
+    if (cmd == VK_NULL_HANDLE) return false;
+    VkCommandPool pool = m_Device->GetOrCreateThreadCommandPool();
+
+    if (vkEndCommandBuffer(cmd) != VK_SUCCESS) {
+        if (pool) vkFreeCommandBuffers(m_VkDevice, pool, 1, &cmd);
+        return false;
+    }
+
+    VkFenceCreateInfo fi{};
+    fi.sType = VK_STRUCTURE_TYPE_FENCE_CREATE_INFO;
+    VkFence fence = VK_NULL_HANDLE;
+    vkCreateFence(m_VkDevice, &fi, nullptr, &fence);
+
+    VkSubmitInfo si{};
+    si.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
+    si.commandBufferCount = 1;
+    si.pCommandBuffers = &cmd;
+
+    bool ok = false;
+    if (vkQueueSubmit(m_Queue, 1, &si, fence) == VK_SUCCESS &&
+        vkWaitForFences(m_VkDevice, 1, &fence, VK_TRUE, UINT64_MAX) == VK_SUCCESS) {
+        ok = true;
+    }
+
+    vkDestroyFence(m_VkDevice, fence, nullptr);
+    if (pool) vkFreeCommandBuffers(m_VkDevice, pool, 1, &cmd);
+    return ok;
+}
+
 bool VulkanOffscreenTarget::Readback(std::vector<uint8_t>& out)
 {
     out.assign(static_cast<size_t>(m_ReadbackSize), 0);
