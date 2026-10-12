@@ -420,7 +420,7 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
             build-essential libglfw3-dev xvfb mesa-utils \
-            mesa-vulkan-drivers libvulkan1 vulkan-tools
+            mesa-vulkan-drivers libvulkan1 libvulkan-dev vulkan-tools
 
       - name: Record the Mesa and Vulkan stack actually installed
         run: |
