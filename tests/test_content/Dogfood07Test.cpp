@@ -8,6 +8,7 @@
  *   3. Save → Load round-trip（Restart 语义）
  */
 
+#include "../utils/TestAssets.h"
 #include <gtest/gtest.h>
 #include "Engine/Core/Content/ContentAsset.h"
 #include "Engine/Core/Content/SceneSerializerV1.h"
@@ -31,10 +32,10 @@ using namespace Engine::Scripting;
 TEST(Dogfood07, LoadRunRestart) {
     // ── 1. 加载场景 + 脚本 ──
     ContentRegistry reg;
-    ASSERT_TRUE(reg.LoadManifest("assets/scenes/dogfood07.manifest.json"));
+    ASSERT_TRUE(reg.LoadManifest(ResolveTestAsset("assets/scenes/dogfood07.manifest.json"));
 
     SceneSnapshot snap; std::string err;
-    ASSERT_TRUE(LoadSnapshotFromFile("assets/scenes/dogfood07.scene", snap, err)) << err;
+    ASSERT_TRUE(LoadSnapshotFromFile(ResolveTestAsset("assets/scenes/dogfood07.scene"), snap, err)) << err;
 
     Engine::Scene scene;
     StubGraphicsFactory gfxF;
@@ -95,7 +96,7 @@ TEST(Dogfood07, LoadRunRestart) {
     // ── 3. Restart 语义：Save → 新 Scene → Load ──
     ASSERT_TRUE(SaveSnapshotToFile(snap, "assets/scenes/_df07_roundtrip.scene"));
     SceneSnapshot snap2;
-    ASSERT_TRUE(LoadSnapshotFromFile("assets/scenes/_df07_roundtrip.scene", snap2, err)) << err;
+    ASSERT_TRUE(LoadSnapshotFromFile(ResolveTestAsset("assets/scenes/_df07_roundtrip.scene"), snap2, err)) << err;
     EXPECT_EQ(snap2.entities.size(), snap.entities.size());
 
     Engine::Scene scene2;
