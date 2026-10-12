@@ -474,15 +474,23 @@ jobs:
       - name: Probe whether lavapipe can host offscreen Vulkan rendering
         run: |
           LAVAPIPE_ICD="$(ls -1 /usr/share/vulkan/icd.d/lvp_icd*.json 2>/dev/null | head -1)"
+          OUT="$RUNNER_TEMP/probe-vulkan-lavapipe.txt"
           if [[ -z "$LAVAPIPE_ICD" ]]; then
-            echo "lavapipe ICD not found; Vulkan probe cannot run" \
-              | tee "$RUNNER_TEMP/probe-vulkan-lavapipe.txt"
+            echo "lavapipe ICD not found; Vulkan probe cannot run" | tee "$OUT"
             exit 0
           fi
           g++ -std=c++17 -O1 tools/vk_capability_probe.cpp -o "$RUNNER_TEMP/vkprobe" -lvulkan
+          # 不能写成 `probe | tee`：管道下退出码取自 tee，探针崩溃会被吞掉，
+          # 而且 stdout 是块缓冲，段错误时缓冲区丢失——日志与产物都会是 0 字节，
+          # 看起来像"成功但无输出"。这里重定向落盘，再单独取退出码。
+          PROBE_RC=0
           env VK_DRIVER_FILES="$LAVAPIPE_ICD" VK_ICD_FILENAMES="$LAVAPIPE_ICD" \
-            "$RUNNER_TEMP/vkprobe" 2>&1 | tee "$RUNNER_TEMP/probe-vulkan-lavapipe.txt"
-
+            stdbuf -o0 -e0 "$RUNNER_TEMP/vkprobe" > "$OUT" 2>&1 || PROBE_RC=$?
+          cat "$OUT"
+          echo "vkprobe exit = $PROBE_RC" | tee -a "$OUT"
+          if [[ "$PROBE_RC" -ne 0 ]]; then
+            echo "vkprobe did not succeed (exit $PROBE_RC)"
+          fi
       - name: Probe under Xvfb with Zink and no ICD restriction
         run: |
           xvfb-run -a -s "-screen 0 1280x800x24" \
