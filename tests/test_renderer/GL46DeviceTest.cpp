@@ -290,17 +290,49 @@ void GpuDumpShaderLogs(GladGLContext& gl, const char* vertPath, const char* frag
 
 }  // namespace
 
+namespace glcap {
+
+static const char* SafeGetString(GladGLContext& gl, GLenum name)
+{
+    if (!gl.GetString) return "<no glGetString>";
+    const GLubyte* s = gl.GetString(name);
+    return s ? reinterpret_cast<const char*>(s) : "<null>";
+}
+
+// Returns true only if a core context of the requested version was created.
+// On failure *outWindow is left untouched, so callers may chain attempts.
+static bool TryCreateCoreContext(int major, int minor, GLFWwindow** outWindow,
+                                 const char* title = "GL capability probe")
+{
+    glfwDefaultWindowHints();
+    glfwWindowHint(GLFW_CLIENT_API, GLFW_OPENGL_API);
+    glfwWindowHint(GLFW_CONTEXT_VERSION_MAJOR, major);
+    glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, minor);
+    glfwWindowHint(GLFW_OPENGL_PROFILE, GLFW_OPENGL_CORE_PROFILE);
+    glfwWindowHint(GLFW_VISIBLE, GLFW_FALSE);
+    GLFWwindow* w = glfwCreateWindow(64, 64, title, nullptr, nullptr);
+    if (!w) return false;
+    if (outWindow) *outWindow = w;
+    return true;
+}
+
+} // namespace glcap
+
 class GPUSkinningPixelTest : public ::testing::Test {
 protected:
     static void SetUpTestSuite()
     {
         if (!glfwInit()) { std::printf("  [FATAL] glfwInit failed\n"); return; }
-        glfwWindowHint(GLFW_VISIBLE, GLFW_FALSE);
-        glfwWindowHint(GLFW_CONTEXT_VERSION_MAJOR, 4);
-        glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, 6);
-        glfwWindowHint(GLFW_OPENGL_PROFILE, GLFW_OPENGL_CORE_PROFILE);
-        s_Window = glfwCreateWindow(64, 64, "GPUSkinPixel", nullptr, nullptr);
-        if (!s_Window) { std::printf("  [FATAL] GL 4.6 core context creation failed\n"); return; }
+        // 优先 4.6 core（与生产 viewport 的请求一致），但驱动给不出时降到 4.5。
+        // Linux CI 的 llvmpipe 最高只支持 4.5，而被测 shader 是 #version 330 core，
+        // 4.5 足以真实渲染并回读像素，所以降级不会削弱验证强度。
+        // 两者都拿不到时仍然失败：这些用例不允许被跳过。
+        if (!glcap::TryCreateCoreContext(4, 6, &s_Window, "GPUSkinPixel") &&
+            !glcap::TryCreateCoreContext(4, 5, &s_Window, "GPUSkinPixel")) {
+            std::printf("  [FATAL] no GL core context (tried 4.6 then 4.5)\n");
+            s_Window = nullptr;
+            return;
+        }
         glfwMakeContextCurrent(s_Window);
 
         s_Factory = std::make_unique<OpenGLGraphicsFactory>();
@@ -330,7 +362,7 @@ protected:
     void SetUp() override
     {
         ASSERT_NE(s_Window, nullptr)
-            << "no GL 4.6 core context; GPU skinning verification cannot be skipped";
+            << "no GL core context (4.6 or 4.5); GPU skinning verification cannot be skipped";
         ASSERT_NE(s_Context.get(), nullptr)
             << "render context creation failed; GPU skinning verification cannot be skipped";
     }
@@ -608,32 +640,6 @@ TEST_F(GPUSkinningPixelTest, SkinnedProgramIsInUseAndBackgroundIsStable)
 // created. The probe never fails the build on capability grounds: it is a
 // measurement, and it must stay runnable on machines without a usable driver.
 // ---------------------------------------------------------------------------
-namespace glcap {
-
-static const char* SafeGetString(GladGLContext& gl, GLenum name)
-{
-    if (!gl.GetString) return "<no glGetString>";
-    const GLubyte* s = gl.GetString(name);
-    return s ? reinterpret_cast<const char*>(s) : "<null>";
-}
-
-// Returns true only if a core context of the requested version was created.
-static bool TryCreateCoreContext(int major, int minor, GLFWwindow** outWindow)
-{
-    glfwDefaultWindowHints();
-    glfwWindowHint(GLFW_CLIENT_API, GLFW_OPENGL_API);
-    glfwWindowHint(GLFW_CONTEXT_VERSION_MAJOR, major);
-    glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, minor);
-    glfwWindowHint(GLFW_OPENGL_PROFILE, GLFW_OPENGL_CORE_PROFILE);
-    glfwWindowHint(GLFW_VISIBLE, GLFW_FALSE);
-    GLFWwindow* w = glfwCreateWindow(64, 64, "GL capability probe", nullptr, nullptr);
-    if (!w) return false;
-    if (outWindow) *outWindow = w;
-    return true;
-}
-
-} // namespace glcap
-
 TEST(GLRunnerCapabilityProbe, ReportRunnerOpenGLCapability)
 {
     if (!glfwInit()) {
