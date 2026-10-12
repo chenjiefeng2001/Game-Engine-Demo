@@ -17,6 +17,7 @@
  */
 
 #include "Engine/Vulkan/VulkanCommon.h"
+#include "Engine/Vulkan/ShaderRegistry.h"
 #include "Engine/Core/RHI/PSODesc.h"
 
 #ifdef ENGINE_HAS_SHADERC
@@ -192,5 +193,76 @@ private:
 #endif
 };
 
+
+// ════════════════════════════════════════════════════════════
+// ShaderRegistry 实现
+//
+// 放在本文件是因为 ShaderCompiler 是文件内私有类（无法从其它 TU 引用）。
+// 本文件在 src/Vulkan/ 下，engine/CMakeLists.txt 的 GLOB 会自动纳入。
+// ════════════════════════════════════════════════════════════
+
+ShaderRegistry& ShaderRegistry::Get()
+{
+    static ShaderRegistry instance;
+    return instance;
+}
+
+bool ShaderRegistry::RegisterCompiled(const std::string& name, ShaderStageType stage,
+                                      std::vector<uint32_t>&& words)
+{
+    if (words.empty()) return false;
+    StringID id = StringID::Runtime(name);
+    Key key{ id.Value(), static_cast<uint8_t>(stage) };
+    m_Shaders[std::move(key)] = std::move(words);
+    return true;
+}
+
+bool ShaderRegistry::RegisterSource(const std::string& name, ShaderStageType stage,
+                                    const std::string& glslSource)
+{
+#ifdef ENGINE_HAS_SHADERC
+    ShaderCompiler compiler;
+    SpirVBinary result = compiler.Compile(glslSource, ShaderStage::FromGLSL(stage, glslSource));
+    if (!result.success) {
+        std::fprintf(stderr, "[ShaderRegistry] compile failed for '%s': %s\n",
+                     name.c_str(), result.errorMessage.c_str());
+        return false;
+    }
+    return RegisterCompiled(name, stage, std::move(result.data));
+#else
+    (void)name; (void)stage; (void)glslSource;
+    std::fprintf(stderr, "[ShaderRegistry] shaderc unavailable (ENGINE_HAS_SHADERC undefined)\n");
+    return false;
+#endif
+}
+
+bool ShaderRegistry::RegisterFile(const std::string& name, ShaderStageType stage,
+                                  const std::string& glslPath)
+{
+    std::ifstream in(glslPath, std::ios::binary);
+    if (!in.is_open()) {
+        std::fprintf(stderr, "[ShaderRegistry] cannot open '%s'\n", glslPath.c_str());
+        return false;
+    }
+    std::stringstream ss;
+    ss << in.rdbuf();
+    return RegisterSource(name, stage, ss.str());
+}
+
+bool ShaderRegistry::RegisterSpirv(const std::string& name, ShaderStageType stage,
+                                   const uint32_t* data, size_t wordCount)
+{
+    if (!data || wordCount == 0) return false;
+    return RegisterCompiled(name, stage, std::vector<uint32_t>(data, data + wordCount));
+}
+
+const std::vector<uint32_t>* ShaderRegistry::Find(StringID id, ShaderStageType stage) const
+{
+    Key key{ id.Value(), static_cast<uint8_t>(stage) };
+    auto it = m_Shaders.find(key);
+    return (it == m_Shaders.end()) ? nullptr : &it->second;
+}
+
+size_t ShaderRegistry::Count() const noexcept { return m_Shaders.size(); }
 } // namespace RHI
 } // namespace Engine

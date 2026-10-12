@@ -10,6 +10,7 @@
 #include "Engine/Vulkan/VulkanFrameResource.h"
 #include "Engine/Vulkan/VulkanPipelineLayoutCache.h"
 #include "Engine/Vulkan/VulkanDeferredDeletion.h"
+#include "Engine/Vulkan/ShaderRegistry.h"
 #include <cstdio>
 #include <cstdlib>
 #include <vector>
@@ -330,7 +331,40 @@ IRHIPipelineState* VulkanDevice::CreateGraphicsPSO(const GraphicsPSODesc& desc) 
     if (auto* hit = PSOCache::Get().Find<GraphicsPSODesc>(hash)) return hit;
     VkPipelineLayout layout; VkPipelineLayoutCreateInfo plCI{VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO};
     vkCreatePipelineLayout(m_Impl->device, &plCI, nullptr, &layout);
-    auto* pso = CreateGraphicsPipeline(m_Impl->device, layout, desc, VK_NULL_HANDLE, VK_NULL_HANDLE);
+
+    // 着色器解析：此前这里传的是两个 VK_NULL_HANDLE，而 CreateGraphicsPipeline
+    // 对空模块的处理是 stages.empty() → 返回 nullptr，于是图形管线**永远无法创建**。
+    // GraphicsPSODesc 用 StringID 引用着色器，StringID 是单向哈希无法反解回名字，
+    // 因此走运行时注册表（加载期填充）。
+    VkShaderModule vsModule = VK_NULL_HANDLE;
+    VkShaderModule fsModule = VK_NULL_HANDLE;
+
+    if (const auto* vs = ShaderRegistry::Get().Find(desc.vertexShader, ShaderStageType::Vertex)) {
+        VkShaderModuleCreateInfo ci{VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO};
+        ci.codeSize = vs->size() * sizeof(uint32_t);
+        ci.pCode = vs->data();
+        if (vkCreateShaderModule(m_Impl->device, &ci, nullptr, &vsModule) != VK_SUCCESS)
+            vsModule = VK_NULL_HANDLE;
+    } else {
+        std::fprintf(stderr, "[Vulkan] vertex shader not registered (id=%llu)\n",
+                     static_cast<unsigned long long>(desc.vertexShader.Value()));
+    }
+
+    if (const auto* fs = ShaderRegistry::Get().Find(desc.pixelShader, ShaderStageType::Fragment)) {
+        VkShaderModuleCreateInfo ci{VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO};
+        ci.codeSize = fs->size() * sizeof(uint32_t);
+        ci.pCode = fs->data();
+        if (vkCreateShaderModule(m_Impl->device, &ci, nullptr, &fsModule) != VK_SUCCESS)
+            fsModule = VK_NULL_HANDLE;
+    } else {
+        std::fprintf(stderr, "[Vulkan] pixel shader not registered (id=%llu)\n",
+                     static_cast<unsigned long long>(desc.pixelShader.Value()));
+    }
+
+    auto* pso = CreateGraphicsPipeline(m_Impl->device, layout, desc, vsModule, fsModule);
+    // 模块只用于创建管线，创建完即可销毁（管线内部已持有）。
+    if (vsModule) vkDestroyShaderModule(m_Impl->device, vsModule, nullptr);
+    if (fsModule) vkDestroyShaderModule(m_Impl->device, fsModule, nullptr);
     if (pso) PSOCache::Get().Store<GraphicsPSODesc>(hash, pso);
     return pso;
 }
