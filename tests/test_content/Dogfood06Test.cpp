@@ -16,7 +16,7 @@
 #include "Engine/Scripting/GameplayAPI.h"
 #include "Engine/Scripting/ScriptAPI.h"
 #include "Engine/Scripting/ScriptInstance.h"
-#include "Engine/OpenGL/OpenGLGraphicsFactory.h"
+#include "StubGraphicsFactory.h"
 
 #include <cmath>
 #include <cstdio>
@@ -33,7 +33,7 @@ TEST(Dogfood06, LoadAndRun) {
     ASSERT_TRUE(LoadSnapshotFromFile("assets/scenes/dogfood06.scene", snap, err)) << err;
 
     Engine::Scene scene;
-    OpenGLGraphicsFactory gfxF;
+    StubGraphicsFactory gfxF;
     TextureManager tm(gfxF);
     GameplayAPI::Reset();
     GameplayAPI::SetScene(&scene);

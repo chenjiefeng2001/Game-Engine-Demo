@@ -26,7 +26,7 @@
 #include "Engine/Scripting/ScriptAPI.h"
 #include "Engine/Scripting/ScriptInstance.h"
 
-#include "Engine/OpenGL/OpenGLGraphicsFactory.h"
+#include "StubGraphicsFactory.h"
 
 #include <nlohmann/json.hpp>
 #include <filesystem>
@@ -257,7 +257,7 @@ TEST(DXGoldenGate, R13_ProcessB_LoadAndPlay) {
     ASSERT_TRUE(LoadSnapshotFromFile(DX_SS(), snap, err)) << err;
 
     Engine::Scene scene;
-    OpenGLGraphicsFactory gfxF;
+    StubGraphicsFactory gfxF;
     Engine::TextureManager tm(gfxF);
     Scripting::GameplayAPI::Reset();
     Scripting::GameplayAPI::SetScene(&scene);
