@@ -117,24 +117,6 @@ bool SubmitAndWait(Ctx& c, VkCommandBuffer cb)
     return true;
 }
 
-void AddImageBarrier(VkCommandBuffer cb, VkImage img, VkImageAspectFlags aspect,
-                     VkImageLayout from, VkImageLayout to,
-                     VkAccessFlags srcAccess, VkAccessFlags dstAccess,
-                     VkPipelineStageFlags srcStage, VkPipelineStageFlags dstStage)
-{
-    VkImageMemoryBarrier b{};
-    b.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
-    b.oldLayout = from;
-    b.newLayout = to;
-    b.srcAccessMask = srcAccess;
-    b.dstAccessMask = dstAccess;
-    b.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
-    b.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
-    b.image = img;
-    b.subresourceRange = { aspect, 0, 1, 0, 1 };
-    vkCmdPipelineBarrier(cb, srcStage, dstStage, 0, 0, nullptr, 0, nullptr, 1, &b);
-}
-
 } // namespace
 
 int main(int argc, char** argv)
@@ -368,7 +350,7 @@ int main(int argc, char** argv)
     vkBindBufferMemory(c.device, buf, bufMem, 0);
 
     // ── 录制并提交 ──
-    VkCommandBuffer cb = BeginOneShot(c);
+    VkCommandBuffer cmd = BeginOneShot(c);
     VkClearValue clear{};
     clear.color = { { 0.0f, 0.0f, 0.0f, 1.0f } };
     VkRenderPassBeginInfo rpb{};
@@ -378,17 +360,17 @@ int main(int argc, char** argv)
     rpb.renderArea = { { 0, 0 }, { W, H } };
     rpb.clearValueCount = 1;
     rpb.pClearValues = &clear;
-    vkCmdBeginRenderPass(cb, &rpb, VK_SUBPASS_CONTENTS_INLINE);
-    vkCmdBindPipeline(cb, VK_PIPELINE_BIND_POINT_GRAPHICS, pipe);
-    vkCmdDraw(cb, 3, 1, 0, 0);   // 全屏三角形由 gl_VertexIndex 生成
-    vkCmdEndRenderPass(cb);
+    vkCmdBeginRenderPass(cmd, &rpb, VK_SUBPASS_CONTENTS_INLINE);
+    vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, pipe);
+    vkCmdDraw(cmd, 3, 1, 0, 0);   // 全屏三角形由 gl_VertexIndex 生成
+    vkCmdEndRenderPass(cmd);
 
     VkBufferImageCopy copy{};
     copy.imageSubresource = { VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1 };
     copy.imageExtent = { W, H, 1 };
-    vkCmdCopyImageToBuffer(cb, image, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, buf, 1, &copy);
+    vkCmdCopyImageToBuffer(cmd, image, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, buf, 1, &copy);
 
-    if (!SubmitAndWait(c, cb)) return 1;
+    if (!SubmitAndWait(c, cmd)) return 1;
 
     void* mapped = nullptr;
     vkMapMemory(c.device, bufMem, 0, bytes, 0, &mapped);
