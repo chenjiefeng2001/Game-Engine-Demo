@@ -710,16 +710,24 @@ jobs:
           echo "--- Vulkan lines from configure ---"
           grep -iE "vulkan" vulkan-cfg.log | sed 's/^/  /' || echo "  (no Vulkan lines)"
 
-      - name: Build and record whether the Vulkan backend compiles
+      - name: Compile only the Vulkan backend objects
         continue-on-error: true
         run: |
+          # 只编译 src/Vulkan/ 下的目标文件：全量引擎构建会超出本 job 的时限
+          # （实测被 runner SIGTERM，exit 143），而这里要回答的问题只与 Vulkan 有关。
           set +e
-          cmake --build build -j > vulkan-build.log 2>&1
-          echo "build exit = $?"
-          echo "--- first errors, if any ---"
-          grep -E "error:" vulkan-build.log | head -20 | sed 's/^/  /' || echo "  (none)"
-          echo "--- tail ---"
-          tail -25 vulkan-build.log
+          RC=0
+          for src in engine/src/Vulkan/*.cpp; do
+            base="$(basename "$src")"
+            obj="engine/CMakeFiles/EngineCore.dir/src/Vulkan/${base}.o"
+            make -C build -f engine/CMakeFiles/EngineCore.dir/build.make "$obj" \
+              >> vulkan-build.log 2>&1 || RC=1
+          done
+          echo "compile-all-objects rc = $RC"
+          echo "--- errors, if any ---"
+          grep -E "error:" vulkan-build.log | head -30 | sed 's/^/  /' || echo "  (none)"
+          echo "--- objects attempted ---"
+          ls engine/src/Vulkan/*.cpp | wc -l
 
       - name: Upload Vulkan compile evidence
         if: always()
