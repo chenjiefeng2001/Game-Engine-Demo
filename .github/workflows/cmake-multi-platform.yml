@@ -271,6 +271,9 @@ jobs:
     # GPU 蒙皮用例并把 SKIP 原因打进日志，让"没验证"这件事在 CI 上显式可见，
     # 而不是藏在一个绿色对勾后面。
     - name: Report GPU skinning verification status
+      # 必须 always()：套件红的时候恰恰最需要知道 GPU 像素到底验没验，
+      # 若跟随前置步骤失败而被跳过，这条证据就永远丢了。
+      if: always()
       shell: bash
       working-directory: ${{ steps.strings.outputs.build-output-dir }}
       run: |
