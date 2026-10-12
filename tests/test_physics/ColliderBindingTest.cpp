@@ -333,18 +333,25 @@ TEST(F2ColliderPhysics, WorldLifecycle_DestroyWorld_RestoreBodyFromComponent) {
     EXPECT_EQ(adapter.GetTrackedCount(), 1u);
     IPhysicsBody* bodyB = adapter.GetBody(*collider);
     ASSERT_NE(bodyB, nullptr);
-    // 这里**不能**用 `EXPECT_NE(bodyB, bodyA)` 来断言"重建出了新 body"。
-    // IPhysicsBody 是 m_Bodies 里 shared_ptr 托管的堆对象，ReleaseWorld()→Clear()
-    // 已经把 bodyA 释放掉了；拿一个悬垂指针和存活指针比较，结果是未指定的，
-    // 分配器只要复用了同一地址就会误报失败。实测正是如此。
-    // 改在有意义且有定义的层面断言：底层 Box2D body 必须是新建的。
-    // Box2D 复用 slot 时会递增 generation，所以 index1 或 generation 任一不同，
-    // 都说明这是新 body，而不是被复用的旧 body。
+    // 这里刻意**不做** body 的"身份"断言，两种写法都站不住：
+    //
+    // 1) `EXPECT_NE(bodyB, bodyA)` —— IPhysicsBody 是 m_Bodies 里 shared_ptr 托管的
+    //    堆对象，ReleaseWorld()→Clear() 已经把它释放了。拿悬垂指针和存活指针比较
+    //    结果未指定；分配器复用同一地址就会误报失败（实测正是如此）。
+    //
+    // 2) 比较 Box2D 的 b2BodyId —— 同样不成立。b2BodyId 的 generation 是**每个 world
+    //    独立**的计数，而这里 ReleaseWorld() 销毁的是整个 world；随后 MakeWorld()
+    //    新建的 world 其 body 数组从 generation 1 重新计数，于是新 body 合法地拿到
+    //    与旧 body 相同的 (index1, generation)。实测重建得到 index1=1, generation=1，
+    //    与被销毁的旧 body 完全一致，但它是另一个 world 里的另一个 body。
+    //
+    // 本用例真正要证明的契约，由下面这些有定义的断言完整覆盖：
+    //   - 旧 body 已随 world 一起销毁：上面的 EXPECT_FALSE(b2Body_IsValid(nativeA))
+    //   - 重建出了一个新的、有效的 body：下面 b2Body_IsValid(nativeB)
+    //   - 它来自 Component 的**当前**状态：下面的半径/类别/掩码/激活断言
+    //   - 没有残留重复 body：GetBodyCount() == 1、GetTrackedCount() == 1
     const b2BodyId nativeB = GetNativeBodyId(bodyB);
     EXPECT_TRUE(b2Body_IsValid(nativeB));
-    EXPECT_TRUE(nativeB.index1 != nativeA.index1 || nativeB.generation != nativeA.generation)
-        << "rebuilt body is the same Box2D body as the destroyed one "
-        << "(index1=" << nativeB.index1 << ", generation=" << nativeB.generation << ")";
 
     // Body#2 参数与 Component 完全一致
     EXPECT_FLOAT_EQ(CircleRadius(bodyB), 1.5f);
