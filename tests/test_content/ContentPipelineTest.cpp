@@ -3,7 +3,6 @@
  * @brief Content Pipeline acceptance tests (Ring8-Ring12 + Gameplay API v2.1)
  */
 
-#include "../utils/TestAssets.h"
 #include <gtest/gtest.h>
 #include "Engine/Core/Content/ContentAsset.h"
 #include "Engine/Core/Content/SceneSerializerV1.h"
@@ -580,10 +579,10 @@ TEST(TextureGoldenPath, T5_MissingTextureGuid_CleanFailure) {
 
 TEST(ContentDogfood, DF03_Smoke_LoadRunTimerExpire) {
     ContentRegistry reg;
-    ASSERT_TRUE(reg.LoadManifest(ResolveTestAsset("assets/scenes/dogfood03.manifest.json"));
+    ASSERT_TRUE(reg.LoadManifest("assets/scenes/dogfood03.manifest.json"));
 
     SceneSnapshot snap; std::string err;
-    ASSERT_TRUE(LoadSnapshotFromFile(ResolveTestAsset("assets/scenes/dogfood03.scene"), snap, err)) << err;
+    ASSERT_TRUE(LoadSnapshotFromFile("assets/scenes/dogfood03.scene", snap, err)) << err;
     ASSERT_EQ(snap.entities.size(), 13u);
 
     Engine::Scene scene;
@@ -642,9 +641,9 @@ TEST(ContentDogfood, DF03_Smoke_LoadRunTimerExpire) {
 
 TEST(ContentDogfood, DF03_EntityCount_MultiScript) {
     ContentRegistry reg;
-    ASSERT_TRUE(reg.LoadManifest(ResolveTestAsset("assets/scenes/dogfood03.manifest.json"));
+    ASSERT_TRUE(reg.LoadManifest("assets/scenes/dogfood03.manifest.json"));
     SceneSnapshot snap; std::string err;
-    ASSERT_TRUE(LoadSnapshotFromFile(ResolveTestAsset("assets/scenes/dogfood03.scene"), snap, err)) << err;
+    ASSERT_TRUE(LoadSnapshotFromFile("assets/scenes/dogfood03.scene", snap, err)) << err;
 
     Engine::Scene scene;
     StubGraphicsFactory gfxF;
