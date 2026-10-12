@@ -412,7 +412,24 @@ jobs:
       # 不改任何门禁、不改引擎、不改测试。
       - name: Confirm lavapipe is a usable Vulkan device
         run: |
-          vulkaninfo --summary 2>&1 | tee "$RUNNER_TEMP/vulkaninfo.txt" | head -40 || true
+          {
+            echo "=== vulkan loader present? ==="
+            ldconfig -p | grep -i vulkan || echo "  (no libvulkan in ldconfig)"
+            echo "=== lvp ICD contents ==="
+            ls -1 /usr/share/vulkan/icd.d/lvp_icd*.json 2>&1 | while read -r f; do
+              echo "  $f"; cat "$f"; done
+            echo "=== lavapipe shared object present? ==="
+            ls -1 /usr/lib/x86_64-linux-gnu/libvulkan_lvp.so 2>&1 | sed 's/^/  /'
+            echo "=== vulkaninfo --summary ==="
+            vulkaninfo --summary 2>&1 || echo "  (vulkaninfo failed rc=$?)"
+          } | tee "$RUNNER_TEMP/vulkaninfo.txt"
+
+      - name: Probe under Xvfb with Zink and no ICD restriction
+        run: |
+          xvfb-run -a -s "-screen 0 1280x800x24" \
+            env MESA_LOADER_DRIVER_OVERRIDE=zink \
+                XDG_SESSION_TYPE=x11 \
+            "$RUNNER_TEMP/glprobe" 2>&1 | tee "$RUNNER_TEMP/probe-zink-defaulticd.txt"
 
       - name: Probe under Xvfb with Zink on lavapipe
         run: |
