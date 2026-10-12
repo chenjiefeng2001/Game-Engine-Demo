@@ -6,7 +6,55 @@
 
 ---
 
-## 0. 为什么有这份文档
+## 0. 最重要的一件事：图形管线路径完全不可用
+
+**接手前请先读这一节。**
+
+`VulkanDevice::CreateGraphicsPSO` 传两个空句柄作为着色器模块：
+
+```cpp
+// VulkanDevice.cpp:333
+auto* pso = CreateGraphicsPipeline(m_Impl->device, layout, desc,
+                                  VK_NULL_HANDLE, VK_NULL_HANDLE);
+```
+
+而 `CreateGraphicsPipeline` 对空模块的处理是直接放弃：
+
+```cpp
+if (vsModule != VK_NULL_HANDLE) { ... }   // 跳过
+if (fsModule != VK_NULL_HANDLE) { ... }   // 跳过
+if (stages.empty()) { "no shader stages provided"; return nullptr; }   // 必然命中
+```
+
+**因此 `CreateGraphicsPSO()` 永远返回 nullptr。**
+
+`GraphicsPSODesc::vertexShader` / `pixelShader`（`StringID`）在整个
+`engine/src/Vulkan/` 中**从未被解析成 SPIR-V** —— 对这两个字段全目录搜索，
+**零命中**。着色器 ID 到 SPIR-V 的解析子系统**根本不存在**。
+
+连带：`GraphicsPSODesc` 也没有顶点输入描述字段（无 vertex buffer / attribute
+布局），即使着色器解决了，也没有表达带属性顶点流的方式。
+
+### 这意味着什么
+
+引擎的 Vulkan 后端**无法创建任何图形管线**，因此无法绘制任何东西。
+本路线剩下的工作不是「把线接上」，而是「造一条线」——具体来说是：
+
+1. 着色器注册表/缓存（GLSL → SPIR-V，按 StringID 存取）
+2. `CreateGraphicsPSO` 接入它，替换两个 `VK_NULL_HANDLE`
+3. `GraphicsPSODesc` 的顶点输入契约（该结构被 GL / D3D12 后端共用，会牵动跨后端设计）
+
+### 一处需要更正的判断
+
+此前的工作笔记曾把该后端描述为「比预想更完整，只需补呈现层」。**这个判断是错的。**
+它基于代码看起来完整（有 `vkCreateGraphicsPipelines`、有 dynamic rendering 配置），
+而不是基于它能工作。实际上从着色器解析到管线创建，主链在中间断开。
+
+已完成的其它部分（环境可行、可编译、离屏设施、命令池）不受此影响，依然成立。
+
+---
+
+## 0.1 为什么有这份文档
 
 Linux runner 提供不了 OpenGL 4.6（引擎的产品承诺），而 `llvmpipe` 最高只有 4.5、
 `Zink` 在 lavapipe 上无法初始化。因此 4 个 `GPUSkinningPixelTest` 用例在 CI 上
@@ -59,6 +107,9 @@ engine/src/Vulkan/VulkanDevice.cpp:19:10: fatal error: windows.h: No such file o
 
 `7b6b7f1` 已修（见 §3）。现在 15 个文件全部编译通过，含新增的 `VulkanOffscreen.cpp`。
 
+> **编译通过 ≠ 后端可用。** 请务必连同 §0 一起读：本节只说明「能构建」，
+> 而图形管线路径在运行时是完全断开的。
+
 ### 1.3 离屏设施：已写好并编译通过 ✅
 
 `engine/include/Engine/Vulkan/VulkanOffscreen.h` + `engine/src/Vulkan/VulkanOffscreen.cpp`
@@ -75,18 +126,25 @@ engine/src/Vulkan/VulkanDevice.cpp:19:10: fatal error: windows.h: No such file o
 
 ## 2. 尚未完成（运行时空洞，编译期暴露不出）
 
-按建议的接手顺序排列：
+### 2.0 着色器解析缺失 —— 见 §0，首要阻塞
 
-### 2.1 `GetOrCreateThreadCommandPool()` 是桩 —— 直接命中
+`CreateGraphicsPSO()` 恒返回 nullptr。详见 §0。
+
+### 2.1 ~~`GetOrCreateThreadCommandPool()` 是桩~~ ✅ 已修复（`ad8f97b`）
 
 ```
 VulkanDevice.cpp:387  VkCommandPool VulkanDevice::GetOrCreateThreadCommandPool() { return VK_NULL_HANDLE; }
-VulkanDevice.cpp:388  void VulkanDevice::ResetAllThreadCommandPools() {}
 ```
 
-`VulkanOffscreenTarget::Readback()` 依赖它分配 command buffer，返回空句柄**必然失败**。
-**下一步从这里开始**：实现真实的 command pool（按线程或按设备单例皆可），
-`m_Impl` 里已有 `cmdPool` 相关结构可复用。
+`VulkanOffscreenTarget::Readback()` 依赖它分配 command buffer，返回空句柄必然失败。
+
+已修复：`Impl` 增加设备级 `cmdPool`，`Initialize` 创建（与帧资源并列）、`Shutdown` 销毁，
+函数返回它。真正的 per-thread 池需要 `thread_local` 存储，但 headless 一次性录制只需
+一个可重置的池。
+
+同时修掉同源的第二处桩：`VulkanCommandList::Begin()` 原本要求 `cmdBuffer` 已存在，
+却从无任何分配。现改为惰性从该池分配。
+（`CreateCommandList` 本就从 frame resource 提供 cmdBuffer，那条路径不受影响。）
 
 ### 2.2 `VulkanTexture` 是空壳
 
@@ -130,6 +188,7 @@ VulkanDevice.cpp:406  std::string GetVulkanDeviceInfo() noexcept { return "Vulka
 `017007b` | 新增 `VulkanOffscreen` 设施；新增 `vulkan-backend-compile` 诊断 job |
 `03ef491` | 诊断 job 改为只编译 Vulkan 目标文件（全量构建被 runner SIGTERM，exit 143） |
 `7b6b7f1` | **让 Vulkan 后端可在非 Windows 编译** |
+`ad8f97b` | **实现真实命令池**：修 `GetOrCreateThreadCommandPool()` 桩 + `VulkanCommandList::Begin()` 的 cmdBuffer 分配 |
 
 `7b6b7f1` 的四处改动（`engine/src/Vulkan/VulkanDevice.cpp`，该目录 clean）：
 
@@ -144,12 +203,22 @@ VulkanDevice.cpp:406  std::string GetVulkanDeviceInfo() noexcept { return "Vulka
 
 ## 4. 建议的接手路径
 
-1. 实现 `GetOrCreateThreadCommandPool()`（§2.1）
-2. 在 `sandbox/` 新增一个 headless 三角形目标：创建设备 → 离屏目标 →
-   建管线 → `vkCmdBeginRendering` → 绘制 → 回读 → **断言像素**
+**先决条件**：§0 的着色器解析子系统。没有它，后面每一步都无法执行。
+
+1. 实现着色器注册表：GLSL → SPIR-V，按 `StringID` 存取
+   （`ShaderCompiler` 目前只是 asset pipeline 的一个规则，见 §0，不是运行时注册表）
+2. 在 `VulkanDevice::CreateGraphicsPSO` 中用它替换两个 `VK_NULL_HANDLE`
+3. 补 `GraphicsPSODesc` 的顶点输入契约 —— 注意该结构被 GL / D3D12 共用，
+   属跨后端设计，最好先与其它后端 owner 对齐
+4. 在 `sandbox/` 新增 headless 三角形目标：创建设备 → 离屏目标 → 建管线 →
+   `vkCmdBeginRendering` → 绘制 → 回读 → **断言像素**
    （`sandbox/CMakeLists.txt` clean，可直接加目标；用 `#ifdef ENGINE_HAS_VULKAN` 守卫）
-3. 目标通过后，再把 `GPUSkinningPixelTest` 抽象为后端无关（第 3 步）
-4. 届时把 `GPU_SKINNING_NO_GL46=1` 从 Linux 测试步骤中移除
+5. 目标通过后，再把 `GPUSkinningPixelTest` 抽象为后端无关
+6. 届时把 `GPU_SKINNING_NO_GL46=1` 从 Linux 测试步骤中移除
+
+> 经验提示：这个后端有多个「代码看起来完整、实际不工作」的地方，且只能靠运行
+> 逐个暴露。上一轮连续三轮各暴露一个空洞（command pool → PSO 着色器 → 顶点输入），
+> 每轮都是一次 CI。动手前值得先通读整个 `engine/src/Vulkan/` 判断规模。
 
 ### CI 现状
 
