@@ -416,7 +416,7 @@ jobs:
 
       - name: Probe under Xvfb with Zink on lavapipe
         run: |
-          LAVAPIPE_ICD="$(ls -1 /usr/share/vulkan/icd.d/lvp_icd.*.json 2>/dev/null | head -1)"
+          LAVAPIPE_ICD="$(ls -1 /usr/share/vulkan/icd.d/lvp_icd*.json 2>/dev/null | head -1)"
           echo "lavapipe ICD = ${LAVAPIPE_ICD:-<not found>}"
           if [[ -z "$LAVAPIPE_ICD" ]]; then
             echo "lavapipe ICD not found; Zink cannot be exercised" \
@@ -433,7 +433,7 @@ jobs:
 
       - name: Probe under Xvfb with Zink and LIBGL_KOPPER_DRI2
         run: |
-          LAVAPIPE_ICD="$(ls -1 /usr/share/vulkan/icd.d/lvp_icd.*.json 2>/dev/null | head -1)"
+          LAVAPIPE_ICD="$(ls -1 /usr/share/vulkan/icd.d/lvp_icd*.json 2>/dev/null | head -1)"
           if [[ -z "$LAVAPIPE_ICD" ]]; then
             echo "lavapipe ICD not found; skipping kopper variant" \
               | tee "$RUNNER_TEMP/probe-zink-kopper.txt"
