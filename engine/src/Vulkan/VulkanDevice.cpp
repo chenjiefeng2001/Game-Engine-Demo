@@ -16,8 +16,15 @@
 #include <set>
 #include <mutex>
 #define NOMINMAX
+// Win32 只用于**带窗口的呈现路径**（surface 创建）。headless 离屏渲染不需要它，
+// 而此前这两个头文件是无条件包含的 —— 于是整个 Vulkan 后端在 Linux 上根本
+// 无法编译（find_package(Vulkan) 一旦成功就会把 src/Vulkan/*.cpp 纳入构建）。
+#ifdef _WIN32
 #include <windows.h>
 #include <vulkan/vulkan_win32.h>
+#else
+#include <dlfcn.h>
+#endif
 
 #define VK_CHECK(x) do { VkResult _e = (x); if (_e) { std::fprintf(stderr, "[Vulkan] Error %d\n", _e); abort(); } } while(0)
 
@@ -117,7 +124,9 @@ bool VulkanDevice::Initialize(void* windowHandle, uint32_t width, uint32_t heigh
     std::vector<const char*> instanceExts;
     if (windowHandle) {
         instanceExts.push_back(VK_KHR_SURFACE_EXTENSION_NAME);
+#ifdef _WIN32
         instanceExts.push_back("VK_KHR_win32_surface");
+#endif
     }
     VkInstanceCreateInfo ici{VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO};
     ici.pApplicationInfo = &app;
@@ -179,9 +188,11 @@ bool VulkanDevice::Initialize(void* windowHandle, uint32_t width, uint32_t heigh
     vkGetDeviceQueue(m_Impl->device, m_Impl->graphicsQueueIndex, 0, &m_Impl->graphicsQueue);
 
     if (windowHandle) {
+#ifdef _WIN32
         VkWin32SurfaceCreateInfoKHR sci{VK_STRUCTURE_TYPE_WIN32_SURFACE_CREATE_INFO_KHR};
         sci.hinstance = GetModuleHandle(nullptr); sci.hwnd = (HWND)windowHandle;
         vkCreateWin32SurfaceKHR(m_Impl->instance, &sci, nullptr, &m_Impl->surface);
+#endif
     }
 
     VmaVulkanFunctions vf{};
@@ -376,7 +387,22 @@ VulkanDeferredDeletion* VulkanDevice::GetDeletionQueue() const noexcept { return
 VkCommandPool VulkanDevice::GetOrCreateThreadCommandPool() { return VK_NULL_HANDLE; }
 void VulkanDevice::ResetAllThreadCommandPools() {}
 
-bool HasVulkanSupport() noexcept { HMODULE m = LoadLibraryA("vulkan-1.dll"); if (!m) return false; FreeLibrary(m); return true; }
+bool HasVulkanSupport() noexcept {
+        // 跨平台探测：Windows 走 vulkan-1.dll，POSIX 走 libvulkan.so。
+        // 原实现只用 LoadLibraryA，在非 Windows 上必然编译失败。
+#ifdef _WIN32
+        HMODULE m = LoadLibraryA("vulkan-1.dll");
+        if (!m) return false;
+        FreeLibrary(m);
+        return true;
+#else
+        void* h = dlopen("libvulkan.so.1", RTLD_LAZY | RTLD_LOCAL);
+        if (!h) h = dlopen("libvulkan.so", RTLD_LAZY | RTLD_LOCAL);
+        if (!h) return false;
+        dlclose(h);
+        return true;
+#endif
+    }
 std::string GetVulkanDeviceInfo() noexcept { return "Vulkan 1.3"; }
 std::unique_ptr<IRHIDevice> CreateVulkanDevice() {
     auto dev = std::make_unique<VulkanDevice>();
