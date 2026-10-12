@@ -333,8 +333,18 @@ TEST(F2ColliderPhysics, WorldLifecycle_DestroyWorld_RestoreBodyFromComponent) {
     EXPECT_EQ(adapter.GetTrackedCount(), 1u);
     IPhysicsBody* bodyB = adapter.GetBody(*collider);
     ASSERT_NE(bodyB, nullptr);
-    EXPECT_NE(bodyB, bodyA);
-    EXPECT_TRUE(b2Body_IsValid(GetNativeBodyId(bodyB)));
+    // 这里**不能**用 `EXPECT_NE(bodyB, bodyA)` 来断言"重建出了新 body"。
+    // IPhysicsBody 是 m_Bodies 里 shared_ptr 托管的堆对象，ReleaseWorld()→Clear()
+    // 已经把 bodyA 释放掉了；拿一个悬垂指针和存活指针比较，结果是未指定的，
+    // 分配器只要复用了同一地址就会误报失败。实测正是如此。
+    // 改在有意义且有定义的层面断言：底层 Box2D body 必须是新建的。
+    // Box2D 复用 slot 时会递增 generation，所以 index1 或 generation 任一不同，
+    // 都说明这是新 body，而不是被复用的旧 body。
+    const b2BodyId nativeB = GetNativeBodyId(bodyB);
+    EXPECT_TRUE(b2Body_IsValid(nativeB));
+    EXPECT_TRUE(nativeB.index1 != nativeA.index1 || nativeB.generation != nativeA.generation)
+        << "rebuilt body is the same Box2D body as the destroyed one "
+        << "(index1=" << nativeB.index1 << ", generation=" << nativeB.generation << ")";
 
     // Body#2 参数与 Component 完全一致
     EXPECT_FLOAT_EQ(CircleRadius(bodyB), 1.5f);
