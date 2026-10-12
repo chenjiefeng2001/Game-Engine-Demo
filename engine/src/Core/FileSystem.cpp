@@ -18,6 +18,7 @@
 #include <fstream>
 #include <cstring>
 #include <algorithm>
+#include <chrono>
 #include <mutex>
 
 namespace fs = std::filesystem;
@@ -244,7 +245,12 @@ namespace Engine {
     int64 FileSystem::GetLastWriteTime(const std::string& path) {
         try {
             auto ft = fs::last_write_time(fs::path(path));
-            return std::chrono::duration_cast<std::chrono::seconds>(ft.time_since_epoch()).count();
+            // fs::file_time_type 的 epoch 由实现决定，不是 Unix 纪元：
+            // libstdc++ 把它放在 2174-01-01，于是当代文件的 time_since_epoch()
+            // 是负值（Linux 上实测 -4645898781）。必须显式换算到 system_clock，
+            // 否则调用方按“Unix 秒”解读会得到荒谬的时间。
+            auto st = std::chrono::clock_cast<std::chrono::system_clock>(ft);
+            return std::chrono::duration_cast<std::chrono::seconds>(st.time_since_epoch()).count();
         } catch (...) { return 0; }
     }
 
