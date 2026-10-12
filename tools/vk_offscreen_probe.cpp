@@ -378,7 +378,7 @@ int main(int argc, char** argv)
     const uint8_t* px = static_cast<const uint8_t*>(mapped);
     const uint32_t cx = W / 2, cy = H / 2;
     const uint8_t* center = px + (static_cast<size_t>(cy) * W + cx) * 4;
-    const uint8_t corner = px[0];
+    const uint8_t* corner = px;
 
     std::printf("[VKOFF] readback %ux%u (RGBA8)\n", W, H);
     std::printf("[VKOFF] centre pixel = %u %u %u %u\n", center[0], center[1], center[2], center[3]);
