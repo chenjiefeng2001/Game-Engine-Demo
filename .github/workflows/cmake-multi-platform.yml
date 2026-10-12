@@ -467,6 +467,22 @@ jobs:
             vulkaninfo --summary 2>&1 || echo "  (vulkaninfo failed rc=$?)"
           } | tee "$RUNNER_TEMP/vulkaninfo.txt"
 
+      # 引擎把 OpenGL 4.6 作为产品承诺，而 runner 的 llvmpipe 最高 4.5、
+      # Zink 在 lavapipe 上无法初始化，于是 headless GPU 验证只剩 Vulkan 一路。
+      # 投入前必须先测环境侧是否真的可行，而不是假设。此探针不链接引擎，
+      # 只测：实例、物理设备、graphics 队列族、颜色附件格式、逻辑设备创建。
+      - name: Probe whether lavapipe can host offscreen Vulkan rendering
+        run: |
+          LAVAPIPE_ICD="$(ls -1 /usr/share/vulkan/icd.d/lvp_icd*.json 2>/dev/null | head -1)"
+          if [[ -z "$LAVAPIPE_ICD" ]]; then
+            echo "lavapipe ICD not found; Vulkan probe cannot run" \
+              | tee "$RUNNER_TEMP/probe-vulkan-lavapipe.txt"
+            exit 0
+          fi
+          g++ -std=c++17 -O1 tools/vk_capability_probe.cpp -o "$RUNNER_TEMP/vkprobe" -lvulkan
+          env VK_DRIVER_FILES="$LAVAPIPE_ICD" VK_ICD_FILENAMES="$LAVAPIPE_ICD" \
+            "$RUNNER_TEMP/vkprobe" 2>&1 | tee "$RUNNER_TEMP/probe-vulkan-lavapipe.txt"
+
       - name: Probe under Xvfb with Zink and no ICD restriction
         run: |
           xvfb-run -a -s "-screen 0 1280x800x24" \

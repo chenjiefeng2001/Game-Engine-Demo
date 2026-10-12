@@ -495,8 +495,14 @@ protected:
     //
     // 本方法只负责**装配**，不新增任何逐帧调用 —— 驱动完全由既有 Play 路径完成。
     //
-    // 边界：这里只让**姿势求值与蒙皮矩阵计算**进入产品帧循环。
-    // **骨骼网格的 GPU 蒙皮与渲染未接通**，不做任何相关声明。
+    // 边界：本方法装配的是**组件与 GPU 资源**，姿势推进由既有帧循环完成。
+    // 骨骼网格的 GPU 蒙皮与渲染**已接通**（RenderGameObject 的蒙皮分支 +
+    // Engine::DrawSkinnedMeshIndexed，见同文件 RenderSkinnedGameObject）。
+    //
+    // 但"渲染已接通"不等于"动画会在编辑器里播放"：姿势推进与被绘制的对象
+    // 目前不是同一个场景（EngineEditor 更新编辑场景，而 RenderScene 在 Play
+    // 期间绘制运行态克隆）。该语义断裂归 HRC owner，详见
+    // docs/Handoff-Scene-Lifecycle-For-Animation.md。
 
     void AttachAnimatedSkinningActor()
     {
