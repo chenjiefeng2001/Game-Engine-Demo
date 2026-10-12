@@ -52,6 +52,16 @@ public:
     void EndRendering(VkCommandBuffer cmd) const;
 
     /**
+     * 分配一个一次性命令缓冲并开始录制（供录制绘制使用）。
+     * VulkanCommandList 目前没有暴露渲染作用域 API，所以绘制路径由调用方
+     * 用裸 Vulkan 命令填充这个缓冲。返回 VK_NULL_HANDLE 表示失败。
+     */
+    VkCommandBuffer BeginOneShot() const;
+
+    /** 结束录制、提交到图形队列并等待完成。 */
+    bool EndSubmitAndWait(VkCommandBuffer cmd) const;
+
+    /**
      * 把颜色目标拷进内部 host-visible 缓冲并读出。
      * 内部自行完成 ATTACHMENT_OPTIMAL → TRANSFER_SRC_OPTIMAL 的屏障、
      * 提交、等待与 map。out 按 RGBA8 紧凑排列（RowPitch() == width*4）。

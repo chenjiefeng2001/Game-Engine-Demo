@@ -50,6 +50,9 @@ add_sandbox_executable(RHI3DTest src/Rendering3DTest/main.cpp src/Rendering3DTes
 add_sandbox_executable(RenderTest src/RenderTest/main.cpp src/RenderTest/RenderTestApp.cpp)
 add_sandbox_executable(RHIDemo src/RHIDemo/RHIDemoApp.cpp)
 add_sandbox_executable(SpirVTest src/SpirVTest/SpirVTestApp.cpp)
+# Headless Vulkan 离屏三角形：验证引擎 Vulkan 后端能在无 GPU 环境真实光栅化。
+# 用 ENGINE_HAS_VULKAN 守卫，未启用 Vulkan 时编译成"无需验证"并返回 0。
+add_sandbox_executable(VulkanOffscreenTest src/VulkanOffscreenTest/main.cpp)
 # Shaderc 编译链 — 由 EngineCore 通过 shaderc_wrapper 接口库自动链接。
 # ENGINE_HAS_SHADERC 定义通过 EngineCore 的 PUBLIC 接口传播至此。
 add_sandbox_executable(AssetBakery src/AssetBakery/main.cpp)
