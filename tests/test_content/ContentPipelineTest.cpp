@@ -13,6 +13,7 @@
 #include "Engine/Scripting/GameplayAPI.h"
 #include "Engine/Scripting/ScriptAPI.h"
 #include "Engine/Scripting/ScriptInstance.h"
+#include "StubGraphicsFactory.h"
 // StubGraphicsFactory 的 unique_ptr 返回值需要完整类型（否则默认 delete
 // 实例化会报 sizeof 不完整类型），这里显式包含。
 #include "Engine/Core/IWindow.h"
@@ -129,51 +130,6 @@ TEST(SceneRoundTrip, R10_R11_RoundTrip_SemanticEquality) {
     ExpectSemanticEqual(snapA, snapB);
     EXPECT_EQ(SerializeSnapshot(snapA).dump(), SerializeSnapshot(snapB).dump());
 }
-
-// === 无 GL 的图形工厂（供绑定/反序列化用例使用） ===
-//
-// 这组用例验证的是**绑定契约**：GUID 能否解析、缺失是否非致命、binding 是否
-// 如实记账。纹理是否真的上传到 GPU 与该契约无关——SpriteComponent::SetTexture
-// 只是接收 TextureManager::Load 的返回值（可为空），而 EntityContentBinding 的
-// spriteGuid/scriptGuid 记账是无条件写入的。
-//
-// 原先这里构造的是 OpenGLGraphicsFactory。在没有 OpenGL 上下文的 runner 上，
-// 它的构造函数请求 4.6 core 失败，m_GL 保持全零（函数指针一个都没加载），
-// 随后 CreateTexture 经空函数指针调用 OpenGL 直接段错误，R12 用例根本跑不到断言。
-//
-// 这里改用不触碰 GL 的工厂：CreateTexture 返回一个纯 CPU 侧的 Texture 对象，
-// TextureManager 的缓存路径照样被真实执行，而绑定用例在任何 runner 上都能跑。
-// Texture 是抽象类（Bind / GetWidth / GetHeight 为纯虚），工厂需要一个具体实现。
-// 这里刻意不做任何 GPU 绑定：绑定契约不依赖它，TextureManager 的缓存路径照样真实执行。
-class StubTexture : public Texture {
-public:
-    explicit StubTexture(const std::string& path) : Texture(path) {}
-    void Bind(uint32) const override {}
-    uint32 GetWidth() const override { return 1; }
-    uint32 GetHeight() const override { return 1; }
-};
-
-class StubGraphicsFactory : public IGraphicsFactory {
-public:
-    std::shared_ptr<Texture> CreateTexture(const std::string& path) override {
-        return std::make_shared<StubTexture>(path);
-    }
-    // 其余能力本组用例一律不涉及，显式不支持而不是静默假装可用。
-    std::unique_ptr<IWindow> CreateWindow(int, int, const std::string&) override { return nullptr; }
-    std::unique_ptr<IRenderContext> CreateRenderContext(void*) override { return nullptr; }
-    std::shared_ptr<Shader> CreateShader(const std::string&, const std::string&) override { return nullptr; }
-    std::shared_ptr<Shader> CreateShaderFromStages(const std::vector<ShaderStage>&) override { return nullptr; }
-    std::shared_ptr<VertexBuffer> CreateVertexBuffer(float*, uint32) override { return nullptr; }
-    std::shared_ptr<IndexBuffer> CreateIndexBuffer(uint32*, uint32) override { return nullptr; }
-    std::shared_ptr<VertexArray> CreateVertexArray() override { return nullptr; }
-    std::shared_ptr<RHI::IRHIVertexBuffer> CreateVertexBuffer_RHI(const void*, size_t, uint32) override { return nullptr; }
-    std::shared_ptr<RHI::IRHIIndexBuffer> CreateIndexBuffer_RHI(const uint32*, uint32) override { return nullptr; }
-    std::shared_ptr<RHI::IRHIVertexArray> CreateVertexArray_RHI() override { return nullptr; }
-    std::shared_ptr<ISpriteBatch> CreateSpriteBatch(IRenderContext&) override { return nullptr; }
-    std::unique_ptr<IPrimitiveBatch> CreatePrimitiveBatch(uint32) override { return nullptr; }
-    std::unique_ptr<GBuffer> CreateGBuffer(IRenderContext&) override { return nullptr; }
-    std::unique_ptr<IUIManager> CreateUIManager() override { return nullptr; }
-};
 
 // === Ring12: Adversarial ===
 
