@@ -27,7 +27,7 @@ using namespace Engine::Scripting;
 
 TEST(Dogfood05, LoadAndRun) {
     ContentRegistry reg;
-    ASSERT_TRUE(reg.LoadManifest(ResolveTestAsset("assets/scenes/dogfood05.manifest.json")));
+    ASSERT_TRUE(reg.LoadManifest(ResolveTestAsset("assets/scenes/dogfood05.manifest.json"));
 
     SceneSnapshot snap; std::string err;
     ASSERT_TRUE(LoadSnapshotFromFile(ResolveTestAsset("assets/scenes/dogfood05.scene"), snap, err)) << err;
