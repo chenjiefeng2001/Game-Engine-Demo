@@ -25,7 +25,7 @@
 #include "Engine/Scripting/GameplayAPI.h"
 #include "Engine/Scripting/ScriptAPI.h"
 #include "Engine/Scripting/ScriptInstance.h"
-#include "Engine/OpenGL/OpenGLGraphicsFactory.h"
+#include "StubGraphicsFactory.h"
 
 #include <nlohmann/json.hpp>
 #include <cstdio>
@@ -131,7 +131,7 @@ TEST(Dogfood09, MultiScene_ReferenceIntegrity) {
     EXPECT_EQ(reg.GetAllEntries().size(), 3u);           // renamed.png + shared.lua + shared.png(stale)
 
     // ═══ R5: 跨进程重启 → 双场景恢复 ═══
-    OpenGLGraphicsFactory gfxF;
+    StubGraphicsFactory gfxF;
     TextureManager tm(gfxF);
     ContentRegistry reg2;                                // 全新进程等价
     ASSERT_TRUE(reg2.LoadManifest(P9("manifest.json")));
@@ -232,7 +232,7 @@ TEST(Dogfood09, FailureContract_LocalAndDiagnosable) {
         ContentRegistry partialReg;                      // 故意不含 tex/scr
         partialReg.Import(P9("unrelated.txt"), AssetType::Texture);
 
-        OpenGLGraphicsFactory gfxF;
+        StubGraphicsFactory gfxF;
         TextureManager tm(gfxF);
         Engine::Scene scene;
         GameplayAPI::Reset();
