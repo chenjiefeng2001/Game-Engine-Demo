@@ -9,7 +9,6 @@
 #pragma once
 
 #include <gtest/gtest.h>
-#include "../utils/TestAssets.h"
 #include "Engine/Core/Content/ContentAsset.h"
 #include "Engine/Core/Content/SceneSerializerV1.h"
 #include "Engine/Core/Scene/Scene.h"
@@ -132,14 +131,11 @@ namespace gp01 {
             GameplayAPI::SetScene(&scene);
             GameplayAPI::SetInputProvider(&input);
             if (manifestPath)
-                ASSERT_TRUE(reg.LoadManifest(ResolveTestAsset(manifestPath)));
+                ASSERT_TRUE(reg.LoadManifest(manifestPath));
         }
         void LoadAndBind(const std::string& scenePath) {
             SceneSnapshot snap; std::string err;
-            // CI 里 ctest 的工作目录是构建输出目录，仓库相对的 assets/gp01/*.scene
-            // 解析不到（表现为 "cannot open file"）。本函数是所有调用者的唯一入口，
-            // 在这里解析一次即可；scratch 输出路径在工作目录下已存在，原样返回。
-            EXPECT_TRUE(LoadSnapshotFromFile(ResolveTestAsset(scenePath.c_str()), snap, err)) << err;
+            EXPECT_TRUE(LoadSnapshotFromFile(scenePath, snap, err)) << err;
             auto r = InstantiateScene(snap, scene, tm, reg);
             EXPECT_TRUE(r.ok);
             bindings = r.bindings;
