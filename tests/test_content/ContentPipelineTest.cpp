@@ -580,7 +580,7 @@ TEST(TextureGoldenPath, T5_MissingTextureGuid_CleanFailure) {
 
 TEST(ContentDogfood, DF03_Smoke_LoadRunTimerExpire) {
     ContentRegistry reg;
-    ASSERT_TRUE(reg.LoadManifest(ResolveTestAsset("assets/scenes/dogfood03.manifest.json"));
+    ASSERT_TRUE(reg.LoadManifest(ResolveTestAsset("assets/scenes/dogfood03.manifest.json")));
 
     SceneSnapshot snap; std::string err;
     ASSERT_TRUE(LoadSnapshotFromFile(ResolveTestAsset("assets/scenes/dogfood03.scene"), snap, err)) << err;
@@ -642,7 +642,7 @@ TEST(ContentDogfood, DF03_Smoke_LoadRunTimerExpire) {
 
 TEST(ContentDogfood, DF03_EntityCount_MultiScript) {
     ContentRegistry reg;
-    ASSERT_TRUE(reg.LoadManifest(ResolveTestAsset("assets/scenes/dogfood03.manifest.json"));
+    ASSERT_TRUE(reg.LoadManifest(ResolveTestAsset("assets/scenes/dogfood03.manifest.json")));
     SceneSnapshot snap; std::string err;
     ASSERT_TRUE(LoadSnapshotFromFile(ResolveTestAsset("assets/scenes/dogfood03.scene"), snap, err)) << err;
 
