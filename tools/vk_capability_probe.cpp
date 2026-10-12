@@ -85,14 +85,14 @@ int main()
         }
 
         // 附件格式：离屏颜色目标能否落地
-        uint32_t fmtCount = 0;
-        vkGetPhysicalDeviceFormatProperties(pd, VK_FORMAT_R8G8B8A8_UNORM, nullptr) ;
+        // 注意：vkGetPhysicalDeviceFormatProperties 的第三参是**输出**参数，
+        // 不能传 nullptr（传了必崩）。
         VkFormatProperties fp{};
         vkGetPhysicalDeviceFormatProperties(pd, VK_FORMAT_R8G8B8A8_UNORM, &fp);
         const bool colorTarget = (fp.optimalTilingFeatures & VK_FORMAT_FEATURE_COLOR_ATTACHMENT_BIT) != 0;
         std::printf("[VKPROBE]   R8G8B8A8_UNORM color attachment = %s\n", colorTarget ? "YES" : "NO");
         std::printf("[VKPROBE]   maxImageDimension2D = %u\n", props.limits.maxImageDimension2D);
-        (void)fmtCount;
+        std::fflush(stdout);
     }
 
     if (chosen == VK_NULL_HANDLE) {
