@@ -77,12 +77,27 @@ VulkanCommandList::~VulkanCommandList() = default;
 void VulkanCommandList::Begin() {
     if (m_Impl->isRecording) return;
 
-    // 从设备获取线程命令池
-    // 注意：m_Impl->device 需要在创建时设置
-    // 这里简化处理：使用 main 命令缓冲
+    // 命令缓冲：首次 Begin 时从设备池惰性分配。此前这里只在 cmdBuffer
+    // 已存在时继续，而**没有任何地方分配它**，于是 Begin 永远失败。
     if (m_Impl->cmdBuffer == VK_NULL_HANDLE) {
-        std::fprintf(stderr, "[VulkanCommandList] No command buffer allocated\n");
-        return;
+        if (!m_Impl->device) {
+            std::fprintf(stderr, "[VulkanCommandList] No device set on command list\n");
+            return;
+        }
+        VkCommandPool pool = m_Impl->device->GetOrCreateThreadCommandPool();
+        if (pool == VK_NULL_HANDLE) {
+            std::fprintf(stderr, "[VulkanCommandList] No command pool available\n");
+            return;
+        }
+        VkCommandBufferAllocateInfo alloc{VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO};
+        alloc.commandPool = pool;
+        alloc.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
+        alloc.commandBufferCount = 1;
+        if (vkAllocateCommandBuffers(m_Impl->device->GetVkDevice(), &alloc, &m_Impl->cmdBuffer) != VK_SUCCESS) {
+            std::fprintf(stderr, "[VulkanCommandList] vkAllocateCommandBuffers failed\n");
+            m_Impl->cmdBuffer = VK_NULL_HANDLE;
+            return;
+        }
     }
 
     VkCommandBufferBeginInfo beginInfo{VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO};

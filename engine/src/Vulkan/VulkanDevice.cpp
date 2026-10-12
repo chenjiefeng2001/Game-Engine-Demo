@@ -42,6 +42,9 @@ struct VulkanDevice::Impl {
     VkQueue transferQueue{VK_NULL_HANDLE};
     uint32_t graphicsQueueIndex{UINT32_MAX};
     uint32_t transferQueueIndex{UINT32_MAX};
+    // 设备级命令池：供一次性命令缓冲使用（离屏回读、初始化上传等）。
+    // 帧渲染另有 VulkanFrameContext::commandPool。
+    VkCommandPool cmdPool{VK_NULL_HANDLE};
     VmaAllocator vmaAllocator{VK_NULL_HANDLE};
     VkSwapchainKHR swapChain{VK_NULL_HANDLE};
     VkSurfaceKHR surface{VK_NULL_HANDLE};
@@ -218,6 +221,20 @@ bool VulkanDevice::Initialize(void* windowHandle, uint32_t width, uint32_t heigh
     m_Impl->graphicsQueueWrapper->m_Impl->type = QueueType::Graphics;
 
     for (uint32 i = 0; i < kMaxFramesInFlight; ++i) CreateFrameResource(m_Impl->frameContext.frames[i]);
+
+    // 设备级命令池。一次性命令缓冲（离屏回读等）需要一个可分配的池；
+    // 此前 GetOrCreateThreadCommandPool() 直接返回 VK_NULL_HANDLE，
+    // 使得任何依赖它的路径都无法工作。
+    VkCommandPoolCreateInfo pci{VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO};
+    pci.queueFamilyIndex = m_Impl->graphicsQueueIndex;
+    pci.flags = VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT |
+               VK_COMMAND_POOL_CREATE_TRANSIENT_BIT;
+    if (vkCreateCommandPool(m_Impl->device, &pci, nullptr, &m_Impl->cmdPool) != VK_SUCCESS) {
+        std::fprintf(stderr, "[Vulkan] Failed to create device command pool\n");
+        m_Impl->cmdPool = VK_NULL_HANDLE;
+        return false;
+    }
+
     m_Impl->initialized = true;
     return true;
 }
@@ -258,6 +275,8 @@ void VulkanDevice::Shutdown() {
     // 清理全局 PSO 缓存（确保没有资源引用残留）
     PSOCache::Get().Clear();
     for (uint32 i = 0; i < kMaxFramesInFlight; ++i) DestroyFrameResource(m_Impl->frameContext.frames[i]);
+    if (m_Impl->cmdPool) vkDestroyCommandPool(m_Impl->device, m_Impl->cmdPool, nullptr);
+    m_Impl->cmdPool = VK_NULL_HANDLE;
     if (m_Impl->swapChain) vkDestroySwapchainKHR(m_Impl->device, m_Impl->swapChain, nullptr);
     if (m_Impl->surface) vkDestroySurfaceKHR(m_Impl->instance, m_Impl->surface, nullptr);
     // VMA 要求：销毁前所有由它分配的资源必须已释放
@@ -384,7 +403,11 @@ uint32_t VulkanDevice::GetGraphicsQueueIndex() const noexcept { return m_Impl->g
 VulkanFrameContext& VulkanDevice::GetFrameContext() noexcept { return m_Impl->frameContext; }
 uint32_t VulkanDevice::GetUBOAlignment() const noexcept { return m_Impl->uboAlignment; }
 VulkanDeferredDeletion* VulkanDevice::GetDeletionQueue() const noexcept { return m_Impl->deletionQueue; }
-VkCommandPool VulkanDevice::GetOrCreateThreadCommandPool() { return VK_NULL_HANDLE; }
+VkCommandPool VulkanDevice::GetOrCreateThreadCommandPool() {
+    // 单一设备级池。真正的 per-thread 池需要 thread_local 存储，
+    // 但 headless 一次性命令缓冲（离屏回读等）只需一个可重置的池。
+    return m_Impl ? m_Impl->cmdPool : VK_NULL_HANDLE;
+}
 void VulkanDevice::ResetAllThreadCommandPools() {}
 
 bool HasVulkanSupport() noexcept {
