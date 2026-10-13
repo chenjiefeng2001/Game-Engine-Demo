@@ -137,13 +137,13 @@ namespace RHI {
     };
 
     /** 一个顶点属性。location 对应着色器里的 layout(location = N)。 */
-    struct VertexAttribute {
+    struct VertexInputAttribute {
         uint32  location = 0;   ///< 着色器中的 location
         uint32  binding  = 0;   ///< 对应 vertexBuffers 的下标
         Format  format   = Format::Unknown;
         uint32  offset   = 0;   ///< 在单个顶点内的字节偏移
 
-        bool operator==(const VertexAttribute& o) const noexcept {
+        bool operator==(const VertexInputAttribute& o) const noexcept {
             return location == o.location && binding == o.binding
                 && format == o.format && offset == o.offset;
         }
@@ -152,7 +152,7 @@ namespace RHI {
     /** 顶点输入契约。 */
     struct VertexInputDesc {
         std::vector<VertexBufferBinding> buffers;
-        std::vector<VertexAttribute>     attributes;
+        std::vector<VertexInputAttribute>     attributes;
 
         bool operator==(const VertexInputDesc& o) const noexcept {
             return buffers == o.buffers && attributes == o.attributes;
