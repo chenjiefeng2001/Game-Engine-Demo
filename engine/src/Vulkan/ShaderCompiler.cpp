@@ -201,6 +201,22 @@ private:
 // 本文件在 src/Vulkan/ 下，engine/CMakeLists.txt 的 GLOB 会自动纳入。
 // ════════════════════════════════════════════════════════════
 
+namespace {
+// RHI::ShaderStageType → 本文件私有的 RHI::ShaderStage 枚举。
+ShaderStage ToLocalStage(::Engine::ShaderStageType stage)
+{
+    switch (stage) {
+    case ::Engine::ShaderStageType::Vertex:   return ShaderStage::Vertex;
+    case ::Engine::ShaderStageType::Fragment: return ShaderStage::Fragment;
+    case ::Engine::ShaderStageType::Compute:  return ShaderStage::Compute;
+    case ::Engine::ShaderStageType::Geometry: return ShaderStage::Geometry;
+    case ::Engine::ShaderStageType::TessControl:    return ShaderStage::TessControl;
+    case ::Engine::ShaderStageType::TessEvaluation: return ShaderStage::TessEval;
+    default: return ShaderStage::Fragment;
+    }
+}
+} // namespace
+
 ShaderRegistry& ShaderRegistry::Get()
 {
     static ShaderRegistry instance;
@@ -222,7 +238,10 @@ bool ShaderRegistry::RegisterSource(const std::string& name, ShaderStageType sta
 {
 #ifdef ENGINE_HAS_SHADERC
     ShaderCompiler compiler;
-    SpirVBinary result = compiler.Compile(glslSource, ShaderStage::FromGLSL(stage, glslSource));
+    // 本文件在 Engine::RHI 内定义了自己的 ShaderStage 枚举（且 IGraphicsFactory.h
+    // 在同一命名空间还有一个不透明前向声明），因此 ShaderStage 与
+    // ShaderStageType::Vertex 都不能直接对应，必须显式映射。
+    SpirVBinary result = compiler.Compile(glslSource, ToLocalStage(stage));
     if (!result.success) {
         std::fprintf(stderr, "[ShaderRegistry] compile failed for '%s': %s\n",
                      name.c_str(), result.errorMessage.c_str());
