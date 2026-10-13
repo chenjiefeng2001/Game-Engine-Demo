@@ -188,9 +188,11 @@ cmake --build build --target AudioPhysicsSandbox
 
 ### <span class="material-symbols-outlined">image</span> 渲染系统 — Vulkan 1.3
 
-> **状态**：设备初始化、管线创建、离屏回读已在 lavapipe 上真实运行过；
-> 但**离屏三角形的像素断言仍为全 0**，根因已定位为两处缺陷（动态视口未设置、
-> `att.clearValue` 未赋值），两处均已修复、**均未经 CI 验证**。
+> **状态**：<span class="material-symbols-outlined">check_circle</span> 离屏三角形**像素断言已通过**
+> （`centre pixel = 64 128 191 255`，WSL + lavapipe 实测）。
+> 根因是 `frontFace` 绕序与 `cullMode` 不匹配，导致几何被整体剔除而画面只剩 clear；
+> 另有两处真实但非根因的缺陷（动态视口未设置、`att.clearValue` 未赋值）同期修复。
+> 尚未绘制带顶点缓冲的几何 —— `GraphicsPSODesc` 仍无顶点输入契约。
 > 详见 `docs/Handoff-Vulkan-Headless-GPU-Verification.md`。
 
 | 组件 | 说明 |

@@ -6,23 +6,45 @@
 
 ---
 
-## 0. 两个缺陷均已定位并修复，**均未验证**
+## 0. 像素已验证通过 —— 真正的根因是**正面绕序**
 
 **接手前请先读这一节。**
 
-管线创建已经打通（见 §1.4），后端能跑、能建管线、能回读数据 —— 但回读到的像素
-全是 0。两个缺陷都已定位、都已修复，**都还没有 CI 证据**：最后观测值仍是
-`centre pixel = 0 0 0 0`。
+在 WSL（lavapipe）上取得首个运行时证据后，结论发生了根本变化：
 
 ```
-[VKTRI] shaders registered (registry holds 2)
-[VKTRI] device created: llvmpipe (LLVM 20.1.2, 256 bits)
-[VKTRI] graphics pipeline created
-[VKTRI] centre pixel = 0 0 0 0 (pitch=256)
-[VKTRI] FAIL: centre pixel is not the shader colour
+[H] device = llvmpipe (LLVM 20.1.2, 256 bits)
+[H] graphics pipeline created
+[H] centre pixel = 64 128 191 255
+[H] pixels with any non-zero channel = 4096 / 4096
+[H] PASS: both fixes work end to end
 ```
 
-### 已确认的缺陷一：动态视口从未设置（已修，未验证）
+**此前「视口是根因」的判断是错的。** 视口确实从未设置（真实缺陷，已修并验证），
+但它不是像素全 0 的原因 —— 静态视口同样不出像素。真正的根因是：
+
+```
+VulkanPipelineState.cpp：cullMode = BACK 配 frontFace = COUNTER_CLOCKWISE
+```
+
+Vulkan 对三角形正/负面积的约定与 OpenGL 相反。按 OpenGL 习惯逆时针书写的三角形，
+在 `frontFace = COUNTER_CLOCKWISE` 下会被**整体剔除**，画面只剩 clear 的颜色 ——
+且 Vulkan 不为「被剔除」报任何错误。改为 `VK_FRONT_FACE_CLOCKWISE` 后保留背面剔除
+的同时光栅化恢复正常。
+
+### 三个缺陷的最终定论
+
+| 缺陷 | 是否是像素全 0 的原因 | 现状 |
+|---|---|---|
+动态视口/裁剪未设置 | **否**（真实缺陷，但改静态视口仍失败） | 已修并验证 |
+`att.clearValue` 未赋值 | **否**（clear 一直生效，只是清成 (0,0,0,0)） | 已修并验证 |
+`frontFace` 绕序与 `cullMode` 不匹配 | **是，唯一根因** | 已修并验证 |
+
+> 教训：前两者都是真实缺陷且都必须修，但它们都只产生 0，因此**症状无法区分**
+> 「视口不对」「clear 颜色被丢弃」「几何被剔除」。在没有运行时反馈的情况下，
+> 按代码阅读收敛根因是不可靠的 —— 本次靠 WSL 逐项二分才定位。
+
+### 已确认的缺陷一：动态视口从未设置（已修，已验证非根因）
 
 `VulkanPipelineState.cpp:127` 把视口与裁剪声明为**动态状态**：
 
@@ -38,9 +60,9 @@ VkDynamicState dynamicStates[] = { VK_DYNAMIC_STATE_VIEWPORT, VK_DYNAMIC_STATE_S
 已在 `VulkanOffscreenTarget::BeginRendering` 末尾补上按目标尺寸设置视口与裁剪
 （放在设施里而非测试里，因为所有调用方都有同一要求；管线若用静态视口，多调用一次也合法）。
 
-**该修复未验证** —— 验证需要推送并触发 CI。
+**已在 WSL/lavapipe 实测**：改用静态视口仍不出像素，因此它不是根因，但确属缺陷。
 
-### 已确认的根因二：`att.clearValue` 从未赋值（已修，未验证）
+### 已确认的缺陷二：`att.clearValue` 从未赋值（已修，已验证非根因）
 
 ```cpp
 VkClearValue clear{};
@@ -56,28 +78,48 @@ att.storeOp = VK_ATTACHMENT_STORE_OP_STORE;
 
 这解释了实测的 `0 0 0 0`：**clear 其实生效了，只是被清成了透明黑**。
 
-### 两个缺陷叠加，才产生「全 0」
+### 真正的根因：正面绕序与剔除模式不匹配（`7017d17`）
 
-| # | 缺陷 | 单独存在时的效果 |
-|---|---|---|
-1 | `att.clearValue` 未赋值 | 图像被清成 (0,0,0,0)，请求的颜色被丢弃 |
-2 | 动态视口/裁剪未设置 | 绘制被整体裁掉，什么都不写 |
+```cpp
+rasterizer.cullMode   = VK_CULL_MODE_BACK_BIT;
+rasterizer.frontFace  = VK_FRONT_FACE_COUNTER_CLOCKWISE;   // ← 这里
+```
 
-两者都只产生 0，因此**只修其中一个，像素仍然是 0**。这是此前排查绕远的原因：
-症状无法区分「clear 用了错误的颜色」与「clear 和 draw 都没生效」。
+Vulkan 判定三角形朝向用的有符号面积
+
+```
+a = 0.5 · Σ (x_i·y_{i+1} − x_{i+1}·y_i)      // 帧缓冲坐标，y 轴向下
+```
+
+与 OpenGL 的正负约定相反。离屏三角形的 NDC 顶点为 `(-1,-1) (3,-1) (-1,3)`，
+按此公式 `a > 0`，在 `frontFace = COUNTER_CLOCKWISE` 下被判为**背面并剔除**，
+于是整张图只剩 clear 的颜色。
+
+修复：`frontFace = VK_FRONT_FACE_CLOCKWISE`，**保留背面剔除**（不是关掉剔除）：
+
+```
+frontFace=COUNTER_CLOCKWISE  → centre = 0 0 0 64   （仅 clear）
+frontFace=CLOCKWISE          → centre = 64 128 191 255   （端到端通过）
+```
+
+定位方式：把 `tools/vk_offscreen_probe.cpp` 在同一环境跑通作为基线
+（`centre pixel = 64 128 191 255`），再把引擎管线逐项对齐探针配置并逐项还原，
+每次只改一个字段。绕序是唯一能翻转结果的变量。
+
+逐项**实测**排除（不是读代码推断）：
+- 片元/顶点模块均已在注册表中找到，且都已进入管线
+- 附件格式与管线声明的 `colorAttachmentFormats` 一致
+- `dsvFormat` 默认 `Unknown` → `FormatToVk` 返回 `VK_FORMAT_UNDEFINED`，未声明深度附件
+- 管线布局 `setLayoutCount = 0`，不要求绑定描述符集
+- `topology` 默认为 `TriangleList`，映射正确
+- 动态视口、静态视口、`pDepthStencilState` 置空、`cullMode = NONE` 均**不能**翻转结果
 
 > 教训：`VkClearValue clear` 被 memcpy 填充过，编译器不会报 unused，
 > 静默丢弃一个「已经用过的」局部变量极易逃过 review。
-
-已逐项核对并排除的其它候选（读代码确认均正确）：
-- 剔除：`CULL_MODE_BACK` + `COUNTER_CLOCKWISE`，该三角形有符号面积 > 0 → 前面，不被剔除
-- 深度/混合：测试显式关闭深度测试，`colorWriteMask` 含 alpha
-- 格式一致：附件 `R8G8B8A8_UNORM` 与管线 `rtvFormats[0]` 两侧一致
-- `rtvCount = 1` 与单个颜色附件匹配
-- 回读缓冲区 `HOST_VISIBLE | HOST_COHERENT`，无需 invalidate
-- 回读 barrier：`ATTACHMENT_OPTIMAL → TRANSFER_SRC_OPTIMAL`，stage/access 均正确
-- 设备已启用 `VK_KHR_dynamic_rendering` 且 `dynamicRendering = VK_TRUE`
-- `VulkanLoader` 直接链接 `vulkan-1`，`vkCmdBeginRendering` 是真实符号、非空桩
+>
+> **更大的教训**：前两个缺陷都是真实缺陷、都必须修，但症状相同（都是 0）。
+> 在没有运行时反馈时按代码阅读收敛根因不可靠 —— 本次靠 WSL 逐项二分才定位。
+> 这也是为什么 validation layer 抓不到这类问题：被剔除的绘制是完全合法的 API 调用。
 
 > 顺带纠正一个容易踩的坑：`VkBufferImageCopy` **没有** `imageLayout` 成员
 > （那是 `VkImageCopy` 才有的）。拷贝布局由 `vkCmdCopyImageToBuffer` 的参数传入，
@@ -345,6 +387,10 @@ lavapipe 上设备初始化成功，`GetDeviceName()` 返回真实名称。
 `4834590` | backbuffer 建 image view；拆分 `AcquireNextImage()` 与 `Present()` |
 `2d25e21` | `CreateTexture` 建 image view；view 泄漏修复（纹理统一持有） |
 `ab64696` | `ShaderCompileRule` 接入 `ShaderRegistry`，按扩展名推断 stage |
+### WSL 验证与根因修正（`7017d17`）
+
+`7017d17` | 修正 `frontFace` 绕序（**真正的根因**）；`Failed()` 误报修复；
+新增 X11/XCB/Wayland surface 支持；补 `MemoryTypes.h` / `Log.cpp` 缺失的 include
 
 > **以上 11 个提交全部未推送、全部未经运行时验证。** 其中 `4834590`、`dcc65a6`、
 > `2d25e21` 涉及帧循环、交换链时序与纹理生命周期三处结构性修改，
@@ -363,27 +409,25 @@ lavapipe 上设备初始化成功，`GetDeviceName()` 返回真实名称。
 
 ## 4. 建议的接手路径
 
-0. **先推送并验证**。当前有 11 个提交只经过编译校验，没有任何运行时证据。
-   优先跑通 §0 的三角形像素断言，其余工作都建立在「这条链路确实能跑」之上。
-1. **推送 §0 的两个修复并验证三角形像素**（`b05c894` + `d30cdb5`，已提交未推送）。
-   预期中心像素变为 `64 128 191 255`。
-2. 若仍为 0：先看 §1.5 的 validation 输出。若 layer 报出 barrier / layout 问题，
-   按报告修；若 layer 干净，则排除同步类根因，回到 §0 的候选清单。
-3. 让 `RHIDemo` 的 Vulkan 路径真正出画面 —— `RenderVulkanFrame()` 目前只清除不绘制
-   （见 §2.3b），需要接上一份真实几何与材质。
-4. 补 `GraphicsPSODesc` 的顶点输入契约 —— 注意该结构被 GL / D3D12 共用，
-   属跨后端设计，最好先与其它后端 owner 对齐。当前三角形靠 `gl_VertexIndex`
-   绕开了这个缺口，因此**带顶点缓冲的蒙皮网格仍无法在 Vulkan 上绘制**。
-5. 删除 `VulkanOffscreenTarget` 自带的渲染作用域逻辑，改走命令列表
+1. **把 WSL 上已完成的验证接进 CI。** 像素断言已在真实 Linux + lavapipe 通过
+   （`7017d17`），但 CI 尚未复现这一步，且提交仍全部未推送。
+2. **把 WSL 验证回路固化下来。** 本次用 WSL（Ubuntu 24.04 + g++ 13.3 + lavapipe）
+   绕开 shaderc：SPIR-V 由 Windows 侧 Vulkan SDK 的 glslangValidator 生成，
+   harness 自行实现 `ShaderRegistry` 的 `RegisterSpirv`/`Find`，因此无需编译
+   shaderc 即可跑通引擎管线。此方法可复用于后续回归。
+3. **让 `RHIDemo` 的 Vulkan 路径真正出画面** —— `RenderVulkanFrame()` 目前只清除
+   不绘制（见 §2.3b），需要接上一份真实几何与材质。
+4. **补 `GraphicsPSODesc` 的顶点输入契约** —— 该结构被 GL / D3D12 共用，属跨后端
+   设计，最好先与其它后端 owner 对齐。当前三角形靠 `gl_VertexIndex` 绕开了这个
+   缺口，因此**带顶点缓冲的蒙皮网格仍无法在 Vulkan 上绘制**。
+5. **验证 X11 / Wayland surface** —— 本次只验证到「Linux 15/15 编译通过」；
+   `SetNativeWindow` + `CreateSwapChain` 需要真实 X11/Wayland 会话才能跑通。
+6. **删除 `VulkanOffscreenTarget` 自带的渲染作用域逻辑**，改走命令列表
    （新契约见 §2.3，两条路径目前并存）。
-6. 补 `ShaderCompileRule` 的真实产出：它目前只写出 `.spv` 文件名却不生成该文件（见 §2.3c）。
-7. 三角形通过后，把 `GPUSkinningPixelTest` 抽象为后端无关
-8. 届时把 `GPU_SKINNING_NO_GL46=1` 从 Linux 测试步骤中移除，
-   4 个 GPU 像素用例转为真实执行
-7. 补 `VulkanTexture` 的图像创建（§2.2）—— 像素测试需要纹理
-> 经验提示：这个后端有多个「代码看起来完整、实际不工作」的地方，且只能靠运行
-> 逐个暴露。上一轮连续三轮各暴露一个空洞（command pool → PSO 着色器 → 顶点输入），
-> 每轮都是一次 CI。动手前值得先通读整个 `engine/src/Vulkan/` 判断规模。
+7. **补 `ShaderCompileRule` 的真实产出**：它目前只写出 `.spv` 文件名却不生成该文件
+   （见 §2.3c）。
+8. 三角形已通过，接下来把 `GPUSkinningPixelTest` 抽象为后端无关。
+9. 届时把 `GPU_SKINNING_NO_GL46=1` 从 Linux 测试步骤中移除。
 
 ### CI 现状
 
