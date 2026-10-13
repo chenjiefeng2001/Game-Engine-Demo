@@ -116,8 +116,14 @@ int main()
         std::printf("[VKTRI] FAIL: BeginOneShot returned null\n");
         return 1;
     }
-    const float black[4] = { 0.0f, 0.0f, 0.0f, 1.0f };
-    target->BeginRendering(cmd, black);
+    // 清除色刻意用 alpha = 0.25：片元输出与清除色的 alpha 都取 1.0 时，
+    // 「clear 生效但 draw 没跑」和「clear 也没生效」读到的 alpha 都是 255，
+    // 无法区分。给出可区分的哨兵值后，单看 alpha 即可定位是哪一层没工作：
+    //   alpha   0  → clear 与 draw 都没生效（提交/回读/布局层面）
+    //   alpha  64  → clear 生效、draw 没生效（视口、剔除、顶点等光栅层）
+    //   64 128 191 255 → 端到端正常
+    const float clearWithSentinel[4] = { 0.0f, 0.0f, 0.0f, 0.25f };
+    target->BeginRendering(cmd, clearWithSentinel);
     vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline);
     vkCmdDraw(cmd, 3, 1, 0, 0);
     target->EndRendering(cmd);
@@ -143,13 +149,33 @@ int main()
     const uint8_t* c = pixels.data() + off;
     std::printf("[VKTRI] centre pixel = %u %u %u %u (pitch=%u)\n", c[0], c[1], c[2], c[3], pitch);
 
+    // 全缓冲区统计：把「一个像素都没写进去」与「写进去了但值不对」区分开，
+    // 避免只看中心点时把缓冲未初始化误读成光栅问题。
+    size_t nonZeroBytes = 0;
+    size_t distinctAlpha = 0;
+    uint8_t seenAlpha[256] = { 0 };
+    for (size_t i = 0; i + 3 < pixels.size(); i += 4) {
+        const uint8_t* px = pixels.data() + i;
+        if (px[0] | px[1] | px[2] | px[3]) ++nonZeroBytes;
+        if (!seenAlpha[px[3]]) { seenAlpha[px[3]] = 1; ++distinctAlpha; }
+    }
+    std::printf("[VKTRI] pixels with any non-zero channel = %zu / %zu, distinct alpha values = %zu\n",
+                nonZeroBytes, pixels.size() / 4, distinctAlpha);
+
     const bool drew = (c[0] == 64 && c[1] == 128 && c[2] == 191 && c[3] == 255);
     if (drew) {
         std::printf("[VKTRI] PASS: fragment shader output reached the readback; "
                     "the engine Vulkan backend rasterises offscreen on this device\n");
+    } else if (nonZeroBytes == 0) {
+        std::printf("[VKTRI] FAIL: nothing reached the readback buffer at all. The clear alone "
+                    "would have set alpha 64, so this is a submit/copy/layout problem upstream of "
+                    "rasterisation, not a draw-state problem.\n");
+    } else if (c[3] == 64) {
+        std::printf("[VKTRI] FAIL: clear landed (alpha 64) but the shader colour did not. "
+                    "Raster-stage problem: viewport, scissor, culling or vertex generation.\n");
     } else {
-        std::printf("[VKTRI] FAIL: centre pixel is not the shader colour "
-                    "(black would mean only the clear happened)\n");
+        std::printf("[VKTRI] FAIL: centre pixel is neither the clear sentinel nor the shader "
+                    "colour; some pixels were written.\n");
     }
     return drew ? 0 : 1;
 #endif // ENGINE_HAS_VULKAN
