@@ -6,7 +6,7 @@
 
 ---
 
-## 0. 当前唯一阻塞：三角形像素为全 0
+## 0. 当前唯一阻塞：三角形像素为全 0（**根因范围已缩小**）
 
 **接手前请先读这一节。**
 
@@ -21,7 +21,7 @@
 [VKTRI] FAIL: centre pixel is not the shader colour
 ```
 
-### 最可能的根因（已定位，**尚未验证**）
+### 已确认的缺陷一：动态视口从未设置（已修，未验证）
 
 `VulkanPipelineState.cpp:127` 把视口与裁剪声明为**动态状态**：
 
@@ -39,15 +39,50 @@ VkDynamicState dynamicStates[] = { VK_DYNAMIC_STATE_VIEWPORT, VK_DYNAMIC_STATE_S
 
 **该修复未验证** —— 验证需要推送并触发 CI。
 
-### 若视口修复不生效，下一个候选
+### 已确认的缺陷二：实测 alpha 说明 clear 也没生效（推测，待验证）
 
-1. `rasterizer.cullMode = VK_CULL_MODE_BACK_BIT` + `frontFace = COUNTER_CLOCKWISE`；
-   已核算该三角形为 CCW，理论上不该被剔除，但仍值得复核
-2. 渲染作用域根本没执行 —— 那就要查 `VkRenderingAttachmentInfo::imageLayout` 与
-   image 实际 layout 是否一致（当前设 `ATTACHMENT_OPTIMAL`）
-3. validation layer **抓不到**「忘记设置动态视口」：未设置动态状态属于合法 API 调用，
-   layer 不会报错。像素仍为 0 时它只能排除另一类根因 —— 回读路径的
-   barrier / layout 转换 / 命令缓冲生命周期问题（见 §1.5，现已接线）。
+这一条推翻了一个很容易得出的错误结论。此前读到 `centre pixel = 0 0 0 0` 时，
+自然的解释是「clear 生效（黑）、draw 被丢弃」。**这个解释是错的**：
+
+| 来源 | alpha |
+|---|---|
+清除色 `{0, 0, 0, 1.0f}` | 应为 **255** |
+片元输出 `vec4(0.25, 0.5, 0.75, 1.0)` | 应为 **255** |
+实测 `0 0 0 0` | **0** |
+
+clear 与 draw **任何一项生效**都会给出 alpha=255。实测为 0，说明两者都没生效 ——
+问题可能位于提交/拷贝/布局层，而非光栅层。视口修复**未必是唯一原因**。
+
+已排除的候选（逐项核对代码，均正确）：
+- 剔除：`CULL_MODE_BACK` + `COUNTER_CLOCKWISE`，该三角形有符号面积 > 0 → 前面，不被剔除
+- 深度/混合：测试显式关闭深度测试，blend 关闭但 `colorWriteMask` 含 alpha
+- 格式一致：附件 `R8G8B8A8_UNORM` 与管线 `rtvFormats[0]` 两侧一致
+- `rtvCount = 1` 与单个颜色附件匹配
+- 回读缓冲区 `HOST_VISIBLE | HOST_COHERENT`，无需 invalidate
+- 回读 barrier：`ATTACHMENT_OPTIMAL → TRANSFER_SRC_OPTIMAL`，stage/access 均正确
+
+> 顺带纠正一个容易踩的坑：`VkBufferImageCopy` **没有** `imageLayout` 成员
+> （那是 `VkImageCopy` 才有的）。拷贝布局由 `vkCmdCopyImageToBuffer` 的参数传入，
+> 本工程已正确传 `TRANSFER_SRC_OPTIMAL`。
+
+### 让一次 CI 运行定位到具体层
+
+测试已改为自带定位能力，避免「像素不对」这种无信息结论：
+
+- 清除色 alpha 改为 **0.25**（哨兵值），与片元 alpha（1.0）区分开
+- 统计全缓冲区「非零像素数」与「出现的 alpha 取值个数」
+
+据此单看输出即可分层：
+
+| 输出 | 结论 |
+|---|---|
+`alpha 0`，非零像素 0 | clear 与 draw 都没生效 → 提交/拷贝/布局层 |
+`alpha 64`，非零像素 > 0 | clear 生效、draw 没生效 → 视口/裁剪/剔除等光栅层 |
+`64 128 191 255` | 端到端正常 |
+其他 | 部分写入，需看 validation 报告 |
+
+同时 validation layer 已接线（§1.5），可覆盖 barrier / layout / 命令缓冲生命周期
+这一类同步问题 —— 它抓不到「忘记设置动态视口」。
 
 
 ## 0.1 为什么有这份文档
