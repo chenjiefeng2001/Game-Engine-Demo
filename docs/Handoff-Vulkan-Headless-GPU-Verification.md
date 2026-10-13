@@ -39,35 +39,58 @@ VkDynamicState dynamicStates[] = { VK_DYNAMIC_STATE_VIEWPORT, VK_DYNAMIC_STATE_S
 
 **该修复未验证** —— 验证需要推送并触发 CI。
 
-### 已确认的缺陷二：实测 alpha 说明 clear 也没生效（推测，待验证）
+### 已确认的根因二：`att.clearValue` 从未赋值（已修，未验证）
 
-这一条推翻了一个很容易得出的错误结论。此前读到 `centre pixel = 0 0 0 0` 时，
-自然的解释是「clear 生效（黑）、draw 被丢弃」。**这个解释是错的**：
+```cpp
+VkClearValue clear{};
+std::memcpy(&clear.color, clearColor, sizeof(clear.color));   // clear 被填充…
+...
+att.loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
+att.storeOp = VK_ATTACHMENT_STORE_OP_STORE;
+// …然后 clear 再无任何使用，att.clearValue 保持零初始化
+```
 
-| 来源 | alpha |
-|---|---|
-清除色 `{0, 0, 0, 1.0f}` | 应为 **255** |
-片元输出 `vec4(0.25, 0.5, 0.75, 1.0)` | 应为 **255** |
-实测 `0 0 0 0` | **0** |
+`loadOp = CLEAR` 读的是 **`att.clearValue`**，而不是那个局部变量。于是每次都清成
+`(0,0,0,0)`，调用方传入的清除色被静默丢弃 —— 且没有任何 API 错误。
 
-clear 与 draw **任何一项生效**都会给出 alpha=255。实测为 0，说明两者都没生效 ——
-问题可能位于提交/拷贝/布局层，而非光栅层。视口修复**未必是唯一原因**。
+这解释了实测的 `0 0 0 0`：**clear 其实生效了，只是被清成了透明黑**。
 
-已排除的候选（逐项核对代码，均正确）：
+### 两个缺陷叠加，才产生「全 0」
+
+| # | 缺陷 | 单独存在时的效果 |
+|---|---|---|
+1 | `att.clearValue` 未赋值 | 图像被清成 (0,0,0,0)，请求的颜色被丢弃 |
+2 | 动态视口/裁剪未设置 | 绘制被整体裁掉，什么都不写 |
+
+两者都只产生 0，因此**只修其中一个，像素仍然是 0**。这是此前排查绕远的原因：
+症状无法区分「clear 用了错误的颜色」与「clear 和 draw 都没生效」。
+
+> 教训：`VkClearValue clear` 被 memcpy 填充过，编译器不会报 unused，
+> 静默丢弃一个「已经用过的」局部变量极易逃过 review。
+
+已逐项核对并排除的其它候选（读代码确认均正确）：
 - 剔除：`CULL_MODE_BACK` + `COUNTER_CLOCKWISE`，该三角形有符号面积 > 0 → 前面，不被剔除
-- 深度/混合：测试显式关闭深度测试，blend 关闭但 `colorWriteMask` 含 alpha
+- 深度/混合：测试显式关闭深度测试，`colorWriteMask` 含 alpha
 - 格式一致：附件 `R8G8B8A8_UNORM` 与管线 `rtvFormats[0]` 两侧一致
 - `rtvCount = 1` 与单个颜色附件匹配
 - 回读缓冲区 `HOST_VISIBLE | HOST_COHERENT`，无需 invalidate
 - 回读 barrier：`ATTACHMENT_OPTIMAL → TRANSFER_SRC_OPTIMAL`，stage/access 均正确
+- 设备已启用 `VK_KHR_dynamic_rendering` 且 `dynamicRendering = VK_TRUE`
+- `VulkanLoader` 直接链接 `vulkan-1`，`vkCmdBeginRendering` 是真实符号、非空桩
 
 > 顺带纠正一个容易踩的坑：`VkBufferImageCopy` **没有** `imageLayout` 成员
 > （那是 `VkImageCopy` 才有的）。拷贝布局由 `vkCmdCopyImageToBuffer` 的参数传入，
 > 本工程已正确传 `TRANSFER_SRC_OPTIMAL`。
 
+### 对照：独立探针为何从未暴露这些问题
+
+`tools/vk_offscreen_probe.cpp` 用的是**静态**视口（`pViewports = &vp`，无动态状态），
+所以它不需要 `vkCmdSetViewport` 就正确；而它用显式 render pass，
+在 `VkAttachmentDescription` 里直接给出 `clearValue`。两个坑一个都不碰。
+
 ### 让一次 CI 运行定位到具体层
 
-测试已改为自带定位能力，避免「像素不对」这种无信息结论：
+测试已改为自带定位能力：
 
 - 清除色 alpha 改为 **0.25**（哨兵值），与片元 alpha（1.0）区分开
 - 统计全缓冲区「非零像素数」与「出现的 alpha 取值个数」
@@ -76,10 +99,9 @@ clear 与 draw **任何一项生效**都会给出 alpha=255。实测为 0，说�
 
 | 输出 | 结论 |
 |---|---|
-`alpha 0`，非零像素 0 | clear 与 draw 都没生效 → 提交/拷贝/布局层 |
-`alpha 64`，非零像素 > 0 | clear 生效、draw 没生效 → 视口/裁剪/剔除等光栅层 |
+`alpha 0`，非零像素 0 | 提交/拷贝/布局层未工作 |
+`alpha 64`，非零像素 > 0 | clear 生效（哨兵值正确回传），draw 没生效 → 光栅层 |
 `64 128 191 255` | 端到端正常 |
-其他 | 部分写入，需看 validation 报告 |
 
 同时 validation layer 已接线（§1.5），可覆盖 barrier / layout / 命令缓冲生命周期
 这一类同步问题 —— 它抓不到「忘记设置动态视口」。
