@@ -92,7 +92,8 @@ jobs:
         sudo apt-get install -y \
           libx11-dev libxrandr-dev libxinerama-dev libxcursor-dev libxi-dev \
           libgl1-mesa-dev libgl1-mesa-dri libwayland-dev wayland-protocols \
-          libxkbcommon-dev xvfb pkg-config
+          libxkbcommon-dev xvfb pkg-config \
+          libvulkan1 libvulkan-dev mesa-vulkan-drivers
 
     - name: Set reusable strings
       id: strings
@@ -195,6 +196,31 @@ jobs:
 
     - name: Build
       run: cmake --build ${{ steps.strings.outputs.build-output-dir }} --config ${{ matrix.build_type }}
+
+    # Headless Vulkan 离屏三角形：在 lavapipe（软件 Vulkan）上验证引擎后端能真正
+    # 光栅化并回读像素。这是该后端的第一份运行时证据——此前它从未被任何 CI 编译过，
+    # 更没运行过。断言是像素而不是退出码：clear 为黑、片元固定输出固定色。
+    # continue-on-error 隔离：只提供证据，不 gate 主套件。
+    - name: Run headless Vulkan offscreen triangle on lavapipe
+      if: runner.os == 'Linux'
+      continue-on-error: true
+      shell: bash
+      run: |
+        set +e
+        LAVAPIPE_ICD="$(ls -1 /usr/share/vulkan/icd.d/lvp_icd*.json 2>/dev/null | head -1)"
+        BIN="${{ steps.strings.outputs.build-output-dir }}/sandbox/VulkanOffscreenTest/VulkanOffscreenTest"
+        if [[ -z "$LAVAPIPE_ICD" ]]; then
+          echo "lavapipe ICD not found; Vulkan triangle cannot run"
+          exit 0
+        fi
+        if [[ ! -x "$BIN" ]]; then
+          echo "VulkanOffscreenTest binary not found at $BIN"
+          find "${{ steps.strings.outputs.build-output-dir }}" -name 'VulkanOffscreenTest*' -type f 2>/dev/null | head -5
+          exit 0
+        fi
+        env VK_DRIVER_FILES="$LAVAPIPE_ICD" VK_ICD_FILENAMES="$LAVAPIPE_ICD" \
+          stdbuf -o0 -e0 "$BIN"
+        echo "VulkanOffscreenTest exit = $?"
 
     # 可审计的启用证据（§8.9）：确认 SPIR-V 路径**确实**参与构建，而不是仅
     # 因 artifact 缺失而降级。三项都通过才允许后续 Test 步骤给出绿灯。
@@ -612,30 +638,6 @@ jobs:
           echo "--- last 30 lines of build output ---"
           tail -30 build.log
           grep -n 'undefined reference' build.log || echo "no undefined reference found"
-
-      # Headless Vulkan 离屏三角形：在 lavapipe（软件 Vulkan）上验证引擎后端
-      # 能真正光栅化并回读像素。这是该后端的第一份运行时证据——此前它从未被
-      # 任何 CI 编译过，更没运行过。
-      # 用 continue-on-error 隔离：它不 gate 主套件，只提供证据。
-      - name: Run headless Vulkan offscreen triangle on lavapipe
-        continue-on-error: true
-        shell: bash
-        run: |
-          set +e
-          LAVAPIPE_ICD="$(ls -1 /usr/share/vulkan/icd.d/lvp_icd*.json 2>/dev/null | head -1)"
-          BIN="$GITHUB_WORKSPACE/build/sandbox/VulkanOffscreenTest/VulkanOffscreenTest"
-          if [[ -z "$LAVAPIPE_ICD" ]]; then
-            echo "lavapipe ICD not found; Vulkan triangle cannot run"
-            exit 0
-          fi
-          if [[ ! -x "$BIN" ]]; then
-            echo "VulkanOffscreenTest binary not found at $BIN"
-            find "$GITHUB_WORKSPACE/build" -name 'VulkanOffscreenTest*' -type f 2>/dev/null | head -5
-            exit 0
-          fi
-          env VK_DRIVER_FILES="$LAVAPIPE_ICD" VK_ICD_FILENAMES="$LAVAPIPE_ICD" \
-            stdbuf -o0 -e0 "$BIN"
-          echo "VulkanOffscreenTest exit = $?"
 
       - name: Collect link and symbol evidence
         if: always()
