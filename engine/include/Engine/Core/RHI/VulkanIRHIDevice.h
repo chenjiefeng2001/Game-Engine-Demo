@@ -65,6 +65,8 @@ class VulkanDeferredDeletion;
         void Begin() override;
         void End() override;
         void Reset() override;
+        void BeginRendering(const RenderTargetDesc& desc) override;
+        void EndRendering() override;
         void SetPipelineState(IRHIPipelineState* pso) override;
         void SetVertexBuffer(uint32 slot, IRHIBuffer* buf, uint32 stride, uint32 off) override;
         void SetIndexBuffer(IRHIBuffer* buf, uint32 off) override;
@@ -116,8 +118,12 @@ class VulkanDeferredDeletion;
         uint32_t GetWidth()  const noexcept override;
         uint32_t GetHeight() const noexcept override;
         Format   GetFormat() const noexcept override;
-        VkImage GetVkImage() const noexcept;
-        void SetVkImage(VkImage image);
+VkImage GetVkImage() const noexcept;
+    void SetVkImage(VkImage image);
+    /** 附件视图。渲染作用域（vkCmdBeginRendering）必须绑定 image view 而非 image，
+     *  此前只有 image 的 getter，导致无法从 IRHITexture* 构造渲染附件。 */
+    VkImageView GetVkImageView() const noexcept;
+    void SetVkImageView(VkImageView view);
         void SetWidth(uint32_t w);
         void SetHeight(uint32_t h);
         void SetFormat(Format fmt);
