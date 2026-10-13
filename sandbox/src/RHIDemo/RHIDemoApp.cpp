@@ -87,11 +87,12 @@ bool RHIDemoApp::InitVulkan() {
     if (!m_RHIWindow->GetGLFWHandle()) return false;
     m_RHIWindow->Show();
 
-    auto dev = std::make_unique<RHI::VulkanDevice>();
-    if (!dev->Initialize(m_RHIWindow->GetHWND(), m_RHIWindow->GetWidth(), m_RHIWindow->GetHeight()))
+    m_Device = std::make_unique<RHI::VulkanDevice>();
+    if (!m_Device->Initialize(m_RHIWindow->GetHWND(), m_RHIWindow->GetWidth(), m_RHIWindow->GetHeight()))
         return false;
-    m_GPUName = dev->GetDeviceName();
-    std::printf("  [RHIDemo] ✅ Vulkan 1.3 | %s\n", m_GPUName.c_str());
+    m_GPUName = m_Device->GetDeviceName();
+    std::printf("  [RHIDemo] Vulkan 1.3 设备已初始化 | %s\n", m_GPUName.c_str());
+    std::printf("  [RHIDemo] 注意：该路径尚未接线渲染 —— Run() 只轮询事件，不提交任何命令缓冲\n");
     return true;
 #else
     return false;
@@ -106,11 +107,12 @@ bool RHIDemoApp::InitD3D12() {
     if (!m_RHIWindow->GetGLFWHandle()) return false;
     m_RHIWindow->Show();
 
-    auto dev = std::make_unique<RHI::D3D12Device>();
-    if (!dev->Initialize(m_RHIWindow->GetHWND(), m_RHIWindow->GetWidth(), m_RHIWindow->GetHeight()))
+    m_Device = std::make_unique<RHI::D3D12Device>();
+    if (!m_Device->Initialize(m_RHIWindow->GetHWND(), m_RHIWindow->GetWidth(), m_RHIWindow->GetHeight()))
         return false;
-    m_GPUName = dev->GetDeviceName();
-    std::printf("  [RHIDemo] ✅ D3D12 | %s\n", m_GPUName.c_str());
+    m_GPUName = m_Device->GetDeviceName();
+    std::printf("  [RHIDemo] D3D12 设备已初始化 | %s\n", m_GPUName.c_str());
+    std::printf("  [RHIDemo] 注意：该路径尚未接线渲染 —— Run() 只轮询事件，不提交任何命令缓冲\n");
     return true;
 #else
     return false;
