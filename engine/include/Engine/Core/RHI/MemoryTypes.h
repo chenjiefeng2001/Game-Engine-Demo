@@ -12,6 +12,8 @@
 
 #include "Engine/Types.h"
 #include <cstdint>
+#include <type_traits>  // std::underlying_type_t。此前缺失，依赖其它头间接引入；
+                        // 单独编译本头的 TU 会直接失败。
 
 namespace Engine {
 namespace RHI {

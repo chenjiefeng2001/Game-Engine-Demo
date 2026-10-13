@@ -29,6 +29,17 @@ class VulkanDeferredDeletion;
         const char* GetDeviceName() const override;
 
         bool Initialize(void* windowHandle, uint32_t width, uint32_t height);
+    /**
+     * 提供原生窗口句柄。
+     *
+     * 必须**在 Initialize 之前**调用，否则 surface 不会创建。
+     *
+     * IRHIDevice::Initialize 的 windowHandle 是单个 void*，无法同时表达 X11 的
+     * Display 与 Wayland 的 wl_surface，因此这里额外接收显示连接。
+     * 在 Linux 上这是唯一可行路径：RHIWindow 的 GetHWND() 显式返回 nullptr，
+     * 所以 windowHandle 会是空的。
+     */
+    void SetNativeWindow(const Engine::NativeWindow& win) noexcept;
 
         VkDevice        GetVkDevice() const noexcept;
         VmaAllocator    GetVmaAllocator() const noexcept;

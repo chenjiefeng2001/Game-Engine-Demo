@@ -100,7 +100,11 @@ IRHIPipelineState* CreateGraphicsPipeline(
     VkPipelineRasterizationStateCreateInfo rasterizer{VK_STRUCTURE_TYPE_PIPELINE_RASTERIZATION_STATE_CREATE_INFO};
     rasterizer.polygonMode = VK_POLYGON_MODE_FILL;
     rasterizer.cullMode = VK_CULL_MODE_BACK_BIT;
-    rasterizer.frontFace = VK_FRONT_FACE_COUNTER_CLOCKWISE;
+    // 绕序：Vulkan 的正/负面积约定与 OpenGL 相反。CCW 在这里会剔除掉所有
+    // 按 OpenGL 习惯逆时针书写的三角形——离屏三角形正是如此，结果是整张图只有
+    // clear 的颜色。实测（lavapipe，WSL）：frontFace=CLOCKWISE + cullMode=BACK
+    // 才能正常光栅化。
+    rasterizer.frontFace = VK_FRONT_FACE_CLOCKWISE;
     rasterizer.lineWidth = 1.0f;
 
     // 多重采样
