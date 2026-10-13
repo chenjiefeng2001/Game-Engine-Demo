@@ -130,6 +130,55 @@ bool RHIDemoApp::Initialize() {
     }
 }
 
+void RHIDemoApp::RenderVulkanFrame() {
+    auto* vkDev = dynamic_cast<RHI::VulkanDevice*>(m_Device.get());
+    if (!vkDev || !m_RHIWindow) return;
+
+    if (!m_SwapChain) {
+        RHI::SwapChainDesc desc;
+        // GetWidth/GetHeight 返回 int，而 desc 用 uint32_t：显式转换避免符号转换告警。
+        desc.width  = static_cast<uint32_t>(m_RHIWindow->GetWidth());
+        desc.height = static_cast<uint32_t>(m_RHIWindow->GetHeight());
+        desc.bufferCount = 2;
+        desc.windowHandle = m_RHIWindow->GetHWND();
+        m_SwapChain = vkDev->CreateSwapChain(desc);
+        if (!m_SwapChain) {
+            if (!m_SwapChainReported) {
+                std::printf("  [RHIDemo] CreateSwapChain 失败，无法呈现\n");
+                m_SwapChainReported = true;
+            }
+            return;
+        }
+    }
+
+    auto* sc = dynamic_cast<RHI::VulkanSwapChain*>(m_SwapChain.get());
+    if (!sc) return;
+
+    // 顺序要点：必须先 acquire 才知道要渲染哪个 backbuffer，再录制，最后 present。
+    const uint32_t imageIndex = sc->AcquireNextImage();
+    if (imageIndex == UINT32_MAX) return;
+
+    IRHITexture* backBuffer = sc->GetBackBuffer(imageIndex);
+    if (!backBuffer) return;
+
+    auto cmdList = m_Device->CreateCommandList(RHI::CommandListType::Direct);
+    if (!cmdList) return;
+
+    cmdList->Begin();
+    RHI::RenderTargetDesc rt;
+    rt.color[0] = backBuffer;
+    rt.colorCount = 1;
+    rt.clearColor[0] = 0.15f; rt.clearColor[1] = 0.20f;
+    rt.clearColor[2] = 0.35f; rt.clearColor[3] = 1.0f;
+    rt.clear = true;
+    cmdList->BeginRendering(rt);
+    // 此处尚未绘制几何：先只验证清除→呈现这条链路是否真的通。
+    cmdList->EndRendering();
+    cmdList->End();
+
+    sc->Present();
+}
+
 void RHIDemoApp::Run() {
     auto lastTime = std::chrono::high_resolution_clock::now();
     int fpsCount = 0;
@@ -150,7 +199,11 @@ void RHIDemoApp::Run() {
             m_RHIWindow->PollEvents();
             if (glfwGetKey(m_RHIWindow->GetGLFWHandle(), GLFW_KEY_ESCAPE) == GLFW_PRESS)
                 glfwSetWindowShouldClose(m_RHIWindow->GetGLFWHandle(), GLFW_TRUE);
-            std::this_thread::sleep_for(std::chrono::milliseconds(16));
+            if (m_Backend == RHI::RHIBackend::Vulkan) {
+                RenderVulkanFrame();
+            } else {
+                std::this_thread::sleep_for(std::chrono::milliseconds(16));
+            }
         }
 
         ++m_FrameCount;

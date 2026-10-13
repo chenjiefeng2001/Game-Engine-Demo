@@ -155,6 +155,15 @@ VkImage GetVkImage() const noexcept;
     public:
         VulkanSwapChain();
         ~VulkanSwapChain() override;
+        /**
+         * 显式获取下一个交换链图像，返回索引；失败返回 UINT32_MAX。
+         *
+         * 必须**在录制之前**调用：录制时要绑定哪个 backbuffer 取决于本次 acquire
+         * 的结果。此前 Present() 内部才 acquire，而它提交的是调用方**事先**录好的
+         * 命令缓冲，于是录制时目标 backbuffer 尚未确定 —— 该时序无法正确工作。
+         */
+        uint32_t AcquireNextImage();
+        /** 提交本帧已录制的命令并呈现。不再内部 acquire。 */
         void Present() override;
         void Resize(uint32_t w, uint32_t h) override;
         IRHITexture* GetBackBuffer(uint32_t idx) const override;
@@ -172,6 +181,7 @@ VkImage GetVkImage() const noexcept;
         std::vector<std::shared_ptr<VulkanTexture>> m_BackBuffers;
         std::vector<VkImage> m_SwapChainImages;
         uint32_t m_ImageIndex = 0;
+        bool     m_ImageAcquired = false;
         friend class VulkanDevice;
     };
 
