@@ -17,6 +17,8 @@
  * 三角形不用顶点缓冲，靠 gl_VertexIndex 生成，因此不需要顶点输入契约。
  */
 #include <cstdio>
+#include <cstdlib>
+#include <cstring>
 #include <vector>
 
 #ifdef ENGINE_HAS_VULKAN
@@ -289,7 +291,20 @@ int main()
 
     // ── 第二阶段：顶点输入契约 ──────────────────────────────────────
     // 第一阶段用 gl_VertexIndex 生成三角形，绕开了顶点缓冲；它通过只证明
-    // 光栅化链路可用，**不能**证明顶点输入契约工作。这里改用真正的顶点缓冲。
+    // 光栅化链路可用，**不能**证明顶点输入契约工作。
+    //
+    // 默认**不**运行：lavapipe（Mesa 软件 Vulkan）在绑定顶点缓冲并绘制时会直接
+    // 段错误。该行为与引擎无关——一个不含任何引擎代码的独立 Vulkan 程序在同一
+    // 环境同样崩溃，绑定与不绑定顶点缓冲是唯一的分界点。由于段错误会带走整个
+    // 进程，第一阶段已验证的结果也一并丢失，因此改为按需开启。
+    // 需要验证时：VKTRI_VERTEX_INPUT=1
+    const char* vi = std::getenv("VKTRI_VERTEX_INPUT");
+    if (!vi || std::strcmp(vi, "1") != 0) {
+        std::printf("[VKTRI-VB] SKIPPED: set VKTRI_VERTEX_INPUT=1 to run. "
+                    "Known lavapipe fault: binding a vertex buffer and drawing segfaults "
+                    "the software rasteriser, independent of this engine.\n");
+        return 0;
+    }
     return RunVertexInputPhase(*vkDevice);
 #endif // ENGINE_HAS_VULKAN
 }
