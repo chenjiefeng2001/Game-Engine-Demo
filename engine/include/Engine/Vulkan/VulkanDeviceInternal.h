@@ -77,6 +77,9 @@ struct VulkanDeviceImpl {
     std::vector<VkImageView> swapChainImageViews;
 
     // ── 调试 ──
+// 注意：本文件的 VulkanDeviceImpl 是**未被任何编译单元包含的旧结构体**
+// （真正的实现是 VulkanDevice.cpp 内部的 VulkanDevice::Impl）。
+// 因此这里新增字段不会影响编译，validation 的接线只在 VulkanDevice.cpp。
     VkDebugUtilsMessengerEXT debugMessenger{VK_NULL_HANDLE};
     bool                 enableValidation{false};
 

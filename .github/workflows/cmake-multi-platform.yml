@@ -93,7 +93,7 @@ jobs:
           libx11-dev libxrandr-dev libxinerama-dev libxcursor-dev libxi-dev \
           libgl1-mesa-dev libgl1-mesa-dri libwayland-dev wayland-protocols \
           libxkbcommon-dev xvfb pkg-config \
-          libvulkan1 libvulkan-dev mesa-vulkan-drivers
+          libvulkan1 libvulkan-dev mesa-vulkan-drivers vulkan-validationlayers
 
     - name: Set reusable strings
       id: strings
@@ -201,6 +201,10 @@ jobs:
     # 光栅化并回读像素。这是该后端的第一份运行时证据——此前它从未被任何 CI 编译过，
     # 更没运行过。断言是像素而不是退出码：clear 为黑、片元固定输出固定色。
     # continue-on-error 隔离：只提供证据，不 gate 主套件。
+    #
+    # 同时开启 validation layer：像素异常时，layer 能把回读路径上的
+    # barrier / layout 转换 / 命令缓冲生命周期问题直接报出来，而不是静默读回全 0。
+    # 注意它**抓不到**「忘记设置动态视口」——那属于合法 API 调用。
     - name: Run headless Vulkan offscreen triangle on lavapipe
       if: runner.os == 'Linux'
       continue-on-error: true
@@ -218,8 +222,16 @@ jobs:
           find "${{ steps.strings.outputs.build-output-dir }}" -name 'VulkanOffscreenTest*' -type f 2>/dev/null | head -5
           exit 0
         fi
+        # 明确报告 layer 是否真的被加载，避免「以为开着其实没开」。
+        LAYER_JSON="$(ls -1 /usr/share/vulkan/explicit_layer.d/VkLayer_khronos_validation.json 2>/dev/null | head -1)"
+        if [[ -n "$LAYER_JSON" ]]; then
+          echo "validation layer manifest present: $LAYER_JSON"
+        else
+          echo "WARNING: validation layer not installed; messages will be absent"
+        fi
         env VK_DRIVER_FILES="$LAVAPIPE_ICD" VK_ICD_FILENAMES="$LAVAPIPE_ICD" \
-          stdbuf -o0 -e0 "$BIN"
+            ENGINE_VULKAN_VALIDATION=1 ENGINE_VULKAN_SYNC_VALIDATION=1 \
+            stdbuf -o0 -e0 "$BIN"
         echo "VulkanOffscreenTest exit = $?"
 
     # 可审计的启用证据（§8.9）：确认 SPIR-V 路径**确实**参与构建，而不是仅
