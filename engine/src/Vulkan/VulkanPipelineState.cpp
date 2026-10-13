@@ -86,6 +86,52 @@ IRHIPipelineState* CreateGraphicsPipeline(
 
     // 顶点输入
     VkPipelineVertexInputStateCreateInfo vertexInput{VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO};
+    // 顶点输入契约此前完全缺失，带顶点缓冲的网格因此无法绘制。此处按 binding
+    // 索引把 VertexInputDesc 展开成 Vulkan 的 binding / attribute 描述。
+    // 留空时（默认）保持原样：全屏三角形走 gl_VertexIndex，不需要任何顶点绑定。
+    std::vector<VkVertexInputBindingDescription> vkBindings;
+    std::vector<VkVertexInputAttributeDescription> vkAttributes;
+    if (!desc.vertexInput.buffers.empty() || !desc.vertexInput.attributes.empty()) {
+        vkBindings.reserve(desc.vertexInput.buffers.size());
+        for (const auto& b : desc.vertexInput.buffers) {
+            VkVertexInputBindingDescription bd{};
+            bd.binding   = b.slot;
+            bd.stride    = b.stride;
+            bd.inputRate = (b.rate == VertexInputRate::Instance) ? VK_VERTEX_INPUT_RATE_INSTANCE
+                                                                  : VK_VERTEX_INPUT_RATE_VERTEX;
+            vkBindings.push_back(bd);
+        }
+        vkAttributes.reserve(desc.vertexInput.attributes.size());
+        for (const auto& a : desc.vertexInput.attributes) {
+            if (a.binding >= vkBindings.size()) {
+                std::fprintf(stderr,
+                             "[Vulkan] vertex attribute location=%u references binding=%u but only "
+                             "%zu binding(s) declared; attribute dropped\n",
+                             a.location, a.binding, vkBindings.size());
+                continue;
+            }
+            if (a.format == Format::Unknown) {
+                std::fprintf(stderr, "[Vulkan] vertex attribute location=%u has no format; dropped\n",
+                             a.location);
+                continue;
+            }
+            VkVertexInputAttributeDescription ad{};
+            ad.location = a.location;
+            ad.binding  = a.binding;
+            ad.format   = FormatToVk(a.format);
+            ad.offset   = a.offset;
+            vkAttributes.push_back(ad);
+        }
+        if (!vkBindings.empty()) {
+            vertexInput.vertexBindingDescriptionCount = static_cast<uint32_t>(vkBindings.size());
+            vertexInput.pVertexBindingDescriptions = vkBindings.data();
+        }
+        if (!vkAttributes.empty()) {
+            vertexInput.vertexAttributeDescriptionCount = static_cast<uint32_t>(vkAttributes.size());
+            vertexInput.pVertexAttributeDescriptions = vkAttributes.data();
+        }
+    }
+
 
     // 输入组装
     VkPipelineInputAssemblyStateCreateInfo inputAssembly{VK_STRUCTURE_TYPE_PIPELINE_INPUT_ASSEMBLY_STATE_CREATE_INFO};
