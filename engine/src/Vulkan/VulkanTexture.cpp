@@ -21,15 +21,17 @@ struct VulkanTexture::Impl {
     uint32_t      height{0};
     Format        format{Format::Unknown};
     VmaAllocator  vmaAllocator{nullptr};
+    VkDevice      device{nullptr};          ///< 用于销毁 defaultView
     VkImageLayout currentLayout{VK_IMAGE_LAYOUT_UNDEFINED};
 
     ~Impl() {
+        // 顺序不能反：view 引用着 image，必须先销毁 view。
+        if (defaultView != VK_NULL_HANDLE && device != nullptr) {
+            vkDestroyImageView(device, defaultView, nullptr);
+            defaultView = VK_NULL_HANDLE;
+        }
         if (vkImage != VK_NULL_HANDLE && vmaAllocator != nullptr) {
             vmaDestroyImage(vmaAllocator, vkImage, allocation);
-        }
-        if (defaultView != VK_NULL_HANDLE) {
-            // 需要 VkDevice 来销毁 ImageView
-            // 这里由外部管理
         }
     }
 };
@@ -63,6 +65,10 @@ VkImageView VulkanTexture::GetVkImageView() const noexcept {
 
 void VulkanTexture::SetVkImageView(VkImageView view) {
     m_Impl->defaultView = view;
+}
+
+void VulkanTexture::SetVkDevice(VkDevice device) {
+    m_Impl->device = device;
 }
 
 void VulkanTexture::SetWidth(uint32_t w) {
