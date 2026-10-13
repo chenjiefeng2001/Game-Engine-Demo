@@ -473,7 +473,25 @@ std::shared_ptr<IRHIBuffer> VulkanDevice::CreateBuffer(const RHIBufferDesc& desc
     VkBufferCreateInfo bi{VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO};
     bi.size = desc.size; bi.usage = VK_BUFFER_USAGE_VERTEX_BUFFER_BIT | VK_BUFFER_USAGE_INDEX_BUFFER_BIT |
                VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT | VK_BUFFER_USAGE_STORAGE_BUFFER_BIT;
-    VmaAllocationCreateInfo ai{}; ai.usage = VMA_MEMORY_USAGE_AUTO_PREFER_HOST;
+    // VMA 默认**不**映射内存：ari.pMappedData 只会是 nullptr。于是此前
+    //   - initialData 被静默丢弃（顶点/索引上传全部失效）
+    //   - GetMappedPtr() 恒返回 null
+    // 调用方拿到的顶点缓冲里是未初始化数据，光栅化时越界读会直接崩。
+    //
+    // 注意不能用 AUTO_PREFER_HOST：它不保证所选内存类型可映射，VMA 会接受
+    // MAPPED_BIT 却仍返回 nullptr。CPU 可访问的用途必须显式用 CPU_TO_GPU 并
+    // 配一个 HOST_ACCESS 位，否则 VMA 的断言会直接失败。
+    VmaAllocationCreateInfo ai{};
+    const bool cpuAccessible = (desc.memoryUsage == MemoryUsage::CPU_To_GPU ||
+                                desc.memoryUsage == MemoryUsage::GPU_To_CPU ||
+                                desc.memoryUsage == MemoryUsage::CPU_Only);
+    if (desc.initialData != nullptr || cpuAccessible) {
+        ai.usage  = VMA_MEMORY_USAGE_CPU_TO_GPU;
+        ai.flags  = VMA_ALLOCATION_CREATE_MAPPED_BIT |
+                    VMA_ALLOCATION_CREATE_HOST_ACCESS_SEQUENTIAL_WRITE_BIT;
+    } else {
+        ai.usage  = VMA_MEMORY_USAGE_GPU_ONLY;
+    }
     VkBuffer vkBuf; VmaAllocation alloc; VmaAllocationInfo ari;
     if (vmaCreateBuffer(m_Impl->vmaAllocator, &bi, &ai, &vkBuf, &alloc, &ari) != VK_SUCCESS) {
         std::fprintf(stderr, "[Vulkan] CreateBuffer failed\n");
@@ -483,7 +501,18 @@ std::shared_ptr<IRHIBuffer> VulkanDevice::CreateBuffer(const RHIBufferDesc& desc
     buf->SetAllocator(m_Impl->vmaAllocator); // VMA RAII 析构需要
     buf->SetVmaAllocation(alloc); // 【核心修复】保存 VmaAllocation 句柄给 RAII 析构
     GPUAllocation ga; ga.mappedPtr = ari.pMappedData; buf->SetAllocation(ga);
-    if (desc.initialData && ari.pMappedData) std::memcpy(ari.pMappedData, desc.initialData, desc.size);
+    if (desc.initialData) {
+        if (ari.pMappedData) {
+            std::memcpy(ari.pMappedData, desc.initialData, desc.size);
+        } else {
+            // 静默丢弃会让调用方拿到未初始化的顶点数据，光栅化时才以越界读的形式
+            // 崩在驱动里，极难定位。必须显式报出来。
+            std::fprintf(stderr,
+                         "[Vulkan] CreateBuffer: initialData given (%llu bytes) but the allocation is "
+                         "not host-mapped; upload SKIPPED\n",
+                         static_cast<unsigned long long>(desc.size));
+        }
+    }
     return buf;
 }
 

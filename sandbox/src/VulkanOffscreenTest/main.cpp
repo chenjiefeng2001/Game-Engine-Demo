@@ -21,6 +21,7 @@
 
 #ifdef ENGINE_HAS_VULKAN
 #include "Engine/Core/RHI/IRHICommandList.h"
+#include "Engine/Core/RHI/MemoryTypes.h"
 #include "Engine/Core/RHI/PSODesc.h"
 #include "Engine/Core/RHI/RHITypes.h"
 #include "Engine/Core/RHI/VulkanIRHIDevice.h"
@@ -29,6 +30,113 @@
 #include "Engine/Vulkan/VulkanOffscreen.h"
 
 namespace {
+
+/** 顶点输入契约阶段的着色器：从顶点缓冲取位置与颜色，不依赖 gl_VertexIndex。 */
+const char* kVertexInputGlsl = R"(#version 450
+layout(location = 0) in vec2 inPosition;
+layout(location = 1) in vec3 inColor;
+layout(location = 0) out vec3 vColor;
+void main() {
+    vColor = inColor;
+    gl_Position = vec4(inPosition, 0.0, 1.0);
+}
+)";
+
+const char* kVertexInputFragGlsl = R"(#version 450
+layout(location = 0) in vec3 vColor;
+layout(location = 0) out vec4 outColor;
+void main() { outColor = vec4(vColor, 1.0); }
+)";
+
+/** 32 字节对齐顶点：location 0 取 RG32F @0，location 1 取 RG32F @8（读 8..20）。 */
+struct TriVertex { float x, y, z, w; float r, g, b, a; };
+
+/**
+ * 第二阶段：验证 GraphicsPSODesc 的顶点输入契约真的能驱动 Vulkan 的
+ * vertex input state，并配合引擎顶点缓冲画出几何。
+ *
+ * 与第一阶段分离报告：gl_VertexIndex 通过**不代表**顶点输入可用，两者排查的
+ * 失败面完全不同（binding / attribute / stride / 格式 / 上传）。
+ */
+int RunVertexInputPhase(RHI::VulkanDevice& device) {
+    using namespace Engine;
+    std::printf("[VKTRI-VB] --- vertex input phase ---\n");
+
+    if (!RHI::ShaderRegistry::Get().RegisterSource("vktrib_vs", ShaderStageType::Vertex, kVertexInputGlsl) ||
+        !RHI::ShaderRegistry::Get().RegisterSource("vktrib_fs", ShaderStageType::Fragment, kVertexInputFragGlsl)) {
+        std::printf("[VKTRI-VB] FAIL: shader registration failed\n");
+        return 1;
+    }
+
+    RHI::GraphicsPSODesc desc;
+    desc.vertexShader = StringID::Runtime("vktrib_vs");
+    desc.pixelShader  = StringID::Runtime("vktrib_fs");
+    desc.rtvCount = 1;
+    desc.rtvFormats[0] = RHI::Format::RGBA8_UNorm;
+    desc.depthStencil.depthTest  = false;
+    desc.depthStencil.depthWrite = false;
+    desc.vertexInput.buffers.push_back({ 0u, sizeof(TriVertex), RHI::VertexInputRate::Vertex });
+    desc.vertexInput.attributes.push_back({ 0u, 0u, RHI::Format::RG32_Float, 0u });
+    desc.vertexInput.attributes.push_back({ 1u, 0u, RHI::Format::RG32_Float, 8u });
+
+    auto* pso = device.CreateGraphicsPSO(desc);
+    if (!pso) {
+        std::printf("[VKTRI-VB] FAIL: CreateGraphicsPSO with vertex input returned null\n");
+        return 1;
+    }
+    auto* vkPso = dynamic_cast<RHI::VulkanPipelineState*>(pso);
+    if (!vkPso) { std::printf("[VKTRI-VB] FAIL: PSO is not VulkanPipelineState\n"); return 1; }
+    std::printf("[VKTRI-VB] pipeline created with %zu binding(s), %zu attribute(s)\n",
+                desc.vertexInput.buffers.size(), desc.vertexInput.attributes.size());
+
+    const TriVertex tri[3] = {
+        { -0.8f, -0.8f, 0.0f, 1.0f,  1.0f, 0.0f, 0.0f, 1.0f },
+        {  0.8f, -0.8f, 0.0f, 1.0f,  0.0f, 1.0f, 0.0f, 1.0f },
+        {  0.0f,  0.8f, 0.0f, 1.0f,  0.0f, 0.0f, 1.0f, 1.0f },
+    };
+    RHI::RHIBufferDesc bd;
+    bd.size = sizeof(tri);
+    bd.stride = sizeof(TriVertex);
+    bd.memoryUsage = RHI::MemoryUsage::CPU_To_GPU;
+    bd.initialData = tri;
+    auto vbuf = device.CreateBuffer(bd);
+    if (!vbuf) { std::printf("[VKTRI-VB] FAIL: CreateBuffer\n"); return 1; }
+    auto* vkBuf = static_cast<RHI::VulkanBuffer*>(vbuf.get());
+
+    constexpr uint32_t kW = 64, kH = 64;
+    auto target = RHI::VulkanOffscreenTarget::Create(device, kW, kH);
+    if (!target) { std::printf("[VKTRI-VB] FAIL: offscreen target\n"); return 1; }
+
+    const float clear[4] = { 0.0f, 0.0f, 0.0f, 1.0f };
+    VkCommandBuffer cmd = target->BeginOneShot();
+    if (cmd == VK_NULL_HANDLE) { std::printf("[VKTRI-VB] FAIL: BeginOneShot\n"); return 1; }
+    target->BeginRendering(cmd, clear);
+    vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, vkPso->GetVkPipeline());
+    VkBuffer handle = vkBuf->GetVkBuffer();
+    vkCmdBindVertexBuffers(cmd, 0, 1, &handle, nullptr);
+    vkCmdDraw(cmd, 3, 1, 0, 0);
+    target->EndRendering(cmd);
+    if (!target->EndSubmitAndWait(cmd)) { std::printf("[VKTRI-VB] FAIL: EndSubmitAndWait\n"); return 1; }
+
+    std::vector<uint8_t> px;
+    if (!target->Readback(px)) { std::printf("[VKTRI-VB] FAIL: Readback\n"); return 1; }
+    const uint8_t* mid = px.data() + ((static_cast<size_t>(kH / 2) * kW) + kW / 2) * 4;
+    const uint8_t* corner = px.data();
+    std::printf("[VKTRI-VB] centre = %u %u %u %u (expect non-black)\n", mid[0], mid[1], mid[2], mid[3]);
+    std::printf("[VKTRI-VB] corner = %u %u %u %u (expect 0 0 0 255, clear only)\n",
+                corner[0], corner[1], corner[2], corner[3]);
+
+    const bool triDrawn = !(mid[0] == 0 && mid[1] == 0 && mid[2] == 0);
+    const bool clearOk = (corner[0] == 0 && corner[1] == 0 && corner[2] == 0 && corner[3] == 255);
+    if (triDrawn && clearOk) {
+        std::printf("[VKTRI-VB] PASS: geometry rasterised from an engine vertex buffer; "
+                    "the vertex input contract works\n");
+        return 0;
+    }
+    if (!triDrawn) std::printf("[VKTRI-VB] FAIL: triangle did not rasterise (centre is still clear)\n");
+    if (!clearOk)  std::printf("[VKTRI-VB] FAIL: clear value not applied\n");
+    return 1;
+}
 
 const char* kVertexGlsl = R"(#version 450
 void main() {
@@ -177,6 +285,11 @@ int main()
         std::printf("[VKTRI] FAIL: centre pixel is neither the clear sentinel nor the shader "
                     "colour; some pixels were written.\n");
     }
-    return drew ? 0 : 1;
+    if (!drew) return 1;
+
+    // ── 第二阶段：顶点输入契约 ──────────────────────────────────────
+    // 第一阶段用 gl_VertexIndex 生成三角形，绕开了顶点缓冲；它通过只证明
+    // 光栅化链路可用，**不能**证明顶点输入契约工作。这里改用真正的顶点缓冲。
+    return RunVertexInputPhase(*vkDevice);
 #endif // ENGINE_HAS_VULKAN
 }
