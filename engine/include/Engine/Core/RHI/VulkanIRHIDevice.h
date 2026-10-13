@@ -124,6 +124,9 @@ VkImage GetVkImage() const noexcept;
      *  此前只有 image 的 getter，导致无法从 IRHITexture* 构造渲染附件。 */
     VkImageView GetVkImageView() const noexcept;
     void SetVkImageView(VkImageView view);
+    /** 析构时销毁 view 需要 VkDevice。此前 view 无人销毁（析构里留了空块），
+     *  于是每个带 view 的纹理都会泄漏一个 image view。 */
+    void SetVkDevice(VkDevice device);
         void SetWidth(uint32_t w);
         void SetHeight(uint32_t h);
         void SetFormat(Format fmt);

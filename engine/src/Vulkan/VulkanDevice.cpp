@@ -468,6 +468,23 @@ std::shared_ptr<IRHITexture> VulkanDevice::CreateTexture(const TextureDesc& desc
     tex->SetVkImage(vkImg); tex->SetWidth(desc.width); tex->SetHeight(desc.height); tex->SetFormat(desc.format);
     tex->SetAllocator(m_Impl->vmaAllocator); // VMA RAII 析构需要
     tex->SetAllocation(alloc);
+
+    // 创建 image view：渲染作用域（vkCmdBeginRendering）绑定的是 view 而非 image。
+    // 此前 CreateTexture 只给 image，view 恒为 VK_NULL_HANDLE，因此通过
+    // IRHITexture* 构造的任何渲染目标都会被跳过 —— 命令列表的渲染路径无法用于离屏。
+    VkImageViewCreateInfo vi{VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO};
+    vi.image = vkImg;
+    vi.viewType = VK_IMAGE_VIEW_TYPE_2D;
+    vi.format = ii.format;
+    vi.subresourceRange = { VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1 };
+    VkImageView view = VK_NULL_HANDLE;
+    if (vkCreateImageView(m_Impl->device, &vi, nullptr, &view) != VK_SUCCESS) {
+        std::fprintf(stderr, "[Vulkan] vkCreateImageView failed in CreateTexture\n");
+        vmaDestroyImage(m_Impl->vmaAllocator, vkImg, alloc);
+        return nullptr;
+    }
+    tex->SetVkImageView(view);
+    tex->SetVkDevice(m_Impl->device);
     return tex;
 }
 
@@ -583,6 +600,7 @@ for (auto vkImg : m_Impl->swapChainImages) {
             return nullptr;
         }
         tex->SetVkImageView(view);
+        tex->SetVkDevice(m_Impl->device);   // view 由纹理自己析构销毁
         sc->AddBackBuffer(tex);
     }
     return sc;

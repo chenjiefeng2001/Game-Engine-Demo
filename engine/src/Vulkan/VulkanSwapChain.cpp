@@ -44,13 +44,8 @@ VulkanSwapChain::~VulkanSwapChain() {
     if (!m_Device) return;
     VkDevice dev = m_Device->GetVkDevice();
     if (dev == VK_NULL_HANDLE) return;
-    // 先销毁 backbuffer 的 image view（CreateSwapChain 为每个交换链图像创建的），
-    // 再销毁纹理本身。顺序不能反：view 引用着 image。
-    for (auto& tex : m_BackBuffers) {
-        if (!tex) continue;
-        VkImageView view = tex->GetVkImageView();
-        if (view != VK_NULL_HANDLE) vkDestroyImageView(dev, view, nullptr);
-    }
+    // backbuffer 的 image view 由各自的 VulkanTexture 析构销毁（它们是 shared_ptr，
+    // 成员 m_BackBuffers 释放时触发）。这里**不能**再销毁一次，否则双重释放。
     if (m_SwapChain != VK_NULL_HANDLE) vkDestroySwapchainKHR(dev, m_SwapChain, nullptr);
 }
 
