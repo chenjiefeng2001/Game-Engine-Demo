@@ -45,6 +45,7 @@ struct VulkanCommandList::Impl {
     VkPipelineStageFlags  srcStageMask{0};
     VkPipelineStageFlags  dstStageMask{0};
     uint32_t              barrierCount{0};
+    bool                renderingActive{false};
 
     bool IsReady() const noexcept { return isRecording && cmdBuffer != VK_NULL_HANDLE; }
 
@@ -134,6 +135,100 @@ void VulkanCommandList::Reset() {
     vkResetCommandBuffer(m_Impl->cmdBuffer, 0);
     m_Impl->isRecording = false;
     m_Impl->barrierCount = 0;
+    m_Impl->renderingActive = false;
+}
+
+// ════════════════════════════════════════════════════════════
+// 渲染作用域（Vulkan dynamic rendering）
+// ════════════════════════════════════════════════════════════
+
+void VulkanCommandList::BeginRendering(const RenderTargetDesc& desc) {
+    if (!m_Impl->IsReady()) return;
+    if (m_Impl->renderingActive) {
+        std::fprintf(stderr, "[Vulkan] BeginRendering called while already in a scope\n");
+        return;
+    }
+    if (desc.colorCount == 0 || desc.colorCount > RenderTargetDesc::kMaxColorAttachments) {
+        std::fprintf(stderr, "[Vulkan] BeginRendering: colorCount=%u out of range\n", desc.colorCount);
+        return;
+    }
+
+    VkRenderingAttachmentInfo attachments[RenderTargetDesc::kMaxColorAttachments]{};
+    uint32 usable = 0;
+    uint32 extentW = 0, extentH = 0;
+    for (uint32 i = 0; i < desc.colorCount; ++i) {
+        auto* tex = static_cast<VulkanTexture*>(desc.color[i]);
+        VkImageView view = tex->GetVkImageView();
+        if (view == VK_NULL_HANDLE) {
+            std::fprintf(stderr, "[Vulkan] BeginRendering: color[%u] has no image view\n", i);
+            continue;
+        }
+        VkRenderingAttachmentInfo& a = attachments[usable++];
+        a.sType     = VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO;
+        a.imageView = view;
+        a.imageLayout = VK_IMAGE_LAYOUT_ATTACHMENT_OPTIMAL;
+        a.loadOp    = desc.clear ? VK_ATTACHMENT_LOAD_OP_CLEAR : VK_ATTACHMENT_LOAD_OP_LOAD;
+        a.storeOp   = VK_ATTACHMENT_STORE_OP_STORE;
+        // clearValue 必须赋值：loadOp=CLEAR 读的是它，漏掉会清成 (0,0,0,0)。
+        // 路径为 VkClearValue::color → VkClearColorValue::float32：
+        // 匿名成员 color[] 不支持下标，必须走具名成员。
+        for (uint32 ch = 0; ch < 4; ++ch) a.clearValue.color.float32[ch] = desc.clearColor[ch];
+        tex->SetLayout(VK_IMAGE_LAYOUT_ATTACHMENT_OPTIMAL);
+        extentW = tex->GetWidth();
+        extentH = tex->GetHeight();
+    }
+    if (usable == 0) return;
+
+    VkRenderingAttachmentInfo depthAttachment{};
+    bool hasDepth = false;
+    if (desc.depth) {
+        auto* dtex = static_cast<VulkanTexture*>(desc.depth);
+        if (dtex->GetVkImageView() != VK_NULL_HANDLE) {
+            depthAttachment.sType      = VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO;
+            depthAttachment.imageView  = dtex->GetVkImageView();
+            depthAttachment.imageLayout = VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_OPTIMAL;
+            depthAttachment.loadOp     = desc.clear ? VK_ATTACHMENT_LOAD_OP_CLEAR : VK_ATTACHMENT_LOAD_OP_LOAD;
+            depthAttachment.storeOp    = VK_ATTACHMENT_STORE_OP_STORE;
+            dtex->SetLayout(VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_OPTIMAL);
+            hasDepth = true;
+        }
+    }
+
+    VkRenderingInfo ri{};
+    ri.sType            = VK_STRUCTURE_TYPE_RENDERING_INFO;
+    ri.renderArea       = { { 0, 0 }, { extentW, extentH } };
+    ri.layerCount       = 1;
+    ri.colorAttachmentCount = usable;
+    ri.pColorAttachments    = attachments;
+    if (hasDepth) {
+        // VkRenderingInfo 没有 depthAttachmentCount 字段：是否附加深度由
+        // pDepthAttachment 是否为空决定。
+        ri.pDepthAttachment = &depthAttachment;
+    }
+
+    m_Impl->FlushBarriers();
+    vkCmdBeginRendering(m_Impl->cmdBuffer, &ri);
+    m_Impl->renderingActive = true;
+
+    // 视口与裁剪是动态状态：必须在这里设置，否则绘制被整体裁掉且不报任何错误。
+    if (extentW > 0 && extentH > 0) {
+        VkViewport vp{};
+        vp.x = 0.0f; vp.y = 0.0f;
+        vp.width  = static_cast<float>(extentW);
+        vp.height = static_cast<float>(extentH);
+        vp.minDepth = 0.0f; vp.maxDepth = 1.0f;
+        VkRect2D scissor{};
+        scissor.offset = { 0, 0 };
+        scissor.extent = { extentW, extentH };
+        vkCmdSetViewport(m_Impl->cmdBuffer, 0, 1, &vp);
+        vkCmdSetScissor(m_Impl->cmdBuffer, 0, 1, &scissor);
+    }
+}
+
+void VulkanCommandList::EndRendering() {
+    if (!m_Impl->IsReady() || !m_Impl->renderingActive) return;
+    vkCmdEndRendering(m_Impl->cmdBuffer);
+    m_Impl->renderingActive = false;
 }
 
 // ════════════════════════════════════════════════════════════

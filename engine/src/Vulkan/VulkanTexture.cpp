@@ -57,6 +57,14 @@ void VulkanTexture::SetVkImage(VkImage image) {
     m_Impl->vkImage = image;
 }
 
+VkImageView VulkanTexture::GetVkImageView() const noexcept {
+    return m_Impl->defaultView;
+}
+
+void VulkanTexture::SetVkImageView(VkImageView view) {
+    m_Impl->defaultView = view;
+}
+
 void VulkanTexture::SetWidth(uint32_t w) {
     m_Impl->width = w;
 }
