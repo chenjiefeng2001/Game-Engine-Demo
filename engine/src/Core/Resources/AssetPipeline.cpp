@@ -10,6 +10,11 @@ namespace {
 #include <set>
 #include <chrono>
 #include <cstring>
+#include <fstream>
+#include <iterator>
+#if defined(ENGINE_HAS_VULKAN)
+#include "Engine/Vulkan/ShaderRegistry.h"
+#endif
 
 namespace Engine {
 
@@ -206,14 +211,61 @@ namespace Engine {
         if (dotPos != std::string::npos)
             stem = stem.substr(0, dotPos);
 
-        std::string outputPath = ctx.outputDir + "/" + stem + ".spv";
+std::string outputPath = ctx.outputDir + "/" + stem + ".spv";
         ctx.generatedFiles.push_back(outputPath);
         ctx.metadata["compiled_spv"] = outputPath;
 
-        // 模拟编译成功
+        // ── Vulkan：把着色器登记进运行时注册表 ──
+        // VulkanDevice::CreateGraphicsPSO 按 GraphicsPSODesc 里的 StringID 查找 SPIR-V。
+        // StringID 是单向哈希，无法由 ID 反解回名字，因此注册表必须在**加载期**用名字填充。
+        // 此前只有 sandbox 的 VulkanOffscreenTest 这么做，导致生产路径上
+        // CreateGraphicsPSO 必然查不到任何模块。
+        //
+        // ShaderRegistry 位于 engine/src/Vulkan，仅在 Vulkan_FOUND 时编译，
+        // 故必须用 ENGINE_HAS_VULKAN 守卫，否则无 Vulkan 的构建会链接失败。
+#if defined(ENGINE_HAS_VULKAN)
+        {
+            // 按扩展名推断 stage；无法识别的扩展名不猜，避免把顶点着色器
+            // 当成片元着色器登记后静默产出错误的管线。
+            ShaderStageType stage;
+            const std::string ext = [&] {
+                const auto dot = ctx.entry->fileName.find_last_of('.');
+                return dot == std::string::npos
+                    ? std::string()
+                    : ctx.entry->fileName.substr(dot + 1);
+            }();
+            if      (ext == "vert" || ext == "vs")   stage = ShaderStageType::Vertex;
+            else if (ext == "frag" || ext == "fs")   stage = ShaderStageType::Fragment;
+            else if (ext == "comp" || ext == "cs")   stage = ShaderStageType::Compute;
+            else if (ext == "geom" || ext == "gs")   stage = ShaderStageType::Geometry;
+            else if (ext == "tesc" || ext == "tcs")  stage = ShaderStageType::TessControl;
+            else if (ext == "tese" || ext == "tes")  stage = ShaderStageType::TessEvaluation;
+            else {
+                ctx.onProgress(1.0f, "Shader stage unknown for " + ctx.entry->fileName +
+                                     " (extension '" + ext + "'); not registered for Vulkan");
+                return true;
+            }
+
+            const std::string sourcePath = FileSystem::ResolvePath(ctx.entry->path);
+            std::ifstream src(sourcePath, std::ios::binary);
+            if (!src) {
+                ctx.onProgress(1.0f, "Shader source unreadable: " + sourcePath);
+                return true;
+            }
+            const std::string glsl((std::istreambuf_iterator<char>(src)),
+                                   std::istreambuf_iterator<char>());
+
+            // ShaderRegistry 位于 Engine::RHI，而本文件在 Engine 命名空间内，需显式限定。
+            if (RHI::ShaderRegistry::Get().RegisterSource(stem, stage, glsl)) {
+                ctx.onProgress(1.0f, "Shader registered for Vulkan: " + stem);
+            } else {
+                ctx.onProgress(1.0f, "Shader compile failed for Vulkan: " + stem);
+            }
+        }
+#endif // ENGINE_HAS_VULKAN
+
         if (ctx.onProgress)
             ctx.onProgress(1.0f, "Shader compiled: " + stem);
-
         return true;
     }
 
