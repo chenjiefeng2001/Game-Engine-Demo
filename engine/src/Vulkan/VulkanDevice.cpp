@@ -232,20 +232,24 @@ bool VulkanDevice::Initialize(void* windowHandle, uint32_t width, uint32_t heigh
     if (EnvFlag("ENGINE_VULKAN_VALIDATION")) {
         const bool hasLayer = LayerAvailable("VK_LAYER_KHRONOS_validation");
         const bool hasUtils = InstanceExtensionAvailable(VK_EXT_DEBUG_UTILS_EXTENSION_NAME);
-        if (hasLayer && hasUtils) {
+        // VkValidationFeaturesEXT 挂在 VkInstanceCreateInfo::pNext 上，**必须**同时启用
+        // VK_EXT_validation_features 实例扩展，否则 vkCreateInstance 直接失败
+        // （layer 本身存在也救不了）。这一点此前遗漏，表现为 CI 上
+        // 「validation layer enabled」之后紧跟「Failed to create instance」。
+        const bool hasFeatures = InstanceExtensionAvailable(VK_EXT_VALIDATION_FEATURES_EXTENSION_NAME);
+        if (hasLayer && hasUtils && hasFeatures) {
             instanceLayers.push_back("VK_LAYER_KHRONOS_validation");
             instanceExts.push_back(VK_EXT_DEBUG_UTILS_EXTENSION_NAME);
+            instanceExts.push_back(VK_EXT_VALIDATION_FEATURES_EXTENSION_NAME);
             ici.enabledExtensionCount = static_cast<uint32_t>(instanceExts.size());
 
             VkValidationFeatureEnableEXT enables[2]{};
             uint32_t enableCount = 0;
             enables[enableCount++] = VK_VALIDATION_FEATURE_ENABLE_BEST_PRACTICES_EXT;
             if (EnvFlag("ENGINE_VULKAN_SYNC_VALIDATION")) {
-                validationFeatures.enabledValidationFeatureCount = enableCount + 1;
                 enables[enableCount++] = VK_VALIDATION_FEATURE_ENABLE_SYNCHRONIZATION_VALIDATION_EXT;
-            } else {
-                validationFeatures.enabledValidationFeatureCount = enableCount;
             }
+            validationFeatures.enabledValidationFeatureCount = enableCount;
             validationFeatures.pEnabledValidationFeatures = enables;
             ici.pNext = &validationFeatures;
             ici.enabledLayerCount = static_cast<uint32_t>(instanceLayers.size());
@@ -255,14 +259,18 @@ bool VulkanDevice::Initialize(void* windowHandle, uint32_t width, uint32_t heigh
             std::fprintf(stderr, "[Vulkan] validation layer enabled (sync validation: %s)\n",
                          m_Impl->syncValidation ? "on" : "off");
         } else {
-            std::fprintf(stderr, "[Vulkan] ENGINE_VULKAN_VALIDATION set but layer/extension missing "
-                                 "(layer=%d debug_utils=%d); continuing without validation\n",
-                         hasLayer ? 1 : 0, hasUtils ? 1 : 0);
+            std::fprintf(stderr, "[Vulkan] ENGINE_VULKAN_VALIDATION set but a prerequisite is "
+                                 "missing (layer=%d debug_utils=%d validation_features=%d); "
+                                 "continuing without validation\n",
+                         hasLayer ? 1 : 0, hasUtils ? 1 : 0, hasFeatures ? 1 : 0);
         }
     }
 
-    if (vkCreateInstance(&ici, nullptr, &m_Impl->instance) != VK_SUCCESS) {
-        std::fprintf(stderr, "[Vulkan] Failed to create instance\n");
+    const VkResult instanceResult = vkCreateInstance(&ici, nullptr, &m_Impl->instance);
+    if (instanceResult != VK_SUCCESS) {
+        // 此前只打印固定文案，排查时无法区分是缺 layer 还是扩展不匹配。
+        std::fprintf(stderr, "[Vulkan] Failed to create instance (VkResult=%d, %zu layer(s), %zu ext(s))\n",
+                     static_cast<int>(instanceResult), ici.enabledLayerCount, ici.enabledExtensionCount);
         return false;
     }
     VulkanLoader::LoadInstance(m_Impl->instance);
