@@ -158,7 +158,7 @@ void RHIDemoApp::RenderVulkanFrame() {
     const uint32_t imageIndex = sc->AcquireNextImage();
     if (imageIndex == UINT32_MAX) return;
 
-    IRHITexture* backBuffer = sc->GetBackBuffer(imageIndex);
+    RHI::IRHITexture* backBuffer = sc->GetBackBuffer(imageIndex);
     if (!backBuffer) return;
 
     auto cmdList = m_Device->CreateCommandList(RHI::CommandListType::Direct);
