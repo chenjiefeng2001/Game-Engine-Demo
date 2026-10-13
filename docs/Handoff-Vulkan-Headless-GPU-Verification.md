@@ -6,12 +6,13 @@
 
 ---
 
-## 0. 当前唯一阻塞：三角形像素为全 0（**根因范围已缩小**）
+## 0. 两个缺陷均已定位并修复，**均未验证**
 
 **接手前请先读这一节。**
 
-管线创建已经打通（见 §1.4），后端能跑、能建管线、能回读数据 —— 但**回读到的
-像素全是 0**，连 clear 写入的 alpha=255 都没有。
+管线创建已经打通（见 §1.4），后端能跑、能建管线、能回读数据 —— 但回读到的像素
+全是 0。两个缺陷都已定位、都已修复，**都还没有 CI 证据**：最后观测值仍是
+`centre pixel = 0 0 0 0`。
 
 ```
 [VKTRI] shaders registered (registry holds 2)
@@ -125,7 +126,7 @@ GPU-SKINNING-STATUS: NOT VERIFIED on this runner (explicit skip above).
 
 ## 1. 已验证（可复现）
 
-### 1.1 环境侧：lavapipe 能真实离屏光栅化 ✅
+### 1.1 环境侧：lavapipe 能真实离屏光栅化 <span class="material-symbols-outlined">check_circle</span> 已验证
 
 run `38308346989` 的 `gl-capability-probe` job。这是**像素断言**，不是「退出码为 0」：
 
@@ -148,7 +149,7 @@ image → view → render pass → framebuffer → pipeline → draw → copy �
 clear 为黑、片元着色器输出 `vec4(0.25,0.5,0.75,1.0)` = `64,128,191,255`，实测一致。
 **结论：headless 软件 Vulkan 渲染在本 runner 上真实可用。**
 
-### 1.2 引擎后端侧：15/15 文件可在 Linux 编译 ✅
+### 1.2 引擎后端侧：15/15 文件可在 Linux 编译 <span class="material-symbols-outlined">check_circle</span> 已验证
 
 run `38316605255` 的 `vulkan-backend-compile` job，`compile-all-objects rc = 0`，0 error。
 
@@ -164,7 +165,7 @@ engine/src/Vulkan/VulkanDevice.cpp:19:10: fatal error: windows.h: No such file o
 > **编译通过 ≠ 后端可用。** 请务必连同 §0 一起读：本节只说明「能构建」，
 > 而图形管线路径在运行时是完全断开的。
 
-### 1.3 离屏设施：已写好、编译通过并**首次运行** ✅
+### 1.3 离屏设施：已写好、编译通过并**首次运行** <span class="material-symbols-outlined">check_circle</span> 已验证
 
 `engine/include/Engine/Vulkan/VulkanOffscreen.h` + `engine/src/Vulkan/VulkanOffscreen.cpp`
 
@@ -178,7 +179,7 @@ engine/src/Vulkan/VulkanDevice.cpp:19:10: fatal error: windows.h: No such file o
 
 ---
 
-### 1.4 引擎后端首次运行：管线创建已打通 ✅
+### 1.4 引擎后端首次运行：管线创建已打通 <span class="material-symbols-outlined">check_circle</span> 已验证
 
 run `38328385429`（gcc 与 clang 两个 job 都跑到这一步）：
 
@@ -195,7 +196,7 @@ run `38328385429`（gcc 与 clang 两个 job 都跑到这一步）：
 顺带修正：主构建 job 此前**不安装** `libvulkan-dev`，因此 Vulkan 后端在主构建里
 一直是关闭的，`ShaderRegistry` 的编译路径从未被编译过。现在装上了。
 
-### 1.5 Validation layer：已接线（env 门控）✅
+### 1.5 Validation layer：已接线（env 门控）<span class="material-symbols-outlined">check_circle</span> 已验证
 
 此前 `VulkanDeviceInternal.h` 里就有 `debugMessenger` / `enableValidation` 字段，
 `GetRequiredInstanceExtensions(bool enableValidation)` 也会加 `VK_EXT_debug_utils`
@@ -223,14 +224,14 @@ run `38328385429`（gcc 与 clang 两个 job 都跑到这一步）：
 
 ## 2. 尚未完成（运行时空洞，编译期暴露不出）
 
-### 2.0 ~~着色器解析缺失~~ ✅ 已修复（`f65cd4c`）
+### 2.0 ~~着色器解析缺失~~ <span class="material-symbols-outlined">check_circle</span> 已修复（`f65cd4c`）
 
 见 §1.4。`ShaderRegistry` 已建并接入 `CreateGraphicsPSO`。
 
 设计要点：`StringID` 是**单向哈希**（只有 `Value()`，无法反解回名字），所以
 注册表必须是加载时填充、以 StringID 为键的运行时结构，不能事后从 ID 找文件。
 
-### 2.1 ~~`GetOrCreateThreadCommandPool()` 是桩~~ ✅ 已修复（`ad8f97b`）
+### 2.1 ~~`GetOrCreateThreadCommandPool()` 是桩~~ <span class="material-symbols-outlined">check_circle</span> 已修复（`ad8f97b`）
 
 ```
 VulkanDevice.cpp:387  VkCommandPool VulkanDevice::GetOrCreateThreadCommandPool() { return VK_NULL_HANDLE; }
@@ -246,20 +247,60 @@ VulkanDevice.cpp:387  VkCommandPool VulkanDevice::GetOrCreateThreadCommandPool()
 却从无任何分配。现改为惰性从该池分配。
 （`CreateCommandList` 本就从 frame resource 提供 cmdBuffer，那条路径不受影响。）
 
-### 2.2 `VulkanTexture` 是空壳
+### 2.2 ~~`VulkanTexture` 是空壳~~ 已补齐图像视图（`dcc65a6`、`2d25e21`）
 
-`engine/src/Vulkan/VulkanTexture.cpp` 全文 **0 个 `vkCreateImage`**，只有 getter/setter，
-持有 `VkImage` / `VmaAllocation` 字段。纹理创建路径尚未实现。
-离屏目标自管 image，暂时绕开了它；但第 3 步的像素测试需要纹理。
+`VulkanDevice::CreateTexture` 原先只创建 `VkImage`（经 VMA），**从不创建 image view**。
+而 `vkCmdBeginRendering` 绑定的是 view，于是设备交出的每张纹理都无法作为渲染目标。
+离屏三角形没暴露此问题，因为 `VulkanOffscreenTarget` 自建 view。
 
-### 2.3 渲染作用域：已首次使用，但像素仍为全 0
+现在 `CreateTexture` 按图像自身格式创建 view 并写入纹理，命令列表的渲染路径得以用于离屏。
 
-`VulkanOffscreenTarget` 是第一个调用 `vkCmdBeginRendering` 的地方，作用域本身
-建立成功（见 §1.4），但回读像素为 0。根因排查见 §0。
+另有一处**有意泄漏**已修：`Impl` 原本不持有 `VkDevice`，析构里留了空块并注明
+「view 由外部管理」，而该 owner 并不存在。现由 `VulkanTexture` 统一持有并在
+销毁 image 之前先销毁 view；`~VulkanSwapChain` 相应不再销毁 backbuffer view，否则双重释放。
 
-注意：`VulkanCommandList` **仍然没有**渲染作用域 API。三角形测试因此用裸 Vulkan
-命令填充一次性 command buffer，只借用引擎的管线创建。若要把这条路径产品化，
-命令列表需要补 BeginRendering/EndRendering。
+### 2.3 ~~`VulkanCommandList` 没有渲染作用域~~ 已补（`dcc65a6`）
+
+`IRHICommandList` 已加入 `RenderTargetDesc` 与 `BeginRendering` / `EndRendering`，
+VulkanCommandList 以 dynamic rendering 实现。离屏目标自带的同款逻辑暂未删除，
+两条路径并存。
+
+默认实现是**空操作而非纯虚**：立即模式后端（OpenGL）本就没有作用域概念，空操作正是
+语义正确的默认值，且不会破坏任何既有后端实现。声明处已注明未覆盖的后端会静默忽略
+作用域，调用方不应据此假定发生了切换。
+
+两处 API 细节值得记录，均由编译器纠正：`VkClearColorValue` 是 union，匿名成员
+`color[]` 不支持下标，需经 `color.float32[]`；`VkRenderingInfo` **没有**
+`depthAttachmentCount` 字段，是否附加深度由 `pDepthAttachment` 是否为空决定。
+
+### 2.3b 交换链时序与 backbuffer 视图（`4834590`）
+
+两处此前无法工作的接线：
+
+1. **backbuffer 没有 image view** —— `vkCreateImageView` 全仓库只在离屏文件里出现过，
+   任何由 `IRHITexture*` 构造的渲染附件都会被跳过，窗口路径永远画不出东西。
+2. **`Present()` 时序不可用** —— 它内部才 `vkAcquireNextImageKHR`，却提交调用方
+   **事先**录好的命令缓冲，于是录制时目标 backbuffer 尚未确定。该时序在原理上
+   无法工作。现拆分为 `AcquireNextImage()`（等 fence + acquire）与 `Present()`
+   （仅提交 + 呈现）。
+
+`RHIDemo` 的 `RenderVulkanFrame()` 是这条路径在离屏测试之外的首次使用：
+acquire → 经命令列表渲染作用域录制清除 → 提交并呈现。**尚不绘制任何几何**，
+目的是先把 acquire / scope / submit / present 这四步接通，使后续失败可归因。
+
+### 2.3c 生产侧接线缺口（`0e76957`、`ab64696`）
+
+- `CreateRHIDevice(Backend, ...)`：此前 `CreateVulkanDevice()` 在 `engine/src` 内
+  **零调用者**，`RHIWindow` 也不持有设备，引擎运行时无法选择任何后端。
+- `RHIBackend.h` 中 `CreateRHI` / `IsBackendAvailable` / `GetDefaultBackend`
+  **只声明未定义**，任何调用者都会链接失败。已补上后两个；`CreateRHI` 返回
+  `IGraphicsFactory`，与 `IRHIDevice` 不是同一套抽象，未实现。
+- 着色器注册表的生产来源：`ShaderCompileRule::Execute` 现按扩展名推断 stage 并登记
+  到 `ShaderRegistry`。此前只有 sandbox 测试这么做，生产路径上 `CreateGraphicsPSO`
+  必然查不到模块。该规则**仍有一半是占位**：它写出了 `.spv` 文件名却未真正产出该文件。
+
+**仍然阻塞**：`RHIWindow` 持有设备属 HRC-owned（`RHIWindow.h/.cpp`），
+接缝已就位，剩余是那边加一个成员并调用 `CreateRHIDevice`。
 
 ### 2.4 `GetVulkanDeviceInfo()` 硬编码
 
@@ -269,7 +310,9 @@ VulkanDevice.cpp:406  std::string GetVulkanDeviceInfo() noexcept { return "Vulka
 
 返回值与实际设备无关。应改为读 `VkPhysicalDeviceProperties`。
 
-### 2.5 ~~未验证：设备能否真正初始化~~ ✅ 已验证（见 §1.4）
+### 2.5 ~~未验证：设备能否真正初始化~~ <span class="material-symbols-outlined">check_circle</span> 已验证
+
+（见 §1.4）
 
 lavapipe 上设备初始化成功，`GetDeviceName()` 返回真实名称。
 
@@ -292,6 +335,20 @@ lavapipe 上设备初始化成功，`GetDeviceName()` 返回真实名称。
 `7e12c18` | 新增 headless 三角形 sandbox 目标与 CI 步骤；离屏目标补一次性命令缓冲 |
 `c973059` | 修正 CI 改动落位（此前误放进 `jolt-link-diagnose`），Vulkan 依赖装进主构建 job |
 `03ad678` | 修 `ShaderStageType` → 编译器私有 `ShaderStage` 枚举的映射 |
+`b05c894` | 离屏目标补 `vkCmdSetViewport` / `vkCmdSetScissor`（动态状态，从未设置） |
+`7d33249` | validation layer 接线（env 门控）+ CI 装 layer 包并显式检查 manifest |
+`7a4e5d3` | 三角形测试自带定位能力：清除色哨兵 alpha + 全缓冲区非零像素统计 |
+`d30cdb5` | **`att.clearValue` 从未赋值** —— clear 一直被清成 (0,0,0,0) |
+`cd7af4b` | RHIDemo 设备存于局部变量，函数返回即析构，却打印成功标记 |
+`0e76957` | 新增 `CreateRHIDevice`；补上只声明未定义的 `IsBackendAvailable`/`GetDefaultBackend` |
+`dcc65a6` | `IRHICommandList` 补渲染作用域 + Vulkan 实现；`VulkanTexture` 补 image view 访问器 |
+`4834590` | backbuffer 建 image view；拆分 `AcquireNextImage()` 与 `Present()` |
+`2d25e21` | `CreateTexture` 建 image view；view 泄漏修复（纹理统一持有） |
+`ab64696` | `ShaderCompileRule` 接入 `ShaderRegistry`，按扩展名推断 stage |
+
+> **以上 11 个提交全部未推送、全部未经运行时验证。** 其中 `4834590`、`dcc65a6`、
+> `2d25e21` 涉及帧循环、交换链时序与纹理生命周期三处结构性修改，
+> 风险高于纯修复类提交。
 
 `7b6b7f1` 的四处改动（`engine/src/Vulkan/VulkanDevice.cpp`，该目录 clean）：
 
@@ -305,16 +362,23 @@ lavapipe 上设备初始化成功，`GetDeviceName()` 返回真实名称。
 ---
 
 ## 4. 建议的接手路径
-1. **推送 §0 的视口修复并验证三角形像素**（已本地改好，未提交）。
+
+0. **先推送并验证**。当前有 11 个提交只经过编译校验，没有任何运行时证据。
+   优先跑通 §0 的三角形像素断言，其余工作都建立在「这条链路确实能跑」之上。
+1. **推送 §0 的两个修复并验证三角形像素**（`b05c894` + `d30cdb5`，已提交未推送）。
    预期中心像素变为 `64 128 191 255`。
 2. 若仍为 0：先看 §1.5 的 validation 输出。若 layer 报出 barrier / layout 问题，
    按报告修；若 layer 干净，则排除同步类根因，回到 §0 的候选清单。
-3. 补 `GraphicsPSODesc` 的顶点输入契约 —— 注意该结构被 GL / D3D12 共用，
-   属跨后端设计，最好先与其它后端 owner 对齐
-4. 给 `VulkanCommandList` 补渲染作用域 API（BeginRendering/EndRendering），
-   目前它只能在外部用裸命令驱动（见 §2.3）
-5. 三角形通过后，把 `GPUSkinningPixelTest` 抽象为后端无关
-6. 届时把 `GPU_SKINNING_NO_GL46=1` 从 Linux 测试步骤中移除，
+3. 让 `RHIDemo` 的 Vulkan 路径真正出画面 —— `RenderVulkanFrame()` 目前只清除不绘制
+   （见 §2.3b），需要接上一份真实几何与材质。
+4. 补 `GraphicsPSODesc` 的顶点输入契约 —— 注意该结构被 GL / D3D12 共用，
+   属跨后端设计，最好先与其它后端 owner 对齐。当前三角形靠 `gl_VertexIndex`
+   绕开了这个缺口，因此**带顶点缓冲的蒙皮网格仍无法在 Vulkan 上绘制**。
+5. 删除 `VulkanOffscreenTarget` 自带的渲染作用域逻辑，改走命令列表
+   （新契约见 §2.3，两条路径目前并存）。
+6. 补 `ShaderCompileRule` 的真实产出：它目前只写出 `.spv` 文件名却不生成该文件（见 §2.3c）。
+7. 三角形通过后，把 `GPUSkinningPixelTest` 抽象为后端无关
+8. 届时把 `GPU_SKINNING_NO_GL46=1` 从 Linux 测试步骤中移除，
    4 个 GPU 像素用例转为真实执行
 7. 补 `VulkanTexture` 的图像创建（§2.2）—— 像素测试需要纹理
 > 经验提示：这个后端有多个「代码看起来完整、实际不工作」的地方，且只能靠运行
@@ -333,11 +397,11 @@ lavapipe 上设备初始化成功，`GetDeviceName()` 返回真实名称。
 
 | 路径 | 状态 |
 |---|---|
-`engine/src/Vulkan/`、`engine/include/Engine/Vulkan/` | clean ✅ |
-`sandbox/CMakeLists.txt` | clean ✅ |
-`.github/workflows/cmake-multi-platform.yml` | clean ✅ |
+`engine/src/Vulkan/`、`engine/include/Engine/Vulkan/` | clean，未修改 |
+`sandbox/CMakeLists.txt` | clean，未修改 |
+`.github/workflows/cmake-multi-platform.yml` | clean，未修改 |
 `engine/CMakeLists.txt` | **HRC-DIRTY**（含 `find_package(Vulkan)` 与 GLOB，**无需修改**）
-`engine/src/RHI`、`sandbox/src/BackendTest` | **HRC-DIRTY** ❌ 不可触碰
+`engine/src/RHI`、`sandbox/src/BackendTest` | **HRC-DIRTY**，不可触碰 |
 
 注意 `engine/CMakeLists.txt` 用 `file(GLOB VULKAN_SOURCES CONFIGURE_DEPENDS src/Vulkan/*.cpp)`，
 **新增 .cpp 会被自动纳入**，不需要（也不应该）去改那个文件。
