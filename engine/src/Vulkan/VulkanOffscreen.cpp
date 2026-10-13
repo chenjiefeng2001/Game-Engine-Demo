@@ -148,6 +148,10 @@ void VulkanOffscreenTarget::BeginRendering(VkCommandBuffer cmd, const float clea
     att.imageLayout = VK_IMAGE_LAYOUT_ATTACHMENT_OPTIMAL;
     att.loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
     att.storeOp = VK_ATTACHMENT_STORE_OP_STORE;
+    // 必须把 clearValue 交给附件描述：loadOp=CLEAR 读的是 att.clearValue，
+    // 而不是上面那个局部变量。此前 clear 被构造后从未使用，附件保持零初始化，
+    // 于是每次都清成 (0,0,0,0) —— 调用方传入的清除色被静默丢弃。
+    att.clearValue = clear;
 
     VkRenderingInfo ri{};
     ri.sType = VK_STRUCTURE_TYPE_RENDERING_INFO;
