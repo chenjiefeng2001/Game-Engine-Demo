@@ -6,53 +6,48 @@
 
 ---
 
-## 0. 最重要的一件事：图形管线路径完全不可用
+## 0. 当前唯一阻塞：三角形像素为全 0
 
 **接手前请先读这一节。**
 
-`VulkanDevice::CreateGraphicsPSO` 传两个空句柄作为着色器模块：
+管线创建已经打通（见 §1.4），后端能跑、能建管线、能回读数据 —— 但**回读到的
+像素全是 0**，连 clear 写入的 alpha=255 都没有。
 
-```cpp
-// VulkanDevice.cpp:333
-auto* pso = CreateGraphicsPipeline(m_Impl->device, layout, desc,
-                                  VK_NULL_HANDLE, VK_NULL_HANDLE);
+```
+[VKTRI] shaders registered (registry holds 2)
+[VKTRI] device created: llvmpipe (LLVM 20.1.2, 256 bits)
+[VKTRI] graphics pipeline created
+[VKTRI] centre pixel = 0 0 0 0 (pitch=256)
+[VKTRI] FAIL: centre pixel is not the shader colour
 ```
 
-而 `CreateGraphicsPipeline` 对空模块的处理是直接放弃：
+### 最可能的根因（已定位，**尚未验证**）
+
+`VulkanPipelineState.cpp:127` 把视口与裁剪声明为**动态状态**：
 
 ```cpp
-if (vsModule != VK_NULL_HANDLE) { ... }   // 跳过
-if (fsModule != VK_NULL_HANDLE) { ... }   // 跳过
-if (stages.empty()) { "no shader stages provided"; return nullptr; }   // 必然命中
+VkDynamicState dynamicStates[] = { VK_DYNAMIC_STATE_VIEWPORT, VK_DYNAMIC_STATE_SCISSOR };
 ```
 
-**因此 `CreateGraphicsPSO()` 永远返回 nullptr。**
+即管线要求绘制前动态设置视口/裁剪。而 `sandbox/src/VulkanOffscreenTest/main.cpp`
+走的是裸 Vulkan 命令（`VulkanCommandList` 不暴露渲染作用域 API），因此从未调用
+`vkCmdSetViewport` / `vkCmdSetScissor` → 视口未定义 → 绘制被整体裁掉，
+**且 Vulkan 不会因此报任何错误**。
 
-`GraphicsPSODesc::vertexShader` / `pixelShader`（`StringID`）在整个
-`engine/src/Vulkan/` 中**从未被解析成 SPIR-V** —— 对这两个字段全目录搜索，
-**零命中**。着色器 ID 到 SPIR-V 的解析子系统**根本不存在**。
+已在 `VulkanOffscreenTarget::BeginRendering` 末尾补上按目标尺寸设置视口与裁剪
+（放在设施里而非测试里，因为所有调用方都有同一要求；管线若用静态视口，多调用一次也合法）。
 
-连带：`GraphicsPSODesc` 也没有顶点输入描述字段（无 vertex buffer / attribute
-布局），即使着色器解决了，也没有表达带属性顶点流的方式。
+**该修复未验证** —— 验证需要推送并触发 CI。
 
-### 这意味着什么
+### 若视口修复不生效，下一个候选
 
-引擎的 Vulkan 后端**无法创建任何图形管线**，因此无法绘制任何东西。
-本路线剩下的工作不是「把线接上」，而是「造一条线」——具体来说是：
+1. `rasterizer.cullMode = VK_CULL_MODE_BACK_BIT` + `frontFace = COUNTER_CLOCKWISE`；
+   已核算该三角形为 CCW，理论上不该被剔除，但仍值得复核
+2. 渲染作用域根本没执行 —— 那就要查 `VkRenderingAttachmentInfo::imageLayout` 与
+   image 实际 layout 是否一致（当前设 `ATTACHMENT_OPTIMAL`）
+3. 建议先开 validation layer：当前构建没有启用，它能直接把上述问题报出来
+   而不是静默丢绘制
 
-1. 着色器注册表/缓存（GLSL → SPIR-V，按 StringID 存取）
-2. `CreateGraphicsPSO` 接入它，替换两个 `VK_NULL_HANDLE`
-3. `GraphicsPSODesc` 的顶点输入契约（该结构被 GL / D3D12 后端共用，会牵动跨后端设计）
-
-### 一处需要更正的判断
-
-此前的工作笔记曾把该后端描述为「比预想更完整，只需补呈现层」。**这个判断是错的。**
-它基于代码看起来完整（有 `vkCreateGraphicsPipelines`、有 dynamic rendering 配置），
-而不是基于它能工作。实际上从着色器解析到管线创建，主链在中间断开。
-
-已完成的其它部分（环境可行、可编译、离屏设施、命令池）不受此影响，依然成立。
-
----
 
 ## 0.1 为什么有这份文档
 
@@ -64,8 +59,9 @@ Linux runner 提供不了 OpenGL 4.6（引擎的产品承诺），而 `llvmpipe`
 GPU-SKINNING-STATUS: NOT VERIFIED on this runner (explicit skip above).
 ```
 
-本轮沿 Vulkan 路线推进到「技术前提全部用证据建立」为止，随后收手。
-**不是路线失败，是工作量已超出「给 Animation GPU 蒙皮补 CI 证据」这个原始目标。**
+本轮沿 Vulkan 路线推进，目前**只剩一个渲染状态问题**（§0），且根因已定位。
+此前认为「工作量已超出目标」而收手的判断，是在还不知道管线创建能否打通时作出的；
+现在管线已能创建（§1.4），剩余部分比当时的估计小得多。
 
 ---
 
@@ -110,7 +106,7 @@ engine/src/Vulkan/VulkanDevice.cpp:19:10: fatal error: windows.h: No such file o
 > **编译通过 ≠ 后端可用。** 请务必连同 §0 一起读：本节只说明「能构建」，
 > 而图形管线路径在运行时是完全断开的。
 
-### 1.3 离屏设施：已写好并编译通过 ✅
+### 1.3 离屏设施：已写好、编译通过并**首次运行** ✅
 
 `engine/include/Engine/Vulkan/VulkanOffscreen.h` + `engine/src/Vulkan/VulkanOffscreen.cpp`
 
@@ -124,11 +120,31 @@ engine/src/Vulkan/VulkanDevice.cpp:19:10: fatal error: windows.h: No such file o
 
 ---
 
+### 1.4 引擎后端首次运行：管线创建已打通 ✅
+
+run `38328385429`（gcc 与 clang 两个 job 都跑到这一步）：
+
+```
+[VKTRI] shaders registered (registry holds 2)      ← ShaderRegistry 首次运行
+[VKTRI] device created: llvmpipe (LLVM 20.1.2)     ← 设备首次在 lavapipe 初始化成功
+[VKTRI] graphics pipeline created                  ← CreateGraphicsPSO 首次返回非 null
+[VKTRI] centre pixel = 0 0 0 0                     ← 像素仍失败，见 §0
+```
+
+这条链路上此前**从未运行过**的环节，现在全部跑通：shaderc 编译（诊断 job 里一直
+只编到 stub 分支）、注册表解析、管线创建、离屏目标、回读。
+
+顺带修正：主构建 job 此前**不安装** `libvulkan-dev`，因此 Vulkan 后端在主构建里
+一直是关闭的，`ShaderRegistry` 的编译路径从未被编译过。现在装上了。
+
 ## 2. 尚未完成（运行时空洞，编译期暴露不出）
 
-### 2.0 着色器解析缺失 —— 见 §0，首要阻塞
+### 2.0 ~~着色器解析缺失~~ ✅ 已修复（`f65cd4c`）
 
-`CreateGraphicsPSO()` 恒返回 nullptr。详见 §0。
+见 §1.4。`ShaderRegistry` 已建并接入 `CreateGraphicsPSO`。
+
+设计要点：`StringID` 是**单向哈希**（只有 `Value()`，无法反解回名字），所以
+注册表必须是加载时填充、以 StringID 为键的运行时结构，不能事后从 ID 找文件。
 
 ### 2.1 ~~`GetOrCreateThreadCommandPool()` 是桩~~ ✅ 已修复（`ad8f97b`）
 
@@ -152,12 +168,14 @@ VulkanDevice.cpp:387  VkCommandPool VulkanDevice::GetOrCreateThreadCommandPool()
 持有 `VkImage` / `VmaAllocation` 字段。纹理创建路径尚未实现。
 离屏目标自管 image，暂时绕开了它；但第 3 步的像素测试需要纹理。
 
-### 2.3 尚未有任何渲染侧调用 `vkCmdBeginRendering`
+### 2.3 渲染作用域：已首次使用，但像素仍为全 0
 
-后端能创建设备、buffer、pipeline 并录制 `vkCmdDrawIndexed`，
-但**渲染作用域**这一环此前完全缺失（`VulkanOffscreen` 是第一个使用者）。
-接线时应验证：`VulkanCommandList` 录制的命令在 `vkCmdBeginRendering` 作用域内是否可用
-（dynamic rendering 下 renderPass/framebuffer 为空是合法的）。
+`VulkanOffscreenTarget` 是第一个调用 `vkCmdBeginRendering` 的地方，作用域本身
+建立成功（见 §1.4），但回读像素为 0。根因排查见 §0。
+
+注意：`VulkanCommandList` **仍然没有**渲染作用域 API。三角形测试因此用裸 Vulkan
+命令填充一次性 command buffer，只借用引擎的管线创建。若要把这条路径产品化，
+命令列表需要补 BeginRendering/EndRendering。
 
 ### 2.4 `GetVulkanDeviceInfo()` 硬编码
 
@@ -167,12 +185,9 @@ VulkanDevice.cpp:406  std::string GetVulkanDeviceInfo() noexcept { return "Vulka
 
 返回值与实际设备无关。应改为读 `VkPhysicalDeviceProperties`。
 
-### 2.5 未验证：设备能否真正初始化
+### 2.5 ~~未验证：设备能否真正初始化~~ ✅ 已验证（见 §1.4）
 
-`CreateVulkanDevice()` 从未被执行过。`BackendTest`（`sandbox/src/BackendTest`，
-**HRC-OWNED**）是唯一会调用它的 consumer，但它在 CI 里没跑过。
-
----
+lavapipe 上设备初始化成功，`GetDeviceName()` 返回真实名称。
 
 ## 3. 已落地的改动
 
@@ -189,6 +204,10 @@ VulkanDevice.cpp:406  std::string GetVulkanDeviceInfo() noexcept { return "Vulka
 `03ef491` | 诊断 job 改为只编译 Vulkan 目标文件（全量构建被 runner SIGTERM，exit 143） |
 `7b6b7f1` | **让 Vulkan 后端可在非 Windows 编译** |
 `ad8f97b` | **实现真实命令池**：修 `GetOrCreateThreadCommandPool()` 桩 + `VulkanCommandList::Begin()` 的 cmdBuffer 分配 |
+`f65cd4c` | **实现 `ShaderRegistry`** 并接入 `CreateGraphicsPSO`，替换两个 `VK_NULL_HANDLE` |
+`7e12c18` | 新增 headless 三角形 sandbox 目标与 CI 步骤；离屏目标补一次性命令缓冲 |
+`c973059` | 修正 CI 改动落位（此前误放进 `jolt-link-diagnose`），Vulkan 依赖装进主构建 job |
+`03ad678` | 修 `ShaderStageType` → 编译器私有 `ShaderStage` 枚举的映射 |
 
 `7b6b7f1` 的四处改动（`engine/src/Vulkan/VulkanDevice.cpp`，该目录 clean）：
 
@@ -202,20 +221,18 @@ VulkanDevice.cpp:406  std::string GetVulkanDeviceInfo() noexcept { return "Vulka
 ---
 
 ## 4. 建议的接手路径
-
-**先决条件**：§0 的着色器解析子系统。没有它，后面每一步都无法执行。
-
-1. 实现着色器注册表：GLSL → SPIR-V，按 `StringID` 存取
-   （`ShaderCompiler` 目前只是 asset pipeline 的一个规则，见 §0，不是运行时注册表）
-2. 在 `VulkanDevice::CreateGraphicsPSO` 中用它替换两个 `VK_NULL_HANDLE`
+1. **推送 §0 的视口修复并验证三角形像素**（已本地改好，未提交）。
+   预期中心像素变为 `64 128 191 255`。
+2. 若仍为 0：**开启 Vulkan validation layer**。当前构建没有它，绘制被静默丢弃
+   而不报错，这是本次排查耗时的主因。有了它，这类问题会直接被报出来。
 3. 补 `GraphicsPSODesc` 的顶点输入契约 —— 注意该结构被 GL / D3D12 共用，
    属跨后端设计，最好先与其它后端 owner 对齐
-4. 在 `sandbox/` 新增 headless 三角形目标：创建设备 → 离屏目标 → 建管线 →
-   `vkCmdBeginRendering` → 绘制 → 回读 → **断言像素**
-   （`sandbox/CMakeLists.txt` clean，可直接加目标；用 `#ifdef ENGINE_HAS_VULKAN` 守卫）
-5. 目标通过后，再把 `GPUSkinningPixelTest` 抽象为后端无关
-6. 届时把 `GPU_SKINNING_NO_GL46=1` 从 Linux 测试步骤中移除
-
+4. 给 `VulkanCommandList` 补渲染作用域 API（BeginRendering/EndRendering），
+   目前它只能在外部用裸命令驱动（见 §2.3）
+5. 三角形通过后，把 `GPUSkinningPixelTest` 抽象为后端无关
+6. 届时把 `GPU_SKINNING_NO_GL46=1` 从 Linux 测试步骤中移除，
+   4 个 GPU 像素用例转为真实执行
+7. 补 `VulkanTexture` 的图像创建（§2.2）—— 像素测试需要纹理
 > 经验提示：这个后端有多个「代码看起来完整、实际不工作」的地方，且只能靠运行
 > 逐个暴露。上一轮连续三轮各暴露一个空洞（command pool → PSO 着色器 → 顶点输入），
 > 每轮都是一次 CI。动手前值得先通读整个 `engine/src/Vulkan/` 判断规模。

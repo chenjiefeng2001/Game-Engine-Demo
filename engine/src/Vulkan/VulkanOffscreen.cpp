@@ -157,6 +157,23 @@ void VulkanOffscreenTarget::BeginRendering(VkCommandBuffer cmd, const float clea
     ri.pColorAttachments = &att;
 
     vkCmdBeginRendering(cmd, &ri);
+
+    // 视口与裁剪：VulkanPipelineState 把二者声明为**动态状态**
+    // （VK_DYNAMIC_STATE_VIEWPORT / VK_DYNAMIC_STATE_SCISSOR），因此必须在绘制前
+    // 显式设置，否则视口未定义、绘制被整体裁掉，且不会报任何错误。
+    // 这里按目标尺寸设成全量；即便管线用的是静态视口，多调用一次也是合法的。
+    VkViewport vp{};
+    vp.x = 0.0f;
+    vp.y = 0.0f;
+    vp.width  = static_cast<float>(m_Width);
+    vp.height = static_cast<float>(m_Height);
+    vp.minDepth = 0.0f;
+    vp.maxDepth = 1.0f;
+    VkRect2D scissor{};
+    scissor.offset = { 0, 0 };
+    scissor.extent = { m_Width, m_Height };
+    vkCmdSetViewport(cmd, 0, 1, &vp);
+    vkCmdSetScissor(cmd, 0, 1, &scissor);
 }
 
 void VulkanOffscreenTarget::EndRendering(VkCommandBuffer cmd) const
