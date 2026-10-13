@@ -561,11 +561,28 @@ std::unique_ptr<IRHISwapChain> VulkanDevice::CreateSwapChain(const SwapChainDesc
     auto sc = std::make_unique<VulkanSwapChain>();
     sc->SetDevice(this); sc->SetSwapChain(m_Impl->swapChain);
     sc->SetSwapChainImages(m_Impl->swapChainImages);
-    for (auto vkImg : m_Impl->swapChainImages) {
+for (auto vkImg : m_Impl->swapChainImages) {
         auto tex = std::make_shared<VulkanTexture>();
         tex->SetVkImage(vkImg); tex->SetWidth(desc.width); tex->SetHeight(desc.height);
-        // 初始布局：交换链图像创建后处于 PRESENT_SRC_KHR
+        tex->SetFormat(VkToFormat(selFmt.format));
+        // 初始 layout：交换链图像创建后处于 PRESENT_SRC_KHR
         tex->SetLayout(VK_IMAGE_LAYOUT_PRESENT_SRC_KHR);
+        // 渲染作用域（vkCmdBeginRendering）绑定的是 image **view**，不是 image。
+        // 此前这里只设了 image，导致 backbuffer 的 view 恒为 VK_NULL_HANDLE，
+        // 任何以 IRHITexture* 构造的渲染附件都会被跳过 —— 窗口路径永远画不出东西。
+        VkImageViewCreateInfo vci{VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO};
+        vci.image = vkImg;
+        vci.viewType = VK_IMAGE_VIEW_TYPE_2D;
+        vci.format = selFmt.format;
+        vci.subresourceRange = { VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1 };
+        VkImageView view = VK_NULL_HANDLE;
+        if (vkCreateImageView(m_Impl->device, &vci, nullptr, &view) != VK_SUCCESS || view == VK_NULL_HANDLE) {
+            std::fprintf(stderr, "[Vulkan] vkCreateImageView failed for a swapchain backbuffer\n");
+            vkDestroySwapchainKHR(m_Impl->device, m_Impl->swapChain, nullptr);
+            m_Impl->swapChain = VK_NULL_HANDLE;
+            return nullptr;
+        }
+        tex->SetVkImageView(view);
         sc->AddBackBuffer(tex);
     }
     return sc;
