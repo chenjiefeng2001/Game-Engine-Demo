@@ -58,7 +58,7 @@ struct TriVertex { float x, y, z, w; float r, g, b, a; };
  * 与第一阶段分离报告：gl_VertexIndex 通过**不代表**顶点输入可用，两者排查的
  * 失败面完全不同（binding / attribute / stride / 格式 / 上传）。
  */
-int RunVertexInputPhase(RHI::VulkanDevice& device) {
+int RunVertexInputPhase(Engine::RHI::VulkanDevice& device) {
     using namespace Engine;
     std::printf("[VKTRI-VB] --- vertex input phase ---\n");
 
