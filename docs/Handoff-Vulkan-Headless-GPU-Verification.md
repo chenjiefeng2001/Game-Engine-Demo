@@ -45,8 +45,9 @@ VkDynamicState dynamicStates[] = { VK_DYNAMIC_STATE_VIEWPORT, VK_DYNAMIC_STATE_S
    已核算该三角形为 CCW，理论上不该被剔除，但仍值得复核
 2. 渲染作用域根本没执行 —— 那就要查 `VkRenderingAttachmentInfo::imageLayout` 与
    image 实际 layout 是否一致（当前设 `ATTACHMENT_OPTIMAL`）
-3. 建议先开 validation layer：当前构建没有启用，它能直接把上述问题报出来
-   而不是静默丢绘制
+3. validation layer **抓不到**「忘记设置动态视口」：未设置动态状态属于合法 API 调用，
+   layer 不会报错。像素仍为 0 时它只能排除另一类根因 —— 回读路径的
+   barrier / layout 转换 / 命令缓冲生命周期问题（见 §1.5，现已接线）。
 
 
 ## 0.1 为什么有这份文档
@@ -137,6 +138,32 @@ run `38328385429`（gcc 与 clang 两个 job 都跑到这一步）：
 顺带修正：主构建 job 此前**不安装** `libvulkan-dev`，因此 Vulkan 后端在主构建里
 一直是关闭的，`ShaderRegistry` 的编译路径从未被编译过。现在装上了。
 
+### 1.5 Validation layer：已接线（env 门控）✅
+
+此前 `VulkanDeviceInternal.h` 里就有 `debugMessenger` / `enableValidation` 字段，
+`GetRequiredInstanceExtensions(bool enableValidation)` 也会加 `VK_EXT_debug_utils`
+—— 但该头文件**没有被任何编译单元 include**，且这两个函数**零调用者**。
+即：validation 被脚手架化过，从未接线。
+
+现在接到真正的 `Impl`（定义在 `VulkanDevice.cpp` 内部）：
+
+| 环境变量 | 作用 |
+|---|---|
+`ENGINE_VULKAN_VALIDATION=1` | 请求 `VK_LAYER_KHRONOS_validation` + `VK_EXT_debug_utils` |
+`ENGINE_VULKAN_VALIDATION_VERBOSE=1` | 追加 VERBOSE/INFO 级别 |
+`ENGINE_VULKAN_SYNC_VALIDATION=1` | 追加 `VK_VALIDATION_FEATURE_ENABLE_SYNCHRONIZATION_VALIDATION_EXT` |
+
+设计要点：
+- layer 与扩展**都真实存在才请求**，否则降级并打印原因 —— 缺 layer 时若照请求，
+  `vkCreateInstance` 会以 `VK_ERROR_LAYER_NOT_PRESENT` 直接失败。
+- messenger 在实例创建后立即挂上，且在 `vkDestroyInstance` **之前**销毁。
+- 回调只打 VALIDATION / PERFORMANCE 两类，过滤 GENERAL 以压噪。
+- CI 侧安装 `vulkan-validationlayers`，并显式检查 layer manifest 是否存在，
+  避免「以为开着其实没开」。三角形步骤已开启上述两个变量。
+
+**边界（重要）**：layer 抓不到「忘记设置动态视口」—— 未设置动态状态是合法 API
+调用，不会报错。它的价值在于能一次性排除回读路径上的同步类根因。
+
 ## 2. 尚未完成（运行时空洞，编译期暴露不出）
 
 ### 2.0 ~~着色器解析缺失~~ ✅ 已修复（`f65cd4c`）
@@ -223,8 +250,8 @@ lavapipe 上设备初始化成功，`GetDeviceName()` 返回真实名称。
 ## 4. 建议的接手路径
 1. **推送 §0 的视口修复并验证三角形像素**（已本地改好，未提交）。
    预期中心像素变为 `64 128 191 255`。
-2. 若仍为 0：**开启 Vulkan validation layer**。当前构建没有它，绘制被静默丢弃
-   而不报错，这是本次排查耗时的主因。有了它，这类问题会直接被报出来。
+2. 若仍为 0：先看 §1.5 的 validation 输出。若 layer 报出 barrier / layout 问题，
+   按报告修；若 layer 干净，则排除同步类根因，回到 §0 的候选清单。
 3. 补 `GraphicsPSODesc` 的顶点输入契约 —— 注意该结构被 GL / D3D12 共用，
    属跨后端设计，最好先与其它后端 owner 对齐
 4. 给 `VulkanCommandList` 补渲染作用域 API（BeginRendering/EndRendering），

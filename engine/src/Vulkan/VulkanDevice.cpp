@@ -13,6 +13,7 @@
 #include "Engine/Vulkan/ShaderRegistry.h"
 #include <cstdio>
 #include <cstdlib>
+#include <cstring>
 #include <vector>
 #include <set>
 #include <mutex>
@@ -31,6 +32,73 @@
 
 namespace Engine {
 namespace RHI {
+namespace {
+
+// ── Validation layer 支持 ──────────────────────────────────────────────────
+//
+// 注意边界：validation **抓不到**「忘记设置动态视口」这类问题 —— 未设置动态状态
+// 是合法的 API 调用，layer 不会报错，回读只会得到全 0。
+// 它真正能抓的是本工程的实际风险面：离屏回读路径上的 barrier / image layout 转换、
+// 命令缓冲生命周期、对象销毁次序。像素异常时这些是第二类候选根因。
+//
+// 环境变量（均为可选，缺省关闭，不影响正常构建与发布）：
+//   ENGINE_VULKAN_VALIDATION=1        请求 VK_LAYER_KHRONOS_validation
+//   ENGINE_VULKAN_VALIDATION_VERBOSE=1 额外打印 VERBOSE 级别
+//   ENGINE_VULKAN_SYNC_VALIDATION=1   额外启用同步验证（barrier / 竞争检测）
+
+bool EnvFlag(const char* name) {
+    const char* v = std::getenv(name);
+    return v && v[0] == '1' && v[1] == '\0';
+}
+
+const char* SeverityName(VkDebugUtilsMessageSeverityFlagBitsEXT s) {
+    switch (s) {
+        case VK_DEBUG_UTILS_MESSAGE_SEVERITY_VERBOSE_BIT_EXT: return "VERBOSE";
+        case VK_DEBUG_UTILS_MESSAGE_SEVERITY_INFO_BIT_EXT:    return "INFO";
+        case VK_DEBUG_UTILS_MESSAGE_SEVERITY_WARNING_BIT_EXT: return "WARNING";
+        case VK_DEBUG_UTILS_MESSAGE_SEVERITY_ERROR_BIT_EXT:   return "ERROR";
+        default: return "?";
+    }
+}
+
+VKAPI_ATTR VkBool32 VKAPI_CALL DebugCallback(
+    VkDebugUtilsMessageSeverityFlagBitsEXT severity,
+    VkDebugUtilsMessageTypeFlagsEXT types,
+    const VkDebugUtilsMessengerCallbackDataEXT* data,
+    void*)
+{
+    // 只打引擎关心的两类：状态机/对象生命周期 与 同步。前者噪声太大反而淹没信号。
+    const bool relevant = (types & (VK_DEBUG_UTILS_MESSAGE_TYPE_VALIDATION_BIT_EXT |
+                                     VK_DEBUG_UTILS_MESSAGE_TYPE_PERFORMANCE_BIT_EXT)) != 0;
+    if (!relevant) return VK_FALSE;
+    std::fprintf(stderr, "[Vulkan][validation] %s: %s\n",
+                 SeverityName(severity), data && data->pMessage ? data->pMessage : "(no message)");
+    return VK_FALSE;
+}
+
+bool LayerAvailable(const char* name) {
+    uint32_t count = 0;
+    if (vkEnumerateInstanceLayerProperties(&count, nullptr) != VK_SUCCESS) return false;
+    std::vector<VkLayerProperties> layers(count);
+    if (count && vkEnumerateInstanceLayerProperties(&count, layers.data()) != VK_SUCCESS) return false;
+    for (uint32 i = 0; i < count; ++i) {
+        if (std::strcmp(layers[i].layerName, name) == 0) return true;
+    }
+    return false;
+}
+
+bool InstanceExtensionAvailable(const char* name) {
+    uint32_t count = 0;
+    if (vkEnumerateInstanceExtensionProperties(nullptr, &count, nullptr) != VK_SUCCESS) return false;
+    std::vector<VkExtensionProperties> exts(count);
+    if (count && vkEnumerateInstanceExtensionProperties(nullptr, &count, exts.data()) != VK_SUCCESS) return false;
+    for (uint32 i = 0; i < count; ++i) {
+        if (std::strcmp(exts[i].extensionName, name) == 0) return true;
+    }
+    return false;
+}
+
+}  // namespace
 
 IRHIPipelineState* CreateGraphicsPipeline(VkDevice, VkPipelineLayout, const GraphicsPSODesc&, VkShaderModule, VkShaderModule);
 IRHIPipelineState* CreateComputePipeline(VkDevice, VkPipelineLayout, VkShaderModule);
@@ -57,6 +125,11 @@ struct VulkanDevice::Impl {
     uint32_t uboAlignment{256}; // 默认 256，初始化时从设备获取
     bool initialized{false};
     std::string deviceName;
+
+    // ── 调试 / validation（可选，由环境变量开启）──
+    VkDebugUtilsMessengerEXT debugMessenger{VK_NULL_HANDLE};
+    bool enableValidation{false};
+    bool syncValidation{false};
     ~Impl() {
         delete pipelineLayoutCache;
         delete graphicsQueueWrapper;
@@ -136,11 +209,75 @@ bool VulkanDevice::Initialize(void* windowHandle, uint32_t width, uint32_t heigh
     ici.pApplicationInfo = &app;
     ici.enabledExtensionCount = static_cast<uint32_t>(instanceExts.size());
     ici.ppEnabledExtensionNames = instanceExts.data();
+
+    // ── Validation layer：可选，按环境变量开启 ──
+    // 只有 layer 与 VK_EXT_debug_utils 都真实存在时才请求，否则 vkCreateInstance
+    // 会以 VK_ERROR_LAYER_NOT_PRESENT 直接失败 —— 缺 layer 必须降级而不是报错。
+    std::vector<const char*> instanceLayers;
+    VkValidationFeaturesEXT validationFeatures{};
+    validationFeatures.sType = VK_STRUCTURE_TYPE_VALIDATION_FEATURES_EXT;
+    if (EnvFlag("ENGINE_VULKAN_VALIDATION")) {
+        const bool hasLayer = LayerAvailable("VK_LAYER_KHRONOS_validation");
+        const bool hasUtils = InstanceExtensionAvailable(VK_EXT_DEBUG_UTILS_EXTENSION_NAME);
+        if (hasLayer && hasUtils) {
+            instanceLayers.push_back("VK_LAYER_KHRONOS_validation");
+            instanceExts.push_back(VK_EXT_DEBUG_UTILS_EXTENSION_NAME);
+            ici.enabledExtensionCount = static_cast<uint32_t>(instanceExts.size());
+
+            VkValidationFeatureEnableEXT enables[2]{};
+            uint32_t enableCount = 0;
+            enables[enableCount++] = VK_VALIDATION_FEATURE_ENABLE_BEST_PRACTICES_EXT;
+            if (EnvFlag("ENGINE_VULKAN_SYNC_VALIDATION")) {
+                validationFeatures.enabledValidationFeatureCount = enableCount + 1;
+                enables[enableCount++] = VK_VALIDATION_FEATURE_ENABLE_SYNCHRONIZATION_VALIDATION_EXT;
+            } else {
+                validationFeatures.enabledValidationFeatureCount = enableCount;
+            }
+            validationFeatures.pEnabledValidationFeatures = enables;
+            ici.pNext = &validationFeatures;
+            ici.enabledLayerCount = static_cast<uint32_t>(instanceLayers.size());
+            ici.ppEnabledLayerNames = instanceLayers.data();
+            m_Impl->enableValidation = true;
+            m_Impl->syncValidation = EnvFlag("ENGINE_VULKAN_SYNC_VALIDATION");
+            std::fprintf(stderr, "[Vulkan] validation layer enabled (sync validation: %s)\n",
+                         m_Impl->syncValidation ? "on" : "off");
+        } else {
+            std::fprintf(stderr, "[Vulkan] ENGINE_VULKAN_VALIDATION set but layer/extension missing "
+                                 "(layer=%d debug_utils=%d); continuing without validation\n",
+                         hasLayer ? 1 : 0, hasUtils ? 1 : 0);
+        }
+    }
+
     if (vkCreateInstance(&ici, nullptr, &m_Impl->instance) != VK_SUCCESS) {
         std::fprintf(stderr, "[Vulkan] Failed to create instance\n");
         return false;
     }
     VulkanLoader::LoadInstance(m_Impl->instance);
+
+    // ── Debug messenger：必须在实例创建之后、任何其它 Vulkan 调用之前挂上，
+    //    否则 layer 已经产生的消息无处可去。
+    if (m_Impl->enableValidation) {
+        auto create = reinterpret_cast<PFN_vkCreateDebugUtilsMessengerEXT>(
+            vkGetInstanceProcAddr(m_Impl->instance, "vkCreateDebugUtilsMessengerEXT"));
+        if (create) {
+            VkDebugUtilsMessengerCreateInfoEXT dci{VK_STRUCTURE_TYPE_DEBUG_UTILS_MESSENGER_CREATE_INFO_EXT};
+            dci.messageSeverity = EnvFlag("ENGINE_VULKAN_VALIDATION_VERBOSE")
+                ? (VK_DEBUG_UTILS_MESSAGE_SEVERITY_WARNING_BIT_EXT |
+                   VK_DEBUG_UTILS_MESSAGE_SEVERITY_ERROR_BIT_EXT   |
+                   VK_DEBUG_UTILS_MESSAGE_SEVERITY_INFO_BIT_EXT    |
+                   VK_DEBUG_UTILS_MESSAGE_SEVERITY_VERBOSE_BIT_EXT)
+                : (VK_DEBUG_UTILS_MESSAGE_SEVERITY_WARNING_BIT_EXT |
+                   VK_DEBUG_UTILS_MESSAGE_SEVERITY_ERROR_BIT_EXT);
+            dci.messageType = VK_DEBUG_UTILS_MESSAGE_TYPE_GENERAL_BIT_EXT |
+                              VK_DEBUG_UTILS_MESSAGE_TYPE_VALIDATION_BIT_EXT |
+                              VK_DEBUG_UTILS_MESSAGE_TYPE_PERFORMANCE_BIT_EXT;
+            dci.pfnUserCallback = DebugCallback;
+            if (create(m_Impl->instance, &dci, nullptr, &m_Impl->debugMessenger) != VK_SUCCESS) {
+                m_Impl->debugMessenger = VK_NULL_HANDLE;
+                std::fprintf(stderr, "[Vulkan] failed to create debug messenger\n");
+            }
+        }
+    }
 
     uint32_t devCnt = 0;
     vkEnumeratePhysicalDevices(m_Impl->instance, &devCnt, nullptr);
@@ -284,6 +421,14 @@ void VulkanDevice::Shutdown() {
     if (m_Impl->vmaAllocator) vmaDestroyAllocator(m_Impl->vmaAllocator);
     m_Impl->vmaAllocator = VK_NULL_HANDLE;
     if (m_Impl->device) vkDestroyDevice(m_Impl->device, nullptr);
+    // messenger 依赖实例，必须在 vkDestroyInstance 之前销毁
+    if (m_Impl->debugMessenger != VK_NULL_HANDLE) {
+        if (auto destroy = reinterpret_cast<PFN_vkDestroyDebugUtilsMessengerEXT>(
+                vkGetInstanceProcAddr(m_Impl->instance, "vkDestroyDebugUtilsMessengerEXT"))) {
+            destroy(m_Impl->instance, m_Impl->debugMessenger, nullptr);
+        }
+        m_Impl->debugMessenger = VK_NULL_HANDLE;
+    }
     if (m_Impl->instance) vkDestroyInstance(m_Impl->instance, nullptr);
     m_Impl->initialized = false;
 }
