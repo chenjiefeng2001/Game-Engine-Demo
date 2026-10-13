@@ -5,6 +5,35 @@
 
 #include "Engine/Vulkan/VulkanCommon.h"
 
+#if !defined(_WIN32)
+// 平台 surface 扩展头。Vulkan-Headers 的这些头**不**自带 X11 / xcb / Wayland 的
+// 前置声明，直接包含会因类型未声明而编译失败；而引入 libX11 / libxcb /
+// wayland-client 开发包又需要改 engine/CMakeLists.txt（属他人所有）。
+//
+// 折中且安全的做法：这些类型在 Vulkan 侧**只以指针或 32 位整数出现**，从不解引用，
+// 因此本地声明为不完整类型 / 基本整型即可，无需真正的 SDK 头。
+// 下面这组声明与 xcb.h / Xlib.h / wayland-client 的定义相容（重复的同型 typedef
+// 在 C++ 中合法）。
+typedef struct xcb_connection_t xcb_connection_t;
+typedef uint32_t xcb_window_t;
+typedef uint32_t xcb_visualid_t;
+
+typedef struct _XDisplay Display;
+typedef unsigned long Window;
+typedef unsigned long VisualID;
+
+struct wl_display;
+struct wl_surface;
+
+#include <vulkan/vulkan_xcb.h>
+#include <vulkan/vulkan_xlib.h>
+#include <vulkan/vulkan_wayland.h>
+#endif
+
+#include <cstdio>
+#include <cstdlib>
+#include <cstring>
+
 #ifndef ENGINE_HAS_VULKAN
 #define ENGINE_HAS_VULKAN 1
 #endif
@@ -268,5 +297,79 @@ std::vector<const char*> GetRequiredDeviceExtensions() {
         VK_EXT_DESCRIPTOR_INDEXING_EXTENSION_NAME,
     };
 }
+
+#if !defined(_WIN32)
+
+namespace {
+
+bool InstanceExtensionPresent(VkInstance instance, const char* name) noexcept {
+    uint32_t count = 0;
+    if (vkEnumerateInstanceExtensionProperties(nullptr, &count, nullptr) != VK_SUCCESS) return false;
+    std::vector<VkExtensionProperties> exts(count);
+    if (count == 0) return false;
+    if (vkEnumerateInstanceExtensionProperties(nullptr, &count, exts.data()) != VK_SUCCESS) return false;
+    for (uint32 i = 0; i < count; ++i) {
+        if (std::strcmp(exts[i].extensionName, name) == 0) return true;
+    }
+    (void)instance;
+    return false;
+}
+
+// XCB 优先于 Xlib：GLFW 在 X11 下同时给出两种句柄，XCB 路径不需要额外链接 libX11。
+constexpr const char* kPlatformSurfaceExtensions[] = {
+    VK_KHR_XCB_SURFACE_EXTENSION_NAME,
+    VK_KHR_XLIB_SURFACE_EXTENSION_NAME,
+    VK_KHR_WAYLAND_SURFACE_EXTENSION_NAME,
+};
+
+} // namespace
+
+const char* GetAvailablePlatformSurfaceExtension(VkInstance instance) noexcept {
+    for (const char* name : kPlatformSurfaceExtensions) {
+        if (InstanceExtensionPresent(instance, name)) return name;
+    }
+    return nullptr;
+}
+
+bool CreatePlatformSurface(VkInstance instance, const NativeWindow& win,
+                           VkSurfaceKHR* outSurface) noexcept {
+    if (!outSurface) return false;
+    *outSurface = VK_NULL_HANDLE;
+    if (!win.window) return false;
+
+    const char* ext = GetAvailablePlatformSurfaceExtension(instance);
+    if (!ext) {
+        std::fprintf(stderr, "[Vulkan] no XCB/Xlib/Wayland surface extension available\n");
+        return false;
+    }
+
+    VkResult result = VK_ERROR_INITIALIZATION_FAILED;
+    if (std::strcmp(ext, VK_KHR_XCB_SURFACE_EXTENSION_NAME) == 0 && win.display) {
+        VkXcbSurfaceCreateInfoKHR sci{VK_STRUCTURE_TYPE_XCB_SURFACE_CREATE_INFO_KHR};
+        sci.connection = reinterpret_cast<xcb_connection_t*>(win.display);
+        sci.window     = reinterpret_cast<::Window>(win.window);
+        result = vkCreateXcbSurfaceKHR(instance, &sci, nullptr, outSurface);
+    } else if (std::strcmp(ext, VK_KHR_XLIB_SURFACE_EXTENSION_NAME) == 0 && win.display) {
+        VkXlibSurfaceCreateInfoKHR sci{VK_STRUCTURE_TYPE_XLIB_SURFACE_CREATE_INFO_KHR};
+        sci.dpy    = reinterpret_cast<Display*>(win.display);
+        sci.window = reinterpret_cast<::Window>(win.window);
+        result = vkCreateXlibSurfaceKHR(instance, &sci, nullptr, outSurface);
+    } else if (std::strcmp(ext, VK_KHR_WAYLAND_SURFACE_EXTENSION_NAME) == 0 && win.display) {
+        VkWaylandSurfaceCreateInfoKHR sci{VK_STRUCTURE_TYPE_WAYLAND_SURFACE_CREATE_INFO_KHR};
+        sci.display = reinterpret_cast<wl_display*>(win.display);
+        sci.surface = reinterpret_cast<wl_surface*>(win.window);
+        result = vkCreateWaylandSurfaceKHR(instance, &sci, nullptr, outSurface);
+    }
+
+    if (result != VK_SUCCESS) {
+        std::fprintf(stderr, "[Vulkan] CreatePlatformSurface(%s) failed: %d\n", ext, result);
+        *outSurface = VK_NULL_HANDLE;
+        return false;
+    }
+    std::fprintf(stderr, "[Vulkan] surface created via %s\n", ext);
+    return true;
+}
+
+#endif // !_WIN32
 
 } // namespace Engine

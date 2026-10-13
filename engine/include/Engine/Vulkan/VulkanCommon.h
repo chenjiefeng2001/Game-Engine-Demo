@@ -45,7 +45,51 @@ void ConvertBarrierDesc(
 
 // ── 实例/设备扩展 ──
 std::vector<const char*> GetRequiredInstanceExtensions(bool enableValidation);
-std::vector<const char*> GetRequiredDeviceExtensions();
+    std::vector<const char*> GetRequiredDeviceExtensions();
+
+    // ============================================================
+    // 平台 surface（Win32 / X11 / Wayland）
+    // ============================================================
+
+    /**
+     * 原生窗口句柄。
+     *
+     * IRHIDevice::Initialize 的 windowHandle 是无类型 void*，无法同时表达
+     * X11 的 Display 与 Wayland 的 wl_surface —— 它们的数量就不是一个。
+     * 因此把「窗口」与「显示连接」拆开传入：
+     *
+     *   Windows : display 忽略，window 为 HWND
+     *   X11     : display = Display*（xlib）或 xcb_connection_t*（xcb），window = Window XID
+     *   Wayland : display = wl_display*，window = wl_surface*
+     *
+     * 三个字段都为空时按无窗口（headless）处理，不创建 surface。
+     */
+    struct NativeWindow {
+        void* display = nullptr;
+        void* window  = nullptr;
+    };
+
+#if !defined(_WIN32)
+    /**
+     * 返回本机可用的平台 surface 扩展名（按优先级 XCB > Xlib > Wayland），
+     * 一个都不可用时返回 nullptr。
+     *
+     * 必须先创建 VkInstance 才能查询 —— 因此它接收 instance。
+     */
+    const char* GetAvailablePlatformSurfaceExtension(VkInstance instance) noexcept;
+
+    /**
+     * 按 NativeWindow 的实际内容选择平台并创建 VkSurfaceKHR。
+     * 成功返回 true；平台不支持、扩展缺失或调用失败返回 false。
+     *
+     * 不透明指针的 reinterpret_cast 在这里是有意的：X11/Wayland 的类型
+     * （Display、xcb_connection_t、wl_display、wl_surface）来自各自的 SDK，
+     * 而 Vulkan 后端不应为此强制依赖 X11 或 wayland-client 的开发包。
+     * Vulkan 头只要求把它们作为不完整类型的前向声明传入。
+     */
+    bool CreatePlatformSurface(VkInstance instance, const NativeWindow& win,
+                               VkSurfaceKHR* outSurface) noexcept;
+#endif // !_WIN32
 
 // ── 着色器阶段转换 ──
 VkShaderStageFlagBits ShaderStageToVk(ShaderStage stage);

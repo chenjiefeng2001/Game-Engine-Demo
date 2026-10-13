@@ -27,6 +27,7 @@
 #include <chrono>
 #include <ctime>
 #include <iomanip>
+#include <iostream>  // std::cerr。此前依赖 spdlog 间接引入，单独编译会失败。
 
 namespace Engine {
 

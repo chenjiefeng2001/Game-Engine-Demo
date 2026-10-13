@@ -22,8 +22,12 @@ constexpr VkFormat kOffscreenFormat = VK_FORMAT_R8G8B8A8_UNORM;
 
 bool Failed(const char* what, VkResult r)
 {
+    // 此前无条件打印并恒返回 false：成功时误报 "failed"，而真正的失败又不会返回
+    // true，导致调用方的 `if (Failed(...)) return nullptr;` 形同虚设，会带着
+    // VK_NULL_HANDLE 继续往下走。
+    if (r == VK_SUCCESS) return false;
     std::fprintf(stderr, "[VulkanOffscreen] %s failed (VkResult=%d)\n", what, static_cast<int>(r));
-    return false;
+    return true;
 }
 } // namespace
 

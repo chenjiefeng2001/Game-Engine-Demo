@@ -117,6 +117,9 @@ struct VulkanDevice::Impl {
     VmaAllocator vmaAllocator{VK_NULL_HANDLE};
     VkSwapchainKHR swapChain{VK_NULL_HANDLE};
     VkSurfaceKHR surface{VK_NULL_HANDLE};
+    // 原生窗口句柄：X11 的 Display / Wayland 的 wl_display。必须在 Initialize 之前设置，
+    // 否则非 Windows 上无法创建 surface。
+    NativeWindow nativeWindow{};
     std::vector<VkImage> swapChainImages;
     VulkanFrameContext frameContext;
     VulkanQueue* graphicsQueueWrapper{nullptr};
@@ -189,6 +192,10 @@ QueueType VulkanQueue::GetType() const noexcept { return m_Impl->type; }
 VulkanDevice::VulkanDevice() : m_Impl(std::make_unique<Impl>()) {}
 VulkanDevice::~VulkanDevice() { Shutdown(); }
 
+void VulkanDevice::SetNativeWindow(const NativeWindow& win) noexcept {
+    m_Impl->nativeWindow = win;
+}
+
 bool VulkanDevice::Initialize(void* windowHandle, uint32_t width, uint32_t height) {
     if (m_Impl->initialized) return true;
     if (!VulkanLoader::Initialize()) return false;
@@ -203,6 +210,12 @@ bool VulkanDevice::Initialize(void* windowHandle, uint32_t width, uint32_t heigh
         instanceExts.push_back(VK_KHR_SURFACE_EXTENSION_NAME);
 #ifdef _WIN32
         instanceExts.push_back("VK_KHR_win32_surface");
+#else
+        // XCB / Xlib / Wayland 三者按可用性择一。必须在 vkCreateInstance 之前决定，
+        // 此刻还没有 instance 可查询，因此退而查询**全局**实例扩展列表。
+        if (const char* platformExt = GetAvailablePlatformSurfaceExtension(VK_NULL_HANDLE)) {
+            instanceExts.push_back(platformExt);
+        }
 #endif
     }
     VkInstanceCreateInfo ici{VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO};
@@ -333,6 +346,24 @@ bool VulkanDevice::Initialize(void* windowHandle, uint32_t width, uint32_t heigh
         VkWin32SurfaceCreateInfoKHR sci{VK_STRUCTURE_TYPE_WIN32_SURFACE_CREATE_INFO_KHR};
         sci.hinstance = GetModuleHandle(nullptr); sci.hwnd = (HWND)windowHandle;
         vkCreateWin32SurfaceKHR(m_Impl->instance, &sci, nullptr, &m_Impl->surface);
+#else
+        // Linux/macOS：windowHandle 单独一个指针不足以建 surface，需要 Display 或
+        // wl_display。这些句柄必须由调用方经 SetNativeWindow 提供 ——
+        // RHIWindow 在非 Windows 上把 GetHWND() 显式置空，因此这里常常拿不到。
+        NativeWindow native;
+        native.window = windowHandle;
+        native.display = m_Impl->nativeWindow.display;
+        if (native.display) {
+            if (!CreatePlatformSurface(m_Impl->instance, native, &m_Impl->surface)) {
+                std::fprintf(stderr,
+                             "[Vulkan] window handle given but no surface could be created; "
+                             "call SetNativeWindow() with the Display/wl_display before Initialize()\n");
+            }
+        } else {
+            std::fprintf(stderr,
+                         "[Vulkan] window handle given without a display connection; "
+                         "no surface will be created (present path unavailable)\n");
+        }
 #endif
     }
 
