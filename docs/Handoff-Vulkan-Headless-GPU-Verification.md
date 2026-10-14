@@ -317,6 +317,34 @@ pipeline created with 1 binding(s), 2 attribute(s)
 `Failed()` 无条件打印失败且恒返回 `false`，导致成功时误报、真实失败时不返回
 `nullptr` 而带着空句柄继续执行。
 
+### 1.9 Windows 链接失败：一个被误诊的自身缺陷（`5586e16`）
+
+Windows 两个 job 长期在 Build 阶段失败，日志里有一段刺眼的
+`could not find any instance of Visual Studio`，我据此归因为「runner 只有
+VS 18、workflow 固定 VS 17 生成器」，并判定与本轮改动无关。**这个判断是错的。**
+
+那段报错来自一个明确标注 `diagnostic complete (non-fatal)` 的探针步骤。真正的失败在
+日志深处：
+
+```
+RHIDemoApp.obj : error LNK2019: unresolved external symbol
+    VulkanDevice::CreateSwapChain(SwapChainDesc const &)
+    VulkanSwapChain::AcquireNextImage()
+    VulkanSwapChain::Present()
+    VulkanSwapChain::GetBackBuffer(unsigned int) const
+RHIDemoApp.obj : fatal error LNK1120: 4 unresolved externals
+```
+
+同时 configure 输出 `Vulkan SDK not found — Vulkan backend disabled`：Windows 未安装
+Vulkan SDK，后端源码与 `ENGINE_HAS_VULKAN` **一同**被排除。而我加的
+`RenderVulkanFrame()` 位于文件作用域、在守卫之外，于是照样编译并引用未链接的符号。
+Linux 因安装了 `libvulkan-dev` 不受影响 —— 这也是为什么只有 Windows 抓到。
+
+教训：**「日志里最显眼的报错」不一定是失败原因**。此处探针是 non-fatal 的，真正的
+LNK2019 在八千行之后。应先定位失败步骤的产物，而不是抓住第一条错误信息。
+
+修复后两个 Windows job 均通过构建，停在既有的 `Test (full suite)` 与
+`Verify SPIR-V activation`。
 ## 2. 尚未完成（运行时空洞，编译期暴露不出）
 
 ### 2.0 ~~着色器解析缺失~~ <span class="material-symbols-outlined">check_circle</span> 已修复（`f65cd4c`）
@@ -475,8 +503,13 @@ lavapipe 上设备初始化成功，`GetDeviceName()` 返回真实名称。
    （新契约见 §2.3，两条路径目前并存）。
 6. **补 `ShaderCompileRule` 的真实产出**：它目前只写出 `.spv` 文件名却不生成该文件
    （见 §2.3c）。
-7. **Windows 构建目前在 Build 阶段失败**，与本轮改动无关：runner 上只有
-   Visual Studio 18 Enterprise，而 workflow 固定使用 `Visual Studio 17 2022` 生成器。
+7. ~~Windows 构建在 Build 阶段失败~~ **已修复**（`5586e16`）。此前我把它归因于
+   「runner 只有 VS 18 而 workflow 固定 VS 17 生成器」——**那是错的**：那段探针报错
+   来自一个被正确标记为 non-fatal 的诊断步骤。真实原因是本轮引入的
+   `RenderVulkanFrame` 位于文件作用域、在 `ENGINE_HAS_VULKAN` 守卫之外，Windows
+   未安装 Vulkan SDK 时它照样编译并引用未链接的符号（4 个 LNK2019 / LNK1120）。
+   两个 Windows job 现已通过构建，分别停在既有的 `Test (full suite)` 与
+   `Verify SPIR-V activation`。
 8. 接下来把 `GPUSkinningPixelTest` 抽象为后端无关；届时把
    `GPU_SKINNING_NO_GL46=1` 从 Linux 测试步骤中移除。
 
