@@ -671,8 +671,11 @@ for (auto vkImg : m_Impl->swapChainImages) {
         auto tex = std::make_shared<VulkanTexture>();
         tex->SetVkImage(vkImg); tex->SetWidth(desc.width); tex->SetHeight(desc.height);
         tex->SetFormat(VkToFormat(selFmt.format));
-        // 初始 layout：交换链图像创建后处于 PRESENT_SRC_KHR
-        tex->SetLayout(VK_IMAGE_LAYOUT_PRESENT_SRC_KHR);
+        // 初始 layout 必须是 UNDEFINED：新创建的交换链图像，其内容与布局都是未定义的，
+        // 并非 PRESENT_SRC_KHR。此前谎报为 PRESENT_SRC_KHR，于是首次使用该图像时
+        // 屏障会声明一个与实际不符的 oldLayout，validation layer 随即报出
+        // "expects PRESENT_SRC_KHR, current layout is UNDEFINED"。
+        tex->SetLayout(VK_IMAGE_LAYOUT_UNDEFINED);
         // 渲染作用域（vkCmdBeginRendering）绑定的是 image **view**，不是 image。
         // 此前这里只设了 image，导致 backbuffer 的 view 恒为 VK_NULL_HANDLE，
         // 任何以 IRHITexture* 构造的渲染附件都会被跳过 —— 窗口路径永远画不出东西。

@@ -458,9 +458,44 @@ acquired 0, backbuffer 640x480, isSwapChainImage=1, trackedLayout=PRESENT_SRC_KH
 pImageIndices-01430 出现次数: 0
 ```
 
-**残留说明**：每个交换链图像**首次**使用时报一条 `DrawState-InvalidImageLayout`，之后
-不再出现（10 帧 3 图像恰好 3 条）。因此不是逐帧缺陷；判断是 validation 层在套用本帧
-屏障之前，拿 acquire 后图像的初始 `UNDEFINED` 布局做的比较。**未完全解释。**
+### 2.3g 最后一个「未解释」的现象：真实缺陷，已修复（`VulkanDevice::CreateSwapChain`）
+
+2.3e / 2.3f 末尾记录的残留 —— 每个交换链图像**首次**使用时报一条
+`DrawState-InvalidImageLayout`，之后不再出现 —— **不是 validation 层的记账现象，
+而是我们的真实缺陷**。此前判断错误，现已定位并修复。
+
+`VulkanDevice::CreateSwapChain` 为每个 backbuffer 设置初始布局：
+
+```cpp
+// 初始 layout：交换链图像创建后处于 PRESENT_SRC_KHR
+tex->SetLayout(VK_IMAGE_LAYOUT_PRESENT_SRC_KHR);
+```
+
+**这个注释与 Vulkan 规范相反**：新创建的交换链图像，其内容与布局都是**未定义的**。
+
+于是首次使用该图像时，`BeginRendering` 会发出一条
+`oldLayout = PRESENT_SRC_KHR → COLOR_ATTACHMENT_OPTIMAL` 的屏障，
+而 `oldLayout` 与实际布局不符。validation layer 报出的正是这个矛盾：
+
+```
+expects VkImage to be in layout VK_IMAGE_LAYOUT_PRESENT_SRC_KHR
+-- instead, current layout is VK_IMAGE_LAYOUT_UNDEFINED
+```
+
+**为何只在首次出现**：一次错误布局记账被我们的屏障「固化」后，后续帧的 `oldLayout`
+就与 validation 的记账一致了，所以不再报错。这解释了「每个图像恰好一次」的现象，
+也解释了为何帧数从 4 增到 10 时错误数恒为 3。
+
+定位方法：打印每个 backbuffer 的 `VkImage` 与追踪布局，与 validation 消息里的 handle
+逐一比对，确认三者一致、且初始布局已是 `PRESENT_SRC_KHR`（`1000001002`）。
+
+修复：初始布局改为 `VK_IMAGE_LAYOUT_UNDEFINED`。
+
+**结果**：窗口路径在 Khronos validation layer 下**零发现**，离屏路径仍零发现，
+三角形回读仍为 `64 128 191 255`，15/15 编译通过。
+
+**教训**：把残留的 validation 消息归因于「工具的记账问题」是本次最容易犯的误判。
+残留消息应当先假设是自己的 bug，直到证据指向别处。
 
 **回归**：15/15 Vulkan 编译单元通过；离屏三角形回读仍为 `64 128 191 255`；
 5 个改动文件通过 MSVC 语法检查。
