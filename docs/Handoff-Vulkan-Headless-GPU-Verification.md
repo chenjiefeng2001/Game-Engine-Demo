@@ -411,40 +411,60 @@ VulkanCommandList 以 dynamic rendering 实现。离屏目标自带的同款逻�
 acquire → 经命令列表渲染作用域录制清除 → 提交并呈现。**尚不绘制任何几何**，
 目的是先把 acquire / scope / submit / present 这四步接通，使后续失败可归因。
 
-### 2.3d X11 / Wayland surface：Xlib 路径**已实跑验证**（`3aee96f`）
+### 2.3e Validation layer 在 WSL 可用后抓到的三个真实缺陷（`e9bf326`）
 
-此前只验证到「Linux 15/15 编译通过」。在 WSL 的 WSLg 显示（`DISPLAY=:0`）上实际跑通了
-Xlib 路径：
+此前 WSL 里**没有** Khronos validation layer，只有 `INTEL_nullhw` 与 `MESA_overlay`。
+装上之后（`vulkan-validationlayers` 1.3.275），在真实映射窗口上跑出一批编译期与离屏测试
+都不可能发现的缺陷。
+
+**1. 每一次 present 都是非法调用（真实违规）**
 
 ```
-[Vulkan] surface created via VK_KHR_xlib_surface
-[X11] swapchain created: 3 image(s)
-[X11] acquired image index 0
-[X11] back buffer 640x640, image view present
-[X11] frame recorded and submitted
-[X11] presented
+VUID-VkPresentInfoKHR-pImageIndices-01430 (ERROR / SPEC): images passed to present must be in
+layout VK_IMAGE_LAYOUT_PRESENT_SRC_KHR but is in VK_IMAGE_LAYOUT_UNDEFINED
 ```
 
-验证方式是 `dlopen("libX11.so.6")` + 函数指针，**不包含任何 X11 头文件** —— WSL 里没有
-`X11/Xlib.h`。这既符合本工程的设计意图（Vulkan 后端不强制依赖 X11 / xcb / wayland-client
-开发包），也逼出了一个必须修复的缺陷。
+`EndRendering()` 只调用 `vkCmdEndRendering` 就结束，**从未**把交换链图像转成
+`PRESENT_SRC_KHR`。离屏路径因为调用方自带屏障、且离屏目标从不呈现，所以一直掩盖着这个
+问题。
 
-**发现并修复的两个问题：**
+顺带还有一个：`BeginRendering` 把 `VK_IMAGE_LAYOUT_ATTACHMENT_OPTIMAL` 当作动态渲染的
+附件布局（`vkCmdBeginRendering` 不接受该值），而且只「记录」布局而**不发转换**。
 
-1. **平台推断有类型混淆风险** —— 原先按「扩展是否可用」猜平台，而句柄类型取决于调用方
-   手里是什么。GLFW 在 X11 下同时给出 `Display` 与 xcb 连接，调用方传 Xlib 的 `Display`
-   时，只要 XCB 扩展可用而 Xlib 不可用，就会被 `reinterpret_cast` 成
-   `xcb_connection_t*` —— 转换处不报错，表现为 surface 永远无法呈现。现改为
-   `NativeWindow.platform` 显式指定，`Auto` 仅保留给确实无偏好的调用方。
-2. **交换链句柄双重释放** —— `~VulkanSwapChain` 与 `VulkanDevice::Shutdown()` 销毁同一个
-   `VkSwapchainKHR`，X11 实测直接 `free(): double free detected in tcache 2`。
-   句柄由设备创建并存于 `m_Impl->swapChain`，所有权属设备；backbuffer 的 image view
-   仍由各自的 `VulkanTexture` 持有。
+修复：附件布局改 `COLOR_ATTACHMENT_OPTIMAL`；追踪布局不符时显式发转换；
+`EndRendering` 把交换链图像转到 `PRESENT_SRC_KHR`。`VulkanTexture` 新增
+`IsSwapChainImage()`，由 `VulkanDevice::CreateSwapChain` 标记 —— RHI 接口本身
+不区分渲染目标与呈现目标。
 
-**边界**：向 X display 的 root window 呈现会返回 `VK_ERROR_OUT_OF_DATE_KHR`
-（`1000001003`）—— 预期行为，因为 root window 并非可呈现的映射窗口，而本环境没有 GLFW
-可用来建真实窗口。因此 acquire / 录制 / 提交 / 呈现**整条链路确实执行**，但
-「在真实映射窗口上呈现成功」**未验证**。
+**2. 扩展数组悬空指针**
+
+`ppEnabledExtensionNames` 在 validation 分支 `push_back` **之前**就从
+`instanceExts.data()` 取值，扩容后该指针失效，`vkCreateInstance` 在已释放内存上做
+`strcmp` 直接崩溃。之所以此前从未暴露：validation 分支只在枚举到
+`VK_EXT_validation_features` 时才进入，而本机 loader 并不会枚举到它。
+
+**3. 日志说谎**
+
+层通过 `VK_INSTANCE_LAYERS` 已经加载并在报错误，引擎却打印
+`continuing without validation`。该扩展只承载逐项开关（同步校验），
+**不是**启用 validation 的前提。现在缺它时降级并**具体说明缺什么**，而不是谎称 validation
+已关闭。
+
+**验证结果（真实映射窗口，10 帧 / 3 个交换链图像）**：
+
+```
+surface created via VK_KHR_xlib_surface
+acquired 0, backbuffer 640x480, isSwapChainImage=1, trackedLayout=PRESENT_SRC_KHR
+pImageIndices-01430 出现次数: 0
+```
+
+**残留说明**：每个交换链图像**首次**使用时报一条 `DrawState-InvalidImageLayout`，之后
+不再出现（10 帧 3 图像恰好 3 条）。因此不是逐帧缺陷；判断是 validation 层在套用本帧
+屏障之前，拿 acquire 后图像的初始 `UNDEFINED` 布局做的比较。**未完全解释。**
+
+**回归**：15/15 Vulkan 编译单元通过；离屏三角形回读仍为 `64 128 191 255`；
+5 个改动文件通过 MSVC 语法检查。
+
 ### 2.3c 生产侧接线缺口（`0e76957`、`ab64696`）
 
 - `CreateRHIDevice(Backend, ...)`：此前 `CreateVulkanDevice()` 在 `engine/src` 内
@@ -526,9 +546,8 @@ lavapipe 上设备初始化成功，`GetDeviceName()` 返回真实名称。
 
 1. **§1.4 的像素验证已完成**（run `38485651755`，lavapipe + validation layer，
    全程零 validation 报错）。下列各项都建立在「这条链路确实能跑」之上，现在成立。
-2. ~~X11 / Wayland surface~~ **Xlib 路径已实跑验证**（见 §2.3d）。仍未验证的是
-   **在真实映射窗口上呈现成功** —— 本环境无 GLFW，只能向 root window 呈现并得到
-   `VK_ERROR_OUT_OF_DATE_KHR`。Wayland 路径仍仅编译验证。
+2. ~~X11 / Wayland surface~~ **Xlib 路径已在真实映射窗口上验证**（见 §2.3d 与 §2.3e）。
+   Wayland 路径仍仅编译验证。
 3. **让 `RHIDemo` 的 Vulkan 路径真正出画面** —— `RenderVulkanFrame()` 目前只清除
    不绘制（见 §2.3b），需要接上真实几何与材质。
 4. **补 `GraphicsPSODesc` 的顶点输入契约** —— 契约已实现（§1.7），但
