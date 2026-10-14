@@ -44,10 +44,14 @@ struct VulkanCommandList::Impl {
     VkImageMemoryBarrier  imageBarriers[kMaxBarriers];
     VkPipelineStageFlags  srcStageMask{0};
     VkPipelineStageFlags  dstStageMask{0};
-    uint32_t              barrierCount{0};
-    bool                renderingActive{false};
-
-    bool IsReady() const noexcept { return isRecording && cmdBuffer != VK_NULL_HANDLE; }
+uint32_t              barrierCount{0};
+      bool                renderingActive{false};
+      // 当前渲染作用域的附件。EndRendering 需要它们才能把交换链图像转成
+      // PRESENT_SRC_KHR：RHI 接口不区分渲染目标与呈现目标，只有 Vulkan 侧
+      // 知道某个 VulkanTexture 是否是 swapchain backbuffer。
+      IRHITexture*        renderColors[RenderTargetDesc::kMaxColorAttachments]{};
+      IRHITexture*        renderDepth{nullptr};
+      bool IsReady() const noexcept { return isRecording && cmdBuffer != VK_NULL_HANDLE; }
 
     void FlushBarriers() {
         if (barrierCount == 0) return;
@@ -163,20 +167,23 @@ void VulkanCommandList::BeginRendering(const RenderTargetDesc& desc) {
             std::fprintf(stderr, "[Vulkan] BeginRendering: color[%u] has no image view\n", i);
             continue;
         }
-        VkRenderingAttachmentInfo& a = attachments[usable++];
-        a.sType     = VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO;
-        a.imageView = view;
-        a.imageLayout = VK_IMAGE_LAYOUT_ATTACHMENT_OPTIMAL;
+VkRenderingAttachmentInfo& a = attachments[usable++];
+          a.sType     = VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO;
+          a.imageView = view;
+          // 动态渲染（vkCmdBeginRendering）只接受 COLOR_ATTACHMENT_OPTIMAL /
+          // GENERAL / SHARED_PRESENT_KHR。原先写的是 VK_IMAGE_LAYOUT_ATTACHMENT_OPTIMAL，
+          // 那不是动态渲染的合法附件布局。
+          a.imageLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
         a.loadOp    = desc.clear ? VK_ATTACHMENT_LOAD_OP_CLEAR : VK_ATTACHMENT_LOAD_OP_LOAD;
         a.storeOp   = VK_ATTACHMENT_STORE_OP_STORE;
         // clearValue 必须赋值：loadOp=CLEAR 读的是它，漏掉会清成 (0,0,0,0)。
         // 路径为 VkClearValue::color → VkClearColorValue::float32：
         // 匿名成员 color[] 不支持下标，必须走具名成员。
-        for (uint32 ch = 0; ch < 4; ++ch) a.clearValue.color.float32[ch] = desc.clearColor[ch];
-        tex->SetLayout(VK_IMAGE_LAYOUT_ATTACHMENT_OPTIMAL);
-        extentW = tex->GetWidth();
-        extentH = tex->GetHeight();
-    }
+for (uint32 ch = 0; ch < 4; ++ch) a.clearValue.color.float32[ch] = desc.clearColor[ch];
+          m_Impl->renderColors[usable - 1] = desc.color[i];
+          extentW = tex->GetWidth();
+          extentH = tex->GetHeight();
+      }
     if (usable == 0) return;
 
     VkRenderingAttachmentInfo depthAttachment{};
@@ -207,6 +214,56 @@ void VulkanCommandList::BeginRendering(const RenderTargetDesc& desc) {
     }
 
     m_Impl->FlushBarriers();
+
+    // 附件必须真的处于动态渲染声明的布局。此前这里只把 renderColors 的布局
+    // 「记」成目标布局，却不发出任何转换：刚 acquire 回来的 swapchain 图像追踪
+    // 布局是 UNDEFINED，于是 vkCmdBeginRendering 读的是 UNDEFINED、present 时
+    // 也仍是 UNDEFINED。离屏路径因为调用方自己发过屏障所以没暴露。
+    for (uint32 i = 0; i < usable; ++i) {
+        auto* vkTex = static_cast<VulkanTexture*>(m_Impl->renderColors[i]);
+        if (vkTex->GetLayout() == VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL) continue;
+        VkImageMemoryBarrier b{};
+        b.sType            = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
+        b.image            = vkTex->GetVkImage();   // 必填，漏掉整条 barrier 会被丢弃
+        b.oldLayout        = vkTex->GetLayout();
+        b.newLayout        = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
+        b.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+        b.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+        b.subresourceRange = { VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1 };
+        b.srcAccessMask    = b.oldLayout == VK_IMAGE_LAYOUT_UNDEFINED
+                                 ? 0 : VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
+        b.dstAccessMask    = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
+        vkCmdPipelineBarrier(m_Impl->cmdBuffer,
+                             VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT,
+                             VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT,
+                             0, 0, nullptr, 0, nullptr, 1, &b);
+        vkTex->SetLayout(VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL);
+    }
+    if (hasDepth) {
+        auto* dtex = static_cast<VulkanTexture*>(desc.depth);
+        if (dtex->GetLayout() != VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_OPTIMAL) {
+            VkImageMemoryBarrier b{};
+            b.sType            = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
+            b.image            = dtex->GetVkImage();
+            b.oldLayout        = dtex->GetLayout();
+            b.newLayout        = VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_OPTIMAL;
+            b.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+            b.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+            b.subresourceRange = { VK_IMAGE_ASPECT_DEPTH_BIT, 0, 1, 0, 1 };
+            b.srcAccessMask    = b.oldLayout == VK_IMAGE_LAYOUT_UNDEFINED
+                                     ? 0 : VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT;
+            b.dstAccessMask    = VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT;
+            vkCmdPipelineBarrier(m_Impl->cmdBuffer,
+                                 VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT |
+                                 VK_PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT,
+                                 VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT |
+                                 VK_PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT,
+                                 0, 0, nullptr, 0, nullptr, 1, &b);
+            dtex->SetLayout(VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_OPTIMAL);
+        }
+        m_Impl->renderDepth = desc.depth;
+    }
+
     vkCmdBeginRendering(m_Impl->cmdBuffer, &ri);
     m_Impl->renderingActive = true;
 
@@ -226,10 +283,42 @@ void VulkanCommandList::BeginRendering(const RenderTargetDesc& desc) {
 }
 
 void VulkanCommandList::EndRendering() {
-    if (!m_Impl->IsReady() || !m_Impl->renderingActive) return;
-    vkCmdEndRendering(m_Impl->cmdBuffer);
-    m_Impl->renderingActive = false;
-}
+      if (!m_Impl->IsReady() || !m_Impl->renderingActive) return;
+      vkCmdEndRendering(m_Impl->cmdBuffer);
+      m_Impl->renderingActive = false;
+
+      // 交换链图像必须在 present 之前转到 PRESENT_SRC_KHR。EndRendering 之前
+      // 完全没有这一步，于是每一帧的 vkQueuePresentKHR 都是非法调用
+      // （VUID-VkPresentInfoKHR-pImageIndices-01430），由 Khronos validation
+      // layer 在真实窗口路径上抓出。普通渲染目标保持 COLOR_ATTACHMENT_OPTIMAL。
+      VkImageMemoryBarrier b{};
+      b.sType            = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
+      b.oldLayout        = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
+      b.newLayout        = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR;
+      b.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+      b.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+      b.subresourceRange = { VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1 };
+      b.srcAccessMask    = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
+      b.dstAccessMask    = 0;
+      uint32_t presented = 0;
+      VkImageMemoryBarrier batch[RenderTargetDesc::kMaxColorAttachments];
+      for (auto* c : m_Impl->renderColors) {
+          if (!c) continue;
+          auto* vkTex = static_cast<VulkanTexture*>(c);
+          if (!vkTex->IsSwapChainImage()) continue;
+          b.image = vkTex->GetVkImage();
+          batch[presented++] = b;
+          vkTex->SetLayout(VK_IMAGE_LAYOUT_PRESENT_SRC_KHR);
+      }
+      if (presented > 0) {
+          vkCmdPipelineBarrier(m_Impl->cmdBuffer,
+                               VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT,
+                               VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT,
+                               0, 0, nullptr, 0, nullptr, presented, batch);
+      }
+      for (auto& slot : m_Impl->renderColors) slot = nullptr;
+      m_Impl->renderDepth = nullptr;
+  }
 
 // ════════════════════════════════════════════════════════════
 // 管线状态

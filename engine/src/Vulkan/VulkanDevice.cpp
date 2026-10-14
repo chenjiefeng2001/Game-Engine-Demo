@@ -220,8 +220,10 @@ bool VulkanDevice::Initialize(void* windowHandle, uint32_t width, uint32_t heigh
     }
     VkInstanceCreateInfo ici{VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO};
     ici.pApplicationInfo = &app;
-    ici.enabledExtensionCount = static_cast<uint32_t>(instanceExts.size());
-    ici.ppEnabledExtensionNames = instanceExts.data();
+    // ppEnabledExtensionNames / enabledExtensionCount **不能**在这里赋值：下面的
+    // validation 分支还会往 instanceExts 里 push_back，vector 扩容后先前缓存的
+    // data() 就是悬空指针，vkCreateInstance 会在已释放内存上 strcmp 扩展名而崩溃。
+    // 因此统一在 vkCreateInstance 之前再取一次。
 
     // ── Validation layer：可选，按环境变量开启 ──
     // 只有 layer 与 VK_EXT_debug_utils 都真实存在时才请求，否则 vkCreateInstance
@@ -237,33 +239,53 @@ bool VulkanDevice::Initialize(void* windowHandle, uint32_t width, uint32_t heigh
         // （layer 本身存在也救不了）。这一点此前遗漏，表现为 CI 上
         // 「validation layer enabled」之后紧跟「Failed to create instance」。
         const bool hasFeatures = InstanceExtensionAvailable(VK_EXT_VALIDATION_FEATURES_EXTENSION_NAME);
-        if (hasLayer && hasUtils && hasFeatures) {
+        // 只按 layer + debug_utils 判定是否启用 validation。把 VK_EXT_validation_features
+        // 也当作硬前提，会出现「引擎以为没有 validation、实际 layer 已被 VK_INSTANCE_LAYERS
+        // 强制加载」的错位：WSL 上实测就是层在跑并报出 VUID 违规，而日志写着
+        // "continuing without validation"。该扩展只用于逐项开关（同步校验），
+        // 缺失时降级即可，不该让整个 validation 失效。
+        if (hasLayer && hasUtils) {
             instanceLayers.push_back("VK_LAYER_KHRONOS_validation");
             instanceExts.push_back(VK_EXT_DEBUG_UTILS_EXTENSION_NAME);
-            instanceExts.push_back(VK_EXT_VALIDATION_FEATURES_EXTENSION_NAME);
-            ici.enabledExtensionCount = static_cast<uint32_t>(instanceExts.size());
+            m_Impl->enableValidation = true;
 
-            VkValidationFeatureEnableEXT enables[2]{};
-            uint32_t enableCount = 0;
-            enables[enableCount++] = VK_VALIDATION_FEATURE_ENABLE_BEST_PRACTICES_EXT;
-            if (EnvFlag("ENGINE_VULKAN_SYNC_VALIDATION")) {
-                enables[enableCount++] = VK_VALIDATION_FEATURE_ENABLE_SYNCHRONIZATION_VALIDATION_EXT;
+            if (hasFeatures) {
+                instanceExts.push_back(VK_EXT_VALIDATION_FEATURES_EXTENSION_NAME);
+                VkValidationFeatureEnableEXT enables[2]{};
+                uint32_t enableCount = 0;
+                enables[enableCount++] = VK_VALIDATION_FEATURE_ENABLE_BEST_PRACTICES_EXT;
+                if (EnvFlag("ENGINE_VULKAN_SYNC_VALIDATION")) {
+                    enables[enableCount++] = VK_VALIDATION_FEATURE_ENABLE_SYNCHRONIZATION_VALIDATION_EXT;
+                }
+                validationFeatures.enabledValidationFeatureCount = enableCount;
+                validationFeatures.pEnabledValidationFeatures = enables;
+                ici.pNext = &validationFeatures;
+                m_Impl->syncValidation = EnvFlag("ENGINE_VULKAN_SYNC_VALIDATION");
+            } else {
+                std::fprintf(stderr,
+                             "[Vulkan] validation layer enabled, but %s is not exposed; "
+                             "per-feature toggles (including sync validation) unavailable\n",
+                             VK_EXT_VALIDATION_FEATURES_EXTENSION_NAME);
+                m_Impl->syncValidation = false;
             }
-            validationFeatures.enabledValidationFeatureCount = enableCount;
-            validationFeatures.pEnabledValidationFeatures = enables;
-            ici.pNext = &validationFeatures;
+
             ici.enabledLayerCount = static_cast<uint32_t>(instanceLayers.size());
             ici.ppEnabledLayerNames = instanceLayers.data();
-            m_Impl->enableValidation = true;
-            m_Impl->syncValidation = EnvFlag("ENGINE_VULKAN_SYNC_VALIDATION");
             std::fprintf(stderr, "[Vulkan] validation layer enabled (sync validation: %s)\n",
                          m_Impl->syncValidation ? "on" : "off");
         } else {
             std::fprintf(stderr, "[Vulkan] ENGINE_VULKAN_VALIDATION set but a prerequisite is "
-                                 "missing (layer=%d debug_utils=%d validation_features=%d); "
-                                 "continuing without validation\n",
-                         hasLayer ? 1 : 0, hasUtils ? 1 : 0, hasFeatures ? 1 : 0);
+                                 "missing (layer=%d debug_utils=%d); continuing without validation\n",
+                         hasLayer ? 1 : 0, hasUtils ? 1 : 0);
         }
+    }
+
+    // 所有 push_back 都已完成，此刻取 data() 才安全（见上方注释）。
+    ici.enabledExtensionCount = static_cast<uint32_t>(instanceExts.size());
+    ici.ppEnabledExtensionNames = instanceExts.empty() ? nullptr : instanceExts.data();
+    if (instanceLayers.empty()) {
+        ici.enabledLayerCount = 0;
+        ici.ppEnabledLayerNames = nullptr;
     }
 
     const VkResult instanceResult = vkCreateInstance(&ici, nullptr, &m_Impl->instance);
@@ -666,9 +688,13 @@ for (auto vkImg : m_Impl->swapChainImages) {
             m_Impl->swapChain = VK_NULL_HANDLE;
             return nullptr;
         }
-        tex->SetVkImageView(view);
-        tex->SetVkDevice(m_Impl->device);   // view 由纹理自己析构销毁
-        sc->AddBackBuffer(tex);
+tex->SetVkImageView(view);
+          tex->SetVkDevice(m_Impl->device);   // view 由纹理自己析构销毁
+          // 标记为可呈现图像：EndRendering 据此在渲染结束后把它转成
+          // PRESENT_SRC_KHR，否则每次 vkQueuePresentKHR 都违反
+          // VUID-VkPresentInfoKHR-pImageIndices-01430。
+          tex->SetIsSwapChainImage(true);
+          sc->AddBackBuffer(tex);
     }
     return sc;
 }
