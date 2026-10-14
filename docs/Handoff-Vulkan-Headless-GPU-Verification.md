@@ -411,6 +411,40 @@ VulkanCommandList 以 dynamic rendering 实现。离屏目标自带的同款逻�
 acquire → 经命令列表渲染作用域录制清除 → 提交并呈现。**尚不绘制任何几何**，
 目的是先把 acquire / scope / submit / present 这四步接通，使后续失败可归因。
 
+### 2.3d X11 / Wayland surface：Xlib 路径**已实跑验证**（`3aee96f`）
+
+此前只验证到「Linux 15/15 编译通过」。在 WSL 的 WSLg 显示（`DISPLAY=:0`）上实际跑通了
+Xlib 路径：
+
+```
+[Vulkan] surface created via VK_KHR_xlib_surface
+[X11] swapchain created: 3 image(s)
+[X11] acquired image index 0
+[X11] back buffer 640x640, image view present
+[X11] frame recorded and submitted
+[X11] presented
+```
+
+验证方式是 `dlopen("libX11.so.6")` + 函数指针，**不包含任何 X11 头文件** —— WSL 里没有
+`X11/Xlib.h`。这既符合本工程的设计意图（Vulkan 后端不强制依赖 X11 / xcb / wayland-client
+开发包），也逼出了一个必须修复的缺陷。
+
+**发现并修复的两个问题：**
+
+1. **平台推断有类型混淆风险** —— 原先按「扩展是否可用」猜平台，而句柄类型取决于调用方
+   手里是什么。GLFW 在 X11 下同时给出 `Display` 与 xcb 连接，调用方传 Xlib 的 `Display`
+   时，只要 XCB 扩展可用而 Xlib 不可用，就会被 `reinterpret_cast` 成
+   `xcb_connection_t*` —— 转换处不报错，表现为 surface 永远无法呈现。现改为
+   `NativeWindow.platform` 显式指定，`Auto` 仅保留给确实无偏好的调用方。
+2. **交换链句柄双重释放** —— `~VulkanSwapChain` 与 `VulkanDevice::Shutdown()` 销毁同一个
+   `VkSwapchainKHR`，X11 实测直接 `free(): double free detected in tcache 2`。
+   句柄由设备创建并存于 `m_Impl->swapChain`，所有权属设备；backbuffer 的 image view
+   仍由各自的 `VulkanTexture` 持有。
+
+**边界**：向 X display 的 root window 呈现会返回 `VK_ERROR_OUT_OF_DATE_KHR`
+（`1000001003`）—— 预期行为，因为 root window 并非可呈现的映射窗口，而本环境没有 GLFW
+可用来建真实窗口。因此 acquire / 录制 / 提交 / 呈现**整条链路确实执行**，但
+「在真实映射窗口上呈现成功」**未验证**。
 ### 2.3c 生产侧接线缺口（`0e76957`、`ab64696`）
 
 - `CreateRHIDevice(Backend, ...)`：此前 `CreateVulkanDevice()` 在 `engine/src` 内
@@ -492,8 +526,9 @@ lavapipe 上设备初始化成功，`GetDeviceName()` 返回真实名称。
 
 1. **§1.4 的像素验证已完成**（run `38485651755`，lavapipe + validation layer，
    全程零 validation 报错）。下列各项都建立在「这条链路确实能跑」之上，现在成立。
-2. **X11 / Wayland surface 尚未跑通** —— 只验证到 Linux 15/15 编译通过。
-   `SetNativeWindow` + `CreateSwapChain` 需要真实 X11/Wayland 会话。
+2. ~~X11 / Wayland surface~~ **Xlib 路径已实跑验证**（见 §2.3d）。仍未验证的是
+   **在真实映射窗口上呈现成功** —— 本环境无 GLFW，只能向 root window 呈现并得到
+   `VK_ERROR_OUT_OF_DATE_KHR`。Wayland 路径仍仅编译验证。
 3. **让 `RHIDemo` 的 Vulkan 路径真正出画面** —— `RenderVulkanFrame()` 目前只清除
    不绘制（见 §2.3b），需要接上真实几何与材质。
 4. **补 `GraphicsPSODesc` 的顶点输入契约** —— 契约已实现（§1.7），但
