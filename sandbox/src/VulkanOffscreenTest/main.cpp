@@ -25,6 +25,7 @@
 #include "Engine/Core/RHI/IRHICommandList.h"
 #include "Engine/Core/RHI/MemoryTypes.h"
 #include "Engine/Core/RHI/PSODesc.h"
+#include <memory>
 #include "Engine/Core/RHI/RHITypes.h"
 #include "Engine/Core/RHI/VulkanIRHIDevice.h"
 #include "Engine/Core/StringID.h"
@@ -81,7 +82,11 @@ int RunVertexInputPhase(Engine::RHI::VulkanDevice& device) {
     desc.vertexInput.attributes.push_back({ 0u, 0u, RHI::Format::RG32_Float, 0u });
     desc.vertexInput.attributes.push_back({ 1u, 0u, RHI::Format::RG32_Float, 8u });
 
-    auto* pso = device.CreateGraphicsPSO(desc);
+    // 必须持有所有权：CreateGraphicsPSO 返回裸指针，不接管的话 PSO 永远不析构，
+  // 其 VkPipeline / VkPipelineLayout 会一直活到 vkDestroyDevice，触发
+  // VUID-vkDestroyDevice-device-05137。
+  std::unique_ptr<RHI::IRHIPipelineState> psoOwner(device.CreateGraphicsPSO(desc));
+  auto* pso = psoOwner.get();
     if (!pso) {
         std::printf("[VKTRI-VB] FAIL: CreateGraphicsPSO with vertex input returned null\n");
         return 1;
@@ -199,7 +204,8 @@ int main()
     desc.depthStencil.depthTest = false;
     desc.depthStencil.depthWrite = false;
 
-    auto* pso = vkDevice->CreateGraphicsPSO(desc);
+    std::unique_ptr<RHI::IRHIPipelineState> psoOwner(vkDevice->CreateGraphicsPSO(desc));
+  auto* pso = psoOwner.get();
     if (!pso) {
         std::printf("[VKTRI] FAIL: CreateGraphicsPSO returned null\n");
         return 1;
