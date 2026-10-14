@@ -316,17 +316,25 @@ bool InstanceExtensionPresent(VkInstance instance, const char* name) noexcept {
 }
 
 // XCB 优先于 Xlib：GLFW 在 X11 下同时给出两种句柄，XCB 路径不需要额外链接 libX11。
-constexpr const char* kPlatformSurfaceExtensions[] = {
-    VK_KHR_XCB_SURFACE_EXTENSION_NAME,
-    VK_KHR_XLIB_SURFACE_EXTENSION_NAME,
-    VK_KHR_WAYLAND_SURFACE_EXTENSION_NAME,
+// 但「优先」只在 Auto 时生效；调用方手里是哪种句柄只有它自己知道，必须显式指定，
+// 否则会把 Xlib 的 Display* 当成 xcb 连接 reinterpret_cast，类型不匹配且不立即报错。
+struct PlatformEntry {
+    NativeWindowPlatform platform;
+    const char* extension;
+};
+constexpr PlatformEntry kPlatformSurfaceExtensions[] = {
+    { NativeWindowPlatform::Xcb,     VK_KHR_XCB_SURFACE_EXTENSION_NAME     },
+    { NativeWindowPlatform::Xlib,    VK_KHR_XLIB_SURFACE_EXTENSION_NAME    },
+    { NativeWindowPlatform::Wayland, VK_KHR_WAYLAND_SURFACE_EXTENSION_NAME },
 };
 
 } // namespace
 
-const char* GetAvailablePlatformSurfaceExtension(VkInstance instance) noexcept {
-    for (const char* name : kPlatformSurfaceExtensions) {
-        if (InstanceExtensionPresent(instance, name)) return name;
+const char* GetAvailablePlatformSurfaceExtension(VkInstance instance,
+                                                NativeWindowPlatform requested) noexcept {
+    for (const auto& entry : kPlatformSurfaceExtensions) {
+        if (requested != NativeWindowPlatform::Auto && requested != entry.platform) continue;
+        if (InstanceExtensionPresent(instance, entry.extension)) return entry.extension;
     }
     return nullptr;
 }
@@ -335,26 +343,28 @@ bool CreatePlatformSurface(VkInstance instance, const NativeWindow& win,
                            VkSurfaceKHR* outSurface) noexcept {
     if (!outSurface) return false;
     *outSurface = VK_NULL_HANDLE;
-    if (!win.window) return false;
+    if (!win.window || !win.display) return false;
 
-    const char* ext = GetAvailablePlatformSurfaceExtension(instance);
+    // 用与实例创建时相同的规则解析平台，保证两边一致：实例没启用某扩展却去创建
+    // 对应的 surface，行为未定义。
+    const char* ext = GetAvailablePlatformSurfaceExtension(instance, win.platform);
     if (!ext) {
-        std::fprintf(stderr, "[Vulkan] no XCB/Xlib/Wayland surface extension available\n");
+        std::fprintf(stderr, "[Vulkan] no usable surface extension for the requested platform\n");
         return false;
     }
 
     VkResult result = VK_ERROR_INITIALIZATION_FAILED;
-    if (std::strcmp(ext, VK_KHR_XCB_SURFACE_EXTENSION_NAME) == 0 && win.display) {
-        VkXcbSurfaceCreateInfoKHR sci{VK_STRUCTURE_TYPE_XCB_SURFACE_CREATE_INFO_KHR};
-        sci.connection = reinterpret_cast<xcb_connection_t*>(win.display);
-        sci.window     = reinterpret_cast<::Window>(win.window);
-        result = vkCreateXcbSurfaceKHR(instance, &sci, nullptr, outSurface);
-    } else if (std::strcmp(ext, VK_KHR_XLIB_SURFACE_EXTENSION_NAME) == 0 && win.display) {
+    if (std::strcmp(ext, VK_KHR_XLIB_SURFACE_EXTENSION_NAME) == 0) {
         VkXlibSurfaceCreateInfoKHR sci{VK_STRUCTURE_TYPE_XLIB_SURFACE_CREATE_INFO_KHR};
         sci.dpy    = reinterpret_cast<Display*>(win.display);
         sci.window = reinterpret_cast<::Window>(win.window);
         result = vkCreateXlibSurfaceKHR(instance, &sci, nullptr, outSurface);
-    } else if (std::strcmp(ext, VK_KHR_WAYLAND_SURFACE_EXTENSION_NAME) == 0 && win.display) {
+    } else if (std::strcmp(ext, VK_KHR_XCB_SURFACE_EXTENSION_NAME) == 0) {
+        VkXcbSurfaceCreateInfoKHR sci{VK_STRUCTURE_TYPE_XCB_SURFACE_CREATE_INFO_KHR};
+        sci.connection = reinterpret_cast<xcb_connection_t*>(win.display);
+        sci.window     = reinterpret_cast<::Window>(win.window);
+        result = vkCreateXcbSurfaceKHR(instance, &sci, nullptr, outSurface);
+    } else if (std::strcmp(ext, VK_KHR_WAYLAND_SURFACE_EXTENSION_NAME) == 0) {
         VkWaylandSurfaceCreateInfoKHR sci{VK_STRUCTURE_TYPE_WAYLAND_SURFACE_CREATE_INFO_KHR};
         sci.display = reinterpret_cast<wl_display*>(win.display);
         sci.surface = reinterpret_cast<wl_surface*>(win.window);

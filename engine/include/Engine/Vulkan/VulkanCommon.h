@@ -64,19 +64,37 @@ std::vector<const char*> GetRequiredInstanceExtensions(bool enableValidation);
      *
      * 三个字段都为空时按无窗口（headless）处理，不创建 surface。
      */
+    /**
+     * 原生窗口平台。**必须显式指定**，不能只靠「扩展是否可用」推断：
+     * Xlib 的 `Display*` 与 xcb 的 `xcb_connection_t*` 都是不透明指针，按可用性
+     * 猜测会把 Xlib 的 Display* 当成 xcb 连接去 reinterpret_cast，类型不匹配且
+     * 不会立刻报错，而是产生无法呈现的 surface。
+     */
+    enum class NativeWindowPlatform : uint8 {
+        Auto   = 0,   ///< 按 XCB → Xlib → Wayland 顺序取第一个可用的
+        Xlib   = 1,   ///< display = Display*，window = Window XID
+        Xcb    = 2,   ///< display = xcb_connection_t*，window = Window XID
+        Wayland= 3,   ///< display = wl_display*，window = wl_surface*
+    };
+
     struct NativeWindow {
         void* display = nullptr;
         void* window  = nullptr;
+        NativeWindowPlatform platform = NativeWindowPlatform::Auto;
     };
 
 #if !defined(_WIN32)
     /**
-     * 返回本机可用的平台 surface 扩展名（按优先级 XCB > Xlib > Wayland），
-     * 一个都不可用时返回 nullptr。
+     * 返回本机可用的平台 surface 扩展名；一个都不可用时返回 nullptr。
+     *
+     * 传入 Auto 时按 XCB → Xlib → Wayland 顺序取第一个可用的；传入具体平台时
+     * 只返回该平台的扩展，缺失即返回 nullptr。**实例创建与 surface 创建必须
+     * 得到同一个结果**，否则会出现「实例未启用该扩展却去创建 surface」。
      *
      * 必须先创建 VkInstance 才能查询 —— 因此它接收 instance。
      */
-    const char* GetAvailablePlatformSurfaceExtension(VkInstance instance) noexcept;
+    const char* GetAvailablePlatformSurfaceExtension(VkInstance instance,
+                                                    NativeWindowPlatform requested) noexcept;
 
     /**
      * 按 NativeWindow 的实际内容选择平台并创建 VkSurfaceKHR。
