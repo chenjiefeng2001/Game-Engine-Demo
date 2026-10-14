@@ -465,6 +465,39 @@ pImageIndices-01430 出现次数: 0
 **回归**：15/15 Vulkan 编译单元通过；离屏三角形回读仍为 `64 128 191 255`；
 5 个改动文件通过 MSVC 语法检查。
 
+### 2.3f validation 真正启用后，CI 又暴露的三个缺陷（`bfc5aed`）
+
+关键在于**层此前是被环境强制加载的，而引擎以为它没开**（见 2.3e 第 3 点）。修正后引擎
+自己启用层，CI 从「零错误」变成报出 3 条 —— 那 3 条是真实缺陷，只是此前一直没被检查。
+
+**1. 离屏目标重复了同一个布局错误（`VulkanOffscreen.cpp`）**
+
+`VulkanOffscreenTarget` 把 `VK_IMAGE_LAYOUT_ATTACHMENT_OPTIMAL` 声明为动态渲染附件
+布局，随后又从同一布局做转换。`vkCmdBeginRendering` 不接受该值；而屏障一旦写了它就触发
+`VUID-VkImageMemoryBarrier-synchronization2-07793`（该布局需要 `synchronization2`
+特性），**屏障被丢弃**，图像留在 `UNDEFINED`，于是 `vkCmdBeginRendering` 拿到错误布局。
+
+这与命令列表里已修的是同一个错误，在离屏路径上独立犯了一次。
+
+**2. 只声明布局、从不转换**
+
+`BeginRendering` 声明 `COLOR_ATTACHMENT_OPTIMAL` 却从不转换进去。图像创建后是
+`UNDEFINED`，validation 直接报 `expects COLOR_ATTACHMENT_OPTIMAL / current UNDEFINED`。
+现已补上转换并追踪布局（`mutable m_ColorLayout`），避免重复帧发出 `oldLayout` 失配的屏障。
+
+**3. 每个 PSO 泄漏一个 `VkPipelineLayout`**
+
+`VulkanPipelineState` 只销毁 pipeline、不销毁 layout，`vkDestroyDevice` 时报
+`VUID-vkDestroyDevice-device-05137`。
+
+**当前状态**：离屏三角形在 Khronos validation layer 下**零发现**，回读仍为
+`64 128 191 255`；15/15 编译通过；两个改动文件通过 MSVC 语法检查。窗口路径与前一致
+（每图像一次的首次使用消息仍在，present 违规仍为 0）。
+
+**顺带发现的 API 不一致**（未改）：`CreateCommandList` 返回 `unique_ptr`，而
+`CreateGraphicsPSO` 返回**裸指针**，所有权无处安放 —— 测试代码最初就是这样漏掉了 PSO 的
+销毁。
+
 ### 2.3c 生产侧接线缺口（`0e76957`、`ab64696`）
 
 - `CreateRHIDevice(Backend, ...)`：此前 `CreateVulkanDevice()` 在 `engine/src` 内
