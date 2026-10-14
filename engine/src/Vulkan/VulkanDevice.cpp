@@ -213,7 +213,7 @@ bool VulkanDevice::Initialize(void* windowHandle, uint32_t width, uint32_t heigh
 #else
         // XCB / Xlib / Wayland 三者按可用性择一。必须在 vkCreateInstance 之前决定，
         // 此刻还没有 instance 可查询，因此退而查询**全局**实例扩展列表。
-        if (const char* platformExt = GetAvailablePlatformSurfaceExtension(VK_NULL_HANDLE)) {
+        if (const char* platformExt = GetAvailablePlatformSurfaceExtension(VK_NULL_HANDLE, m_Impl->nativeWindow.platform)) {
             instanceExts.push_back(platformExt);
         }
 #endif
@@ -358,9 +358,8 @@ bool VulkanDevice::Initialize(void* windowHandle, uint32_t width, uint32_t heigh
         // Linux/macOS：windowHandle 单独一个指针不足以建 surface，需要 Display 或
         // wl_display。这些句柄必须由调用方经 SetNativeWindow 提供 ——
         // RHIWindow 在非 Windows 上把 GetHWND() 显式置空，因此这里常常拿不到。
-        NativeWindow native;
+        NativeWindow native = m_Impl->nativeWindow;
         native.window = windowHandle;
-        native.display = m_Impl->nativeWindow.display;
         if (native.display) {
             if (!CreatePlatformSurface(m_Impl->instance, native, &m_Impl->surface)) {
                 std::fprintf(stderr,

@@ -41,12 +41,12 @@ namespace RHI {
 VulkanSwapChain::VulkanSwapChain() = default;
 
 VulkanSwapChain::~VulkanSwapChain() {
-    if (!m_Device) return;
-    VkDevice dev = m_Device->GetVkDevice();
-    if (dev == VK_NULL_HANDLE) return;
-    // backbuffer 的 image view 由各自的 VulkanTexture 析构销毁（它们是 shared_ptr，
-    // 成员 m_BackBuffers 释放时触发）。这里**不能**再销毁一次，否则双重释放。
-    if (m_SwapChain != VK_NULL_HANDLE) vkDestroySwapchainKHR(dev, m_SwapChain, nullptr);
+    // 交换链**句柄**的所有权在 VulkanDevice：它由 VulkanDevice::CreateSwapChain 创建
+    // 并存进 m_Impl->swapChain，Shutdown() 会销毁它。这里再销毁一次就是双重释放，
+    // 在 X11 实测中表现为 free(): double free detected。
+    //
+    // backbuffer 的 image view 归各自的 VulkanTexture 所有（shared_ptr，成员释放时
+    // 触发），本类无需处理。
 }
 
 void VulkanSwapChain::Present() {
