@@ -119,8 +119,11 @@ int RunVertexInputPhase(Engine::RHI::VulkanDevice& device) {
     if (cmd == VK_NULL_HANDLE) { std::printf("[VKTRI-VB] FAIL: BeginOneShot\n"); return 1; }
     target->BeginRendering(cmd, clear);
     vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, vkPso->GetVkPipeline());
-    VkBuffer handle = vkBuf->GetVkBuffer();
-    vkCmdBindVertexBuffers(cmd, 0, 1, &handle, nullptr);
+VkBuffer handle = vkBuf->GetVkBuffer();
+      // 偏移量必须显式传 0：pOffsets 传 nullptr 会被 validation 判为
+      // VUID-vkCmdBindVertexBuffers-pOffsets-parameter。
+      VkDeviceSize vertexOffset = 0;
+      vkCmdBindVertexBuffers(cmd, 0, 1, &handle, &vertexOffset);
     vkCmdDraw(cmd, 3, 1, 0, 0);
     target->EndRendering(cmd);
     if (!target->EndSubmitAndWait(cmd)) { std::printf("[VKTRI-VB] FAIL: EndSubmitAndWait\n"); return 1; }
@@ -296,21 +299,13 @@ int main()
     if (!drew) return 1;
 
     // ── 第二阶段：顶点输入契约 ──────────────────────────────────────
-    // 第一阶段用 gl_VertexIndex 生成三角形，绕开了顶点缓冲；它通过只证明
-    // 光栅化链路可用，**不能**证明顶点输入契约工作。
-    //
-    // 默认**不**运行：lavapipe（Mesa 软件 Vulkan）在绑定顶点缓冲并绘制时会直接
-    // 段错误。该行为与引擎无关——一个不含任何引擎代码的独立 Vulkan 程序在同一
-    // 环境同样崩溃，绑定与不绑定顶点缓冲是唯一的分界点。由于段错误会带走整个
-    // 进程，第一阶段已验证的结果也一并丢失，因此改为按需开启。
-    // 需要验证时：VKTRI_VERTEX_INPUT=1
-    const char* vi = std::getenv("VKTRI_VERTEX_INPUT");
-    if (!vi || std::strcmp(vi, "1") != 0) {
-        std::printf("[VKTRI-VB] SKIPPED: set VKTRI_VERTEX_INPUT=1 to run. "
-                    "Known lavapipe fault: binding a vertex buffer and drawing segfaults "
-                    "the software rasteriser, independent of this engine.\n");
-        return 0;
-    }
-    return RunVertexInputPhase(*vkDevice);
+// 第一阶段用 gl_VertexIndex 生成三角形，绕开了顶点缓冲；它通过只证明
+      // 光栅化链路可用，**不能**证明顶点输入契约工作。因此本阶段必须运行。
+      // 顶点输入阶段曾经按 VKTRI_VERTEX_INPUT 门控，理由是「lavapipe 绑定顶点缓冲即段错误」。
+      // 那个结论是错的：真正的两个原因是我们的 bug —— FormatToVk() 没有
+      // Format::RG32_Float 分支（顶点格式变成 VK_FORMAT_UNDEFINED），以及本测试
+      // 给 vkCmdBindVertexBuffers 传了 nullptr 偏移。两者修复后阶段稳定通过，
+      // 因此取消门控，让它成为常规验证的一部分。
+      return RunVertexInputPhase(*vkDevice);
 #endif // ENGINE_HAS_VULKAN
 }

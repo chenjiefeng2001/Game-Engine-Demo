@@ -118,6 +118,15 @@ IRHIPipelineState* CreateGraphicsPipeline(
                              a.location);
                 continue;
             }
+            // FormatToVk 对未映射的枚举返回 VK_FORMAT_UNDEFINED，而那是**非法值**
+            // 而非「跳过」：传下去会建出非法管线，绘制时表现为驱动崩溃或挂起，
+            // 排查成本极高。此处必须显式拦截。
+            if (FormatToVk(a.format) == VK_FORMAT_UNDEFINED) {
+                std::fprintf(stderr,
+                             "[Vulkan] vertex attribute location=%u has unmapped format %u; dropped\n",
+                             a.location, static_cast<unsigned>(a.format));
+                continue;
+            }
             VkVertexInputAttributeDescription ad{};
             ad.location = a.location;
             ad.binding  = a.binding;
