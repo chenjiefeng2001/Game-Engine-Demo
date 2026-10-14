@@ -6,6 +6,53 @@
 
 ---
 
+### 2.3h 「lavapipe 已知缺陷」是误判：顶点输入阶段现已常开通过
+
+此前文档与测试都记载：lavapipe（Mesa 软件 Vulkan）在「绑定顶点缓冲并绘制」时段错误，
+因此顶点输入阶段用 `VKTRI_VERTEX_INPUT=1` 门控。**这个结论是错的。** 装上 Khronos
+validation layer 后重跑，该段错误的真实原因有两个，都是我们的 bug：
+
+**1. `FormatToVk()` 漏了 `Format::RG32_Float`**（`VulkanCommon.cpp`）
+
+```
+VUID-VkVertexInputAttributeDescription-format-00623:
+pVertexAttributeDescriptions->format (VK_FORMAT_UNDEFINED) is not a supported vertex
+buffer format
+```
+
+顶点位置/颜色最常用的 `RG32_Float` 没有对应 `case`，落到 `default:` 返回
+`VK_FORMAT_UNDEFINED`。注意 **0 是「非法值」而不是「未知」**，而
+`VulkanPipelineState` 的守卫只拦 `Format::Unknown`，所以一个**合法但未映射**的枚举
+直接被放行，建出非法管线。
+
+已补齐 `RG8_SNorm/UInt/SInt`、`RG16_*`、`RG32_*`、`RGBA8_SNorm/UInt/SInt`；并新增
+显式拦截：`FormatToVk(...) == VK_FORMAT_UNDEFINED` 的属性一律丢弃并报错，
+不再让非法值进入 `vkCreateGraphicsPipelines`。
+
+**2. 测试自己给 `vkCmdBindVertexBuffers` 传了 `nullptr` 偏移**（`main.cpp`）
+
+```
+VUID-vkCmdBindVertexBuffers-pOffsets-parameter: pOffsets is NULL
+```
+
+**门控已取消。** 现在两个阶段默认全部运行，在 Khronos validation layer 下零发现：
+
+```
+[VKTRI] centre pixel = 64 128 191 255
+[VKTRI-VB] pipeline created with 1 binding(s), 2 attribute(s)
+[VKTRI-VB] centre = 0 255 0 255 (expect non-black)
+[VKTRI-VB] corner = 0 0 0 255 (expect 0 0 0 255, clear only)
+[VKTRI-VB] PASS: geometry rasterised from an engine vertex buffer; the vertex input contract works
+```
+
+**方法论教训（与 2.3g 同类）**：
+
+- 「独立程序也能复现」**不等于**「与引擎无关」。当时的对照实验必然共享了同一个错误
+  输入（`VK_FORMAT_UNDEFINED` / 空偏移），所以它复现的是同一个 bug，而不是驱动缺陷。
+- **validation layer 应当最先装上**。它把「段错误」这个没有信息量的症状，换成了两条
+  指名道姓的 VUID。整个 Vulkan 排查中，它发现的缺陷比其它所有手段加起来都多。
+- 崩溃点（`vkCmdDraw`）与缺陷位置（管线创建、测试调用）可以相隔很远。
+
 ## 0. 像素已验证通过 —— 真正的根因是**正面绕序**
 
 **接手前请先读这一节。**
@@ -292,6 +339,7 @@ pipeline created with 1 binding(s), 2 attribute(s)
 整个进程，连 §1.4 的已验证结果一并丢失。
 
 **结论**：契约已实现且可编译；「从顶点缓冲光栅化」在此软件驱动上**未验证**。
+（**该结论已被 §2.3h 推翻**：不是驱动缺陷，是我方 bug，已修复并常开验证通过。）
 
 ### 1.8 只有真正跑 CI 才会暴露的四个缺陷
 
@@ -618,9 +666,8 @@ lavapipe 上设备初始化成功，`GetDeviceName()` 返回真实名称。
    Wayland 路径仍仅编译验证。
 3. **让 `RHIDemo` 的 Vulkan 路径真正出画面** —— `RenderVulkanFrame()` 目前只清除
    不绘制（见 §2.3b），需要接上真实几何与材质。
-4. **补 `GraphicsPSODesc` 的顶点输入契约** —— 契约已实现（§1.7），但
-   **顶点缓冲光栅化在 lavapipe 上未验证**。若换用真实 GPU 或能正常处理顶点取数的
-   驱动，设置 `VKTRI_VERTEX_INPUT=1` 即可验证。
+4. ~~补 `GraphicsPSODesc` 的顶点输入契约~~ **已完成并常开验证**（§1.7 与 §2.3h）。
+       此前认为 lavapipe 无法光栅化顶点缓冲，那是误判。
 5. **删除 `VulkanOffscreenTarget` 自带的渲染作用域逻辑**，改走命令列表
    （新契约见 §2.3，两条路径目前并存）。
 6. **补 `ShaderCompileRule` 的真实产出**：它目前只写出 `.spv` 文件名却不生成该文件

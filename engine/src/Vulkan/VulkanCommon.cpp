@@ -64,6 +64,23 @@ VkFormat FormatToVk(RHI::Format fmt) {
         case Format::R32_UInt:     return VK_FORMAT_R32_UINT;
         case Format::R32_SInt:     return VK_FORMAT_R32_SINT;
         case Format::R32_Float:    return VK_FORMAT_R32_SFLOAT;
+case Format::RG16_UNorm:   return VK_FORMAT_R16G16_UNORM;
+case Format::RG16_SNorm:   return VK_FORMAT_R16G16_SNORM;
+case Format::RG16_UInt:    return VK_FORMAT_R16G16_UINT;
+case Format::RG16_SInt:    return VK_FORMAT_R16G16_SINT;
+case Format::RG16_Float:   return VK_FORMAT_R16G16_SFLOAT;
+case Format::RG8_SNorm:    return VK_FORMAT_R8G8_SNORM;
+case Format::RG8_UInt:     return VK_FORMAT_R8G8_UINT;
+case Format::RG8_SInt:     return VK_FORMAT_R8G8_SINT;
+case Format::RG32_UInt:    return VK_FORMAT_R32G32_UINT;
+case Format::RG32_SInt:    return VK_FORMAT_R32G32_SINT;
+          // RG32_Float 是顶点位置/颜色最常用的格式，此前漏掉后落到 default，
+          // 返回 VK_FORMAT_UNDEFINED(0) —— 而 0 是「非法值」而非「未知格式」，
+          // 于是 CreateGraphicsPSO 建出了非法管线，绘制时驱动行为不可预期。
+case Format::RG32_Float:   return VK_FORMAT_R32G32_SFLOAT;
+case Format::RGBA8_SNorm:  return VK_FORMAT_R8G8B8A8_SNORM;
+case Format::RGBA8_UInt:   return VK_FORMAT_R8G8B8A8_UINT;
+case Format::RGBA8_SInt:   return VK_FORMAT_R8G8B8A8_SINT;
         case Format::RGBA8_UNorm:  return VK_FORMAT_R8G8B8A8_UNORM;
         case Format::RGBA8_sRGB:   return VK_FORMAT_R8G8B8A8_SRGB;
         case Format::BGRA8_UNorm:  return VK_FORMAT_B8G8R8A8_UNORM;
