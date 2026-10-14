@@ -20,8 +20,11 @@ struct VulkanPipelineState::Impl {
     bool             isCompute{false};
 
     ~Impl() {
-        if (pipeline != VK_NULL_HANDLE && device != VK_NULL_HANDLE) {
-            vkDestroyPipeline(device, pipeline, nullptr);
+        if (device != VK_NULL_HANDLE) {
+            if (pipeline != VK_NULL_HANDLE) vkDestroyPipeline(device, pipeline, nullptr);
+            // 布局此前无人销毁：每个 PSO 泄漏一个 VkPipelineLayout，
+            // vkDestroyDevice 时报 VUID-vkDestroyDevice-device-05137。
+            if (layout != VK_NULL_HANDLE) vkDestroyPipelineLayout(device, layout, nullptr);
         }
     }
 };

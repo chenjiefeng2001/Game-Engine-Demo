@@ -149,7 +149,7 @@ void VulkanOffscreenTarget::BeginRendering(VkCommandBuffer cmd, const float clea
     VkRenderingAttachmentInfo att{};
     att.sType = VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO;
     att.imageView = m_ColorView;
-    att.imageLayout = VK_IMAGE_LAYOUT_ATTACHMENT_OPTIMAL;
+    att.imageLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
     att.loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
     att.storeOp = VK_ATTACHMENT_STORE_OP_STORE;
     // 必须把 clearValue 交给附件描述：loadOp=CLEAR 读的是 att.clearValue，
@@ -163,6 +163,27 @@ void VulkanOffscreenTarget::BeginRendering(VkCommandBuffer cmd, const float clea
     ri.layerCount = 1;
     ri.colorAttachmentCount = 1;
     ri.pColorAttachments = &att;
+
+    // 声明布局不等于转换布局：图像创建后处于 UNDEFINED，直接 vkCmdBeginRendering
+    // 会让 validation 报 expects COLOR_ATTACHMENT_OPTIMAL / current UNDEFINED。
+    if (m_ColorLayout != VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL) {
+        VkImageMemoryBarrier b{};
+        b.sType            = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
+        b.image            = m_ColorImage;
+        b.oldLayout        = m_ColorLayout;
+        b.newLayout        = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
+        b.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+        b.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+        b.subresourceRange = { VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1 };
+        b.srcAccessMask    = m_ColorLayout == VK_IMAGE_LAYOUT_UNDEFINED
+                                 ? 0 : VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
+        b.dstAccessMask    = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
+        vkCmdPipelineBarrier(cmd,
+                             VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT,
+                             VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT,
+                             0, 0, nullptr, 0, nullptr, 1, &b);
+        m_ColorLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
+    }
 
     vkCmdBeginRendering(cmd, &ri);
 
@@ -266,10 +287,14 @@ bool VulkanOffscreenTarget::Readback(std::vector<uint8_t>& out)
         return false;
     }
 
-    // 渲染作用域结束后 image 处于 ATTACHMENT_OPTIMAL，转成 TRANSFER_SRC 才能拷贝。
-    VkImageMemoryBarrier barrier{};
-    barrier.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
-    barrier.oldLayout = VK_IMAGE_LAYOUT_ATTACHMENT_OPTIMAL;
+// 渲染作用域结束后 image 处于 COLOR_ATTACHMENT_OPTIMAL，转成 TRANSFER_SRC 才能拷贝。
+      // 注意 oldLayout 必须与上面声明的 att.imageLayout 一致：用 ATTACHMENT_OPTIMAL
+      // 会触发 VUID-VkImageMemoryBarrier-synchronization2-07793（该布局需要
+      // synchronization2 特性），barrier 被丢弃后图像仍是 UNDEFINED，
+      // 于是 vkCmdBeginRendering 拿到 UNDEFINED 布局。
+      VkImageMemoryBarrier barrier{};
+      barrier.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
+      barrier.oldLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
     barrier.newLayout = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;
     barrier.srcAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
     barrier.dstAccessMask = VK_ACCESS_TRANSFER_READ_BIT;

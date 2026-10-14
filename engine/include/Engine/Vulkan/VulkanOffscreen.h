@@ -85,6 +85,9 @@ private:
     VkImage        m_ColorImage  = VK_NULL_HANDLE;
     VkDeviceMemory m_ColorMemory = VK_NULL_HANDLE;
     VkImageView    m_ColorView   = VK_NULL_HANDLE;
+    // BeginRendering 是 const 的，但转换布局必须记账，否则每帧都会发出
+    // oldLayout 与实际不符的屏障。mutable 在此正当。
+    mutable VkImageLayout m_ColorLayout = VK_IMAGE_LAYOUT_UNDEFINED;
 
     VkBuffer       m_ReadbackBuffer = VK_NULL_HANDLE;
     VkDeviceMemory m_ReadbackMemory = VK_NULL_HANDLE;
