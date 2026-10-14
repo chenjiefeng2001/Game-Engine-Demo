@@ -130,6 +130,7 @@ bool RHIDemoApp::Initialize() {
     }
 }
 
+#if defined(ENGINE_HAS_VULKAN)
 void RHIDemoApp::RenderVulkanFrame() {
     auto* vkDev = dynamic_cast<RHI::VulkanDevice*>(m_Device.get());
     if (!vkDev || !m_RHIWindow) return;
@@ -178,6 +179,7 @@ void RHIDemoApp::RenderVulkanFrame() {
 
     sc->Present();
 }
+#endif // ENGINE_HAS_VULKAN
 
 void RHIDemoApp::Run() {
     auto lastTime = std::chrono::high_resolution_clock::now();
@@ -200,7 +202,9 @@ void RHIDemoApp::Run() {
             if (glfwGetKey(m_RHIWindow->GetGLFWHandle(), GLFW_KEY_ESCAPE) == GLFW_PRESS)
                 glfwSetWindowShouldClose(m_RHIWindow->GetGLFWHandle(), GLFW_TRUE);
             if (m_Backend == RHI::RHIBackend::Vulkan) {
+#if defined(ENGINE_HAS_VULKAN)
                 RenderVulkanFrame();
+#endif
             } else {
                 std::this_thread::sleep_for(std::chrono::milliseconds(16));
             }
