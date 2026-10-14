@@ -14,7 +14,8 @@ public:
     ~RHIDemoApp();
     bool Initialize();
     void Run();
-    /** Vulkan 一帧：acquire → 录制清除 → 提交并呈现。 */
+    /** Vulkan 一帧：acquire → 录制清除 → 提交并呈现。
+     *  仅在构建含 Vulkan 后端时存在；声明保留无妨，定义受 ENGINE_HAS_VULKAN 守卫。 */
     void RenderVulkanFrame();
 
 private:
