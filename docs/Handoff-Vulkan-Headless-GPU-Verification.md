@@ -221,23 +221,26 @@ engine/src/Vulkan/VulkanDevice.cpp:19:10: fatal error: windows.h: No such file o
 
 ---
 
-### 1.4 引擎后端首次运行：管线创建已打通 <span class="material-symbols-outlined">check_circle</span> 已验证
-
-run `38328385429`（gcc 与 clang 两个 job 都跑到这一步）：
+### 1.4 引擎后端像素验证：**已通过**（run `38485651755`）
 
 ```
-[VKTRI] shaders registered (registry holds 2)      ← ShaderRegistry 首次运行
-[VKTRI] device created: llvmpipe (LLVM 20.1.2)     ← 设备首次在 lavapipe 初始化成功
-[VKTRI] graphics pipeline created                  ← CreateGraphicsPSO 首次返回非 null
-[VKTRI] centre pixel = 0 0 0 0                     ← 像素仍失败，见 §0
+[VKTRI] shaders registered (registry holds 2)
+[VKTRI] device created: llvmpipe (LLVM 20.1.2, 256 bits)
+[VKTRI] graphics pipeline created
+[VKTRI] centre pixel = 64 128 191 255 (pitch=256)      <- 通过
+[VKTRI] pixels with any non-zero channel = 4096 / 4096
+[VKTRI] PASS: fragment shader output reached the readback
 ```
 
-这条链路上此前**从未运行过**的环节，现在全部跑通：shaderc 编译（诊断 job 里一直
-只编到 stub 分支）、注册表解析、管线创建、离屏目标、回读。
+这是该后端**首个真实的像素级运行证据**。validation layer 同时启用
+（`validation layer manifest present`，CI 安装了 `vulkan-validationlayers`），
+全程**无任何 validation 报错**。
 
-顺带修正：主构建 job 此前**不安装** `libvulkan-dev`，因此 Vulkan 后端在主构建里
-一直是关闭的，`ShaderRegistry` 的编译路径从未被编译过。现在装上了。
+此前的历史观测（run `38328385429`）是 `centre pixel = 0 0 0 0`，根因见 §0。
 
+shaderc 编译、注册表解析、管线创建、离屏目标、回读这五个环节在此之前从未运行过。
+顺带修正：主构建 job 此前**不安装** `libvulkan-dev`，Vulkan 后端在主构建里一直是
+关闭的，`ShaderRegistry` 的编译路径从未被编译过。
 ### 1.5 Validation layer：已接线（env 门控）<span class="material-symbols-outlined">check_circle</span> 已验证
 
 此前 `VulkanDeviceInternal.h` 里就有 `debugMessenger` / `enableValidation` 字段，
@@ -263,6 +266,56 @@ run `38328385429`（gcc 与 clang 两个 job 都跑到这一步）：
 
 **边界（重要）**：layer 抓不到「忘记设置动态视口」—— 未设置动态状态是合法 API
 调用，不会报错。它的价值在于能一次性排除回读路径上的同步类根因。
+
+### 1.7 顶点输入契约：已实现，**光栅化未验证**
+
+`GraphicsPSODesc` 此前无法描述顶点输入，带顶点缓冲的网格因此无法绘制。契约已补齐
+（`VertexInputDesc` / `VertexBufferBinding` / `VertexInputAttribute`，并参与 `GetHash` ——
+否则顶点布局不同的两个描述符会命中同一条 PSOCache 记录，拿到顶点绑定错误的管线）。
+CI 确认契约真正到达 Vulkan：
+
+```
+pipeline created with 1 binding(s), 2 attribute(s)
+```
+
+但**绘制阶段在 lavapipe 上段错误**（exit 139），且**与本引擎无关**：
+
+| 场景 | 结果 |
+|---|---|
+| 同一二进制，不绑定顶点缓冲 | 正常跑完（无几何，符合预期） |
+| 同一二进制，绑定顶点缓冲 | libvulkan_lvp.so 段错误 |
+| 完全不含引擎代码的独立 Vulkan 程序 | 同样段错误 |
+
+判别依据：着色器仍声明 2 个输入，唯一分界点就是绑不绑顶点缓冲。
+
+该测试已改为 `VKTRI_VERTEX_INPUT=1` 门控，默认跳过并打印原因 —— 否则段错误会带走
+整个进程，连 §1.4 的已验证结果一并丢失。
+
+**结论**：契约已实现且可编译；「从顶点缓冲光栅化」在此软件驱动上**未验证**。
+
+### 1.8 只有真正跑 CI 才会暴露的四个缺陷
+
+这些全部由本轮改动引入或暴露，且都**不在**本地编译检查的覆盖范围内：
+
+1. **`IRHITexture` 未限定命名空间** —— `RHIDemoApp` 位于 `namespace Engine` 而非
+   `Engine::RHI`。该文件从未被编译过（GLFW 未 vendored，`vulkan-backend-compile`
+   只编引擎源），Ubuntu 构建第一次编到它就报错。
+2. **`RunVertexInputPhase` 同样未限定** —— 位于全局作用域的匿名 `namespace` 内。
+   我的本地检查报了**假阳性**：shell 管道以 `head` 收尾，被检查的退出码属于 `head`
+   而非编译器。此后所有检查改为不经管道。
+3. **`VertexAttribute` 与既有类型重名** —— `Engine::VertexAttribute` 已存在于
+   `RenderResources/VertexArray.h`；同时导入两个命名空间的 TU 出现二义性，
+   `tests/test_renderer` 编译失败。已重命名为 `VertexInputAttribute`。
+4. **validation layer 缺少 `VK_EXT_validation_features` 扩展** ——
+   `VkValidationFeaturesEXT` 挂在 `pNext` 上，必须同时启用该实例扩展；layer 存在
+   也救不了。CI 表现为「validation layer enabled」紧跟「Failed to create instance」、
+   三角形 exit 134。同时把 `vkCreateInstance` 的固定失败文案改为打印 `VkResult` 与
+   layer/扩展数量 —— 正是这句无信息的文案让排查多花了一轮 CI。
+
+附带发现并修复：`MemoryTypes.h` 缺 `<type_traits>`、`Log.cpp` 缺 `<iostream>`
+（二者都只因被其它头间接引入才编过，单独包含即失败）；`VulkanOffscreen.cpp` 的
+`Failed()` 无条件打印失败且恒返回 `false`，导致成功时误报、真实失败时不返回
+`nullptr` 而带着空句柄继续执行。
 
 ## 2. 尚未完成（运行时空洞，编译期暴露不出）
 
@@ -409,25 +462,23 @@ lavapipe 上设备初始化成功，`GetDeviceName()` 返回真实名称。
 
 ## 4. 建议的接手路径
 
-1. **把 WSL 上已完成的验证接进 CI。** 像素断言已在真实 Linux + lavapipe 通过
-   （`7017d17`），但 CI 尚未复现这一步，且提交仍全部未推送。
-2. **把 WSL 验证回路固化下来。** 本次用 WSL（Ubuntu 24.04 + g++ 13.3 + lavapipe）
-   绕开 shaderc：SPIR-V 由 Windows 侧 Vulkan SDK 的 glslangValidator 生成，
-   harness 自行实现 `ShaderRegistry` 的 `RegisterSpirv`/`Find`，因此无需编译
-   shaderc 即可跑通引擎管线。此方法可复用于后续回归。
+1. **§1.4 的像素验证已完成**（run `38485651755`，lavapipe + validation layer，
+   全程零 validation 报错）。下列各项都建立在「这条链路确实能跑」之上，现在成立。
+2. **X11 / Wayland surface 尚未跑通** —— 只验证到 Linux 15/15 编译通过。
+   `SetNativeWindow` + `CreateSwapChain` 需要真实 X11/Wayland 会话。
 3. **让 `RHIDemo` 的 Vulkan 路径真正出画面** —— `RenderVulkanFrame()` 目前只清除
-   不绘制（见 §2.3b），需要接上一份真实几何与材质。
-4. **补 `GraphicsPSODesc` 的顶点输入契约** —— 该结构被 GL / D3D12 共用，属跨后端
-   设计，最好先与其它后端 owner 对齐。当前三角形靠 `gl_VertexIndex` 绕开了这个
-   缺口，因此**带顶点缓冲的蒙皮网格仍无法在 Vulkan 上绘制**。
-5. **验证 X11 / Wayland surface** —— 本次只验证到「Linux 15/15 编译通过」；
-   `SetNativeWindow` + `CreateSwapChain` 需要真实 X11/Wayland 会话才能跑通。
-6. **删除 `VulkanOffscreenTarget` 自带的渲染作用域逻辑**，改走命令列表
+   不绘制（见 §2.3b），需要接上真实几何与材质。
+4. **补 `GraphicsPSODesc` 的顶点输入契约** —— 契约已实现（§1.7），但
+   **顶点缓冲光栅化在 lavapipe 上未验证**。若换用真实 GPU 或能正常处理顶点取数的
+   驱动，设置 `VKTRI_VERTEX_INPUT=1` 即可验证。
+5. **删除 `VulkanOffscreenTarget` 自带的渲染作用域逻辑**，改走命令列表
    （新契约见 §2.3，两条路径目前并存）。
-7. **补 `ShaderCompileRule` 的真实产出**：它目前只写出 `.spv` 文件名却不生成该文件
+6. **补 `ShaderCompileRule` 的真实产出**：它目前只写出 `.spv` 文件名却不生成该文件
    （见 §2.3c）。
-8. 三角形已通过，接下来把 `GPUSkinningPixelTest` 抽象为后端无关。
-9. 届时把 `GPU_SKINNING_NO_GL46=1` 从 Linux 测试步骤中移除。
+7. **Windows 构建目前在 Build 阶段失败**，与本轮改动无关：runner 上只有
+   Visual Studio 18 Enterprise，而 workflow 固定使用 `Visual Studio 17 2022` 生成器。
+8. 接下来把 `GPUSkinningPixelTest` 抽象为后端无关；届时把
+   `GPU_SKINNING_NO_GL46=1` 从 Linux 测试步骤中移除。
 
 ### CI 现状
 
