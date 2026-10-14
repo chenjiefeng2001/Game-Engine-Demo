@@ -23,6 +23,7 @@ struct VulkanTexture::Impl {
     VmaAllocator  vmaAllocator{nullptr};
     VkDevice      device{nullptr};          ///< 用于销毁 defaultView
     VkImageLayout currentLayout{VK_IMAGE_LAYOUT_UNDEFINED};
+    bool          swapChainImage{false};    ///< 交换链 backbuffer，见头文件说明
 
     ~Impl() {
         // 顺序不能反：view 引用着 image，必须先销毁 view。
@@ -97,6 +98,14 @@ void VulkanTexture::SetLayout(VkImageLayout layout) noexcept {
 
 VkImageLayout VulkanTexture::GetLayout() const noexcept {
     return m_Impl->currentLayout;
+}
+
+void VulkanTexture::SetIsSwapChainImage(bool value) noexcept {
+    m_Impl->swapChainImage = value;
+}
+
+bool VulkanTexture::IsSwapChainImage() const noexcept {
+    return m_Impl->swapChainImage;
 }
 
 } // namespace RHI

@@ -146,6 +146,17 @@ VkImage GetVkImage() const noexcept;
         // 布局追踪（用于 ResourceBarrier 的正确 oldLayout）
         void SetLayout(VkImageLayout layout) noexcept;
         VkImageLayout GetLayout() const noexcept;
+        /**
+         * 是否为交换链图像。
+         *
+         * EndRendering 必须知道目标是不是可呈现图像：普通渲染目标留在
+         * COLOR_ATTACHMENT_OPTIMAL 即可，而交换链图像必须转到
+         * VK_IMAGE_LAYOUT_PRESENT_SRC_KHR，否则 vkQueuePresentKHR 违反
+         * VUID-VkPresentInfoKHR-pImageIndices-01430。这两者在 IRHITexture
+         * 接口上没有区别，所以由 VulkanDevice::CreateSwapChain 标记。
+         */
+        void SetIsSwapChainImage(bool value) noexcept;
+        bool IsSwapChainImage() const noexcept;
     private:
         struct Impl;
         std::unique_ptr<Impl> m_Impl;
