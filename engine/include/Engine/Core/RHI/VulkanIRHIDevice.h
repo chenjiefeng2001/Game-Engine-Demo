@@ -40,6 +40,9 @@ class VulkanDeferredDeletion;
      * 所以 windowHandle 会是空的。
      */
     void SetNativeWindow(const Engine::NativeWindow& win) noexcept;
+        /** 与 SetNativeWindow 成对：Initialize 会用参数覆盖其中的 window 字段，
+         *  调用方常需要取回最终生效的句柄。 */
+        const Engine::NativeWindow& GetNativeWindow() const noexcept;
 
         VkDevice        GetVkDevice() const noexcept;
         VmaAllocator    GetVmaAllocator() const noexcept;

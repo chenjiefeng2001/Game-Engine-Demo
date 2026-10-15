@@ -20,12 +20,21 @@
 
 #include <glad/gl.h>
 #include <GLFW/glfw3.h>
+#if defined(_WIN32)
+// 只有 Windows 分支直接调用原生访问器（X11/Wayland 分支走 dlsym，无需 GLFW 原生头，
+// 也就无需 X11 / wayland-client 开发包）。
+#define GLFW_EXPOSE_NATIVE_WIN32
+#include <GLFW/glfw3native.h>
+#endif
 
 #include <chrono>
 #include <cstring>
 #include <cstdio>
 #include <thread>
 #include <algorithm>
+#if !defined(_WIN32)
+#include <dlfcn.h>
+#endif
 
 #include "Engine/Core/RHI/IRHIDevice.h"
 #include "Engine/Core/RHI/VulkanIRHIDevice.h"
@@ -79,6 +88,10 @@ bool RHIDemoApp::InitOpenGL() {
     return true;
 }
 
+#if defined(ENGINE_HAS_VULKAN)
+static bool BindNativeWindow(RHI::VulkanDevice* dev, GLFWwindow* window);
+#endif
+
 bool RHIDemoApp::InitVulkan() {
     m_BackendName = "Vulkan";
 #if defined(ENGINE_HAS_VULKAN)
@@ -87,13 +100,22 @@ bool RHIDemoApp::InitVulkan() {
     if (!m_RHIWindow->GetGLFWHandle()) return false;
     m_RHIWindow->Show();
 
-    m_Device = std::make_unique<RHI::VulkanDevice>();
-    if (!m_Device->Initialize(m_RHIWindow->GetHWND(), m_RHIWindow->GetWidth(), m_RHIWindow->GetHeight()))
-        return false;
-    m_GPUName = m_Device->GetDeviceName();
-    std::printf("  [RHIDemo] Vulkan 1.3 设备已初始化 | %s\n", m_GPUName.c_str());
-    std::printf("  [RHIDemo] 注意：该路径尚未接线渲染 —— Run() 只轮询事件，不提交任何命令缓冲\n");
-    return true;
+m_Device = std::make_unique<RHI::VulkanDevice>();
+      // 必须**先**声明原生句柄再 Initialize：非 Windows 上创建 surface 需要 display
+      // 句柄，而 RHIWindow 的 GetHWND() 在这些平台恒为 nullptr。
+      auto* vkDev = dynamic_cast<RHI::VulkanDevice*>(m_Device.get());
+      if (!BindNativeWindow(vkDev, m_RHIWindow->GetGLFWHandle())) {
+          std::printf("  [RHIDemo] Vulkan surface 句柄不可用，跳过该后端\n");
+          return false;
+      }
+      // Initialize 的非 Windows 分支用传入的 windowHandle 覆盖 native.window，
+      // 因此这里必须传真正的窗口 XID / wl_surface，而不是 GetHWND()。
+      if (!m_Device->Initialize(vkDev->GetNativeWindow().window,
+                                m_RHIWindow->GetWidth(), m_RHIWindow->GetHeight()))
+          return false;
+      m_GPUName = m_Device->GetDeviceName();
+      std::printf("  [RHIDemo] Vulkan 1.3 设备已初始化 | %s\n", m_GPUName.c_str());
+      return true;
 #else
     return false;
 #endif
@@ -129,6 +151,68 @@ bool RHIDemoApp::Initialize() {
         default: return false;
     }
 }
+
+#if defined(ENGINE_HAS_VULKAN)
+/**
+ * 把 GLFW 窗口的原生句柄交给 VulkanDevice。
+ *
+ * RHIWindow 只在 _WIN32 下把 m_HWND 填成 HWND，其它平台显式置 nullptr。而
+ * VulkanDevice::Initialize 的非 Windows 分支要求 display 句柄才能建 surface，
+ * 于是 Linux 上永远拿不到 surface、CreateSwapChain 每帧返回空 —— 这条路径
+ * 此前从未真正跑起来过。句柄必须由应用自己从 GLFW 取出并声明平台。
+ *
+ * GLFW 只导出**其构建时所用平台**的原生访问器，直接链接会在缺少该平台时链接失败，
+ * 因此这里用 dlsym 在运行时解析。
+ */
+static bool BindNativeWindow(RHI::VulkanDevice* dev, GLFWwindow* window) {
+    if (!dev || !window) return false;
+#if defined(_WIN32)
+    HWND hwnd = glfwGetWin32Window(window);
+    if (!hwnd) { std::printf("  [RHIDemo] glfwGetWin32Window 返回空\n"); return false; }
+    Engine::NativeWindow nw{};
+    nw.window = hwnd;
+    dev->SetNativeWindow(nw);
+    return true;
+#else
+    // 优先 Wayland：合成器存在时 GLFW 会把窗口放在 Wayland 上。
+    using GetWaylandDisplay = void* (*)(GLFWwindow*);
+    using GetWaylandWindow  = void* (*)(GLFWwindow*);
+    auto getWlDisplay = reinterpret_cast<GetWaylandDisplay>(dlsym(RTLD_DEFAULT, "glfwGetWaylandDisplay"));
+    auto getWlSurface = reinterpret_cast<GetWaylandWindow>(dlsym(RTLD_DEFAULT, "glfwGetWaylandWindow"));
+    if (getWlDisplay && getWlSurface) {
+        void* disp = getWlDisplay(window);
+        void* surf = getWlSurface(window);
+        if (disp && surf) {
+            Engine::NativeWindow nw{};
+            nw.display = disp; nw.window = surf;
+            nw.platform = Engine::NativeWindowPlatform::Wayland;
+            dev->SetNativeWindow(nw);
+            std::printf("  [RHIDemo] 原生句柄: Wayland\n");
+            return true;
+        }
+    }
+    using GetX11Display = void* (*)(GLFWwindow*);
+    using GetX11Window  = unsigned long (*)(GLFWwindow*);
+    auto getXDisplay = reinterpret_cast<GetX11Display>(dlsym(RTLD_DEFAULT, "glfwGetX11Display"));
+    auto getXWindow  = reinterpret_cast<GetX11Window>(dlsym(RTLD_DEFAULT, "glfwGetX11Window"));
+    if (getXDisplay && getXWindow) {
+        void* disp = getXDisplay(window);
+        unsigned long xid = getXWindow(window);
+        if (disp && xid) {
+            Engine::NativeWindow nw{};
+            nw.display = disp;
+            nw.window = reinterpret_cast<void*>(static_cast<uintptr_t>(xid));
+            nw.platform = Engine::NativeWindowPlatform::Xlib;
+            dev->SetNativeWindow(nw);
+            std::printf("  [RHIDemo] 原生句柄: Xlib\n");
+            return true;
+        }
+    }
+    std::printf("  [RHIDemo] GLFW 未提供 X11/Wayland 原生句柄，无法创建 Vulkan surface\n");
+    return false;
+#endif
+}
+#endif // ENGINE_HAS_VULKAN
 
 #if defined(ENGINE_HAS_VULKAN)
 void RHIDemoApp::RenderVulkanFrame() {
