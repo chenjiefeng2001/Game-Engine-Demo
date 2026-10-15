@@ -109,8 +109,12 @@ class VulkanDeferredDeletion;
     public:
         VulkanBuffer();
         ~VulkanBuffer() override;
-        uint64_t GetSize() const noexcept override;
-        const GPUAllocation& GetAllocation() const noexcept override;
+uint64_t GetSize() const noexcept override;
+const GPUAllocation& GetAllocation() const noexcept override;
+        /** 持久映射指针。CPU 可访问的用途（CPU_To_GPU / GPU_To_CPU / CPU_Only）
+         * 在 CreateBuffer 里用 VMA 显式映射，此处必须透出，否则 RHI 侧拿到的
+         * 顶点缓冲虽已正确上传，读写接口却恒为 nullptr。GPU_ONLY 返回 nullptr。 */
+        void* GetMappedPtr() const noexcept override;
         VkBuffer GetVkBuffer() const noexcept;
         void SetAllocation(const GPUAllocation& alloc);
         void SetVkBuffer(VkBuffer buffer);

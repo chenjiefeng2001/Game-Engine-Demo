@@ -529,7 +529,15 @@ std::shared_ptr<IRHIBuffer> VulkanDevice::CreateBuffer(const RHIBufferDesc& desc
     buf->SetVkBuffer(vkBuf); buf->SetSize(desc.size);
     buf->SetAllocator(m_Impl->vmaAllocator); // VMA RAII 析构需要
     buf->SetVmaAllocation(alloc); // 【核心修复】保存 VmaAllocation 句柄给 RAII 析构
-    GPUAllocation ga; ga.mappedPtr = ari.pMappedData; buf->SetAllocation(ga);
+    GPUAllocation ga;
+      ga.size = desc.size; ga.requestedSize = desc.size;
+      ga.mappedPtr = ari.pMappedData; ga.mappedSize = desc.size;
+      // 此前除 mappedPtr 外全部为零值，GetAllocation() 返回的结构体毫无信息量
+      // （size / requestedSize 均为 0，MappedSize() 也会退回 0）。
+      ga.usage = desc.memoryUsage;
+      // strategy 保持默认：AllocationStrategy 描述的是引擎侧分配器（Bump/Buddy 等），
+      // 而 VMA 是后端分配器，没有对应值，填任何一个都是假的。
+      buf->SetAllocation(ga);
     if (desc.initialData) {
         if (ari.pMappedData) {
             std::memcpy(ari.pMappedData, desc.initialData, desc.size);
