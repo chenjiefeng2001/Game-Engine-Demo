@@ -132,6 +132,84 @@ display 的话，lavapipe 会在关闭 surface 时对已死的 display 发请求
 
 其中 1、2、3 是「能不能真正跑一帧带光照/纹理的画面」的前置条件；4、5 是应删除的死代码。
 
+### 2.3k 三项接线修复（`e0b85e5`、`ccb2fdf`、`ee5bd2b`）
+
+**1. `RHIDemo --vulkan` 在 Linux 上此前从未成功过（`e0b85e5`）**
+
+`RHIWindow` 只在 `_WIN32` 下填 `m_HWND`，其它平台置 `nullptr`；而 `Initialize` 的非
+Windows 分支需要 display 才能建 surface。`RHIDemo` 把这个空句柄直接传进去、从不调用
+`SetNativeWindow`，于是 `CreateSwapChain` **每帧**返回空。这条路径只在 Windows 上经由
+HWND 走通。
+
+现在 demo 自己从 GLFW 窗口取出原生句柄并在 `Initialize` 之前声明平台，优先 Wayland、
+回退 Xlib。GLFW 访问器用 `dlsym` 运行时解析（GLFW 只导出其构建平台的访问器，直接
+链接会在缺失时失败），因此**不需要 X11 / wayland-client 开发包即可编译**。
+`VulkanDevice` 补了 `GetNativeWindow()` 与 `SetNativeWindow()` 配对。
+
+WSLg X server 上实跑：
+
+```
+[RHIWindow] Created 1280x720 window (backend=1)
+[RHIDemo] 原生句柄: Xlib
+[Vulkan] surface created via VK_KHR_xlib_surface
+[RHIDemo] Vulkan 1.3 设备已初始化 | llvmpipe
+```
+
+12 秒无崩溃、无 swapchain 失败日志、present 未返回 `OUT_OF_DATE`、零 validation 发现。
+（FPS 打印只存在于 OpenGL 分支，不能作为 Vulkan 出帧的证据。）
+
+**2. `IRHIBuffer::GetMappedPtr()` 恒为 `nullptr`（`ccb2fdf`）**
+
+`VulkanBuffer` 未覆盖该方法，而 `CreateBuffer` 早已用 VMA 显式映射 CPU 可访问内存。
+`GPUAllocation` 也只填了 `mappedPtr`，`size` / `requestedSize` 全为 0。
+
+**3. `CreateTexture` 从未成功执行过，且无法建深度纹理（`ee5bd2b`）**
+
+这一条的严重程度超过此前审计的判断。两个独立缺陷：
+
+- **`vmaCreateImage` 的 `pAllocationCreateInfo` 传了 `nullptr`**，VMA 直接断言它非空。
+  也就是说**任何调用 `CreateTexture` 的代码都会崩** —— 之所以一直没暴露，是因为没有任何
+  验证路径调用它。
+- 图像一律按颜色格式创建：`COLOR_ATTACHMENT` 用途 + `COLOR` aspect。对 `D32_Float`
+  这类深度格式是「深度图像 + 颜色语义」的非法组合，深度附件没有可用视图 —— 尽管命令
+  列表的 `RenderTargetDesc` 接受 `depth` 字段。
+
+现按格式选择用途与 aspect（新增 `IsDepthFormat` / `IsStencilFormat` / `FormatToAspect`），
+并补上真正的分配描述与返回值检查。D32_Float 纹理作为深度附件实测通过：
+
+```
+[D] depth texture: 64x64 image=0xf000000000f view=0x110000000011
+[D] rendered into colour + depth attachment
+```
+
+**教训**：「没人调用所以没崩」和「编译通过」都不是正确性证据。`CreateTexture` 两者都
+满足，却从未运行过一次。
+
+### 2.3l 剩余三项的难度评估（尚未实施）
+
+**描述符系统** —— 不是接一根线，而是缺一整条链：`GraphicsPSODesc` 里没有任何绑定声明
+（只有 `ShaderReflection.h` 里的反射数据，且未接入管线布局）；`SetConstantBuffer` /
+`SetShaderResource` 只重绑一个**空**的 set（`currentDescriptorSet` 在任何引擎路径下都
+不会被置为非空），从不写入描述符。需要一次做完：绑定声明结构体 → `VkDescriptorSetLayout`
+→ 纳入 `VkPipelineLayoutCreateInfo` → descriptor pool → 每帧 set → 写入 UBO / sampler /
+纹理描述符。验证方式是让着色器真正用上 UBO 并确认像素随之改变。
+
+**PSO 所有权一致性** —— `CreateGraphicsPSO` 返回裸指针而 `CreateCommandList` 返回
+`unique_ptr`。但 `PSOCache` 以裸指针持有缓存条目，**改签名会立刻与缓存语义冲突**：
+缓存条目无法重复转移所有权。正确做法是缓存与返回值都改为 `shared_ptr`，这会波及接口、
+缓存和全部调用点（`RHIDemo`、三个 sandbox 测试、`BindlessDescriptor`）。机械但有面，
+不适合在一次改动里顺手做。
+
+**`IRHICommandList::Submit`** —— 不是简单加一个 `vkQueueSubmit`：帧 fence 与
+`renderFinished` 信号量目前由 `VulkanSwapChain::Present()` 掌管，命令列表并不持有它们。
+在没定清楚「谁拥有帧同步」之前加 `Submit`，极易与 `Present()` 形成重复提交。
+
+**HRC-owned 死代码** —— `RHIWindow::CreateVulkanSurface`（第二套 surface 实现，零调用者）
+属于 HRC 拥有的 `RHIWindow.h/.cpp`，**不得删除**，只能在此记录。两套渲染作用域
+（`VulkanCommandList::BeginRendering` 与 `VulkanOffscreenTarget::BeginRendering`）并存的
+理由是离屏目标使用独立的一次性命令缓冲路径，被 CI 测试直接依赖；合并它属于高风险
+重构，应单独评估。
+
 ## 0. 像素已验证通过 —— 真正的根因是**正面绕序**
 
 **接手前请先读这一节。**
