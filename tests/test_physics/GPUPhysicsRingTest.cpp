@@ -393,10 +393,14 @@ TEST_F(GPUPhysicsRingTest, Ring2_ComputeShaderModifiesData) {
 
     // 通过 CmdList 手动复现 engine 管线（完全绕开 GPUPhysicsEngine::Update）
     // 使用 StringID::Runtime 动态计算 hash，避免硬编码哈希值
-    auto* integratePSO = reinterpret_cast<GL46ComputePipelineState*>(s_Device->CreateComputePSO(
-        RHI::ComputePSODesc{Engine::StringID::Runtime("gpu_physics_integrate")}));
-    auto* collidePSO   = reinterpret_cast<GL46ComputePipelineState*>(s_Device->CreateComputePSO(
-        RHI::ComputePSODesc{Engine::StringID::Runtime("gpu_physics_collide")}));
+      // PSO 现在由 shared_ptr 持有：reinterpret_cast 不再适用，必须经
+      // static_pointer_cast 才能拿到具体后端类型。
+      auto integratePSO = std::static_pointer_cast<GL46ComputePipelineState>(
+          s_Device->CreateComputePSO(
+              RHI::ComputePSODesc{Engine::StringID::Runtime("gpu_physics_integrate")}));
+      auto collidePSO = std::static_pointer_cast<GL46ComputePipelineState>(
+          s_Device->CreateComputePSO(
+              RHI::ComputePSODesc{Engine::StringID::Runtime("gpu_physics_collide")}));
     ASSERT_NE(integratePSO, nullptr) << "Integrate PSO must be found (hash via StringID::Runtime)";
     ASSERT_NE(collidePSO, nullptr) << "Collide PSO must be found (hash via StringID::Runtime)";
     ASSERT_NE(integratePSO->program, nullptr) << "Integrate compute program must be compiled";
@@ -406,7 +410,7 @@ TEST_F(GPUPhysicsRingTest, Ring2_ComputeShaderModifiesData) {
         m_CmdList->Begin();
 
         // Integrate Pass
-        m_CmdList->SetPipelineState(integratePSO);
+        m_CmdList->SetPipelineState(integratePSO.get());
         m_CmdList->SetUnorderedAccess(0, m_Engine->GetParticleBuffer());
         m_CmdList->SetComputeFloat("u_Dt", 1.0f / 60.0f);
         m_CmdList->SetComputeVec3("u_Gravity", 0.0f, -9.8f, 0.0f);
@@ -418,7 +422,7 @@ TEST_F(GPUPhysicsRingTest, Ring2_ComputeShaderModifiesData) {
         m_CmdList->Dispatch(1, 1, 1);
 
         // Collide Pass
-        m_CmdList->SetPipelineState(collidePSO);
+        m_CmdList->SetPipelineState(collidePSO.get());
         m_CmdList->SetUnorderedAccess(0, m_Engine->GetParticleBuffer());
         m_CmdList->SetComputeFloat("u_Dt", 1.0f / 60.0f);
         m_CmdList->SetComputeFloat("u_Restitution", 0.8f);
