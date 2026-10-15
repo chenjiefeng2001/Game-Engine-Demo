@@ -53,6 +53,39 @@ VUID-vkCmdBindVertexBuffers-pOffsets-parameter: pOffsets is NULL
   指名道姓的 VUID。整个 Vulkan 排查中，它发现的缺陷比其它所有手段加起来都多。
 - 崩溃点（`vkCmdDraw`）与缺陷位置（管线创建、测试调用）可以相隔很远。
 
+### 2.3i Wayland surface 也已实跑验证（WSLg 合成器）
+
+装上 `libwayland-dev` 后，WSLg 提供的 Wayland 合成器可直接用于验证：
+`XDG_RUNTIME_DIR=/mnt/wslg/runtime-dir`、`WAYLAND_DISPLAY=wayland-0`。
+注意 **`XDG_RUNTIME_DIR` 不是 `/run/user/1000`** —— 那里没有 socket，只有
+`/mnt/wslg/runtime-dir/` 里有；`wl_display_connect()` 因此会静默失败。
+
+测试只用**核心协议**（`wl_compositor` + `wl_surface`），不引入 `xdg_wm_base`：
+验证 surface 创建与扩展选择不需要窗口映射。
+
+```
+[Vulkan] surface created via VK_KHR_wayland_surface
+[WL] wl_compositor bound
+[WL] device: llvmpipe (LLVM 20.1.2, 256 bits)
+[WL] swapchain: 4 image(s)
+[WL] acquired 0, backbuffer 640x480, isSwapChainImage=1
+[WL] rendered and presented one frame
+```
+
+Khronos validation layer 下零发现。至此三条平台 surface 路径的状态：
+
+| 平台 | 状态 |
+| --- | --- |
+| Xlib | 真实映射窗口，acquire / 渲染 / 提交 / 呈现全链路验证 |
+| Wayland | WSLg 合成器，全链路验证（surface 未 configure） |
+| XCB | 仅编译验证（本环境未搭 xcb 会话） |
+
+**踩到的真实约束**：Vulkan 设备必须先于平台 display 销毁。`VulkanDevice::Shutdown()`
+会销毁 `VkSurfaceKHR`，而它内部仍持有 `wl_display` / `wl_surface` 的引用；先断开
+display 的话，lavapipe 会在关闭 surface 时对已死的 display 发请求而**段错误**。
+本条最初表现为 Wayland 路径崩溃，gdb 回溯显示崩在 `Shutdown()` 内的
+`wl_proxy_marshal`，与 surface 创建无关。
+
 ## 0. 像素已验证通过 —— 真正的根因是**正面绕序**
 
 **接手前请先读这一节。**
@@ -662,8 +695,8 @@ lavapipe 上设备初始化成功，`GetDeviceName()` 返回真实名称。
 
 1. **§1.4 的像素验证已完成**（run `38485651755`，lavapipe + validation layer，
    全程零 validation 报错）。下列各项都建立在「这条链路确实能跑」之上，现在成立。
-2. ~~X11 / Wayland surface~~ **Xlib 路径已在真实映射窗口上验证**（见 §2.3d 与 §2.3e）。
-   Wayland 路径仍仅编译验证。
+2. ~~X11 / Wayland surface~~ **两条路径均已在真实合成器上验证**（Xlib 见 §2.3d 与 §2.3e，
+   Wayland 见 §2.3i）。
 3. **让 `RHIDemo` 的 Vulkan 路径真正出画面** —— `RenderVulkanFrame()` 目前只清除
    不绘制（见 §2.3b），需要接上真实几何与材质。
 4. ~~补 `GraphicsPSODesc` 的顶点输入契约~~ **已完成并常开验证**（§1.7 与 §2.3h）。
