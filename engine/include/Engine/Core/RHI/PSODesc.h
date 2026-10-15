@@ -12,6 +12,7 @@
 
 #include "Engine/Core/RHI/RHITypes.h"
 #include "Engine/Core/StringID.h"
+#include <vector>
 #include <cstdint>
 #include <cstring>
 #include <vector>
@@ -180,7 +181,34 @@ namespace RHI {
     // ============================================================
     // Graphics PSO 描述符（渲染管线）
     // ============================================================
-    struct GraphicsPSODesc {
+    /**
+ * @brief 描述符绑定类型。
+ *
+ * 描述符系统此前**整条链都不存在**：GraphicsPSODesc 没有绑定声明，
+ * VulkanPipelineState 建的 pipeline layout 里 setLayoutCount 为 0，
+ * 而 SetConstantBuffer / SetShaderResource 只是重绑一个恒为空的
+ * currentDescriptorSet，从不写入描述符。
+ */
+enum class DescriptorKind : uint8 {
+    UniformBuffer = 0,
+    StorageBuffer,
+    SampledTexture,
+    Sampler,
+    CombinedImageSampler,
+};
+
+struct DescriptorBindingDesc {
+    uint32       set{0};
+    uint32       binding{0};
+    DescriptorKind kind{DescriptorKind::UniformBuffer};
+    uint32       count{1};
+
+    bool operator==(const DescriptorBindingDesc& o) const noexcept {
+        return set == o.set && binding == o.binding && kind == o.kind && count == o.count;
+    }
+};
+
+struct GraphicsPSODesc {
         StringID        vertexShader;       ///< 顶点着色器 ID（由 ShaderCompiler 注册）
         StringID        pixelShader;        ///< 像素着色器 ID
         BlendDesc       blend;
@@ -191,8 +219,14 @@ namespace RHI {
         uint32          rtvCount      = 1;
         Format          dsvFormat     = Format::Unknown;
         uint32          sampleCount   = 1;
-        /** 顶点输入契约。留空表示该 PSO 不从顶点缓冲取数（如全屏三角形）。 */
-        VertexInputDesc vertexInput;
+/** 顶点输入契约。留空表示该 PSO 不从顶点缓冲取数（如全屏三角形）。 */
+          VertexInputDesc vertexInput;
+          /**
+           * 描述符绑定声明。留空表示该 PSO 不使用描述符（setLayoutCount = 0）。
+           * 必须参与哈希与相等比较：布局不同的两个 PSO 若共用缓存条目，
+           * pipeline layout 与着色器期望的 set 布局就会对不上。
+           */
+          std::vector<DescriptorBindingDesc> bindings;
 
         /**
          * @brief 计算确定性哈希值（用于 PSOCache 去重）
@@ -212,9 +246,15 @@ namespace RHI {
             h = h * 31 + sampleCount;
             // 顶点输入必须参与哈希：否则两个顶点布局不同、其余状态相同的 PSO
             // 会命中同一条缓存记录，拿到顶点绑定错误的管线。
-            h = h * 31 + vertexInput.Hash();
-            return h;
-        }
+h = h * 31 + vertexInput.Hash();
+              for (const auto& b : bindings) {
+                  h = h * 31 + b.set;
+                  h = h * 31 + b.binding;
+                  h = h * 31 + static_cast<uint32_t>(b.kind);
+                  h = h * 31 + b.count;
+              }
+              return h;
+          }
 
         bool operator==(const GraphicsPSODesc& o) const {
             return vertexShader == o.vertexShader
@@ -226,8 +266,9 @@ namespace RHI {
                 && rtvCount == o.rtvCount
                 && dsvFormat == o.dsvFormat
                 && sampleCount == o.sampleCount
-                && vertexInput == o.vertexInput
-                && memcmp(rtvFormats, o.rtvFormats, sizeof(rtvFormats)) == 0;
+&& vertexInput == o.vertexInput
+                  && bindings == o.bindings
+                  && memcmp(rtvFormats, o.rtvFormats, sizeof(rtvFormats)) == 0;
         }
 
         /**

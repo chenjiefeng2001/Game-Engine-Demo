@@ -94,6 +94,17 @@ case Format::RGBA8_SInt:   return VK_FORMAT_R8G8B8A8_SINT;
     }
 }
 
+VkDescriptorType DescriptorKindToVk(RHI::DescriptorKind kind) noexcept {
+    switch (kind) {
+        case RHI::DescriptorKind::UniformBuffer:          return VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
+        case RHI::DescriptorKind::StorageBuffer:          return VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
+        case RHI::DescriptorKind::SampledTexture:         return VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE;
+        case RHI::DescriptorKind::Sampler:                return VK_DESCRIPTOR_TYPE_SAMPLER;
+        case RHI::DescriptorKind::CombinedImageSampler:   return VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+        default: return VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
+    }
+}
+
 bool IsDepthFormat(RHI::Format format) noexcept {
     switch (format) {
         case RHI::Format::D16_UNorm:

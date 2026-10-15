@@ -43,6 +43,13 @@ class VulkanDeferredDeletion;
         /** 与 SetNativeWindow 成对：Initialize 会用参数覆盖其中的 window 字段，
          *  调用方常需要取回最终生效的句柄。 */
         const Engine::NativeWindow& GetNativeWindow() const noexcept;
+        /**
+         * 从设备描述符池分配一个描述符集。
+         *
+         * 命令列表在绑定 uniform buffer / 纹理时调用。此前描述符池根本不存在，
+         * 也没有任何分配入口，SetConstantBuffer 因此永远写不进东西。
+         */
+        VkDescriptorSet AllocateDescriptorSet(VkDescriptorSetLayout layout) noexcept;
 
         VkDevice        GetVkDevice() const noexcept;
         VmaAllocator    GetVmaAllocator() const noexcept;
@@ -99,8 +106,18 @@ class VulkanDeferredDeletion;
 
         VkCommandBuffer GetVkCommandBuffer() const noexcept;
         void SetVkCommandBuffer(VkCommandBuffer cmdBuf) noexcept;
-        void SetVkPipelineState(VkPipeline pipeline, VkPipelineLayout layout) noexcept;
-        void SetDevice(VulkanDevice* device) noexcept;
+void SetVkPipelineState(VkPipeline pipeline, VkPipelineLayout layout) noexcept;
+          void SetDevice(VulkanDevice* device) noexcept;
+          /**
+           * 挂到一个**调用方已开始录制**的命令缓冲上。
+           *
+           * 引擎里存在两种互不相容的录制所有权模型：VulkanCommandList 由调用方
+           * Begin()/End()，而 VulkanOffscreenTarget::BeginOneShot() 返回的缓冲已经
+           * 处于录制状态。对后者再调 Begin() 会得到
+           * VUID-vkBeginCommandBuffer-commandBuffer-00049。此入口显式声明「我接手一个
+           * 已在录制的缓冲」，End() 仍会正确地结束它。
+           */
+          void AttachToRecording(VkCommandBuffer cmdBuf) noexcept;
 
     private:
         struct Impl;
@@ -178,6 +195,9 @@ VkImage GetVkImage() const noexcept;
         VkPipelineLayout GetVkPipelineLayout() const noexcept;
         bool IsCompute() const noexcept;
         void SetNativeHandles(VkPipeline pipeline, VkPipelineLayout layout, VkDevice device) noexcept;
+        /** 本 PSO 的描述符 set 布局（无描述符时为 VK_NULL_HANDLE）。 */
+        void SetDescriptorSetLayout(VkDescriptorSetLayout layout) noexcept;
+        VkDescriptorSetLayout GetDescriptorSetLayout() const noexcept;
     private:
         struct Impl;
         std::unique_ptr<Impl> m_Impl;

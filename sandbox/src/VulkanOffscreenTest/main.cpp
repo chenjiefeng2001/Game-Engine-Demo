@@ -61,8 +61,118 @@ struct TriVertex { float x, y, z, w; float r, g, b, a; };
  * 与第一阶段分离报告：gl_VertexIndex 通过**不代表**顶点输入可用，两者排查的
  * 失败面完全不同（binding / attribute / stride / 格式 / 上传）。
  */
-int RunVertexInputPhase(Engine::RHI::VulkanDevice& device) {
-    using namespace Engine;
+/**
+   * 第三阶段：描述符（uniform buffer）。
+   *
+   * 此前整条描述符链都不存在 —— GraphicsPSODesc 没有绑定声明、pipeline layout 的
+   * setLayoutCount 恒为 0、描述符池从未创建、SetConstantBuffer 只重绑一个恒为空的
+   * set 且从不写入描述符。着色器因此无法读取任何 uniform。
+   *
+   * 这里让着色器真的读一个 UBO，并改写 UBO 确认像素随之改变 —— 只有「值真的
+   * 到达了着色器」才能通过，单看绘制成功是不够的。
+   */
+  int RunUniformBufferPhase(Engine::RHI::VulkanDevice& device) {
+      using namespace Engine;
+      using namespace Engine::RHI;
+      std::printf("[VKTRI-UBO] --- uniform buffer phase ---\n");
+
+      const char* kVert = R"(
+      #version 450
+      void main() {
+          vec2 p = vec2((gl_VertexIndex << 1) & 2, gl_VertexIndex & 2);
+          gl_Position = vec4(p * 2.0 - 1.0, 0.0, 1.0);
+      }
+      )";
+      const char* kFrag = R"(
+      #version 450
+      layout(set = 0, binding = 0) uniform Params { vec4 tint; } params;
+      layout(location = 0) out vec4 outColor;
+      void main() { outColor = params.tint; }
+      )";
+      if (!ShaderRegistry::Get().RegisterSource("vktribo_vs", ShaderStageType::Vertex, kVert) ||
+          !ShaderRegistry::Get().RegisterSource("vktribo_fs", ShaderStageType::Fragment, kFrag)) {
+          std::printf("[VKTRI-UBO] FAIL: shader compilation\n"); return 1;
+      }
+
+      GraphicsPSODesc desc;
+      desc.vertexShader = StringID::Runtime("vktribo_vs");
+      desc.pixelShader  = StringID::Runtime("vktribo_fs");
+      desc.rtvCount = 1;
+      desc.rtvFormats[0] = Format::RGBA8_UNorm;
+      desc.depthStencil.depthTest = false;
+      desc.depthStencil.depthWrite = false;
+      // 声明绑定：此前 GraphicsPSODesc 根本没有这个字段。
+      desc.bindings.push_back({ 0u, 0u, DescriptorKind::UniformBuffer, 1u });
+
+      std::unique_ptr<IRHIPipelineState> psoOwner(device.CreateGraphicsPSO(desc));
+      auto* pso = psoOwner.get();
+      if (!pso) { std::printf("[VKTRI-UBO] FAIL: CreateGraphicsPSO with a binding\n"); return 1; }
+      auto* vkPso = dynamic_cast<VulkanPipelineState*>(pso);
+      if (!vkPso || vkPso->GetDescriptorSetLayout() == VK_NULL_HANDLE) {
+          std::printf("[VKTRI-UBO] FAIL: pipeline has no descriptor set layout\n"); return 1;
+      }
+      std::printf("[VKTRI-UBO] pipeline created with a descriptor set layout\n");
+
+      struct Params { float r, g, b, a; };
+      RHIBufferDesc bd{};
+      bd.size = sizeof(Params);
+      bd.memoryUsage = MemoryUsage::CPU_To_GPU;
+      const Params red{1.0f, 0.0f, 0.0f, 1.0f};
+      bd.initialData = &red;
+      auto ubo = device.CreateBuffer(bd);
+      if (!ubo) { std::printf("[VKTRI-UBO] FAIL: CreateBuffer\n"); return 1; }
+      if (!ubo->GetMappedPtr()) {
+          std::printf("[VKTRI-UBO] FAIL: GetMappedPtr() is null\n"); return 1;
+      }
+
+      constexpr uint32_t kW = 64, kH = 64;
+      auto target = VulkanOffscreenTarget::Create(device, kW, kH);
+      if (!target) { std::printf("[VKTRI-UBO] FAIL: offscreen target\n"); return 1; }
+
+      auto renderWith = [&](const Params& v, uint8_t* out) -> bool {
+          std::memcpy(ubo->GetMappedPtr(), &v, sizeof(v));
+          VkCommandBuffer cmd = target->BeginOneShot();
+          if (cmd == VK_NULL_HANDLE) return false;
+          target->BeginRendering(cmd, (const float[4]){0.0f, 0.0f, 0.0f, 1.0f});
+          {
+              auto cl = device.CreateCommandList(CommandListType::Direct);
+              auto* vcl = dynamic_cast<VulkanCommandList*>(cl.get());
+              vcl->SetDevice(&device);
+              // BeginOneShot() 已开始录制，不能再 Begin()；结束由 EndSubmitAndWait() 负责。
+              vcl->AttachToRecording(cmd);
+              vcl->SetPipelineState(pso);
+              vcl->SetConstantBuffer(0, 0, ubo.get(), 0, sizeof(Params));
+              vcl->Draw(3, 0);
+          }
+          target->EndRendering(cmd);
+          if (!target->EndSubmitAndWait(cmd)) return false;
+          std::vector<uint8_t> px;
+          if (!target->Readback(px)) return false;
+          const uint8_t* mid = px.data() + (((kH / 2) * kW) + kW / 2) * 4;
+          out[0] = mid[0]; out[1] = mid[1]; out[2] = mid[2]; out[3] = mid[3];
+          return true;
+      };
+
+      uint8_t pxRed[4]{}, pxGreen[4]{};
+      if (!renderWith(red, pxRed)) { std::printf("[VKTRI-UBO] FAIL: red draw\n"); return 1; }
+      std::printf("[VKTRI-UBO] red   -> %u %u %u %u\n", pxRed[0], pxRed[1], pxRed[2], pxRed[3]);
+      if (!renderWith(Params{0.0f, 1.0f, 0.0f, 1.0f}, pxGreen)) {
+          std::printf("[VKTRI-UBO] FAIL: green draw\n"); return 1;
+      }
+      std::printf("[VKTRI-UBO] green -> %u %u %u %u\n", pxGreen[0], pxGreen[1], pxGreen[2], pxGreen[3]);
+
+      const bool redOK = pxRed[0] > 200 && pxRed[1] < 60 && pxRed[2] < 60;
+      const bool greenOK = pxGreen[0] < 60 && pxGreen[1] > 200 && pxGreen[2] < 60;
+      if (!redOK || !greenOK) {
+          std::printf("[VKTRI-UBO] FAIL: UBO contents never reached the shader\n"); return 1;
+      }
+      std::printf("[VKTRI-UBO] PASS: the shader read the UBO through a real descriptor set; "
+                  "changing the UBO changed the pixels\n");
+      return 0;
+  }
+
+  int RunVertexInputPhase(Engine::RHI::VulkanDevice& device) {
+      using namespace Engine;
     std::printf("[VKTRI-VB] --- vertex input phase ---\n");
 
     if (!RHI::ShaderRegistry::Get().RegisterSource("vktrib_vs", ShaderStageType::Vertex, kVertexInputGlsl) ||
@@ -306,6 +416,8 @@ int main()
       // Format::RG32_Float 分支（顶点格式变成 VK_FORMAT_UNDEFINED），以及本测试
       // 给 vkCmdBindVertexBuffers 传了 nullptr 偏移。两者修复后阶段稳定通过，
       // 因此取消门控，让它成为常规验证的一部分。
-      return RunVertexInputPhase(*vkDevice);
+      if (RunVertexInputPhase(*vkDevice) != 0) return 1;
+      // 描述符阶段：证明 uniform buffer 真的能到达着色器。
+      return RunUniformBufferPhase(*vkDevice);
 #endif // ENGINE_HAS_VULKAN
 }

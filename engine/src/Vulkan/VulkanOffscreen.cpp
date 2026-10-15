@@ -303,9 +303,13 @@ bool VulkanOffscreenTarget::Readback(std::vector<uint8_t>& out)
     barrier.image = m_ColorImage;
     barrier.subresourceRange = { VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1 };
     vkCmdPipelineBarrier(cmd,
-                         VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT,
-                         VK_PIPELINE_STAGE_TRANSFER_BIT, 0,
-                         0, nullptr, 0, nullptr, 1, &barrier);
+VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT,
+                           VK_PIPELINE_STAGE_TRANSFER_BIT, 0,
+                           0, nullptr, 0, nullptr, 1, &barrier);
+      // 必须同步更新追踪布局：否则下一帧 BeginRendering 看到 m_ColorLayout 仍是
+      // COLOR_ATTACHMENT_OPTIMAL 就会跳过转换，而图像实际已在 TRANSFER_SRC_OPTIMAL，
+      // validation 于是报 expects COLOR_ATTACHMENT_OPTIMAL / current TRANSFER_SRC。
+      m_ColorLayout = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;
 
     VkBufferImageCopy copy{};
     copy.bufferOffset = 0;

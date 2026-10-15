@@ -15,8 +15,11 @@ namespace RHI {
 
 struct VulkanPipelineState::Impl {
     VkPipeline       pipeline{VK_NULL_HANDLE};
-    VkPipelineLayout layout{VK_NULL_HANDLE};
-    VkDevice         device{VK_NULL_HANDLE};
+VkPipelineLayout layout{VK_NULL_HANDLE};
+      // 本 PSO 的描述符 set 布局；无描述符时为 VK_NULL_HANDLE。命令列表要靠它
+      // 分配并写入对应的描述符集。
+      VkDescriptorSetLayout setLayout{VK_NULL_HANDLE};
+      VkDevice         device{VK_NULL_HANDLE};
     bool             isCompute{false};
 
     ~Impl() {
@@ -25,6 +28,7 @@ struct VulkanPipelineState::Impl {
             // 布局此前无人销毁：每个 PSO 泄漏一个 VkPipelineLayout，
             // vkDestroyDevice 时报 VUID-vkDestroyDevice-device-05137。
             if (layout != VK_NULL_HANDLE) vkDestroyPipelineLayout(device, layout, nullptr);
+              if (setLayout != VK_NULL_HANDLE) vkDestroyDescriptorSetLayout(device, setLayout, nullptr);
         }
     }
 };
@@ -42,10 +46,16 @@ VkPipelineLayout VulkanPipelineState::GetVkPipelineLayout() const noexcept {
 }
 
 void VulkanPipelineState::SetNativeHandles(VkPipeline pipeline, VkPipelineLayout layout, VkDevice device) noexcept {
-    m_Impl->pipeline = pipeline;
-    m_Impl->layout = layout;
-    m_Impl->device = device;
-}
+      m_Impl->pipeline = pipeline;
+      m_Impl->layout = layout;
+      m_Impl->device = device;
+  }
+  void VulkanPipelineState::SetDescriptorSetLayout(VkDescriptorSetLayout l) noexcept {
+      m_Impl->setLayout = l;
+  }
+  VkDescriptorSetLayout VulkanPipelineState::GetDescriptorSetLayout() const noexcept {
+      return m_Impl->setLayout;
+  }
 
 // ════════════════════════════════════════════════════════════
 // 工厂：创建 Graphics PSO
