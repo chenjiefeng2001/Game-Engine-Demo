@@ -92,8 +92,19 @@ namespace RHI {
         /** 开始录制命令 */
         virtual void Begin() = 0;
 
-        /** 结束录制（之后不可再录制） */
-        virtual void End() = 0;
+/** 结束录制（之后不可再录制） */
+      virtual void End() = 0;
+
+      /**
+       * @brief 提交已录制的命令
+       *
+       * 此前命令列表**无法自行提交**：VulkanSwapChain::Present() 顺手把调用方录好的
+       * 命令缓冲提交了，提交语义被藏在「呈现」里。于是离屏或无窗口的场景根本没有
+       * 提交入口，调用方也无法知道一帧何时真正进入 GPU。
+       *
+       * 默认空实现：其它后端尚未提供提交入口，不应因此无法编译。
+       */
+      virtual void Submit() {}
 
         /** 重置命令列表以重新录制（重新回到 Begin 前的状态） */
         virtual void Reset() = 0;

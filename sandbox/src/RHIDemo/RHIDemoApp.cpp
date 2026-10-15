@@ -260,6 +260,9 @@ void RHIDemoApp::RenderVulkanFrame() {
     // 此处尚未绘制几何：先只验证清除→呈现这条链路是否真的通。
     cmdList->EndRendering();
     cmdList->End();
+    // 提交与呈现现在是两件事：Submit() 等 acquire、signal renderFinished 并提交，
+    // Present() 只负责呈现。顺序不能反。
+    cmdList->Submit();
 
     sc->Present();
 }

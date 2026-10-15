@@ -83,9 +83,10 @@ class VulkanDeferredDeletion;
     public:
         VulkanCommandList();
         ~VulkanCommandList() override;
-        void Begin() override;
-        void End() override;
-        void Reset() override;
+void Begin() override;
+          void End() override;
+          void Submit() override;
+          void Reset() override;
         void BeginRendering(const RenderTargetDesc& desc) override;
         void EndRendering() override;
         void SetPipelineState(IRHIPipelineState* pso) override;
