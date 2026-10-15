@@ -80,7 +80,7 @@ namespace Engine { namespace Rendering {
         cmdList.SetUnorderedAccess(0, m_AABBBuffer);
         cmdList.SetUnorderedAccess(1, m_FrustumBuffer);
         cmdList.SetUnorderedAccess(2, m_VisibleIndicesBuffer);
-        cmdList.SetPipelineState(m_CullPSO);
+        cmdList.SetPipelineState(m_CullPSO.get());
 
         uint32_t groupCount = (m_CurrentObjectCount + 63) / 64;
         cmdList.Dispatch(groupCount, 1, 1);

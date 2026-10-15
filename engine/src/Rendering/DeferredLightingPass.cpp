@@ -60,7 +60,7 @@ namespace Rendering {
             return;
         }
 
-        cmd.SetPipelineState(m_DeferredLightingPSO);
+        cmd.SetPipelineState(m_DeferredLightingPSO.get());
         cmd.SetPrimitiveTopology(RHI::PrimitiveTopology::TriangleList);
 
         // 绑定光源数据 UBO
