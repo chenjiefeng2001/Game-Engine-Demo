@@ -128,6 +128,9 @@ struct VulkanDevice::Impl {
       // 描述符池。描述符系统此前整条链都不存在（pool 从未创建），因此
       // SetConstantBuffer 无法为着色器写入任何 UBO / 纹理描述符。
       VkDescriptorPool descriptorPool{VK_NULL_HANDLE};
+      // 共享采样器。描述符里的纹理必须有配套 sampler，而命令列表此前没有任何
+      // 采样器来源 —— 这是 SetShaderResource 一直写不出描述符的原因之一。
+      VkSampler sampler{VK_NULL_HANDLE};
     uint32_t uboAlignment{256}; // 默认 256，初始化时从设备获取
     bool initialized{false};
     std::string deviceName;
@@ -201,6 +204,10 @@ void VulkanDevice::SetNativeWindow(const NativeWindow& win) noexcept {
 
 const NativeWindow& VulkanDevice::GetNativeWindow() const noexcept {
     return m_Impl->nativeWindow;
+}
+
+VkSampler VulkanDevice::GetSampler() const noexcept {
+    return m_Impl->sampler;
 }
 
 VkDescriptorSet VulkanDevice::AllocateDescriptorSet(VkDescriptorSetLayout layout) noexcept {
@@ -461,6 +468,21 @@ bool VulkanDevice::Initialize(void* windowHandle, uint32_t width, uint32_t heigh
         }
     }
 
+    // 共享采样器：线性过滤 + 钳制到边缘，全局一个即可。
+    {
+        VkSamplerCreateInfo si{VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO};
+        si.magFilter = VK_FILTER_LINEAR;
+        si.minFilter = VK_FILTER_LINEAR;
+        si.mipmapMode = VK_SAMPLER_MIPMAP_MODE_LINEAR;
+        si.addressModeU = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
+        si.addressModeV = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
+        si.addressModeW = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
+        si.maxLod = 1.0f;
+        si.borderColor = VK_BORDER_COLOR_INT_OPAQUE_BLACK;
+        if (vkCreateSampler(m_Impl->device, &si, nullptr, &m_Impl->sampler) != VK_SUCCESS)
+            m_Impl->sampler = VK_NULL_HANDLE;
+    }
+
     // 设备级命令池。一次性命令缓冲（离屏回读等）需要一个可分配的池；
     // 此前 GetOrCreateThreadCommandPool() 直接返回 VK_NULL_HANDLE，
     // 使得任何依赖它的路径都无法工作。
@@ -520,6 +542,10 @@ void VulkanDevice::Shutdown() {
       if (m_Impl->descriptorPool) {
           vkDestroyDescriptorPool(m_Impl->device, m_Impl->descriptorPool, nullptr);
           m_Impl->descriptorPool = VK_NULL_HANDLE;
+      }
+      if (m_Impl->sampler) {
+          vkDestroySampler(m_Impl->device, m_Impl->sampler, nullptr);
+          m_Impl->sampler = VK_NULL_HANDLE;
       }
     if (m_Impl->surface) vkDestroySurfaceKHR(m_Impl->instance, m_Impl->surface, nullptr);
     // VMA 要求：销毁前所有由它分配的资源必须已释放
@@ -610,6 +636,11 @@ auto tex = std::make_shared<VulkanTexture>();
       const bool isDepth = IsDepthFormat(desc.format);
       ii.usage = isDepth ? (VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT)
                          : (VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT);
+      // 有初始数据时需要走 staging 上传：VK_IMAGE_TILING_OPTIMAL 的图像不能被
+      // CPU 直接写入，必须经 TRANSFER_DST。此前 TextureDesc::initialData 被完全
+      // 忽略，调用方拿到的纹理内容是未定义的。
+      const bool hasUpload = desc.initialData != nullptr;
+      if (hasUpload) ii.usage |= VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT;
       VkImage vkImg; VmaAllocation alloc; VmaAllocationInfo allocInfo{};
       // pAllocationCreateInfo 不能为 nullptr：VMA 直接断言它非空。此前这里传的是
       // nullptr，于是 **CreateTexture 从未成功执行过** —— 只是没有任何验证路径调用它，
@@ -640,9 +671,81 @@ auto tex = std::make_shared<VulkanTexture>();
         vmaDestroyImage(m_Impl->vmaAllocator, vkImg, alloc);
         return nullptr;
     }
-    tex->SetVkImageView(view);
-    tex->SetVkDevice(m_Impl->device);
-    return tex;
+tex->SetVkImageView(view);
+      tex->SetVkDevice(m_Impl->device);
+
+      // 上传初始数据：staging buffer → 一次性命令缓冲 → vkCmdCopyBufferToImage。
+      if (hasUpload) {
+          const VkDeviceSize bytes = static_cast<VkDeviceSize>(desc.width) * desc.height * 4;
+          VkBufferCreateInfo bi{VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO};
+          bi.size = bytes;
+          bi.usage = VK_BUFFER_USAGE_TRANSFER_SRC_BIT;
+          bi.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
+          VkBuffer staging = VK_NULL_HANDLE;
+          VmaAllocation sAlloc = VK_NULL_HANDLE; VmaAllocationInfo sInfo{};
+          VmaAllocationCreateInfo sai{};
+          sai.usage = VMA_MEMORY_USAGE_CPU_ONLY;
+          sai.flags = VMA_ALLOCATION_CREATE_MAPPED_BIT |
+                      VMA_ALLOCATION_CREATE_HOST_ACCESS_SEQUENTIAL_WRITE_BIT;
+          if (vmaCreateBuffer(m_Impl->vmaAllocator, &bi, &sai, &staging, &sAlloc, &sInfo) != VK_SUCCESS ||
+              !sInfo.pMappedData) {
+              std::fprintf(stderr, "[Vulkan] CreateTexture: staging buffer failed\n");
+          } else {
+              std::memcpy(sInfo.pMappedData, desc.initialData, static_cast<size_t>(bytes));
+              VkCommandPool pool = GetOrCreateThreadCommandPool();
+              VkCommandBufferAllocateInfo ai{VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO};
+              ai.commandPool = pool;
+              ai.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
+              ai.commandBufferCount = 1;
+              VkCommandBuffer cmd = VK_NULL_HANDLE;
+              if (vkAllocateCommandBuffers(m_Impl->device, &ai, &cmd) == VK_SUCCESS) {
+                  VkCommandBufferBeginInfo cbi{VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO};
+                  cbi.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
+                  vkBeginCommandBuffer(cmd, &cbi);
+                  VkImageMemoryBarrier toDst{VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER};
+                  toDst.srcAccessMask = 0;
+                  toDst.dstAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+                  toDst.oldLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+                  toDst.newLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
+                  toDst.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+                  toDst.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+                  toDst.image = vkImg;
+                  toDst.subresourceRange = { FormatToAspect(desc.format), 0, 1, 0, 1 };
+                  vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT,
+                                       VK_PIPELINE_STAGE_TRANSFER_BIT, 0,
+                                       0, nullptr, 0, nullptr, 1, &toDst);
+                  VkBufferImageCopy copy{};
+                  copy.imageSubresource = { FormatToAspect(desc.format), 0, 0, 1 };
+                  copy.imageExtent = { desc.width, desc.height, 1 };
+                  vkCmdCopyBufferToImage(cmd, staging, vkImg,
+                                         VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &copy);
+                  // 上传后直接落到 SHADER_READ_ONLY：调用方最常见的用法是采样，
+                  // 让它自己再转换一次纯属多余。
+                  VkImageMemoryBarrier toRo = toDst;
+                  toRo.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+                  toRo.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
+                  toRo.oldLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
+                  toRo.newLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+                  vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_TRANSFER_BIT,
+                                       VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT, 0,
+                                       0, nullptr, 0, nullptr, 1, &toRo);
+                  vkEndCommandBuffer(cmd);
+                  VkSubmitInfo si{VK_STRUCTURE_TYPE_SUBMIT_INFO};
+                  si.commandBufferCount = 1; si.pCommandBuffers = &cmd;
+                  VkFenceCreateInfo fci{VK_STRUCTURE_TYPE_FENCE_CREATE_INFO};
+                  VkFence fence = VK_NULL_HANDLE;
+                  vkCreateFence(m_Impl->device, &fci, nullptr, &fence);
+                  vkQueueSubmit(GetGraphicsQueue(), 1, &si, fence);
+                  // 同步等待：调用方在 CreateTexture 返回后就要用这张纹理。
+                  vkWaitForFences(m_Impl->device, 1, &fence, VK_TRUE, UINT64_MAX);
+                  vkDestroyFence(m_Impl->device, fence, nullptr);
+                  vkFreeCommandBuffers(m_Impl->device, pool, 1, &cmd);
+                  tex->SetLayout(VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+              }
+              vmaDestroyBuffer(m_Impl->vmaAllocator, staging, sAlloc);
+          }
+      }
+      return tex;
 }
 
 std::shared_ptr<IRHIPipelineState> VulkanDevice::CreateGraphicsPSO(const GraphicsPSODesc& desc) {

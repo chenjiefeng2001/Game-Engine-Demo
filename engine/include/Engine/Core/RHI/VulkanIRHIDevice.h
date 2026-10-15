@@ -50,6 +50,9 @@ class VulkanDeferredDeletion;
          * 也没有任何分配入口，SetConstantBuffer 因此永远写不进东西。
          */
         VkDescriptorSet AllocateDescriptorSet(VkDescriptorSetLayout layout) noexcept;
+        /** 设备共享采样器（线性过滤 + 钳制边缘）。组合式图像采样描述符需要它，
+         *  而此前引擎里根本没有任何采样器。 */
+        VkSampler GetSampler() const noexcept;
 
         VkDevice        GetVkDevice() const noexcept;
         VmaAllocator    GetVmaAllocator() const noexcept;
