@@ -139,12 +139,13 @@ TEST_F(GL46DeviceTest, CreateAndDispatchComputeShader) {
     // 创建 Compute PSO
     ComputePSODesc psoDesc;
     psoDesc.computeShader = StringID::Runtime("gpu_physics_integrate");
-    auto* pso = s_Device->CreateComputePSO(psoDesc);
+      // CreateComputePSO 现在返回 shared_ptr，auto* 无法推导。
+      auto pso = s_Device->CreateComputePSO(psoDesc);
     ASSERT_NE(pso, nullptr);
 
     // Dispatch
     cmdList->Begin();
-    cmdList->SetPipelineState(pso);
+    cmdList->SetPipelineState(pso.get());
     cmdList->SetUnorderedAccess(0, buffer.get());
     cmdList->SetComputeFloat("u_Dt", 1.0f / 60.0f);
     cmdList->Dispatch(1, 1, 1);
