@@ -100,8 +100,8 @@ bool InstanceExtensionAvailable(const char* name) {
 
 }  // namespace
 
-IRHIPipelineState* CreateGraphicsPipeline(VkDevice, VkPipelineLayout, const GraphicsPSODesc&, VkShaderModule, VkShaderModule);
-IRHIPipelineState* CreateComputePipeline(VkDevice, VkPipelineLayout, VkShaderModule);
+std::shared_ptr<IRHIPipelineState> CreateGraphicsPipeline(VkDevice, VkPipelineLayout, const GraphicsPSODesc&, VkShaderModule, VkShaderModule);
+std::shared_ptr<IRHIPipelineState> CreateComputePipeline(VkDevice, VkPipelineLayout, VkShaderModule);
 
 struct VulkanDevice::Impl {
     VkInstance instance{VK_NULL_HANDLE};
@@ -645,9 +645,9 @@ auto tex = std::make_shared<VulkanTexture>();
     return tex;
 }
 
-IRHIPipelineState* VulkanDevice::CreateGraphicsPSO(const GraphicsPSODesc& desc) {
+std::shared_ptr<IRHIPipelineState> VulkanDevice::CreateGraphicsPSO(const GraphicsPSODesc& desc) {
     uint64_t hash = desc.GetHash();
-    if (auto* hit = PSOCache::Get().Find<GraphicsPSODesc>(hash)) return hit;
+    if (auto hit = PSOCache::Get().Find<GraphicsPSODesc>(hash)) return hit;
 
       // 描述符 set 布局。此前这里 setLayoutCount 恒为 0，于是着色器即使声明了
       // set/binding 也无法拿到任何描述符 —— 整条描述符链在此断开。
@@ -726,22 +726,19 @@ IRHIPipelineState* VulkanDevice::CreateGraphicsPSO(const GraphicsPSODesc& desc) 
                      static_cast<unsigned long long>(desc.pixelShader.Value()));
     }
 
-auto* pso = CreateGraphicsPipeline(m_Impl->device, layout, desc, vsModule, fsModule);
+std::shared_ptr<IRHIPipelineState> pso =
+            CreateGraphicsPipeline(m_Impl->device, layout, desc, vsModule, fsModule);
       // 模块只用于创建管线，创建完即可销毁（管线内部已持有）。
       if (vsModule) vkDestroyShaderModule(m_Impl->device, vsModule, nullptr);
       if (fsModule) vkDestroyShaderModule(m_Impl->device, fsModule, nullptr);
       if (pso) {
           // 管线失败时上面已建好的 set 布局不会进入 pipeline layout，必须自行回收，
           // 否则每次失败的 PSO 请求都泄漏一个 VkDescriptorSetLayout。
-          if (auto* vpso = dynamic_cast<VulkanPipelineState*>(pso)) {
-              vpso->SetDescriptorSetLayout(setLayout);
-              if (vpso->GetVkPipeline() == VK_NULL_HANDLE) {
-                  for (auto s : setLayouts) vkDestroyDescriptorSetLayout(m_Impl->device, s, nullptr);
-                  delete vpso;
-                  pso = nullptr;
-              }
-          } else {
+          auto* vpso = dynamic_cast<VulkanPipelineState*>(pso.get());
+          if (vpso) vpso->SetDescriptorSetLayout(setLayout);
+          if (pso && (!vpso || vpso->GetVkPipeline() == VK_NULL_HANDLE)) {
               for (auto s : setLayouts) vkDestroyDescriptorSetLayout(m_Impl->device, s, nullptr);
+              pso.reset();
           }
       } else {
           for (auto s : setLayouts) vkDestroyDescriptorSetLayout(m_Impl->device, s, nullptr);
@@ -750,7 +747,7 @@ auto* pso = CreateGraphicsPipeline(m_Impl->device, layout, desc, vsModule, fsMod
       return pso;
 }
 
-IRHIPipelineState* VulkanDevice::CreateComputePSO(const ComputePSODesc& desc) {
+std::shared_ptr<IRHIPipelineState> VulkanDevice::CreateComputePSO(const ComputePSODesc& desc) {
     VkPipelineLayout layout; VkPipelineLayoutCreateInfo plCI{VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO};
     vkCreatePipelineLayout(m_Impl->device, &plCI, nullptr, &layout);
     return CreateComputePipeline(m_Impl->device, layout, VK_NULL_HANDLE);

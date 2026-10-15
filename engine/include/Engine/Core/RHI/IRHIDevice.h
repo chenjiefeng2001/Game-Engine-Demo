@@ -197,12 +197,12 @@ namespace RHI {
          *
          * 通常不直接调用，而是通过 PSOCache::GetOrCreate() 间接使用。
          */
-        virtual IRHIPipelineState* CreateGraphicsPSO(const GraphicsPSODesc& desc) = 0;
+virtual std::shared_ptr<IRHIPipelineState> CreateGraphicsPSO(const GraphicsPSODesc& desc) = 0;
 
         /**
          * @brief 创建 Compute PSO
          */
-        virtual IRHIPipelineState* CreateComputePSO(const ComputePSODesc& desc) = 0;
+        virtual std::shared_ptr<IRHIPipelineState> CreateComputePSO(const ComputePSODesc& desc) = 0;
 
         // ── 命令列表 ──
 
