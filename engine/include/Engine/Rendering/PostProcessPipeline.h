@@ -33,12 +33,13 @@ namespace Engine { namespace Rendering {
     public:
         bool Initialize(::Engine::RHI::IRHIDevice& device);
         void Shutdown();
-        ::Engine::RHI::IRHIPipelineState* GetPSO(PostProcessEffect e) const noexcept { return m_PSOs[static_cast<uint8>(e)]; }
+        // 存储与创建接口现在都是 shared_ptr；GetPSO 返回裸指针供调用方直接绑定。
+          ::Engine::RHI::IRHIPipelineState* GetPSO(PostProcessEffect e) const noexcept { return m_PSOs[static_cast<uint8>(e)].get(); }
         void UploadParams(::Engine::RHI::IRHICommandList& cmd, const PostProcessUBO& params);
         bool IsInitialized() const noexcept { return m_Initialized; }
     private:
         bool m_Initialized = false;
-        ::Engine::RHI::IRHIPipelineState* m_PSOs[static_cast<uint8>(PostProcessEffect::COUNT)] = {};
+        std::shared_ptr<::Engine::RHI::IRHIPipelineState> m_PSOs[static_cast<uint8>(PostProcessEffect::COUNT)] = {};
     };
 
     struct BloomConfig { uint32_t downsampleLevels = 4; float filterRadius = 0.005f; bool useKawase = true; };
