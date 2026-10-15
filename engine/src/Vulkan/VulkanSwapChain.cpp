@@ -63,19 +63,11 @@ void VulkanSwapChain::Present() {
     VulkanFrameResource& fr = frameCtx.frames[frameCtx.currentFrame];
     const uint32_t imageIndex = m_ImageIndex;
 
-    // ── 3. 提交调用方已录制的命令（等待 fr.imageAvailable，由 AcquireNextImage 触发）──
-    VkPipelineStageFlags waitStages = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
-    VkSubmitInfo submitInfo{VK_STRUCTURE_TYPE_SUBMIT_INFO};
-    submitInfo.waitSemaphoreCount = 1;
-    submitInfo.pWaitSemaphores = &fr.imageAvailable;
-    submitInfo.pWaitDstStageMask = &waitStages;
-    submitInfo.commandBufferCount = 1;
-    submitInfo.pCommandBuffers = &fr.commandBuffer;
-    submitInfo.signalSemaphoreCount = 1;
-    submitInfo.pSignalSemaphores = &fr.renderFinished;
-    vkQueueSubmit(queue, 1, &submitInfo, fr.fence);
-
-    // ── 4. 呈现图像 ──
+    // ── 3. 呈现 ──
+    // 提交已移到 IRHICommandList::Submit()。此前 Present() 顺手替调用方提交命令缓冲，
+    // 提交语义被藏在呈现里：离屏场景因此没有提交入口，调用方也无从知道一帧何时进入 GPU。
+    // 现在分工明确 —— Submit() 等 acquire、signal renderFinished 并提交；Present() 只
+    // 等待并呈现。顺序要求：Submit() 必须在 Present() 之前。
     VkPresentInfoKHR presentInfo{VK_STRUCTURE_TYPE_PRESENT_INFO_KHR};
     presentInfo.waitSemaphoreCount = 1;
     presentInfo.pWaitSemaphores = &fr.renderFinished;

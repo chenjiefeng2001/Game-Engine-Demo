@@ -135,10 +135,48 @@ void VulkanCommandList::End() {
     m_Impl->isRecording = false;
 }
 
-void VulkanCommandList::Reset() {
-    if (m_Impl->cmdBuffer == VK_NULL_HANDLE) return;
+void VulkanCommandList::Submit() {
+      // 提交语义此前藏在 VulkanSwapChain::Present() 里：它顺手把调用方录好的命令
+      // 缓冲提交了。于是离屏 / 无窗口场景根本没有提交入口。现在显式提供。
+if (!m_Impl->device) return;
+      if (m_Impl->cmdBuffer == VK_NULL_HANDLE) return;
+      // 还没 End()：命令缓冲仍是录制态，提交非法。
+      if (m_Impl->isRecording) {
+          std::fprintf(stderr, "[VulkanCommandList] Submit() while still recording; call End() first\n");
+          return;
+      }
+      VulkanFrameContext& frameCtx = m_Impl->device->GetFrameContext();
+      VulkanFrameResource& fr = frameCtx.frames[frameCtx.currentFrame];
+      VkDevice dev = m_Impl->device->GetVkDevice();
 
-    vkResetCommandBuffer(m_Impl->cmdBuffer, 0);
+      VkPipelineStageFlags waitStages = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
+      VkSubmitInfo si{VK_STRUCTURE_TYPE_SUBMIT_INFO};
+      si.commandBufferCount = 1;
+      si.pCommandBuffers = &m_Impl->cmdBuffer;
+      // 有交换链时必须先等 acquire，否则任何触碰 backbuffer 的命令都是竞态。
+      //
+      // 刻意**不**在这里 vkWaitForFences：那属于「复用帧槽位」的等待，已由
+      // AcquireNextImage() 完成（它等完并重置了 fence）。重复等待会挂死 ——
+      // 此时 fence 尚未被本次提交 signal，等待一个永不signal 的 fence 是死锁。
+      if (fr.imageAvailable != VK_NULL_HANDLE) {
+          si.waitSemaphoreCount = 1;
+          si.pWaitSemaphores = &fr.imageAvailable;
+          si.pWaitDstStageMask = &waitStages;
+      }
+      // signal renderFinished：Present() 要靠它等待渲染完成。
+      if (fr.renderFinished != VK_NULL_HANDLE) {
+          si.signalSemaphoreCount = 1;
+          si.pSignalSemaphores = &fr.renderFinished;
+      }
+      if (vkQueueSubmit(m_Impl->device->GetGraphicsQueue(), 1, &si,
+                        fr.fence != VK_NULL_HANDLE ? fr.fence : VK_NULL_HANDLE) != VK_SUCCESS) {
+          std::fprintf(stderr, "[VulkanCommandList] vkQueueSubmit failed\n");
+      }
+  }
+
+void VulkanCommandList::Reset() {
+      if (m_Impl->cmdBuffer == VK_NULL_HANDLE) return;
+      vkResetCommandBuffer(m_Impl->cmdBuffer, 0);
     m_Impl->isRecording = false;
     m_Impl->barrierCount = 0;
     m_Impl->renderingActive = false;
