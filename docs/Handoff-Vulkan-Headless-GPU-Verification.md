@@ -86,6 +86,52 @@ display 的话，lavapipe 会在关闭 surface 时对已死的 display 发请求
 本条最初表现为 Wayland 路径崩溃，gdb 回溯显示崩在 `Shutdown()` 内的
 `wl_proxy_marshal`，与 surface 创建无关。
 
+### 2.3j Vulkan 接线完整度审计（`ccb2fdf`）
+
+按接口面 / 生产调用链 / 资源三处逐项核对，结论如下。
+
+**已完整并有验证的：**
+
+| 环节 | 证据 |
+| --- | --- |
+| 实例 / 物理设备 / 队列 / VMA | 15/15 编译 + 全部路径运行 |
+| Surface（Xlib / Wayland） | 真实合成器，§2.3d §2.3i |
+| Swapchain / acquire / present | 同上，零 validation 发现 |
+| 渲染作用域（dynamic rendering） | 离屏三角形 + 窗口路径 |
+| 管线状态 / 顶点输入契约 | CI 常开，§2.3h |
+| 图像布局跟踪与屏障 | validation 零发现 |
+| 资源生命周期（image / view / swapchain / PSO） | 修完泄漏后 `vkDestroyDevice` 无告警 |
+
+**本轮补上的洞：** `VulkanBuffer` 未覆盖 `IRHIBuffer::GetMappedPtr()`，
+基类恒返回 `nullptr`，于是即便 `CreateBuffer` 已经把内存映射好，通过 `IRHIBuffer*`
+也拿不到指针。`GPUAllocation` 此前也只填了 `mappedPtr`，`size` / `requestedSize` 全为 0。
+
+**尚未接线的（按影响排序）：**
+
+1. **生产路径在 Linux 上根本没有 surface。** `RHIWindow` 只在 `_WIN32` 下取
+   `glfwGetWin32Window`，其它平台 `m_HWND = nullptr`；而 `RHIDemoApp::InitVulkan` 把这个
+   句柄直接传给 `VulkanDevice::Initialize`，且从不调用 `SetNativeWindow`。
+   结果是 Linux 上没有 display 句柄 → 不建 surface → `CreateSwapChain` 返回空 →
+   `RenderVulkanFrame` 每帧失败。**`RHIDemo --vulkan` 目前只在 Windows 上可用。**
+2. **描述符集完全没接。** `VulkanCommandList::currentDescriptorSet` 在任何路径下都不会被
+   置为非空，只有独立的 `BindlessDescriptor` 自己 `vkAllocateDescriptorSets`。
+   于是 `SetConstantBuffer` / `SetTexture` 是死代码 —— 着色器无法使用 uniform、
+   sampler 或任何纹理。
+3. **深度缓冲未在引擎路径创建。** `CreateTexture` 只建颜色图像与颜色 view，
+   命令列表虽接受 `desc.depth`，但没有 DSV 的创建路径，深度附件无法真正使用。
+4. **`RHIWindow::CreateVulkanSurface` 是第二套 surface 实现**（走 GLFW 而非引擎的
+   `NativeWindow`），且**零调用者** —— 属于死代码，且与引擎路径语义不一致。
+5. **`SetNativeWindow` 在生产代码中零调用**，只有验证用测试调过。
+6. **两套渲染作用域并存**：`VulkanCommandList::BeginRendering` 与
+   `VulkanOffscreenTarget::BeginRendering` 各自实现一遍，后者应并入前者。
+7. **API 所有权不一致**：`CreateGraphicsPSO` 返回裸指针，`CreateCommandList` 返回
+   `unique_ptr`；`IRHICommandList` 也没有 `Submit`，提交只能经交换链/离屏目标的内部
+   方法，调用方无法自行提交。
+8. **`ShaderCompileRule` 不产出 `.spv` 文件**，只登记源码。
+9. **XCB 路径仅编译验证**（本环境无 xcb 会话）。
+
+其中 1、2、3 是「能不能真正跑一帧带光照/纹理的画面」的前置条件；4、5 是应删除的死代码。
+
 ## 0. 像素已验证通过 —— 真正的根因是**正面绕序**
 
 **接手前请先读这一节。**
