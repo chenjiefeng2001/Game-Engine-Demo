@@ -94,6 +94,28 @@ case Format::RGBA8_SInt:   return VK_FORMAT_R8G8B8A8_SINT;
     }
 }
 
+bool IsDepthFormat(RHI::Format format) noexcept {
+    switch (format) {
+        case RHI::Format::D16_UNorm:
+        case RHI::Format::D24_UNorm_S8_UInt:
+        case RHI::Format::D32_Float:
+        case RHI::Format::D32_Float_S8_UInt: return true;
+        default: return false;
+    }
+}
+bool IsStencilFormat(RHI::Format format) noexcept {
+    return format == RHI::Format::D24_UNorm_S8_UInt ||
+           format == RHI::Format::D32_Float_S8_UInt;
+}
+VkImageAspectFlags FormatToAspect(RHI::Format format) noexcept {
+    const bool d = IsDepthFormat(format);
+    const bool s = IsStencilFormat(format);
+    if (d && s) return VK_IMAGE_ASPECT_DEPTH_BIT | VK_IMAGE_ASPECT_STENCIL_BIT;
+    if (d)      return VK_IMAGE_ASPECT_DEPTH_BIT;
+    if (s)      return VK_IMAGE_ASPECT_STENCIL_BIT;
+    return VK_IMAGE_ASPECT_COLOR_BIT;
+}
+
 RHI::Format VkToFormat(VkFormat fmt) {
     switch (fmt) {
         case VK_FORMAT_R8_UNORM:         return Format::R8_UNorm;

@@ -558,14 +558,29 @@ std::shared_ptr<IRHIBuffer> VulkanDevice::CreateBuffer(const RHIBufferDesc& desc
 }
 
 std::shared_ptr<IRHITexture> VulkanDevice::CreateTexture(const TextureDesc& desc) {
-    auto tex = std::make_shared<VulkanTexture>();
-    VkImageCreateInfo ii{VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO};
-    ii.imageType = VK_IMAGE_TYPE_2D; ii.format = FormatToVk(desc.format);
-    ii.extent = {desc.width, desc.height, 1}; ii.mipLevels = 1; ii.arrayLayers = 1;
-    ii.samples = VK_SAMPLE_COUNT_1_BIT; ii.tiling = VK_IMAGE_TILING_OPTIMAL;
-    ii.usage = VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT;
-    VkImage vkImg; VmaAllocation alloc;
-    vmaCreateImage(m_Impl->vmaAllocator, &ii, nullptr, &vkImg, &alloc, nullptr);
+auto tex = std::make_shared<VulkanTexture>();
+      VkImageCreateInfo ii{VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO};
+      ii.imageType = VK_IMAGE_TYPE_2D; ii.format = FormatToVk(desc.format);
+      ii.extent = {desc.width, desc.height, 1}; ii.mipLevels = 1; ii.arrayLayers = 1;
+      ii.samples = VK_SAMPLE_COUNT_1_BIT; ii.tiling = VK_IMAGE_TILING_OPTIMAL;
+      // 深度 / 模板格式必须用 DEPTH_STENCIL_ATTACHMENT 用途，且视图 aspect 也要跟着变。
+      // 此前一律 COLOR_ATTACHMENT + COLOR aspect：对 D32_Float 这类格式是非法组合，
+      // 深度附件根本无法使用（命令列表虽接受 desc.depth，却没有可用的 DSV）。
+      const bool isDepth = IsDepthFormat(desc.format);
+      ii.usage = isDepth ? (VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT)
+                         : (VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT);
+      VkImage vkImg; VmaAllocation alloc; VmaAllocationInfo allocInfo{};
+      // pAllocationCreateInfo 不能为 nullptr：VMA 直接断言它非空。此前这里传的是
+      // nullptr，于是 **CreateTexture 从未成功执行过** —— 只是没有任何验证路径调用它，
+      // 这个断言一直没被触发。
+      VmaAllocationCreateInfo ai{};
+      ai.usage = (desc.memoryUsage == MemoryUsage::CPU_To_GPU ||
+                  desc.memoryUsage == MemoryUsage::CPU_Only)
+                     ? VMA_MEMORY_USAGE_CPU_TO_GPU : VMA_MEMORY_USAGE_GPU_ONLY;
+      if (vmaCreateImage(m_Impl->vmaAllocator, &ii, &ai, &vkImg, &alloc, &allocInfo) != VK_SUCCESS) {
+          std::fprintf(stderr, "[Vulkan] vmaCreateImage failed in CreateTexture\n");
+          return nullptr;
+      }
     tex->SetVkImage(vkImg); tex->SetWidth(desc.width); tex->SetHeight(desc.height); tex->SetFormat(desc.format);
     tex->SetAllocator(m_Impl->vmaAllocator); // VMA RAII 析构需要
     tex->SetAllocation(alloc);
@@ -577,7 +592,7 @@ std::shared_ptr<IRHITexture> VulkanDevice::CreateTexture(const TextureDesc& desc
     vi.image = vkImg;
     vi.viewType = VK_IMAGE_VIEW_TYPE_2D;
     vi.format = ii.format;
-    vi.subresourceRange = { VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1 };
+    vi.subresourceRange = { FormatToAspect(desc.format), 0, 1, 0, 1 };
     VkImageView view = VK_NULL_HANDLE;
     if (vkCreateImageView(m_Impl->device, &vi, nullptr, &view) != VK_SUCCESS) {
         std::fprintf(stderr, "[Vulkan] vkCreateImageView failed in CreateTexture\n");

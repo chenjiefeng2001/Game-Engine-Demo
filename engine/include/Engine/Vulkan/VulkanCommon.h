@@ -34,7 +34,13 @@ constexpr VkCommandPoolCreateFlags kThreadCmdPoolFlags =
 
 // ── 格式转换 ──
 VkFormat FormatToVk(RHI::Format format);
-RHI::Format VkToFormat(VkFormat format);
+    RHI::Format VkToFormat(VkFormat format);
+    /** 深度 / 模板判定。CreateTexture 此前一律按颜色格式建图像与视图：
+     *  对 D32_Float 之类的深度格式会得到「深度图像 + COLOR_ATTACHMENT 用途 +
+     *  COLOR aspect」这种非法组合，深度附件根本无法使用。 */
+    bool IsDepthFormat(RHI::Format format) noexcept;
+    bool IsStencilFormat(RHI::Format format) noexcept;
+    VkImageAspectFlags FormatToAspect(RHI::Format format) noexcept;
 
 // ── 屏障辅助 ──
 void ConvertBarrierDesc(
