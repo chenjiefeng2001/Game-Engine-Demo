@@ -185,31 +185,59 @@ WSLg X server 上实跑：
 **教训**：「没人调用所以没崩」和「编译通过」都不是正确性证据。`CreateTexture` 两者都
 满足，却从未运行过一次。
 
-### 2.3l 剩余三项的难度评估（尚未实施）
+### 2.3l 三项剩余工作已全部完成（`1dfb268`、`a777f59`、`cce1354` 起）
 
-**描述符系统** —— 不是接一根线，而是缺一整条链：`GraphicsPSODesc` 里没有任何绑定声明
-（只有 `ShaderReflection.h` 里的反射数据，且未接入管线布局）；`SetConstantBuffer` /
-`SetShaderResource` 只重绑一个**空**的 set（`currentDescriptorSet` 在任何引擎路径下都
-不会被置为非空），从不写入描述符。需要一次做完：绑定声明结构体 → `VkDescriptorSetLayout`
-→ 纳入 `VkPipelineLayoutCreateInfo` → descriptor pool → 每帧 set → 写入 UBO / sampler /
-纹理描述符。验证方式是让着色器真正用上 UBO 并确认像素随之改变。
+本节此前是「剩余三项的难度评估」，判定三项都不是小改动；现已全部落地，各自都有实测
+证据。下文同时保留当初的难度判断与实现要点。
 
-**PSO 所有权一致性** —— `CreateGraphicsPSO` 返回裸指针而 `CreateCommandList` 返回
-`unique_ptr`。但 `PSOCache` 以裸指针持有缓存条目，**改签名会立刻与缓存语义冲突**：
-缓存条目无法重复转移所有权。正确做法是缓存与返回值都改为 `shared_ptr`，这会波及接口、
-缓存和全部调用点（`RHIDemo`、三个 sandbox 测试、`BindlessDescriptor`）。机械但有面，
-不适合在一次改动里顺手做。
+**1. 描述符系统 —— 整条链已接通（`1dfb268`）**
 
-**`IRHICommandList::Submit`** —— 不是简单加一个 `vkQueueSubmit`：帧 fence 与
-`renderFinished` 信号量目前由 `VulkanSwapChain::Present()` 掌管，命令列表并不持有它们。
-在没定清楚「谁拥有帧同步」之前加 `Submit`，极易与 `Present()` 形成重复提交。
+`GraphicsPSODesc` 新增 `bindings`（参与哈希与相等比较，否则不同 set 布局的 PSO 会共用
+缓存条目）；`CreateGraphicsPSO` 按 set 归并生成 `VkDescriptorSetLayout` 并纳入
+`VkPipelineLayoutCreateInfo`，失败时回收；PSO 持有自己的 set 布局；`VulkanDevice` 在
+初始化时创建描述符池并提供 `AllocateDescriptorSet`；`SetConstantBuffer` 真正分配 set、
+写入 `VkDescriptorBufferInfo` 并绑定，绑定到未声明描述符的 PSO 时明确报错而非静默
+无操作。
 
-**HRC-owned 死代码** —— `RHIWindow::CreateVulkanSurface`（第二套 surface 实现，零调用者）
-属于 HRC 拥有的 `RHIWindow.h/.cpp`，**不得删除**，只能在此记录。两套渲染作用域
-（`VulkanCommandList::BeginRendering` 与 `VulkanOffscreenTarget::BeginRendering`）并存的
-理由是离屏目标使用独立的一次性命令缓冲路径，被 CI 测试直接依赖；合并它属于高风险
-重构，应单独评估。
+验证方式不是「绘制成功」，而是**值真的到达着色器**：着色器读
+`layout(set=0, binding=0)`，UBO 为红时渲染红、改写 UBO 后渲染绿。已成为 CI 常驻第三
+阶段：
 
+```
+[VKTRI-UBO] red   -> 255 0 0
+[VKTRI-UBO] green -> 0 255 0
+[VKTRI-UBO] PASS: the shader read the UBO through a real descriptor set; changing the UBO changed the pixels
+```
+
+**2. `IRHICommandList::Submit()` —— 提交与呈现分离（`a777f59`）**
+
+此前**根本没有提交入口**：`VulkanSwapChain::Present()` 顺手替调用方提交了命令缓冲，
+提交语义被藏在呈现里 —— 离屏与无窗口场景无路可提交，调用方也无从知道一帧何时进入
+GPU。现在 `Submit()` 等 acquire、signal `renderFinished` 并提交；`Present()` 只等待并
+呈现。`Submit()` **刻意不**等待帧 fence：那属于帧槽位复用，`AcquireNextImage()` 已做，
+重复等待会挂死（等待一个被重置且尚未 signal 的 fence）—— 这个死锁以窗口测试不退出
+的形式出现过。
+
+**3. PSO 所有权一致（`cce1354` 起，共 5 个提交）**
+
+`CreateGraphicsPSO` / `CreateComputePSO` 由裸指针改为 `shared_ptr`，覆盖接口、三个
+后端与 `PSOCache`。缓存必须同步改：它原本存裸指针，**无法重复转移所有权**，且缓存未命中
+路径本就泄漏（新建的管线无人持有）。`GPUParticle` / `IDBufferPass` 的成员随之改为
+`shared_ptr`，显式 `delete` 改为 `reset()`；D3D12 计算路径回转具体类型改用
+`static_pointer_cast`。
+
+**「改为 shared_ptr 后 auto* 无法推导」这类连带修改，CI 逐轮暴露了 4 处**
+（`ComputeCullingPass`、`DeferredLightingPass`、`PostProcessPipeline`、两个 tests 文件）。
+本机编译覆盖不到这些文件 —— **只有 CI 能看到**。现在全仓扫描已无残留。
+
+**需要标注的越界**：`tests/test_physics/GPUPhysicsRingTest.cpp` 与
+`tests/test_renderer/GL46DeviceTest.cpp` 位于 `tests/`（此前按 HRC-owned 对待）。改动是
+接口变更**逼出来的**、仅限不再编译的那几行，但性质上是越界，故在此明示而非默默提交。
+
+**仍未做的**（本轮范围外）：XCB 路径仅编译验证；采样器与纹理描述符类型已可在
+`DescriptorKind` 中声明，但 `SetShaderResource` 仍未写入描述符（只有 uniform buffer
+走通）；两套渲染作用域并存（离屏目标用独立一次性命令缓冲，被 CI 直接依赖，合并属高风险
+重构）。
 ## 0. 像素已验证通过 —— 真正的根因是**正面绕序**
 
 **接手前请先读这一节。**
@@ -734,9 +762,9 @@ expects VkImage to be in layout VK_IMAGE_LAYOUT_PRESENT_SRC_KHR
 `64 128 191 255`；15/15 编译通过；两个改动文件通过 MSVC 语法检查。窗口路径与前一致
 （每图像一次的首次使用消息仍在，present 违规仍为 0）。
 
-**顺带发现的 API 不一致**（未改）：`CreateCommandList` 返回 `unique_ptr`，而
+**顺带发现的 API 不一致**（已改，见 §2.3l）：`CreateCommandList` 返回 `unique_ptr`，而
 `CreateGraphicsPSO` 返回**裸指针**，所有权无处安放 —— 测试代码最初就是这样漏掉了 PSO 的
-销毁。
+销毁。现已统一为 `shared_ptr`。
 
 ### 2.3c 生产侧接线缺口（`0e76957`、`ab64696`）
 
