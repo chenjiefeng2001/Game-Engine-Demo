@@ -232,12 +232,12 @@ std::shared_ptr<IRHITexture> GL46Device::CreateTexture(const TextureDesc&) {
     return std::make_shared<GL46Texture>();
 }
 
-IRHIPipelineState* GL46Device::CreateGraphicsPSO(const GraphicsPSODesc& desc) {
-    auto* pso = new GL46PipelineState(); pso->Desc = desc; return pso;
+std::shared_ptr<IRHIPipelineState> GL46Device::CreateGraphicsPSO(const GraphicsPSODesc& desc) {
+    auto pso = std::make_shared<GL46PipelineState>(); pso->Desc = desc; return pso;
 }
 
-IRHIPipelineState* GL46Device::CreateComputePSO(const ComputePSODesc& desc) {
-    auto* pso = new GL46ComputePipelineState();
+std::shared_ptr<IRHIPipelineState> GL46Device::CreateComputePSO(const ComputePSODesc& desc) {
+    auto pso = std::make_shared<GL46ComputePipelineState>();
     uint64_t hash = desc.computeShader.Value();
     pso->program = GetComputeProgram(hash);
     std::fprintf(stdout, "[GL46] CreateComputePSO: hash=0x%016llx, program=%p, glprog=%u\n",

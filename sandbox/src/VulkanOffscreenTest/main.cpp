@@ -104,7 +104,7 @@ struct TriVertex { float x, y, z, w; float r, g, b, a; };
       // 声明绑定：此前 GraphicsPSODesc 根本没有这个字段。
       desc.bindings.push_back({ 0u, 0u, DescriptorKind::UniformBuffer, 1u });
 
-      std::unique_ptr<IRHIPipelineState> psoOwner(device.CreateGraphicsPSO(desc));
+      std::shared_ptr<IRHIPipelineState> psoOwner(device.CreateGraphicsPSO(desc));
       auto* pso = psoOwner.get();
       if (!pso) { std::printf("[VKTRI-UBO] FAIL: CreateGraphicsPSO with a binding\n"); return 1; }
       auto* vkPso = dynamic_cast<VulkanPipelineState*>(pso);
@@ -195,7 +195,7 @@ struct TriVertex { float x, y, z, w; float r, g, b, a; };
     // 必须持有所有权：CreateGraphicsPSO 返回裸指针，不接管的话 PSO 永远不析构，
   // 其 VkPipeline / VkPipelineLayout 会一直活到 vkDestroyDevice，触发
   // VUID-vkDestroyDevice-device-05137。
-  std::unique_ptr<RHI::IRHIPipelineState> psoOwner(device.CreateGraphicsPSO(desc));
+  std::shared_ptr<RHI::IRHIPipelineState> psoOwner(device.CreateGraphicsPSO(desc));
   auto* pso = psoOwner.get();
     if (!pso) {
         std::printf("[VKTRI-VB] FAIL: CreateGraphicsPSO with vertex input returned null\n");
@@ -317,7 +317,7 @@ int main()
     desc.depthStencil.depthTest = false;
     desc.depthStencil.depthWrite = false;
 
-    std::unique_ptr<RHI::IRHIPipelineState> psoOwner(vkDevice->CreateGraphicsPSO(desc));
+    std::shared_ptr<RHI::IRHIPipelineState> psoOwner(vkDevice->CreateGraphicsPSO(desc));
   auto* pso = psoOwner.get();
     if (!pso) {
         std::printf("[VKTRI] FAIL: CreateGraphicsPSO returned null\n");

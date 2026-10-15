@@ -192,9 +192,9 @@ private:
 
     std::shared_ptr<RHI::IRHIBuffer> m_VertexBuffer;
     std::shared_ptr<RHI::IRHIBuffer> m_IndexBuffer;
-    RHI::IRHIPipelineState* m_IntegratePSO = nullptr;
-    RHI::IRHIPipelineState* m_CollidePSO   = nullptr;      ///< brute-force collide
-    RHI::IRHIPipelineState* m_RenderPSO    = nullptr;
+    std::shared_ptr<RHI::IRHIPipelineState> m_IntegratePSO  = nullptr;
+    std::shared_ptr<RHI::IRHIPipelineState> m_CollidePSO    = nullptr;      ///< brute-force collide
+    std::shared_ptr<RHI::IRHIPipelineState> m_RenderPSO     = nullptr;
 
     // ── Phase 4：Spatial Hash 资源（计数排序管线，仅依赖 atomicAdd）──
     std::shared_ptr<RHI::IRHIBuffer> m_CellCountBuf;   ///< gridCells × 4B 每 cell 粒子数
@@ -202,11 +202,11 @@ private:
     std::shared_ptr<RHI::IRHIBuffer> m_CellOfBuf;      ///< N × 4B 每粒子所属 cell
     std::shared_ptr<RHI::IRHIBuffer> m_OffsetBuf;      ///< N × 4B cell 内序号
     std::shared_ptr<RHI::IRHIBuffer> m_SortedIdxBuf;   ///< N × 4B 按 cell 分组的粒子索引
-    RHI::IRHIPipelineState* m_HashClearPSO   = nullptr;
-    RHI::IRHIPipelineState* m_HashBuildPSO   = nullptr;
-    RHI::IRHIPipelineState* m_HashScanPSO    = nullptr;
-    RHI::IRHIPipelineState* m_HashScatterPSO = nullptr;
-    RHI::IRHIPipelineState* m_CollideSpatialPSO = nullptr;
+    std::shared_ptr<RHI::IRHIPipelineState> m_HashClearPSO    = nullptr;
+    std::shared_ptr<RHI::IRHIPipelineState> m_HashBuildPSO    = nullptr;
+    std::shared_ptr<RHI::IRHIPipelineState> m_HashScanPSO     = nullptr;
+    std::shared_ptr<RHI::IRHIPipelineState> m_HashScatterPSO  = nullptr;
+    std::shared_ptr<RHI::IRHIPipelineState> m_CollideSpatialPSO  = nullptr;
     uint32_t m_GridDim[3]  = {0, 0, 0};                    ///< 三轴 cell 数
     float    m_CellSize    = 2.0f;                         ///< 自适应后的 cell 边长
     uint32_t m_GridCells   = 0;                            ///< 总 cell 数

@@ -61,14 +61,14 @@ void VulkanPipelineState::SetNativeHandles(VkPipeline pipeline, VkPipelineLayout
 // 工厂：创建 Graphics PSO
 // ════════════════════════════════════════════════════════════
 
-IRHIPipelineState* CreateGraphicsPipeline(
+std::shared_ptr<IRHIPipelineState> CreateGraphicsPipeline(
     VkDevice device,
     VkPipelineLayout pipelineLayout,
     const GraphicsPSODesc& desc,
     VkShaderModule vsModule,
     VkShaderModule fsModule)
 {
-    auto pso = new VulkanPipelineState();
+    std::shared_ptr<IRHIPipelineState> pso(new VulkanPipelineState());
 
     std::vector<VkPipelineShaderStageCreateInfo> stages;
 
@@ -93,7 +93,6 @@ IRHIPipelineState* CreateGraphicsPipeline(
     // Vulkan 规范要求 stageCount >= 1。若没有 shader module 则无法创建合法的 PSO。
     if (stages.empty()) {
         std::fprintf(stderr, "[Vulkan] CreateGraphicsPipeline: no shader stages provided\n");
-        delete pso;
         return nullptr;
     }
 
@@ -231,20 +230,19 @@ IRHIPipelineState* CreateGraphicsPipeline(
     VkResult result = vkCreateGraphicsPipelines(device, VK_NULL_HANDLE, 1, &ci, nullptr, &vkPipeline);
     if (result != VK_SUCCESS) {
         std::fprintf(stderr, "[Vulkan] Failed to create graphics pipeline\n");
-        delete pso;
         return nullptr;
     }
 
-    pso->SetNativeHandles(vkPipeline, pipelineLayout, device);
+    std::static_pointer_cast<VulkanPipelineState>(pso)->SetNativeHandles(vkPipeline, pipelineLayout, device);
     return pso;
 }
 
-IRHIPipelineState* CreateComputePipeline(
+std::shared_ptr<IRHIPipelineState> CreateComputePipeline(
     VkDevice device,
     VkPipelineLayout pipelineLayout,
     VkShaderModule csModule)
 {
-    auto pso = new VulkanPipelineState();
+    std::shared_ptr<IRHIPipelineState> pso(new VulkanPipelineState());
 
     VkPipelineShaderStageCreateInfo csCI{VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO};
     csCI.stage = VK_SHADER_STAGE_COMPUTE_BIT;
@@ -257,13 +255,13 @@ IRHIPipelineState* CreateComputePipeline(
 
     VkPipeline vkPipeline;
     VkResult result = vkCreateComputePipelines(device, VK_NULL_HANDLE, 1, &ci, nullptr, &vkPipeline);
-    if (result != VK_SUCCESS) {
-        std::fprintf(stderr, "[Vulkan] Failed to create compute pipeline\n");
-        delete pso;
-        return nullptr;
-    }
+if (result != VK_SUCCESS) {
+          std::fprintf(stderr, "[Vulkan] Failed to create compute pipeline\n");
+          // 所有权已改为 shared_ptr，不能再 delete：由 pso 析构自动回收
+          return nullptr;
+      }
 
-    pso->SetNativeHandles(vkPipeline, pipelineLayout, device);
+    std::static_pointer_cast<VulkanPipelineState>(pso)->SetNativeHandles(vkPipeline, pipelineLayout, device);
     return pso;
 }
 

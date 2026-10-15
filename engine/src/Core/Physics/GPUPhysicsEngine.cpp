@@ -57,14 +57,14 @@ bool GPUPhysicsEngine::Initialize(RHI::IRHIDevice* device, const GPUPhysicsConfi
 
 void GPUPhysicsEngine::Shutdown() {
     if (!m_Initialized) return;
-    delete m_IntegratePSO; m_IntegratePSO = nullptr;
-    delete m_CollidePSO;   m_CollidePSO = nullptr;
-    delete m_RenderPSO;    m_RenderPSO = nullptr;
-    delete m_HashClearPSO; m_HashClearPSO = nullptr;
-    delete m_HashBuildPSO; m_HashBuildPSO = nullptr;
-    delete m_HashScanPSO;  m_HashScanPSO = nullptr;
-    delete m_HashScatterPSO; m_HashScatterPSO = nullptr;
-    delete m_CollideSpatialPSO; m_CollideSpatialPSO = nullptr;
+    m_IntegratePSO.reset();
+    m_CollidePSO.reset();
+    m_RenderPSO.reset();
+    m_HashClearPSO.reset();
+    m_HashBuildPSO.reset();
+    m_HashScanPSO.reset();
+    m_HashScatterPSO.reset();
+    m_CollideSpatialPSO.reset();
     m_StateBuffer[0].reset();
     m_StateBuffer[1].reset();
     m_CellCountBuf.reset();
@@ -159,7 +159,7 @@ void GPUPhysicsEngine::RecordIntegratePass(float dt,
 
     const uint32_t groupCount = GetDispatchGroupCount();
 
-    cmdList->SetPipelineState(m_IntegratePSO);
+    cmdList->SetPipelineState(m_IntegratePSO.get());
     cmdList->SetUnorderedAccess(0, src);   // InBuf  (readonly in shader)
     cmdList->SetUnorderedAccess(1, dst);   // OutBuf
 
@@ -196,7 +196,7 @@ void GPUPhysicsEngine::RecordCollideBrutePass(RHI::IRHIBuffer* src, RHI::IRHIBuf
 
     const uint32_t groupCount = GetDispatchGroupCount();
 
-    cmdList->SetPipelineState(m_CollidePSO);
+    cmdList->SetPipelineState(m_CollidePSO.get());
     cmdList->SetUnorderedAccess(0, src);   // InBuf  (readonly 快照)
     cmdList->SetUnorderedAccess(1, dst);   // OutBuf
     cmdList->SetComputeFloat("u_Dt", 0.0f);   // collide 着色器当前未消费 dt
@@ -259,7 +259,7 @@ void GPUPhysicsEngine::RecordHashClearPass(RHI::IRHICommandList* cmdList) {
     if (!m_HashClearPSO || !cmdList || !m_CellCountBuf) return;
     const uint32_t groups = (m_GridCells + m_Config.workGroupSize - 1) / m_Config.workGroupSize;
 
-    cmdList->SetPipelineState(m_HashClearPSO);
+    cmdList->SetPipelineState(m_HashClearPSO.get());
     cmdList->SetUnorderedAccess(0, m_CellCountBuf.get());
     cmdList->SetComputeInt("u_CellCount", (int32_t)m_GridCells);
 
@@ -275,7 +275,7 @@ void GPUPhysicsEngine::RecordHashBuildPass(RHI::IRHIBuffer* src, RHI::IRHIComman
     if (!m_HashBuildPSO || !cmdList || !src || !m_CellCountBuf || !m_CellOfBuf || !m_OffsetBuf) return;
     const uint32_t groupCount = GetDispatchGroupCount();
 
-    cmdList->SetPipelineState(m_HashBuildPSO);
+    cmdList->SetPipelineState(m_HashBuildPSO.get());
     cmdList->SetUnorderedAccess(0, src);                 // InBuf
     cmdList->SetUnorderedAccess(1, m_CellCountBuf.get());// CountBuf
     cmdList->SetUnorderedAccess(2, m_CellOfBuf.get());   // CellOfBuf
@@ -298,7 +298,7 @@ void GPUPhysicsEngine::RecordHashScanPass(RHI::IRHICommandList* cmdList) {
     if (!m_HashScanPSO || !cmdList || !m_CellCountBuf || !m_CellStartBuf) return;
 
     // 单工作组（local_size_x=512，着色器内固定）
-    cmdList->SetPipelineState(m_HashScanPSO);
+    cmdList->SetPipelineState(m_HashScanPSO.get());
     cmdList->SetUnorderedAccess(1, m_CellCountBuf.get());
     cmdList->SetUnorderedAccess(2, m_CellStartBuf.get());
     cmdList->SetComputeInt("u_CellCount", (int32_t)m_GridCells);
@@ -316,7 +316,7 @@ void GPUPhysicsEngine::RecordHashScatterPass(RHI::IRHICommandList* cmdList) {
             || !m_CellStartBuf || !m_SortedIdxBuf) return;
     const uint32_t groupCount = GetDispatchGroupCount();
 
-    cmdList->SetPipelineState(m_HashScatterPSO);
+    cmdList->SetPipelineState(m_HashScatterPSO.get());
     cmdList->SetUnorderedAccess(2, m_CellOfBuf.get());
     cmdList->SetUnorderedAccess(3, m_OffsetBuf.get());
     cmdList->SetUnorderedAccess(4, m_CellStartBuf.get());
@@ -337,7 +337,7 @@ void GPUPhysicsEngine::RecordCollideSpatialPass(RHI::IRHIBuffer* src, RHI::IRHIB
             || !m_CellStartBuf || !m_SortedIdxBuf) return;
     const uint32_t groupCount = GetDispatchGroupCount();
 
-    cmdList->SetPipelineState(m_CollideSpatialPSO);
+    cmdList->SetPipelineState(m_CollideSpatialPSO.get());
     cmdList->SetUnorderedAccess(0, src);                 // InBuf
     cmdList->SetUnorderedAccess(1, dst);                 // OutBuf
     cmdList->SetUnorderedAccess(4, m_CellStartBuf.get());// StartBuf
@@ -361,7 +361,7 @@ void GPUPhysicsEngine::RecordCollideSpatialPass(RHI::IRHIBuffer* src, RHI::IRHIB
 
 void GPUPhysicsEngine::Render(RHI::IRHICommandList* cmdList) {
     if (!m_Initialized || !cmdList || m_Stats.frameCount == 0) return;
-    cmdList->SetPipelineState(m_RenderPSO);
+    cmdList->SetPipelineState(m_RenderPSO.get());
     cmdList->SetVertexBuffer(0, m_VertexBuffer.get(), 6 * sizeof(float), 0);
     cmdList->SetIndexBuffer(m_IndexBuffer.get(), 0);
     cmdList->SetPrimitiveTopology(RHI::PrimitiveTopology::TriangleList);
