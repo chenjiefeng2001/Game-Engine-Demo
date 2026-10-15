@@ -51,6 +51,8 @@ uint32_t              barrierCount{0};
       // 知道某个 VulkanTexture 是否是 swapchain backbuffer。
       IRHITexture*        renderColors[RenderTargetDesc::kMaxColorAttachments]{};
       IRHITexture*        renderDepth{nullptr};
+      // 当前绑定的 PSO：SetConstantBuffer 需要它的 descriptor set 布局。
+      VulkanPipelineState* currentPso{nullptr};
       bool IsReady() const noexcept { return isRecording && cmdBuffer != VK_NULL_HANDLE; }
 
     void FlushBarriers() {
@@ -340,6 +342,7 @@ void VulkanCommandList::SetPipelineState(IRHIPipelineState* pso) {
     
     m_Impl->currentPipeline = pipeline;
     m_Impl->currentPipelineLayout = layout;
+      m_Impl->currentPso = vkPso;
 }
 
 // ════════════════════════════════════════════════════════════
@@ -498,22 +501,46 @@ void VulkanCommandList::ResourceBarrier(uint32 count,
 // ════════════════════════════════════════════════════════════
 
 void VulkanCommandList::SetConstantBuffer(uint32 set, uint32 binding,
-                                            IRHIBuffer* buffer,
-                                            uint64_t offset, uint64_t size)
-{
-    if (!m_Impl->IsReady()) return;
-    // 通过 Bindless Allocator 绑定 UBO
-    // 使用 descriptorIndexing 模式，将 buffer 绑定到全局描述符集
-    if (m_Impl->currentDescriptorSet != VK_NULL_HANDLE && 
-        m_Impl->currentPipelineLayout != VK_NULL_HANDLE) {
-        // 绑定到图形管线
-        VkPipelineBindPoint bp = VK_PIPELINE_BIND_POINT_GRAPHICS;
-        if (m_Impl->currentDescriptorSet != VK_NULL_HANDLE) {
-            vkCmdBindDescriptorSets(m_Impl->cmdBuffer, bp,
-                m_Impl->currentPipelineLayout, set, 1, &m_Impl->currentDescriptorSet, 0, nullptr);
-        }
-    }
-}
+                                              IRHIBuffer* buffer,
+                                              uint64_t offset, uint64_t size)
+  {
+      if (!m_Impl->IsReady()) return;
+      auto* vkBuffer = static_cast<VulkanBuffer*>(buffer);
+      if (!vkBuffer || vkBuffer->GetVkBuffer() == VK_NULL_HANDLE) return;
+
+      // 此前这里只重绑 currentDescriptorSet，而它在任何引擎路径下都不会被置为
+      // 非空 —— 于是函数体永远不执行，且即使执行也没有写入任何描述符。
+      // 现在真正写入：分配 set → 写 buffer 描述符 → 绑定。
+      VulkanPipelineState* pso = m_Impl->currentPso;
+      if (!pso || !m_Impl->device) return;
+      VkDescriptorSetLayout setLayout = pso->GetDescriptorSetLayout();
+      if (setLayout == VK_NULL_HANDLE) {
+          std::fprintf(stderr,
+                       "[Vulkan] SetConstantBuffer: the bound PSO declares no descriptors "
+                       "(add a DescriptorBindingDesc to GraphicsPSODesc)\n");
+          return;
+      }
+      VkDescriptorSet dset = m_Impl->device->AllocateDescriptorSet(setLayout);
+      if (dset == VK_NULL_HANDLE) return;
+
+      VkDescriptorBufferInfo info{};
+      info.buffer = vkBuffer->GetVkBuffer();
+      info.offset = offset;
+      info.range  = size ? size : vkBuffer->GetSize();
+      VkWriteDescriptorSet write{VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET};
+      write.dstSet      = dset;
+      write.dstBinding  = binding;
+      write.dstArrayElement = 0;
+      write.descriptorCount = 1;
+      write.descriptorType  = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
+      write.pBufferInfo     = &info;
+      vkUpdateDescriptorSets(m_Impl->device->GetVkDevice(), 1, &write, 0, nullptr);
+
+      VkPipelineBindPoint bp = pso->IsCompute() ? VK_PIPELINE_BIND_POINT_COMPUTE
+                                                : VK_PIPELINE_BIND_POINT_GRAPHICS;
+      vkCmdBindDescriptorSets(m_Impl->cmdBuffer, bp, pso->GetVkPipelineLayout(),
+                              set, 1, &dset, 0, nullptr);
+  }
 
 void VulkanCommandList::SetShaderResource(uint32 set, uint32 binding,
                                             IRHITexture* texture)
@@ -560,8 +587,13 @@ CommandListType VulkanCommandList::GetType() const noexcept {
 }
 
 void VulkanCommandList::SetVkCommandBuffer(VkCommandBuffer cmdBuf) noexcept {
-    m_Impl->cmdBuffer = cmdBuf;
-}
+      m_Impl->cmdBuffer = cmdBuf;
+  }
+  void VulkanCommandList::AttachToRecording(VkCommandBuffer cmdBuf) noexcept {
+      m_Impl->cmdBuffer = cmdBuf;
+      // 声明该缓冲已在录制：所有 IsReady() 守卫据此放行，End() 负责结束它。
+      m_Impl->isRecording = true;
+  }
 
 void VulkanCommandList::SetVkPipelineState(VkPipeline pipeline, VkPipelineLayout layout) noexcept {
     m_Impl->currentPipeline = pipeline;

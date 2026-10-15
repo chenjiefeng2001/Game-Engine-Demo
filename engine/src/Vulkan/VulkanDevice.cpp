@@ -125,6 +125,9 @@ struct VulkanDevice::Impl {
     VulkanQueue* graphicsQueueWrapper{nullptr};
     VulkanPipelineLayoutCache* pipelineLayoutCache{nullptr};
     VulkanDeferredDeletion* deletionQueue{nullptr};
+      // 描述符池。描述符系统此前整条链都不存在（pool 从未创建），因此
+      // SetConstantBuffer 无法为着色器写入任何 UBO / 纹理描述符。
+      VkDescriptorPool descriptorPool{VK_NULL_HANDLE};
     uint32_t uboAlignment{256}; // 默认 256，初始化时从设备获取
     bool initialized{false};
     std::string deviceName;
@@ -198,6 +201,20 @@ void VulkanDevice::SetNativeWindow(const NativeWindow& win) noexcept {
 
 const NativeWindow& VulkanDevice::GetNativeWindow() const noexcept {
     return m_Impl->nativeWindow;
+}
+
+VkDescriptorSet VulkanDevice::AllocateDescriptorSet(VkDescriptorSetLayout layout) noexcept {
+    if (layout == VK_NULL_HANDLE || m_Impl->descriptorPool == VK_NULL_HANDLE) return VK_NULL_HANDLE;
+    VkDescriptorSetAllocateInfo ai{VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO};
+    ai.descriptorPool = m_Impl->descriptorPool;
+    ai.descriptorSetCount = 1;
+    ai.pSetLayouts = &layout;
+    VkDescriptorSet set = VK_NULL_HANDLE;
+    if (vkAllocateDescriptorSets(m_Impl->device, &ai, &set) != VK_SUCCESS) {
+        std::fprintf(stderr, "[Vulkan] vkAllocateDescriptorSets failed (pool exhausted?)\n");
+        return VK_NULL_HANDLE;
+    }
+    return set;
 }
 
 bool VulkanDevice::Initialize(void* windowHandle, uint32_t width, uint32_t height) {
@@ -424,6 +441,26 @@ bool VulkanDevice::Initialize(void* windowHandle, uint32_t width, uint32_t heigh
 
     for (uint32 i = 0; i < kMaxFramesInFlight; ++i) CreateFrameResource(m_Impl->frameContext.frames[i]);
 
+    // 描述符池：每帧若干个 set，够覆盖常见的「每帧重建描述符」用法。
+    // 上限设得保守而明确 —— 池耗尽时 AllocateDescriptorSet 会失败并报错，
+    // 而不是静默地返回一个无效 set。
+    {
+        VkDescriptorPoolSize poolSizes[5]{};
+        const VkDescriptorType types[5] = {
+            VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
+            VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE, VK_DESCRIPTOR_TYPE_SAMPLER,
+            VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER};
+        for (int i = 0; i < 5; ++i) { poolSizes[i].type = types[i]; poolSizes[i].descriptorCount = 256; }
+        VkDescriptorPoolCreateInfo dpCI{VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO};
+        dpCI.maxSets = kMaxFramesInFlight * 64;
+        dpCI.poolSizeCount = 5;
+        dpCI.pPoolSizes = poolSizes;
+        if (vkCreateDescriptorPool(m_Impl->device, &dpCI, nullptr, &m_Impl->descriptorPool) != VK_SUCCESS) {
+            std::fprintf(stderr, "[Vulkan] vkCreateDescriptorPool failed; descriptors unavailable\n");
+            m_Impl->descriptorPool = VK_NULL_HANDLE;
+        }
+    }
+
     // 设备级命令池。一次性命令缓冲（离屏回读等）需要一个可分配的池；
     // 此前 GetOrCreateThreadCommandPool() 直接返回 VK_NULL_HANDLE，
     // 使得任何依赖它的路径都无法工作。
@@ -480,6 +517,10 @@ void VulkanDevice::Shutdown() {
     if (m_Impl->cmdPool) vkDestroyCommandPool(m_Impl->device, m_Impl->cmdPool, nullptr);
     m_Impl->cmdPool = VK_NULL_HANDLE;
     if (m_Impl->swapChain) vkDestroySwapchainKHR(m_Impl->device, m_Impl->swapChain, nullptr);
+      if (m_Impl->descriptorPool) {
+          vkDestroyDescriptorPool(m_Impl->device, m_Impl->descriptorPool, nullptr);
+          m_Impl->descriptorPool = VK_NULL_HANDLE;
+      }
     if (m_Impl->surface) vkDestroySurfaceKHR(m_Impl->instance, m_Impl->surface, nullptr);
     // VMA 要求：销毁前所有由它分配的资源必须已释放
     if (m_Impl->vmaAllocator) vmaDestroyAllocator(m_Impl->vmaAllocator);
@@ -607,8 +648,54 @@ auto tex = std::make_shared<VulkanTexture>();
 IRHIPipelineState* VulkanDevice::CreateGraphicsPSO(const GraphicsPSODesc& desc) {
     uint64_t hash = desc.GetHash();
     if (auto* hit = PSOCache::Get().Find<GraphicsPSODesc>(hash)) return hit;
-    VkPipelineLayout layout; VkPipelineLayoutCreateInfo plCI{VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO};
-    vkCreatePipelineLayout(m_Impl->device, &plCI, nullptr, &layout);
+
+      // 描述符 set 布局。此前这里 setLayoutCount 恒为 0，于是着色器即使声明了
+      // set/binding 也无法拿到任何描述符 —— 整条描述符链在此断开。
+      VkDescriptorSetLayout setLayout = VK_NULL_HANDLE;
+      std::vector<VkDescriptorSetLayout> setLayouts;
+      if (!desc.bindings.empty()) {
+          // 按 set 归并：同一 set 的多个 binding 合成一个 set 布局。
+          std::vector<uint32> setIds;
+          for (const auto& b : desc.bindings) {
+              if (std::find(setIds.begin(), setIds.end(), b.set) == setIds.end())
+                  setIds.push_back(b.set);
+          }
+          std::sort(setIds.begin(), setIds.end());
+          for (uint32 setId : setIds) {
+              std::vector<VkDescriptorSetLayoutBinding> binds;
+              for (const auto& b : desc.bindings) {
+                  if (b.set != setId) continue;
+                  VkDescriptorSetLayoutBinding lb{};
+                  lb.binding         = b.binding;
+                  lb.descriptorCount = b.count ? b.count : 1;
+                  lb.descriptorType  = DescriptorKindToVk(b.kind);
+                  lb.stageFlags      = VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT;
+                  binds.push_back(lb);
+              }
+              VkDescriptorSetLayoutCreateInfo slCI{VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO};
+              slCI.bindingCount = static_cast<uint32_t>(binds.size());
+              slCI.pBindings = binds.data();
+              VkDescriptorSetLayout sl = VK_NULL_HANDLE;
+              if (vkCreateDescriptorSetLayout(m_Impl->device, &slCI, nullptr, &sl) != VK_SUCCESS) {
+                  std::fprintf(stderr, "[Vulkan] vkCreateDescriptorSetLayout failed\n");
+                  for (auto s : setLayouts) vkDestroyDescriptorSetLayout(m_Impl->device, s, nullptr);
+                  return nullptr;
+              }
+              setLayouts.push_back(sl);
+              // 单 set 的常见情形：命令列表只需要记住一个布局来分配描述符集。
+              if (setLayouts.size() == 1) setLayout = sl;
+          }
+      }
+
+      VkPipelineLayout layout = VK_NULL_HANDLE;
+      VkPipelineLayoutCreateInfo plCI{VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO};
+      plCI.setLayoutCount = static_cast<uint32_t>(setLayouts.size());
+      plCI.pSetLayouts = setLayouts.empty() ? nullptr : setLayouts.data();
+      if (vkCreatePipelineLayout(m_Impl->device, &plCI, nullptr, &layout) != VK_SUCCESS) {
+          std::fprintf(stderr, "[Vulkan] vkCreatePipelineLayout failed\n");
+          for (auto s : setLayouts) vkDestroyDescriptorSetLayout(m_Impl->device, s, nullptr);
+          return nullptr;
+      }
 
     // 着色器解析：此前这里传的是两个 VK_NULL_HANDLE，而 CreateGraphicsPipeline
     // 对空模块的处理是 stages.empty() → 返回 nullptr，于是图形管线**永远无法创建**。
@@ -639,12 +726,28 @@ IRHIPipelineState* VulkanDevice::CreateGraphicsPSO(const GraphicsPSODesc& desc) 
                      static_cast<unsigned long long>(desc.pixelShader.Value()));
     }
 
-    auto* pso = CreateGraphicsPipeline(m_Impl->device, layout, desc, vsModule, fsModule);
-    // 模块只用于创建管线，创建完即可销毁（管线内部已持有）。
-    if (vsModule) vkDestroyShaderModule(m_Impl->device, vsModule, nullptr);
-    if (fsModule) vkDestroyShaderModule(m_Impl->device, fsModule, nullptr);
-    if (pso) PSOCache::Get().Store<GraphicsPSODesc>(hash, pso);
-    return pso;
+auto* pso = CreateGraphicsPipeline(m_Impl->device, layout, desc, vsModule, fsModule);
+      // 模块只用于创建管线，创建完即可销毁（管线内部已持有）。
+      if (vsModule) vkDestroyShaderModule(m_Impl->device, vsModule, nullptr);
+      if (fsModule) vkDestroyShaderModule(m_Impl->device, fsModule, nullptr);
+      if (pso) {
+          // 管线失败时上面已建好的 set 布局不会进入 pipeline layout，必须自行回收，
+          // 否则每次失败的 PSO 请求都泄漏一个 VkDescriptorSetLayout。
+          if (auto* vpso = dynamic_cast<VulkanPipelineState*>(pso)) {
+              vpso->SetDescriptorSetLayout(setLayout);
+              if (vpso->GetVkPipeline() == VK_NULL_HANDLE) {
+                  for (auto s : setLayouts) vkDestroyDescriptorSetLayout(m_Impl->device, s, nullptr);
+                  delete vpso;
+                  pso = nullptr;
+              }
+          } else {
+              for (auto s : setLayouts) vkDestroyDescriptorSetLayout(m_Impl->device, s, nullptr);
+          }
+      } else {
+          for (auto s : setLayouts) vkDestroyDescriptorSetLayout(m_Impl->device, s, nullptr);
+      }
+      if (pso) PSOCache::Get().Store<GraphicsPSODesc>(hash, pso);
+      return pso;
 }
 
 IRHIPipelineState* VulkanDevice::CreateComputePSO(const ComputePSODesc& desc) {

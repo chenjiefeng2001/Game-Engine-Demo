@@ -6,6 +6,7 @@
  */
 
 #include "Engine/Core/RHI/RHITypes.h"
+#include "Engine/Core/RHI/PSODesc.h"
 #include "Engine/Core/RHI/RenderCommand.h"
 #include "Engine/Core/RHI/IRHICommandList.h"
 #include "Engine/Core/RenderResources/ShaderStage.h"
@@ -41,6 +42,8 @@ VkFormat FormatToVk(RHI::Format format);
     bool IsDepthFormat(RHI::Format format) noexcept;
     bool IsStencilFormat(RHI::Format format) noexcept;
     VkImageAspectFlags FormatToAspect(RHI::Format format) noexcept;
+    /** RHI 描述符类型 → Vulkan 描述符类型。 */
+    VkDescriptorType DescriptorKindToVk(RHI::DescriptorKind kind) noexcept;
 
 // ── 屏障辅助 ──
 void ConvertBarrierDesc(
