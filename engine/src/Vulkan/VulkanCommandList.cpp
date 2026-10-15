@@ -53,6 +53,33 @@ uint32_t              barrierCount{0};
       IRHITexture*        renderDepth{nullptr};
       // 当前绑定的 PSO：SetConstantBuffer 需要它的 descriptor set 布局。
       VulkanPipelineState* currentPso{nullptr};
+      // 每个 set 索引只分配一次描述符集并绑定一次，后续写入累积到同一个集合。
+      // 此前每次 Set*Resource 都新分配一个 set 并绑定：同一 shader 同时用 UBO 与
+      // 纹理时，第二次调用会覆盖第一次的绑定，UBO 就丢了。
+      VkDescriptorSet descriptorSets[4]{};
+      VkDescriptorSetLayout boundSetLayouts[4]{};
+      void ResetDescriptorSets() {
+          for (auto& s : descriptorSets) s = VK_NULL_HANDLE;
+          for (auto& l : boundSetLayouts) l = VK_NULL_HANDLE;
+      }
+      // 取（必要时分配并绑定）某个 set 索引的描述符集。
+      VkDescriptorSet AcquireDescriptorSet(uint32 index) {
+          if (index >= 4 || !currentPso || !device) return VK_NULL_HANDLE;
+          if (descriptorSets[index] != VK_NULL_HANDLE &&
+              boundSetLayouts[index] == currentPso->GetDescriptorSetLayout())
+              return descriptorSets[index];
+          ResetDescriptorSets();
+          VkDescriptorSetLayout lay = currentPso->GetDescriptorSetLayout();
+          VkDescriptorSet s = device->AllocateDescriptorSet(lay);
+          if (s == VK_NULL_HANDLE) return VK_NULL_HANDLE;
+          VkPipelineBindPoint bp = currentPso->IsCompute() ? VK_PIPELINE_BIND_POINT_COMPUTE
+                                                            : VK_PIPELINE_BIND_POINT_GRAPHICS;
+          vkCmdBindDescriptorSets(cmdBuffer, bp, currentPso->GetVkPipelineLayout(),
+                                  index, 1, &s, 0, nullptr);
+          descriptorSets[index] = s;
+          boundSetLayouts[index] = lay;
+          return s;
+      }
       bool IsReady() const noexcept { return isRecording && cmdBuffer != VK_NULL_HANDLE; }
 
     void FlushBarriers() {
@@ -558,7 +585,7 @@ void VulkanCommandList::SetConstantBuffer(uint32 set, uint32 binding,
                        "(add a DescriptorBindingDesc to GraphicsPSODesc)\n");
           return;
       }
-      VkDescriptorSet dset = m_Impl->device->AllocateDescriptorSet(setLayout);
+      VkDescriptorSet dset = m_Impl->AcquireDescriptorSet(set);
       if (dset == VK_NULL_HANDLE) return;
 
       VkDescriptorBufferInfo info{};
@@ -573,24 +600,63 @@ void VulkanCommandList::SetConstantBuffer(uint32 set, uint32 binding,
       write.descriptorType  = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
       write.pBufferInfo     = &info;
       vkUpdateDescriptorSets(m_Impl->device->GetVkDevice(), 1, &write, 0, nullptr);
-
-      VkPipelineBindPoint bp = pso->IsCompute() ? VK_PIPELINE_BIND_POINT_COMPUTE
-                                                : VK_PIPELINE_BIND_POINT_GRAPHICS;
-      vkCmdBindDescriptorSets(m_Impl->cmdBuffer, bp, pso->GetVkPipelineLayout(),
-                              set, 1, &dset, 0, nullptr);
   }
 
-void VulkanCommandList::SetShaderResource(uint32 set, uint32 binding,
-                                            IRHITexture* texture)
-{
-    if (!m_Impl->IsReady()) return;
-    // 通过 Bindless DescriptorIndexing 绑定纹理
-    if (m_Impl->currentDescriptorSet != VK_NULL_HANDLE &&
-        m_Impl->currentPipelineLayout != VK_NULL_HANDLE) {
-        vkCmdBindDescriptorSets(m_Impl->cmdBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS,
-            m_Impl->currentPipelineLayout, set, 1, &m_Impl->currentDescriptorSet, 0, nullptr);
-    }
-}
+  void VulkanCommandList::SetShaderResource(uint32 set, uint32 binding,
+                                              IRHITexture* texture)
+  {
+      if (!m_Impl->IsReady()) return;
+      auto* vkTex = static_cast<VulkanTexture*>(texture);
+      if (!vkTex || vkTex->GetVkImageView() == VK_NULL_HANDLE) return;
+      VulkanPipelineState* pso = m_Impl->currentPso;
+      if (!pso || !m_Impl->device) return;
+      if (pso->GetDescriptorSetLayout() == VK_NULL_HANDLE) {
+          std::fprintf(stderr,
+                       "[Vulkan] SetShaderResource: the bound PSO declares no descriptors\n");
+          return;
+      }
+      VkSampler sampler = m_Impl->device->GetSampler();
+      if (sampler == VK_NULL_HANDLE) {
+          std::fprintf(stderr, "[Vulkan] SetShaderResource: no sampler available\n");
+          return;
+      }
+
+      // 被采样的图像必须处于 SHADER_READ_ONLY，否则采样是未定义行为。
+      if (vkTex->GetLayout() != VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL) {
+          VkImageMemoryBarrier b{VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER};
+          b.image            = vkTex->GetVkImage();
+          b.oldLayout        = vkTex->GetLayout();
+          b.newLayout        = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+          b.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+          b.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+          b.subresourceRange = { FormatToAspect(vkTex->GetFormat()), 0, 1, 0, 1 };
+          b.srcAccessMask    = b.oldLayout == VK_IMAGE_LAYOUT_UNDEFINED
+                                   ? 0 : VK_ACCESS_SHADER_READ_BIT;
+          b.dstAccessMask    = VK_ACCESS_SHADER_READ_BIT;
+          m_Impl->FlushBarriers();
+          vkCmdPipelineBarrier(m_Impl->cmdBuffer,
+                               VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT,
+                               VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT, 0,
+                               0, nullptr, 0, nullptr, 1, &b);
+          vkTex->SetLayout(VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+      }
+
+      VkDescriptorSet dset = m_Impl->AcquireDescriptorSet(set);
+      if (dset == VK_NULL_HANDLE) return;
+
+      VkDescriptorImageInfo img{};
+      img.sampler     = sampler;
+      img.imageView   = vkTex->GetVkImageView();
+      img.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+      VkWriteDescriptorSet write{VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET};
+      write.dstSet      = dset;
+      write.dstBinding  = binding;
+      write.dstArrayElement = 0;
+      write.descriptorCount = 1;
+      write.descriptorType  = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+      write.pImageInfo      = &img;
+      vkUpdateDescriptorSets(m_Impl->device->GetVkDevice(), 1, &write, 0, nullptr);
+  }
 
 // ════════════════════════════════════════════════════════════
 // Compute 管线

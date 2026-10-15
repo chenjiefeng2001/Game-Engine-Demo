@@ -171,6 +171,123 @@ struct TriVertex { float x, y, z, w; float r, g, b, a; };
       return 0;
   }
 
+  /**
+   * 第四阶段：纹理描述符与采样器。
+   *
+   * SetShaderResource 此前与 SetConstantBuffer 一样是死代码（只重绑恒为空的 set、
+   * 从不写描述符），引擎里也没有任何采样器，TextureDesc::initialData 被
+   * CreateTexture 完全忽略。
+   *
+   * 关键在于 UBO 与纹理**放在同一个 set 内**：描述符集若每次调用都重新分配并绑定，
+   * 第二次调用就会覆盖第一次的绑定，UBO 会被丢掉。
+   */
+  int RunTextureSamplerPhase(Engine::RHI::VulkanDevice& device) {
+      using namespace Engine;
+      using namespace Engine::RHI;
+      std::printf("[VKTRI-TEX] --- texture descriptor phase ---\n");
+
+      const char* kVert = R"(
+      #version 450
+      void main() {
+          vec2 p = vec2((gl_VertexIndex << 1) & 2, gl_VertexIndex & 2);
+          gl_Position = vec4(p * 2.0 - 1.0, 0.0, 1.0);
+      }
+      )";
+      const char* kFrag = R"(
+      #version 450
+      layout(set = 0, binding = 0) uniform Params { vec4 tint; } params;
+      layout(set = 0, binding = 1) uniform sampler2D tex;
+      layout(location = 0) out vec4 outColor;
+      void main() { outColor = texture(tex, gl_FragCoord.xy / 64.0) * params.tint; }
+      )";
+      if (!ShaderRegistry::Get().RegisterSource("vktrix_vs", ShaderStageType::Vertex, kVert) ||
+          !ShaderRegistry::Get().RegisterSource("vktrix_fs", ShaderStageType::Fragment, kFrag)) {
+          std::printf("[VKTRI-TEX] FAIL: shader compilation\n"); return 1;
+      }
+
+      GraphicsPSODesc desc;
+      desc.vertexShader = StringID::Runtime("vktrix_vs");
+      desc.pixelShader  = StringID::Runtime("vktrix_fs");
+      desc.rtvCount = 1;
+      desc.rtvFormats[0] = Format::RGBA8_UNorm;
+      desc.depthStencil.depthTest = false;
+      desc.depthStencil.depthWrite = false;
+      desc.bindings.push_back({ 0u, 0u, DescriptorKind::UniformBuffer, 1u });
+      desc.bindings.push_back({ 0u, 1u, DescriptorKind::CombinedImageSampler, 1u });
+
+      std::shared_ptr<IRHIPipelineState> psoOwner(device.CreateGraphicsPSO(desc));
+      if (!psoOwner) { std::printf("[VKTRI-TEX] FAIL: CreateGraphicsPSO\n"); return 1; }
+
+      constexpr uint32_t kN = 64;
+      std::vector<uint8_t> pixels(kN * kN * 4);
+      for (uint32_t i = 0; i < kN * kN; ++i) {
+          pixels[i * 4 + 0] = 32; pixels[i * 4 + 1] = 96;
+          pixels[i * 4 + 2] = 160; pixels[i * 4 + 3] = 255;
+      }
+      TextureDesc td{};
+      td.width = kN; td.height = kN;
+      td.format = Format::RGBA8_UNorm;
+      td.memoryUsage = MemoryUsage::GPU_Only;
+      td.initialData = pixels.data();
+      auto texture = device.CreateTexture(td);
+      if (!texture) { std::printf("[VKTRI-TEX] FAIL: CreateTexture\n"); return 1; }
+
+      struct Params { float r, g, b, a; };
+      RHIBufferDesc bd{};
+      bd.size = sizeof(Params);
+      bd.memoryUsage = MemoryUsage::CPU_To_GPU;
+      const Params white{1.0f, 1.0f, 1.0f, 1.0f};
+      bd.initialData = &white;
+      auto ubo = device.CreateBuffer(bd);
+      if (!ubo || !ubo->GetMappedPtr()) { std::printf("[VKTRI-TEX] FAIL: CreateBuffer\n"); return 1; }
+
+      auto target = VulkanOffscreenTarget::Create(device, kN, kN);
+      if (!target) { std::printf("[VKTRI-TEX] FAIL: offscreen target\n"); return 1; }
+
+      auto renderWith = [&](const Params& tint, uint8_t* out) -> bool {
+          std::memcpy(ubo->GetMappedPtr(), &tint, sizeof(tint));
+          VkCommandBuffer cmd = target->BeginOneShot();
+          if (cmd == VK_NULL_HANDLE) return false;
+          target->BeginRendering(cmd, (const float[4]){0.0f, 0.0f, 0.0f, 1.0f});
+          {
+              auto cl = device.CreateCommandList(CommandListType::Direct);
+              auto* vcl = dynamic_cast<VulkanCommandList*>(cl.get());
+              vcl->SetDevice(&device);
+              vcl->AttachToRecording(cmd);
+              vcl->SetPipelineState(psoOwner.get());
+              vcl->SetConstantBuffer(0, 0, ubo.get(), 0, sizeof(Params));
+              vcl->SetShaderResource(0, 1, texture.get());
+              vcl->Draw(3, 0);
+          }
+          target->EndRendering(cmd);
+          if (!target->EndSubmitAndWait(cmd)) return false;
+          std::vector<uint8_t> px;
+          if (!target->Readback(px)) return false;
+          const uint8_t* mid = px.data() + ((kN / 2 * kN) + kN / 2) * 4;
+          for (int i = 0; i < 4; ++i) out[i] = mid[i];
+          return true;
+      };
+
+      uint8_t px[4]{};
+      if (!renderWith(white, px)) { std::printf("[VKTRI-TEX] FAIL: first draw\n"); return 1; }
+      std::printf("[VKTRI-TEX] white UBO    -> %u %u %u %u (expect ~32 96 160 255)\n",
+                  px[0], px[1], px[2], px[3]);
+      if (!renderWith(Params{0.5f, 1.0f, 1.0f, 1.0f}, px)) {
+          std::printf("[VKTRI-TEX] FAIL: second draw\n"); return 1;
+      }
+      std::printf("[VKTRI-TEX] half-red UBO -> %u %u %u %u (expect ~16 96 160 255)\n",
+                  px[0], px[1], px[2], px[3]);
+
+      const bool texOK = px[1] > 70 && px[1] < 125 && px[2] > 130 && px[2] < 190;
+      const bool uboOK = px[0] >= 4 && px[0] <= 32;
+      if (!texOK || !uboOK) {
+          std::printf("[VKTRI-TEX] FAIL: texture or UBO did not reach the shader\n"); return 1;
+      }
+      std::printf("[VKTRI-TEX] PASS: a real texture reached the shader through a descriptor "
+                  "and sampler, and coexisted with a UBO in the same set\n");
+      return 0;
+  }
+
   int RunVertexInputPhase(Engine::RHI::VulkanDevice& device) {
       using namespace Engine;
     std::printf("[VKTRI-VB] --- vertex input phase ---\n");
@@ -418,6 +535,8 @@ int main()
       // 因此取消门控，让它成为常规验证的一部分。
       if (RunVertexInputPhase(*vkDevice) != 0) return 1;
       // 描述符阶段：证明 uniform buffer 真的能到达着色器。
-      return RunUniformBufferPhase(*vkDevice);
+      if (RunUniformBufferPhase(*vkDevice) != 0) return 1;
+      // 纹理阶段：证明纹理描述符与采样器可用，且与 UBO 共存于同一 set。
+      return RunTextureSamplerPhase(*vkDevice);
 #endif // ENGINE_HAS_VULKAN
 }
