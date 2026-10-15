@@ -196,6 +196,10 @@ void VulkanDevice::SetNativeWindow(const NativeWindow& win) noexcept {
     m_Impl->nativeWindow = win;
 }
 
+const NativeWindow& VulkanDevice::GetNativeWindow() const noexcept {
+    return m_Impl->nativeWindow;
+}
+
 bool VulkanDevice::Initialize(void* windowHandle, uint32_t width, uint32_t height) {
     if (m_Impl->initialized) return true;
     if (!VulkanLoader::Initialize()) return false;
