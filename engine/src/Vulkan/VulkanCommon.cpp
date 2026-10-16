@@ -118,6 +118,45 @@ VkCompareOp CompareFuncToVk(RHI::CompareFunc f) noexcept {
       default:                             return VK_COMPARE_OP_LESS_OR_EQUAL;
     }
 }
+bool PrepareColorAttachment(VkCommandBuffer cmd,
+                                VkImageView view,
+                                VkImage image,
+                                VkImageLayout& outLayout,
+                                VkAttachmentLoadOp loadOp,
+                                const float clearColor[4],
+                                VkRenderingAttachmentInfo& outAttachment) noexcept {
+    outAttachment = {};
+    outAttachment.sType = VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO;
+    outAttachment.imageView = view;
+    // 动态渲染只接受 COLOR_ATTACHMENT_OPTIMAL / GENERAL / SHARED_PRESENT_KHR。
+    // 曾经写成 VK_IMAGE_LAYOUT_ATTACHMENT_OPTIMAL，那不是动态渲染的合法附件布局。
+    outAttachment.imageLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
+    outAttachment.loadOp = loadOp;
+    outAttachment.storeOp = VK_ATTACHMENT_STORE_OP_STORE;
+    // loadOp=CLEAR 读的就是 clearValue；漏填会清成零值而不是调用方要的清除色。
+    for (uint32 ch = 0; ch < 4; ++ch) outAttachment.clearValue.color.float32[ch] = clearColor[ch];
+
+    // 声明布局不等于转换布局：图像创建后处于 UNDEFINED。
+    if (outLayout == VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL) return false;
+    VkImageMemoryBarrier b{};
+    b.sType            = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
+    b.image            = image;
+    b.oldLayout        = outLayout;
+    b.newLayout        = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
+    b.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+    b.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+    b.subresourceRange = { VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1 };
+    b.srcAccessMask    = outLayout == VK_IMAGE_LAYOUT_UNDEFINED ? 0
+                             : VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
+    b.dstAccessMask    = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
+    vkCmdPipelineBarrier(cmd,
+                         VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT,
+                         VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT,
+                         0, 0, nullptr, 0, nullptr, 1, &b);
+    outLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
+    return true;
+}
+
 bool IsDepthFormat(RHI::Format format) noexcept {
     switch (format) {
         case RHI::Format::D16_UNorm:

@@ -100,6 +100,10 @@ VkImageLayout VulkanTexture::GetLayout() const noexcept {
     return m_Impl->currentLayout;
 }
 
+VkImageLayout& VulkanTexture::GetLayoutRefImpl() noexcept {
+    return m_Impl->currentLayout;
+}
+
 void VulkanTexture::SetIsSwapChainImage(bool value) noexcept {
     m_Impl->swapChainImage = value;
 }

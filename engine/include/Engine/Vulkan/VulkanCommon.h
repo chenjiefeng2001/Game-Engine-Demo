@@ -46,6 +46,24 @@ VkFormat FormatToVk(RHI::Format format);
      *  VK_COMPARE_OP_LESS，完全忽略调用方在 DepthStencilDesc 里选的函数 ——
      *  默认值是 LessEqual，两者对等深度像素的行为并不相同。 */
     VkCompareOp CompareFuncToVk(RHI::CompareFunc f) noexcept;
+    /**
+     * 准备一个颜色渲染附件：声明布局、按需发出布局转换屏障、填 load/store/clear。
+     *
+     * 存在的原因不是洁癖：`VkRenderingAttachmentInfo` 的布局声明 + 实际转换这段逻辑
+     * 此前在 VulkanCommandList::BeginRendering 与 VulkanOffscreenTarget::BeginRendering
+     * 里各写了一遍，于是 ATTACHMENT_OPTIMAL 那个 bug 同时存在于两处、必须改两遍。
+     * 任何一侧漏改都会变成「一条路径正常、另一条静默渲染不出来」。
+     *
+     * @param outLayout 传入当前布局；若发生转换则写回新布局。
+     * @return false 表示布局已是目标值、无需屏障（此时仍会填写 outAttachment）。
+     */
+    bool PrepareColorAttachment(VkCommandBuffer cmd,
+                                VkImageView view,
+                                VkImage image,
+                                VkImageLayout& outLayout,
+                                VkAttachmentLoadOp loadOp,
+                                const float clearColor[4],
+                                VkRenderingAttachmentInfo& outAttachment) noexcept;
     /** RHI 描述符类型 → Vulkan 描述符类型。 */
     VkDescriptorType DescriptorKindToVk(RHI::DescriptorKind kind) noexcept;
 

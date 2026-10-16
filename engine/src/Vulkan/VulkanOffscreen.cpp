@@ -147,15 +147,11 @@ void VulkanOffscreenTarget::BeginRendering(VkCommandBuffer cmd, const float clea
     std::memcpy(&clear.color, clearColor, sizeof(clear.color));
 
     VkRenderingAttachmentInfo att{};
-    att.sType = VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO;
-    att.imageView = m_ColorView;
-    att.imageLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
-    att.loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
-    att.storeOp = VK_ATTACHMENT_STORE_OP_STORE;
-    // 必须把 clearValue 交给附件描述：loadOp=CLEAR 读的是 att.clearValue，
-    // 而不是上面那个局部变量。此前 clear 被构造后从未使用，附件保持零初始化，
-    // 于是每次都清成 (0,0,0,0) —— 调用方传入的清除色被静默丢弃。
-    att.clearValue = clear;
+    // 与 VulkanCommandList::BeginRendering 走同一份「声明 + 转换」逻辑。
+    // 此前两处各写一遍，VK_IMAGE_LAYOUT_ATTACHMENT_OPTIMAL 那个 bug 就同时存在于
+    // 两处、必须改两遍；任何一侧漏改都会变成「一条路径正常、另一条静默不出画面」。
+    PrepareColorAttachment(cmd, m_ColorView, m_ColorImage, m_ColorLayout,
+                           VK_ATTACHMENT_LOAD_OP_CLEAR, clearColor, att);
 
     VkRenderingInfo ri{};
     ri.sType = VK_STRUCTURE_TYPE_RENDERING_INFO;
@@ -164,26 +160,6 @@ void VulkanOffscreenTarget::BeginRendering(VkCommandBuffer cmd, const float clea
     ri.colorAttachmentCount = 1;
     ri.pColorAttachments = &att;
 
-    // 声明布局不等于转换布局：图像创建后处于 UNDEFINED，直接 vkCmdBeginRendering
-    // 会让 validation 报 expects COLOR_ATTACHMENT_OPTIMAL / current UNDEFINED。
-    if (m_ColorLayout != VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL) {
-        VkImageMemoryBarrier b{};
-        b.sType            = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
-        b.image            = m_ColorImage;
-        b.oldLayout        = m_ColorLayout;
-        b.newLayout        = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
-        b.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
-        b.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
-        b.subresourceRange = { VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1 };
-        b.srcAccessMask    = m_ColorLayout == VK_IMAGE_LAYOUT_UNDEFINED
-                                 ? 0 : VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
-        b.dstAccessMask    = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
-        vkCmdPipelineBarrier(cmd,
-                             VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT,
-                             VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT,
-                             0, 0, nullptr, 0, nullptr, 1, &b);
-        m_ColorLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
-    }
 
     vkCmdBeginRendering(cmd, &ri);
 
