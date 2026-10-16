@@ -234,10 +234,35 @@ GPU。现在 `Submit()` 等 acquire、signal `renderFinished` 并提交；`Prese
 `tests/test_renderer/GL46DeviceTest.cpp` 位于 `tests/`（此前按 HRC-owned 对待）。改动是
 接口变更**逼出来的**、仅限不再编译的那几行，但性质上是越界，故在此明示而非默默提交。
 
-**仍未做的**（本轮范围外）：XCB 路径仅编译验证；采样器与纹理描述符类型已可在
-`DescriptorKind` 中声明，但 `SetShaderResource` 仍未写入描述符（只有 uniform buffer
-走通）；两套渲染作用域并存（离屏目标用独立一次性命令缓冲，被 CI 直接依赖，合并属高风险
-重构）。
+### 2.3n 纹理描述符与采样器（`b1c9bd2`）
+
+`SetShaderResource` 与 `SetConstantBuffer` 曾经是同一类死代码：只重绑一个恒为空的 set、
+从不写描述符。除此之外还缺两样东西：
+
+- **引擎里根本没有采样器** —— 组合式图像采样描述符需要它。
+- **`CreateTexture` 完全忽略 `TextureDesc::initialData`** —— 调用方要一张指定内容的纹理，
+  拿到的却是未定义内容。
+
+三样都已补上：`VulkanDevice` 在初始化时创建一个共享采样器（线性过滤 + 钳制边缘）并
+暴露 `GetSampler()`；`CreateTexture` 经 staging buffer + 一次性传输上传 `initialData`，
+并让图像落在 `SHADER_READ_ONLY_OPTIMAL`；`SetShaderResource` 先把图像转到该布局，再写入
+真实的 `VkDescriptorImageInfo` 并绑定。
+
+**同时修掉我上一轮引入的一个缺陷**：此前每次 `Set*Resource` 都新分配一个描述符集并绑定，
+于是同一 shader 在**同一个 set 内**同时用 UBO 与纹理时，第二次调用会覆盖第一次的绑定，
+UBO 就丢了。现改为每个 set 索引只分配并绑定一次，后续写入累积到同一集合。
+
+验证用的 shader 同时采样纹理并乘以同一 set 内的 UBO，一次跑完同时回答两个问题：
+
+```
+[VKTRI-TEX] white UBO    -> 32 96 160 255   (expect ~32 96 160 255)
+[VKTRI-TEX] half-red UBO -> 16 96 160 255   (expect ~16 96 160 255)
+```
+
+纹理颜色精确复现、R 通道精确减半。已成为 CI 第四阶段。
+
+**仍未做的**：XCB 路径仅编译验证；两套渲染作用域并存（离屏目标用独立一次性命令缓冲，
+被 CI 直接依赖，合并属高风险重构）。
 ## 0. 像素已验证通过 —— 真正的根因是**正面绕序**
 
 **接手前请先读这一节。**
