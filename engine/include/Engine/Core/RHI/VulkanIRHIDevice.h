@@ -182,6 +182,11 @@ VkImage GetVkImage() const noexcept;
         // 布局追踪（用于 ResourceBarrier 的正确 oldLayout）
         void SetLayout(VkImageLayout layout) noexcept;
         VkImageLayout GetLayout() const noexcept;
+        /** 供共享的附件准备助手就地改写布局（它需要按引用回写）。
+         *  返回引用而不是拷贝，是为了让 VulkanCommandList 与 VulkanOffscreenTarget
+         *  走同一份「声明 + 转换」逻辑而不必各自再 SetLayout 一次。 */
+        VkImageLayout& GetLayoutRef() noexcept { return GetLayoutRefImpl(); }
+        VkImageLayout& GetLayoutRefImpl() noexcept;
         /**
          * 是否为交换链图像。
          *

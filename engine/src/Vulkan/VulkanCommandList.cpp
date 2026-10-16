@@ -224,6 +224,10 @@ void VulkanCommandList::BeginRendering(const RenderTargetDesc& desc) {
         return;
     }
 
+    // 调用方声明的屏障必须先落地：PrepareColorAttachment 随后会把附件转到
+    // COLOR_ATTACHMENT_OPTIMAL，顺序反了会让调用方的转换作用在已就位的附件上。
+    m_Impl->FlushBarriers();
+
     VkRenderingAttachmentInfo attachments[RenderTargetDesc::kMaxColorAttachments]{};
     uint32 usable = 0;
     uint32 extentW = 0, extentH = 0;
@@ -235,21 +239,16 @@ void VulkanCommandList::BeginRendering(const RenderTargetDesc& desc) {
             continue;
         }
 VkRenderingAttachmentInfo& a = attachments[usable++];
-          a.sType     = VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO;
-          a.imageView = view;
-          // 动态渲染（vkCmdBeginRendering）只接受 COLOR_ATTACHMENT_OPTIMAL /
-          // GENERAL / SHARED_PRESENT_KHR。原先写的是 VK_IMAGE_LAYOUT_ATTACHMENT_OPTIMAL，
-          // 那不是动态渲染的合法附件布局。
-          a.imageLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
-        a.loadOp    = desc.clear ? VK_ATTACHMENT_LOAD_OP_CLEAR : VK_ATTACHMENT_LOAD_OP_LOAD;
-        a.storeOp   = VK_ATTACHMENT_STORE_OP_STORE;
-        // clearValue 必须赋值：loadOp=CLEAR 读的是它，漏掉会清成 (0,0,0,0)。
-        // 路径为 VkClearValue::color → VkClearColorValue::float32：
-        // 匿名成员 color[] 不支持下标，必须走具名成员。
-for (uint32 ch = 0; ch < 4; ++ch) a.clearValue.color.float32[ch] = desc.clearColor[ch];
-          m_Impl->renderColors[usable - 1] = desc.color[i];
-          extentW = tex->GetWidth();
-          extentH = tex->GetHeight();
+            // 共享助手：附件声明 + 布局转换。VulkanOffscreenTarget 走同一份逻辑，
+            // 否则两处会各自漂移（ATTACHMENT_OPTIMAL 的 bug 就曾同时存在于两处）。
+            const VkAttachmentLoadOp loadOp = desc.clear ? VK_ATTACHMENT_LOAD_OP_CLEAR
+                                                          : VK_ATTACHMENT_LOAD_OP_LOAD;
+            if (PrepareColorAttachment(m_Impl->cmdBuffer, view, tex->GetVkImage(),
+                                       tex->GetLayoutRef(), loadOp, desc.clearColor, a))
+                tex->SetLayout(VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL);
+            m_Impl->renderColors[usable - 1] = desc.color[i];
+            extentW = tex->GetWidth();
+            extentH = tex->GetHeight();
       }
     if (usable == 0) return;
 
@@ -283,32 +282,10 @@ depthAttachment.loadOp     = desc.clear ? VK_ATTACHMENT_LOAD_OP_CLEAR : VK_ATTAC
         ri.pDepthAttachment = &depthAttachment;
     }
 
-    m_Impl->FlushBarriers();
 
-    // 附件必须真的处于动态渲染声明的布局。此前这里只把 renderColors 的布局
-    // 「记」成目标布局，却不发出任何转换：刚 acquire 回来的 swapchain 图像追踪
-    // 布局是 UNDEFINED，于是 vkCmdBeginRendering 读的是 UNDEFINED、present 时
-    // 也仍是 UNDEFINED。离屏路径因为调用方自己发过屏障所以没暴露。
-    for (uint32 i = 0; i < usable; ++i) {
-        auto* vkTex = static_cast<VulkanTexture*>(m_Impl->renderColors[i]);
-        if (vkTex->GetLayout() == VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL) continue;
-        VkImageMemoryBarrier b{};
-        b.sType            = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
-        b.image            = vkTex->GetVkImage();   // 必填，漏掉整条 barrier 会被丢弃
-        b.oldLayout        = vkTex->GetLayout();
-        b.newLayout        = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
-        b.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
-        b.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
-        b.subresourceRange = { VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1 };
-        b.srcAccessMask    = b.oldLayout == VK_IMAGE_LAYOUT_UNDEFINED
-                                 ? 0 : VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
-        b.dstAccessMask    = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
-        vkCmdPipelineBarrier(m_Impl->cmdBuffer,
-                             VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT,
-                             VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT,
-                             0, 0, nullptr, 0, nullptr, 1, &b);
-        vkTex->SetLayout(VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL);
-    }
+    // 附件必须真的处于动态渲染声明的布局。转换已由 PrepareColorAttachment 在下面
+    // 的附件循环里发出；FlushBarriers() 必须排在它之前，否则调用方声明的屏障会
+    // 落在「我们已经把图像转成附件布局」之后，顺序反了。
     if (hasDepth) {
         auto* dtex = static_cast<VulkanTexture*>(desc.depth);
         if (dtex->GetLayout() != VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_OPTIMAL) {
