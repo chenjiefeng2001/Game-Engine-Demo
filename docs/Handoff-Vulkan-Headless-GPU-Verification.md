@@ -293,8 +293,32 @@ UBO 就丢了。现改为每个 set 索引只分配并绑定一次，后续写�
 把缓冲声明成 2 个顶点却绘制 6 个，第三个顶点越界使三角形退化。`CreateBuffer` 的上传
 一直是对的。现在测试在绘制前先断言 6 个顶点全部到位。
 
-**仍未做的**：XCB 路径仅编译验证；两套渲染作用域并存（离屏目标用独立一次性命令缓冲，
-被 CI 直接依赖，合并属高风险重构）。
+### 2.3p XCB surface 也已实跑验证 —— 三条平台路径齐了
+
+WSLg 的 Xwayland 可以直接用 libxcb 连上，因此**不经过 GLFW** 建了一个真实 xcb 窗口
+（`xcb_create_window` + `xcb_map_window`，等待 `MapNotify`）再交给引擎 —— 这样验证的是
+平台选择与句柄类型本身，而不是 GLFW 的封装是否正确。
+
+```
+[XCB] window created and mapped: 0x600000
+[Vulkan] surface created via VK_KHR_xcb_surface
+[XCB] swapchain: 3 image(s)
+[XCB] 4 frames presented
+[XCB] PASS: xcb surface -> swapchain -> acquire -> render -> submit -> present
+```
+
+Khronos validation layer 下零发现。至此：
+
+| 平台 surface | 状态 |
+| --- | --- |
+| Xlib | 真实映射窗口，全链路 |
+| Wayland | WSLg 合成器，全链路 |
+| XCB | 真实 xcb 窗口，全链路 |
+
+**只剩一项未做**：两套渲染作用域并存 —— `VulkanCommandList::BeginRendering` 与
+`VulkanOffscreenTarget::BeginRendering` 各实现一遍，且各自的图像布局记账方式不同
+（前者追踪在纹理上，后者追踪在目标上）。离屏目标走独立的一次性命令缓冲、被 CI 测试
+直接依赖，合并属高风险重构，应单独评估而非顺手改。
 ## 0. 像素已验证通过 —— 真正的根因是**正面绕序**
 
 **接手前请先读这一节。**
@@ -904,8 +928,8 @@ lavapipe 上设备初始化成功，`GetDeviceName()` 返回真实名称。
 
 1. **§1.4 的像素验证已完成**（run `38485651755`，lavapipe + validation layer，
    全程零 validation 报错）。下列各项都建立在「这条链路确实能跑」之上，现在成立。
-2. ~~X11 / Wayland surface~~ **两条路径均已在真实合成器上验证**（Xlib 见 §2.3d 与 §2.3e，
-   Wayland 见 §2.3i）。
+2. ~~X11 / Wayland surface~~ **三条平台 surface 路径均已在真实会话上验证**
+   （Xlib 见 §2.3d 与 §2.3e，Wayland 见 §2.3i，XCB 见 §2.3p）。
 3. **让 `RHIDemo` 的 Vulkan 路径真正出画面** —— `RenderVulkanFrame()` 目前只清除
    不绘制（见 §2.3b），需要接上真实几何与材质。
 4. ~~补 `GraphicsPSODesc` 的顶点输入契约~~ **已完成并常开验证**（§1.7 与 §2.3h）。
