@@ -34,6 +34,13 @@
 
 namespace {
 
+/// 离屏渲染作用域的清除色。
+///
+/// 此前写成 `(const float[4]){...}` —— 那是 C99 复合字面量，GCC/Clang 接受，
+/// MSVC 即使在 C++20 模式下也报 C4576/C2760 直接编译失败（Linux CI 因此完全
+/// 看不出这个问题）。命名常量在两个编译器下语义一致。
+constexpr float kVktriClear[4] = { 0.0f, 0.0f, 0.0f, 1.0f };
+
 /** 顶点输入契约阶段的着色器：从顶点缓冲取位置与颜色，不依赖 gl_VertexIndex。 */
 const char* kVertexInputGlsl = R"(#version 450
 layout(location = 0) in vec2 inPosition;
@@ -133,7 +140,7 @@ struct TriVertex { float x, y, z, w; float r, g, b, a; };
           std::memcpy(ubo->GetMappedPtr(), &v, sizeof(v));
           VkCommandBuffer cmd = target->BeginOneShot();
           if (cmd == VK_NULL_HANDLE) return false;
-          target->BeginRendering(cmd, (const float[4]){0.0f, 0.0f, 0.0f, 1.0f});
+          target->BeginRendering(cmd, kVktriClear);
           {
               auto cl = device.CreateCommandList(CommandListType::Direct);
               auto* vcl = dynamic_cast<VulkanCommandList*>(cl.get());
@@ -248,7 +255,7 @@ struct TriVertex { float x, y, z, w; float r, g, b, a; };
           std::memcpy(ubo->GetMappedPtr(), &tint, sizeof(tint));
           VkCommandBuffer cmd = target->BeginOneShot();
           if (cmd == VK_NULL_HANDLE) return false;
-          target->BeginRendering(cmd, (const float[4]){0.0f, 0.0f, 0.0f, 1.0f});
+          target->BeginRendering(cmd, kVktriClear);
           {
               auto cl = device.CreateCommandList(CommandListType::Direct);
               auto* vcl = dynamic_cast<VulkanCommandList*>(cl.get());
