@@ -78,6 +78,9 @@ case Format::RG32_SInt:    return VK_FORMAT_R32G32_SINT;
           // 返回 VK_FORMAT_UNDEFINED(0) —— 而 0 是「非法值」而非「未知格式」，
           // 于是 CreateGraphicsPSO 建出了非法管线，绘制时驱动行为不可预期。
 case Format::RG32_Float:   return VK_FORMAT_R32G32_SFLOAT;
+case Format::RGB32_Float:   return VK_FORMAT_R32G32B32_SFLOAT;
+case Format::RGB32_SInt:    return VK_FORMAT_R32G32B32_SINT;
+case Format::RGB32_UInt:    return VK_FORMAT_R32G32B32_UINT;
 case Format::RGBA8_SNorm:  return VK_FORMAT_R8G8B8A8_SNORM;
 case Format::RGBA8_UInt:   return VK_FORMAT_R8G8B8A8_UINT;
 case Format::RGBA8_SInt:   return VK_FORMAT_R8G8B8A8_SINT;
@@ -187,6 +190,9 @@ RHI::Format VkToFormat(VkFormat fmt) {
         case VK_FORMAT_B8G8R8A8_UNORM:   return Format::BGRA8_UNorm;
         case VK_FORMAT_R32_SFLOAT:       return Format::R32_Float;
         case VK_FORMAT_R32G32B32A32_SFLOAT: return Format::RGBA32_Float;
+case VK_FORMAT_R32G32B32_SFLOAT:   return Format::RGB32_Float;
+case VK_FORMAT_R32G32B32_SINT:     return Format::RGB32_SInt;
+case VK_FORMAT_R32G32B32_UINT:     return Format::RGB32_UInt;
         case VK_FORMAT_R16G16B16A16_SFLOAT: return Format::RGBA16_Float;
         case VK_FORMAT_D32_SFLOAT:       return Format::D32_Float;
         case VK_FORMAT_D24_UNORM_S8_UINT: return Format::D24_UNorm_S8_UInt;

@@ -34,7 +34,11 @@ namespace RHI {
         BGRA8_UNorm, BGRA8_sRGB,
 
         // 64-bit
-        RG32_UInt, RG32_SInt, RG32_Float,
+          RG32_UInt, RG32_SInt, RG32_Float,
+          // 三通道。Vulkan 有 R32G32B32_* ，此前 RHI 侧没有对应枚举，于是任何
+          // 3 分量顶点属性（典型就是 位置 xyz）都无法声明，CreateGraphicsPipeline
+          // 只会拿到 VK_FORMAT_UNDEFINED。补上后顶点输入契约才覆盖常见布局。
+          RGB32_UInt, RGB32_SInt, RGB32_Float,
         RGBA16_UNorm, RGBA16_SNorm, RGBA16_UInt, RGBA16_SInt, RGBA16_Float,
 
         // 128-bit
