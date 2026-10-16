@@ -961,18 +961,56 @@ std::unique_ptr<IRHISwapChain> VulkanDevice::CreateSwapChain(const SwapChainDesc
     uint32_t fmtCnt; vkGetPhysicalDeviceSurfaceFormatsKHR(m_Impl->physicalDevice, m_Impl->surface, &fmtCnt, nullptr);
     std::vector<VkSurfaceFormatKHR> fmts(fmtCnt);
     vkGetPhysicalDeviceSurfaceFormatsKHR(m_Impl->physicalDevice, m_Impl->surface, &fmtCnt, fmts.data());
+    // 此前盲取 fmts[0] —— 驱动把什么排在第一个就用什么，于是管线声明的
+    // rtvFormat 可能与交换链实际格式对不上（B8G8R8A8_SRGB vs R8G8B8A8_UNORM），
+    // 表现为每一次 vkCmdDraw 都违反
+    // VUID-vkCmdDraw-dynamicRenderingUnusedAttachments-08910。
+    // 优先选非 sRGB 的 8 位 RGBA/BGRA：调用方无从得知「实际选了哪个格式」，
+    // 而 sRGB 会让引擎里按线性值写的清除色看起来偏亮。
     auto selFmt = fmts[0];
+    for (const auto& f : fmts) {
+        if (f.format == VK_FORMAT_B8G8R8A8_UNORM || f.format == VK_FORMAT_R8G8B8A8_UNORM) {
+            selFmt = f;
+            break;
+        }
+    }
     VkSurfaceCapabilitiesKHR caps;
     vkGetPhysicalDeviceSurfaceCapabilitiesKHR(m_Impl->physicalDevice, m_Impl->surface, &caps);
     uint32_t imgCnt = std::max(caps.minImageCount, std::min(desc.bufferCount, caps.maxImageCount));
     VkSwapchainCreateInfoKHR sci{VK_STRUCTURE_TYPE_SWAPCHAIN_CREATE_INFO_KHR};
     sci.surface = m_Impl->surface; sci.minImageCount = imgCnt;
+    std::fprintf(stderr, "[Vulkan] swapchain format: VkFormat=%d colorspace=%d (%d offered)\n",
+                 (int)selFmt.format, (int)selFmt.colorSpace, fmtCnt);
     sci.imageFormat = selFmt.format; sci.imageColorSpace = selFmt.colorSpace;
-    sci.imageExtent = {desc.width, desc.height}; sci.imageArrayLayers = 1;
+    // currentExtent 非 0xFFFFFFFF 时，规范要求 imageExtent **必须**等于它。此前直接
+    // 用调用方请求的尺寸，于是任何固定表面尺寸的合成器（WSLg 的 X11 虚拟屏、
+    // Wayland 合成器、tiling WM）都会让 vkCreateSwapchainKHR 失败，validation 报
+    // VUID-VkSwapchainCreateInfoKHR-pNext-07781，且后续 present 会连锁炸出
+    // "semaphore has no way to be signaled" / "image is in UNDEFINED layout"。
+    uint32_t sw = desc.width, sh = desc.height;
+    if (caps.currentExtent.width != 0xFFFFFFFFu && caps.currentExtent.height != 0xFFFFFFFFu) {
+        sw = caps.currentExtent.width; sh = caps.currentExtent.height;
+    } else {
+        sw = std::clamp(sw, caps.minImageExtent.width, caps.maxImageExtent.width);
+        sh = std::clamp(sh, caps.minImageExtent.height, caps.maxImageExtent.height);
+    }
+    if (sw != desc.width || sh != desc.height) {
+        std::fprintf(stderr, "[Vulkan] surface fixes extent: requested %ux%u -> using %ux%u\n",
+                     desc.width, desc.height, sw, sh);
+    }
+    sci.imageExtent = {sw, sh}; sci.imageArrayLayers = 1;
     sci.imageUsage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT;
     sci.preTransform = caps.currentTransform; sci.compositeAlpha = VK_COMPOSITE_ALPHA_OPAQUE_BIT_KHR;
     sci.presentMode = VK_PRESENT_MODE_FIFO_KHR; sci.clipped = VK_TRUE;
-    if (vkCreateSwapchainKHR(m_Impl->device, &sci, nullptr, &m_Impl->swapChain) != VK_SUCCESS) return nullptr;
+    VkResult scRes = vkCreateSwapchainKHR(m_Impl->device, &sci, nullptr, &m_Impl->swapChain);
+    if (scRes != VK_SUCCESS) {
+        // 此前静默返回 nullptr，调用方只能在几百行之外看到一个空指针，
+        // 而 validation 的抱怨（present 时信号量无人 signal）指向的却是别处。
+        std::fprintf(stderr, "[Vulkan] vkCreateSwapchainKHR failed: VkResult=%d "
+                             "(extent=%ux%u, minImageCount=%u, format=%d)\n",
+                     (int)scRes, sw, sh, imgCnt, (int)selFmt.format);
+        return nullptr;
+    }
     uint32_t actualCnt; vkGetSwapchainImagesKHR(m_Impl->device, m_Impl->swapChain, &actualCnt, nullptr);
     m_Impl->swapChainImages.resize(actualCnt);
     vkGetSwapchainImagesKHR(m_Impl->device, m_Impl->swapChain, &actualCnt, m_Impl->swapChainImages.data());
@@ -981,7 +1019,7 @@ std::unique_ptr<IRHISwapChain> VulkanDevice::CreateSwapChain(const SwapChainDesc
     sc->SetSwapChainImages(m_Impl->swapChainImages);
 for (auto vkImg : m_Impl->swapChainImages) {
         auto tex = std::make_shared<VulkanTexture>();
-        tex->SetVkImage(vkImg); tex->SetWidth(desc.width); tex->SetHeight(desc.height);
+        tex->SetVkImage(vkImg); tex->SetWidth(sw); tex->SetHeight(sh);
         tex->SetFormat(VkToFormat(selFmt.format));
         // 初始 layout 必须是 UNDEFINED：新创建的交换链图像，其内容与布局都是未定义的，
         // 并非 PRESENT_SRC_KHR。此前谎报为 PRESENT_SRC_KHR，于是首次使用该图像时

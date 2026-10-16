@@ -39,6 +39,8 @@
 #include "Engine/Core/RHI/IRHIDevice.h"
 #include "Engine/Core/RHI/VulkanIRHIDevice.h"
 #include "Engine/Core/RHI/D3D12IRHIDevice.h"
+#include "Engine/Core/RHI/PSODesc.h"
+#include "Engine/Vulkan/ShaderRegistry.h"
 
 namespace Engine {
 
@@ -88,6 +90,27 @@ bool RHIDemoApp::InitOpenGL() {
     return true;
 }
 
+/** demo 用的顶点：位置 vec3 + 颜色 vec3。 */
+struct VkDemoVertex { float x, y, z, r, g, b; };
+struct VkDemoParams { float r, g, b, a; };
+static constexpr uint32 kVkVertexStride = sizeof(VkDemoVertex);
+
+// 近处的三角形在 z=0.2，远处的在 z=0.8 —— 深度测试生效时应当只看到青色那个。
+static const char* kVkDemoVS = R"(
+#version 450
+layout(location = 0) in vec3 inPos;
+layout(location = 1) in vec3 inColor;
+layout(location = 0) out vec3 vColor;
+void main() { gl_Position = vec4(inPos, 1.0); vColor = inColor; }
+)";
+// UBO 与顶点色相乘：uniform 若没真正到达着色器，颜色会明显偏暗。
+static const char* kVkDemoFS = R"(
+#version 450
+layout(set = 0, binding = 0) uniform Tint { vec4 tint; } params;
+layout(location = 0) in vec3 vColor;
+layout(location = 0) out vec4 outColor;
+void main() { outColor = vec4(vColor * params.tint.rgb, 1.0); }
+)";
 #if defined(ENGINE_HAS_VULKAN)
 static bool BindNativeWindow(RHI::VulkanDevice* dev, GLFWwindow* window);
 #endif
@@ -115,6 +138,53 @@ m_Device = std::make_unique<RHI::VulkanDevice>();
           return false;
       m_GPUName = m_Device->GetDeviceName();
       std::printf("  [RHIDemo] Vulkan 1.3 设备已初始化 | %s\n", m_GPUName.c_str());
+
+      // ── 真实几何 ────────────────────────────────────────────────
+      // 此前这里只做 clear。描述符、纹理采样、深度测试虽都已验证可用，demo 却从未
+      // 真正画过东西 —— 下面把这些能力第一次串起来。
+      if (!RHI::ShaderRegistry::Get().RegisterSource("rhidemo_vs", ShaderStageType::Vertex, kVkDemoVS) ||
+          !RHI::ShaderRegistry::Get().RegisterSource("rhidemo_fs", ShaderStageType::Fragment, kVkDemoFS)) {
+          std::printf("  [RHIDemo] 着色器编译失败，跳过几何绘制\n");
+          return true;
+      }
+
+      // 两个在深度上重叠的三角形：远处橙、近处青，靠深度测试决定谁遮住谁。
+      const VkDemoVertex verts[] = {
+          {-0.85f, -0.75f,  0.8f,  1.0f, 0.55f, 0.15f},
+          { 0.10f, -0.75f,  0.8f,  1.0f, 0.55f, 0.15f},
+          {-0.40f,  0.85f,  0.8f,  1.0f, 0.55f, 0.15f},
+          {-0.60f, -0.60f,  0.2f,  0.20f, 0.85f, 0.95f},
+          { 0.65f, -0.60f,  0.2f,  0.20f, 0.85f, 0.95f},
+          { 0.05f,  0.75f,  0.2f,  0.20f, 0.85f, 0.95f},
+      };
+      m_VkVertexCount = static_cast<uint32>(sizeof(verts) / sizeof(verts[0]));
+
+      RHI::RHIBufferDesc vbDesc{};
+      vbDesc.size = sizeof(verts);
+      vbDesc.memoryUsage = RHI::MemoryUsage::CPU_To_GPU;
+      vbDesc.initialData = verts;
+      m_VkVertexBuffer = m_Device->CreateBuffer(vbDesc);
+      if (!m_VkVertexBuffer) {
+          std::printf("  [RHIDemo] 顶点缓冲创建失败，跳过几何绘制\n");
+          return true;
+      }
+
+      RHI::RHIBufferDesc uboDesc{};
+      uboDesc.size = sizeof(VkDemoParams);
+      uboDesc.memoryUsage = RHI::MemoryUsage::CPU_To_GPU;
+      const VkDemoParams initialTint{ 1.0f, 1.0f, 1.0f, 1.0f };
+      uboDesc.initialData = &initialTint;
+      m_VkUniformBuffer = m_Device->CreateBuffer(uboDesc);
+      if (!m_VkUniformBuffer || !m_VkUniformBuffer->GetMappedPtr()) {
+          std::printf("  [RHIDemo] UBO 创建失败，跳过几何绘制\n");
+          return true;
+      }
+
+      // 管线**不能**在这里创建：交换链还不存在，管线声明的 rtvFormat 必须与
+      // 交换链实际格式一致，否则每一次 vkCmdDraw 都违规。改在首帧拿到 backbuffer
+      // 的真实格式后再建 —— 见 RenderVulkanFrame。
+      std::printf("  [RHIDemo] 几何就绪：%u 个顶点（含深度测试与 UBO，管线待交换链就绪后创建）\n",
+                  m_VkVertexCount);
       return true;
 #else
     return false;
@@ -153,6 +223,7 @@ bool RHIDemoApp::Initialize() {
 }
 
 #if defined(ENGINE_HAS_VULKAN)
+
 /**
  * 把 GLFW 窗口的原生句柄交给 VulkanDevice。
  *
@@ -232,8 +303,19 @@ void RHIDemoApp::RenderVulkanFrame() {
                 std::printf("  [RHIDemo] CreateSwapChain 失败，无法呈现\n");
                 m_SwapChainReported = true;
             }
-            return;
-        }
+          return;
+      }
+      // 深度附件按交换链尺寸创建一次；尺寸变了就重建。
+      const uint32 dw = static_cast<uint32_t>(m_RHIWindow->GetWidth());
+      const uint32 dh = static_cast<uint32_t>(m_RHIWindow->GetHeight());
+      if (!m_VkDepthTexture || m_VkDepthWidth != dw || m_VkDepthHeight != dh) {
+          RHI::TextureDesc td{};
+          td.width = dw; td.height = dh;
+          td.format = RHI::Format::D32_Float;
+          td.memoryUsage = RHI::MemoryUsage::GPU_Only;
+          m_VkDepthTexture = vkDev->CreateTexture(td);
+          m_VkDepthWidth = dw; m_VkDepthHeight = dh;
+      }
     }
 
     auto* sc = dynamic_cast<RHI::VulkanSwapChain*>(m_SwapChain.get());
@@ -246,26 +328,76 @@ void RHIDemoApp::RenderVulkanFrame() {
     RHI::IRHITexture* backBuffer = sc->GetBackBuffer(imageIndex);
     if (!backBuffer) return;
 
-    auto cmdList = m_Device->CreateCommandList(RHI::CommandListType::Direct);
-    if (!cmdList) return;
+      // 管线声明的 rtvFormat 必须等于交换链实际格式，否则每次 vkCmdDraw 都违反
+      // VUID-vkCmdDraw-dynamicRenderingUnusedAttachments-08910。backbuffer 的格式
+      // 就是交换链选中的格式，所以从它取，而不是猜一个。
+      if (!m_VkPipeline) {
+          RHI::GraphicsPSODesc psoDesc{};
+          psoDesc.vertexShader = StringID::Runtime("rhidemo_vs");
+          psoDesc.pixelShader  = StringID::Runtime("rhidemo_fs");
+          psoDesc.rtvCount = 1;
+          psoDesc.rtvFormats[0] = backBuffer->GetFormat();
+          psoDesc.dsvFormat = RHI::Format::D32_Float;
+          psoDesc.depthStencil.depthTest = true;
+          psoDesc.depthStencil.depthWrite = true;
+          psoDesc.depthStencil.depthFunc = RHI::CompareFunc::Less;
+          psoDesc.vertexInput.buffers.push_back({ 0u, kVkVertexStride, RHI::VertexInputRate::Vertex });
+          psoDesc.vertexInput.attributes.push_back({ 0u, 0u, RHI::Format::RGB32_Float, 0u });
+          psoDesc.vertexInput.attributes.push_back({ 1u, 0u, RHI::Format::RGB32_Float, 12u });
+          psoDesc.bindings.push_back({ 0u, 0u, RHI::DescriptorKind::UniformBuffer, 1u });
+          m_VkPipeline = m_Device->CreateGraphicsPSO(psoDesc);
+          if (!m_VkPipeline) {
+              std::printf("  [RHIDemo] 管线创建失败（rtv=%u），退回纯清除\n",
+                          static_cast<unsigned>(backBuffer->GetFormat()));
+              m_DrawEnabled = false;
+          }
+      }
 
-    cmdList->Begin();
-    RHI::RenderTargetDesc rt;
-    rt.color[0] = backBuffer;
-    rt.colorCount = 1;
-    rt.clearColor[0] = 0.15f; rt.clearColor[1] = 0.20f;
-    rt.clearColor[2] = 0.35f; rt.clearColor[3] = 1.0f;
-    rt.clear = true;
-    cmdList->BeginRendering(rt);
-    // 此处尚未绘制几何：先只验证清除→呈现这条链路是否真的通。
-    cmdList->EndRendering();
-    cmdList->End();
-    // 提交与呈现现在是两件事：Submit() 等 acquire、signal renderFinished 并提交，
-    // Present() 只负责呈现。顺序不能反。
-    cmdList->Submit();
+      auto cmdList = m_Device->CreateCommandList(RHI::CommandListType::Direct);
+      if (!cmdList) return;
+      // 几何资源任一缺失就退回纯清除，而不是拿空句柄去画。
+      if (!m_DrawEnabled || !m_VkPipeline || !m_VkVertexBuffer || !m_VkUniformBuffer || !m_VkDepthTexture) {
+          cmdList->Begin();
+          RHI::RenderTargetDesc rt0{};
+          rt0.color[0] = backBuffer; rt0.colorCount = 1; rt0.clear = true;
+          rt0.clearColor[0] = 0.15f; rt0.clearColor[1] = 0.20f;
+          rt0.clearColor[2] = 0.35f; rt0.clearColor[3] = 1.0f;
+          cmdList->BeginRendering(rt0);
+          cmdList->EndRendering();
+          cmdList->End();
+          cmdList->Submit();
+          sc->Present();
+          return;
+      }
 
-    sc->Present();
-}
+      cmdList->Begin();
+      RHI::RenderTargetDesc rt;
+      rt.color[0] = backBuffer;
+      rt.colorCount = 1;
+      rt.clearColor[0] = 0.15f; rt.clearColor[1] = 0.20f;
+      rt.clearColor[2] = 0.35f; rt.clearColor[3] = 1.0f;
+      rt.clear = true;
+      // 深度附件：没有它深度测试无从生效（此前这条路径从未挂过深度）。
+      rt.depth = m_VkDepthTexture.get();
+      rt.depthClearValue = 1.0f;
+      cmdList->BeginRendering(rt);
+      // 真实几何：两个在深度上重叠的三角形，靠深度测试决定谁遮住谁。
+      cmdList->SetPipelineState(m_VkPipeline.get());
+      cmdList->SetVertexBuffer(0, m_VkVertexBuffer.get(), kVkVertexStride, 0);
+      cmdList->SetConstantBuffer(0, 0, m_VkUniformBuffer.get(), 0, sizeof(VkDemoParams));
+      cmdList->Draw(m_VkVertexCount, 0);
+      if (!m_DrawConfirmed) {
+          m_DrawConfirmed = true;
+          std::printf("  [RHIDemo] 几何路径已生效：rtv=%u, dsv=D32_Float, 深度测试 Less\n",
+                      static_cast<unsigned>(backBuffer->GetFormat()));
+      }
+      cmdList->EndRendering();
+      cmdList->End();
+      // 提交与呈现现在是两件事：Submit() 等 acquire、signal renderFinished 并提交，
+      // Present() 只负责呈现。顺序不能反。
+      cmdList->Submit();
+      sc->Present();
+  }
 #endif // ENGINE_HAS_VULKAN
 
 void RHIDemoApp::Run() {
