@@ -814,6 +814,89 @@ expects VkImage to be in layout VK_IMAGE_LAYOUT_PRESENT_SRC_KHR
 **回归**：15/15 Vulkan 编译单元通过；离屏三角形回读仍为 `64 128 191 255`；
 5 个改动文件通过 MSVC 语法检查。
 
+### 2.3h RHIDemo 画出真实几何后，交换链协商暴露的两个缺陷（`bc985b3`）
+
+RHIDemo 的 Vulkan 路径此前只做 clear。接上顶点缓冲、UBO、深度测试与真实
+draw call 之后，第一次运行立刻产生 **1118 条 validation 错误，全部同一个 VUID**：
+
+```
+VUID-vkCmdDraw-dynamicRenderingUnusedAttachments-08910
+vkCmdDraw(): VkRenderingInfo::pColorAttachments[0].imageView format
+  (VK_FORMAT_B8G8R8A8_SRGB) must match corresponding format in
+  VkPipelineRenderingCreateInfo::pColorAttachmentFormats[0]
+  (VK_FORMAT_R8G8B8A8_UNORM)
+```
+
+该 VUID 的字面意思是「管线声明的附件没被用到」，实际报的是**格式不一致**。
+注意离屏五阶段此前一直干净，因为离屏渲染目标的格式由调用方自己指定，
+天然与管线一致；**只有交换链的格式是驱动挑的**。
+
+**缺陷一：管线格式被硬编码，而调用方无从得知实际格式**
+
+`CreateSwapChain` 盲取 `fmts[0]`。驱动把 `B8G8R8A8_SRGB` 排在第一个，于是
+交换链用了它，而 RHIDemo 的管线声明 `RGBA8_UNorm`。两边没有协商机制，
+调用方只能猜。
+
+修复分两处：
+
+1. `CreateSwapChain` 优先选非 sRGB 的 8 位 RGBA/BGRA（找不到再退回 `fmts[0]`）。
+   sRGB 会让引擎里按线性值写的清除色看起来偏亮，而调用方此前无法补偿。
+2. 更重要：RHIDemo 改为**从 backbuffer 的真实 `Format` 建管线**。
+   `IRHITexture::GetFormat()` 本来就在接口里，只是没人用。这才是根治 ——
+   无论驱动挑什么格式，管线都会自动跟上。
+
+管线因此不能在 `InitVulkan` 里建（那时交换链还不存在），改为首帧拿到
+backbuffer 后惰性创建。配套加了 `m_DrawConfirmed`：首帧真正 `Draw` 成功时打印
+一次确认。**「没有报错」不等于「画了东西」** —— 缺这条确认时，
+一条静默退回 clear 的路径和成功的路径在日志里长得一模一样。
+
+**缺陷二：`imageExtent` 无视 `caps.currentExtent`**（与格式问题无关，独立缺陷）
+
+把 X11 harness 跑在 WSLg 上时报：
+
+```
+VUID-VkSwapchainCreateInfoKHR-pNext-07781
+vkCreateSwapchainKHR(): pCreateInfo->imageExtent (640, 480), which is outside
+the bounds returned by vkGetPhysicalDeviceSurfaceCapabilitiesKHR():
+currentExtent = (2560,1600), minImageExtent = (2560,1600), maxImageExtent = (2560,1600)
+```
+
+规范要求：当 `currentExtent` 不是 `{0xFFFFFFFF, 0xFFFFFFFF}` 时，
+`imageExtent` **必须等于它**。此前直接用调用方请求的尺寸，于是任何固定表面
+尺寸的环境（WSLg 的 X11 虚拟屏、Wayland 合成器、tiling WM）都会让
+`vkCreateSwapchainKHR` 失败。
+
+失败的诊断路径极具误导性：它随后连锁产生
+
+- `VUID-vkQueuePresentKHR-pWaitSemaphores-03268` 信号量无人 signal
+- `VUID-VkPresentInfoKHR-pImageIndices-01430` 图像仍在 `UNDEFINED` 布局
+- `UNASSIGNED-VkPresentInfoKHR-pImageIndices-MissingAcquireWait`
+
+真正的原因却在几百行之外，且 `vkCreateSwapchainKHR` 失败时**静默
+`return nullptr`**，调用方只看到一个空指针。现改为：按规范取
+`currentExtent`、否则夹到 `[minImageExtent, maxImageExtent]`；backbuffer 的
+宽高也跟着用协商后的结果；创建失败时打印 `VkResult` 与全部协商参数。
+
+**顺带修掉的 harness bug**：X11 harness 打印 "frame recorded and submitted"
+却从未调用 `cmdList->Submit()` —— 它早于 `a777f59` 的 Submit/Present 分离。
+Wayland 与 XCB harness 当时已更新，只有这一个漏了。这类「日志声称做了、
+代码没做」的差异，只能靠对着日志去读代码发现。
+
+**结果**（llvmpipe + Khronos validation layer）：
+
+| 路径 | 结果 |
+|---|---|
+| `RHIDemo --vulkan` | validation **0**，swapchain failures 0，`rtv=27(BGRA8_UNorm)` `dsv=D32_Float` 深度测试 Less |
+| Xlib surface | PASS，**0 VUID** |
+| Wayland surface | PASS，**0 VUID** |
+| XCB surface | PASS（4 帧），**0 VUID** |
+| VKTRI 离屏五阶段 | 全 PASS，validation 0 |
+| 单元测试 | 15 passed, 0 failed |
+
+**教训**：`GetFormat()` 这类「早就写在接口里」的方法，比新增 API 更能解决
+问题 —— 先找已有的真相来源，再考虑加新的协商机制。而「驱动会帮你挑」的地方，
+凡是自己再猜一次的，就等于埋了一个只在特定机器上才炸的雷。
+
 ### 2.3f validation 真正启用后，CI 又暴露的三个缺陷（`bfc5aed`）
 
 关键在于**层此前是被环境强制加载的，而引擎以为它没开**（见 2.3e 第 3 点）。修正后引擎
@@ -909,6 +992,25 @@ lavapipe 上设备初始化成功，`GetDeviceName()` 返回真实名称。
 `7017d17` | 修正 `frontFace` 绕序（**真正的根因**）；`Failed()` 误报修复；
 新增 X11/XCB/Wayland surface 支持；补 `MemoryTypes.h` / `Log.cpp` 缺失的 include
 
+### 窗口化与描述符阶段（`3aee96f` … `04dbf60`）
+
+| 提交 | 内容 |
+|---|---|
+`3aee96f` | 修 surface 平台类型混淆与交换链双重销毁 |
+`e9bf326` | present 前补 `PRESENT_SRC_KHR` 屏障；修扩展数组悬空指针 |
+`c4e1d74` | 交换链图像初始布局改为 `UNDEFINED`（此前谎报 `PRESENT_SRC_KHR`） |
+`b9f2e07` | 修 `FormatToVk` 漏 `RG32`、测试空指针偏移；移除 VKTRI 门控 |
+`ccb2fdf` | `IRHIBuffer::GetMappedPtr()` 由 `VulkanBuffer` 实现 |
+`e0b85e5` | RHIDemo 的 Linux surface 路径 |
+`ee5bd2b` | `CreateTexture` 接 VMA，并支持深度/模板 aspect |
+`1dfb268` | **描述符链**：set layout、pipeline layout、pool、allocate/write/bind、UBO 与 SRV |
+`a777f59` | **`Submit()` 与 `Present()` 分离**（此前 `Present()` 偷偷提交） |
+`cce1354` 及后续 | PSO 所有权统一为 `shared_ptr`（含 `PSOCache`、三个后端、GPU physics、post-process） |
+`b1c9bd2` | 纹理描述符、共享 sampler、`initialData` staging 上传 |
+`6bacb1e` | 深度测试（`CompareFunc` 映射、`depthClearValue`）、`ReadbackTexture()` |
+`04dbf60` | 两套渲染作用域共享 `PrepareColorAttachment()` |
+`bc985b3` | **RHIDemo 真实几何**；管线格式与交换链对齐；`imageExtent` 按规范取 `currentExtent` |
+
 > **以上 11 个提交全部未推送、全部未经运行时验证。** 其中 `4834590`、`dcc65a6`、
 > `2d25e21` 涉及帧循环、交换链时序与纹理生命周期三处结构性修改，
 > 风险高于纯修复类提交。
@@ -960,11 +1062,15 @@ lavapipe 上设备初始化成功，`GetDeviceName()` 返回真实名称。
 
 | 路径 | 状态 |
 |---|---|
-`engine/src/Vulkan/`、`engine/include/Engine/Vulkan/` | clean，未修改 |
+`engine/src/Vulkan/`、`engine/include/Engine/Vulkan/` | **已大幅修改**（本文各节即是记录；从 `e9bf326` 到 `bc985b3`） |
+`engine/include/Engine/Core/RHI/`（`RHITypes.h`、`PSODesc.h`、`VulkanIRHIDevice.h`、`IRHIDevice.h`） | **已修改** |
+`engine/src/Core/RHI/PSOCache.cpp` | **已修改**（PSO 所有权） |
+`sandbox/src/RHIDemo/`、`sandbox/src/VulkanOffscreenTest/` | **已修改** |
 `sandbox/CMakeLists.txt` | clean，未修改 |
 `.github/workflows/cmake-multi-platform.yml` | clean，未修改 |
 `engine/CMakeLists.txt` | **HRC-DIRTY**（含 `find_package(Vulkan)` 与 GLOB，**无需修改**）
-`engine/src/RHI`、`sandbox/src/BackendTest` | **HRC-DIRTY**，不可触碰 |
+`engine/src/RHI/RHIWindow.cpp`、`engine/include/Engine/Core/RHI/RHIWindow.h` | **HRC-DIRTY**，不可触碰
+`engine/src/Core/Log.cpp` | HRC-DIRTY，但**已被加入** Vulkan harness 的编译单元列表 |
 
 注意 `engine/CMakeLists.txt` 用 `file(GLOB VULKAN_SOURCES CONFIGURE_DEPENDS src/Vulkan/*.cpp)`，
 **新增 .cpp 会被自动纳入**，不需要（也不应该）去改那个文件。
