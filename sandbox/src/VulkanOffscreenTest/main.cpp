@@ -288,6 +288,155 @@ struct TriVertex { float x, y, z, w; float r, g, b, a; };
       return 0;
   }
 
+  /**
+   * 第五阶段：深度测试。
+   *
+   * 深度附件此前虽已能正确创建，却从没有任何测试证明 depthTest / depthWrite 真的按
+   * 深度遮挡像素。更糟的是管线里的 depthCompareOp 曾被硬编码为 VK_COMPARE_OP_LESS，
+   * 完全忽略 DepthStencilDesc 里选的比较函数。
+   *
+   * 画两个**完全重叠**的三角形，只靠 z 区分远近。最后两组用**同一个清除值**换比较
+   * 函数而得到相反结果 —— 这才证明比较函数被采用，而非固定值。
+   */
+  int RunDepthTestPhase(Engine::RHI::VulkanDevice& device) {
+      using namespace Engine;
+      using namespace Engine::RHI;
+      std::printf("[VKTRI-Z] --- depth test phase ---\n");
+
+      const char* kVert = R"(
+      #version 450
+      layout(location = 0) in vec2 inPos;
+      layout(location = 1) in float inZ;
+      void main() { gl_Position = vec4(inPos, inZ, 1.0); }
+      )";
+      // 绿通道 = 深度：近的约 26，远的约 230
+      const char* kFrag = R"(
+      #version 450
+      layout(location = 0) out vec4 outColor;
+      void main() { outColor = vec4(0.0, gl_FragCoord.z, 0.0, 1.0); }
+      )";
+      if (!ShaderRegistry::Get().RegisterSource("vktriz_vs", ShaderStageType::Vertex, kVert) ||
+          !ShaderRegistry::Get().RegisterSource("vktriz_fs", ShaderStageType::Fragment, kFrag)) {
+          std::printf("[VKTRI-Z] FAIL: shader compilation\n"); return 1;
+      }
+
+      struct Vertex { float x, y, z; };
+      constexpr uint32_t kN = 64;
+      TextureDesc cd{}; cd.width = kN; cd.height = kN; cd.format = Format::RGBA8_UNorm;
+      auto colour = device.CreateTexture(cd);
+      TextureDesc dd{}; dd.width = kN; dd.height = kN; dd.format = Format::D32_Float;
+      auto depth = device.CreateTexture(dd);
+      if (!colour || !depth) { std::printf("[VKTRI-Z] FAIL: CreateTexture\n"); return 1; }
+
+      const Vertex verts[6] = {
+          {-0.9f, -0.9f, 0.9f}, { 0.9f, -0.9f, 0.9f}, { 0.0f,  0.9f, 0.9f},
+          {-0.9f, -0.9f, 0.1f}, { 0.9f, -0.9f, 0.1f}, { 0.0f,  0.9f, 0.1f},
+      };
+      RHIBufferDesc bd{};
+      bd.size = sizeof(verts);                 // 6 个顶点
+      bd.memoryUsage = MemoryUsage::CPU_To_GPU;
+      bd.initialData = verts;
+      auto vbuf = device.CreateBuffer(bd);
+      if (!vbuf || !vbuf->GetMappedPtr()) { std::printf("[VKTRI-Z] FAIL: CreateBuffer\n"); return 1; }
+      // 缓冲必须真的装下 6 个顶点：只声明 2 个却画 6 个会让三角形退化、渲染出 0 像素，
+      // 那看起来像引擎坏了，其实是测试写错。
+      {
+          const Vertex* seen = static_cast<const Vertex*>(vbuf->GetMappedPtr());
+          for (int i = 0; i < 6; ++i) {
+              if (seen[i].x != verts[i].x || seen[i].z != verts[i].z) {
+                  std::printf("[VKTRI-Z] FAIL: vertex %d did not upload\n", i); return 1;
+              }
+          }
+          std::printf("[VKTRI-Z] vertex upload complete\n");
+      }
+
+      auto target = VulkanOffscreenTarget::Create(device, kN, kN);
+      if (!target) { std::printf("[VKTRI-Z] FAIL: offscreen target\n"); return 1; }
+
+      GraphicsPSODesc base;
+      base.vertexShader = StringID::Runtime("vktriz_vs");
+      base.pixelShader  = StringID::Runtime("vktriz_fs");
+      base.rtvCount = 1;
+      base.rtvFormats[0] = Format::RGBA8_UNorm;
+      base.dsvFormat = Format::D32_Float;
+      base.depthStencil.depthTest = true;
+      base.depthStencil.depthWrite = true;
+      base.depthStencil.depthFunc = CompareFunc::Less;
+      base.vertexInput.buffers.push_back({ 0u, sizeof(Vertex), VertexInputRate::Vertex });
+      base.vertexInput.attributes.push_back({ 0u, 0u, Format::RG32_Float, 0u });
+      base.vertexInput.attributes.push_back({ 1u, 0u, Format::R32_Float, 8u });
+
+      auto render = [&](bool depthTest, CompareFunc fn, float depthClear, uint8_t* out) -> bool {
+          GraphicsPSODesc d = base;
+          d.depthStencil.depthTest = depthTest;
+          d.depthStencil.depthFunc = fn;
+          std::shared_ptr<IRHIPipelineState> pso(device.CreateGraphicsPSO(d));
+          if (!pso) return false;
+          VkCommandBuffer cmd = target->BeginOneShot();
+          if (cmd == VK_NULL_HANDLE) return false;
+          {
+              auto cl = device.CreateCommandList(CommandListType::Direct);
+              auto* vcl = dynamic_cast<VulkanCommandList*>(cl.get());
+              vcl->SetDevice(&device);
+              vcl->AttachToRecording(cmd);
+              RenderTargetDesc rt{};
+              rt.color[0] = colour.get(); rt.colorCount = 1;
+              rt.depth = depth.get();
+              rt.clear = true;
+              rt.clearColor[0] = 0; rt.clearColor[1] = 0; rt.clearColor[2] = 1; rt.clearColor[3] = 1;
+              rt.depthClearValue = depthClear;
+              vcl->BeginRendering(rt);
+              vcl->SetPipelineState(pso.get());
+              vcl->SetVertexBuffer(0, vbuf.get(), sizeof(Vertex), 0);
+              vcl->Draw(3, 0);
+              vcl->Draw(3, 3);
+              vcl->EndRendering();
+          }
+          if (!target->EndSubmitAndWait(cmd)) return false;
+          std::vector<uint8_t> px;
+          if (!device.ReadbackTexture(colour.get(), px)) return false;
+          const uint8_t* mid = px.data() + ((kN / 2 * kN) + kN / 2) * 4;
+          for (int i = 0; i < 4; ++i) out[i] = mid[i];
+          return true;
+      };
+
+      uint8_t px[4]{};
+      bool ok = true;
+      bool lessRejects = false, greaterAccepts = false;
+
+      // Less + 清除到 1.0（Vulkan 约定最远）：近的胜出
+      if (!render(true, CompareFunc::Less, 1.0f, px)) { std::printf("[VKTRI-Z] FAIL: Less\n"); return 1; }
+      std::printf("[VKTRI-Z] Less,    clear=1.0 -> %u %u %u %u (expect 0 26 0 255)\n",
+                  px[0], px[1], px[2], px[3]);
+      ok = ok && px[2] < 60 && px[1] > 5 && px[1] < 90;
+
+      // 关闭深度测试：后画的近的直接覆盖
+      if (!render(false, CompareFunc::Always, 1.0f, px)) { std::printf("[VKTRI-Z] FAIL: no depth\n"); return 1; }
+      std::printf("[VKTRI-Z] no depth test     -> %u %u %u %u (expect 0 26 0 255)\n",
+                  px[0], px[1], px[2], px[3]);
+      ok = ok && px[2] < 60 && px[1] < 90;
+
+      // 同一清除值 0.0 下换比较函数：Less 全部被拒，Greater 远的胜出
+      if (!render(true, CompareFunc::Less, 0.0f, px)) { std::printf("[VKTRI-Z] FAIL: Less c0\n"); return 1; }
+      std::printf("[VKTRI-Z] Less,    clear=0.0 -> %u %u %u %u (expect nothing: 0 0 255 255)\n",
+                  px[0], px[1], px[2], px[3]);
+      lessRejects = px[2] > 200 && px[1] < 40;
+
+      if (!render(true, CompareFunc::Greater, 0.0f, px)) { std::printf("[VKTRI-Z] FAIL: Greater c0\n"); return 1; }
+      std::printf("[VKTRI-Z] Greater, clear=0.0 -> %u %u %u %u (expect 0 230 0 255)\n",
+                  px[0], px[1], px[2], px[3]);
+      greaterAccepts = px[2] < 60 && px[1] > 180;
+
+      ok = ok && lessRejects && greaterAccepts;
+      if (!ok) {
+          std::printf("[VKTRI-Z] FAIL (lessRejects=%d greaterAccepts=%d)\n",
+                      lessRejects, greaterAccepts);
+          return 1;
+      }
+      std::printf("[VKTRI-Z] PASS: depth test occludes by depth and the compare function is honoured\n");
+      return 0;
+  }
+
   int RunVertexInputPhase(Engine::RHI::VulkanDevice& device) {
       using namespace Engine;
     std::printf("[VKTRI-VB] --- vertex input phase ---\n");
@@ -537,6 +686,8 @@ int main()
       // 描述符阶段：证明 uniform buffer 真的能到达着色器。
       if (RunUniformBufferPhase(*vkDevice) != 0) return 1;
       // 纹理阶段：证明纹理描述符与采样器可用，且与 UBO 共存于同一 set。
-      return RunTextureSamplerPhase(*vkDevice);
+      if (RunTextureSamplerPhase(*vkDevice) != 0) return 1;
+      // 深度阶段：证明深度测试真的按深度遮挡，且比较函数被采用。
+      return RunDepthTestPhase(*vkDevice);
 #endif // ENGINE_HAS_VULKAN
 }

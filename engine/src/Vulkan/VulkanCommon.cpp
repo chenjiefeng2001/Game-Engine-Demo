@@ -105,6 +105,19 @@ VkDescriptorType DescriptorKindToVk(RHI::DescriptorKind kind) noexcept {
     }
 }
 
+VkCompareOp CompareFuncToVk(RHI::CompareFunc f) noexcept {
+    switch (f) {
+      case RHI::CompareFunc::Never:        return VK_COMPARE_OP_NEVER;
+      case RHI::CompareFunc::Less:         return VK_COMPARE_OP_LESS;
+      case RHI::CompareFunc::Equal:        return VK_COMPARE_OP_EQUAL;
+      case RHI::CompareFunc::LessEqual:    return VK_COMPARE_OP_LESS_OR_EQUAL;
+      case RHI::CompareFunc::Greater:      return VK_COMPARE_OP_GREATER;
+      case RHI::CompareFunc::NotEqual:     return VK_COMPARE_OP_NOT_EQUAL;
+      case RHI::CompareFunc::GreaterEqual: return VK_COMPARE_OP_GREATER_OR_EQUAL;
+      case RHI::CompareFunc::Always:       return VK_COMPARE_OP_ALWAYS;
+      default:                             return VK_COMPARE_OP_LESS_OR_EQUAL;
+    }
+}
 bool IsDepthFormat(RHI::Format format) noexcept {
     switch (format) {
         case RHI::Format::D16_UNorm:

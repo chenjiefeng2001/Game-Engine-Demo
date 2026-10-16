@@ -210,6 +210,85 @@ VkSampler VulkanDevice::GetSampler() const noexcept {
     return m_Impl->sampler;
 }
 
+bool VulkanDevice::ReadbackTexture(IRHITexture* texture, std::vector<uint8_t>& out) noexcept {
+    // 此前引擎无法回读任意纹理：只有 VulkanOffscreenTarget 能读回它自己那一张。
+    // 于是任何「渲染到自建纹理再验证」的路径都做不了 —— 而这正是深度测试、
+    // 离屏渲染等验证的前提。
+    auto* tex = static_cast<VulkanTexture*>(texture);
+    if (!tex || tex->GetVkImage() == VK_NULL_HANDLE) return false;
+    const uint32 w = tex->GetWidth(), h = tex->GetHeight();
+    if (w == 0 || h == 0) return false;
+    const VkDeviceSize bytes = static_cast<VkDeviceSize>(w) * h * 4;
+
+    VkBufferCreateInfo bi{VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO};
+    bi.size = bytes;
+    bi.usage = VK_BUFFER_USAGE_TRANSFER_DST_BIT;
+    bi.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
+    VkBuffer staging = VK_NULL_HANDLE; VmaAllocation sAlloc = VK_NULL_HANDLE;
+    VmaAllocationInfo sInfo{};
+    VmaAllocationCreateInfo sai{};
+    sai.usage = VMA_MEMORY_USAGE_CPU_ONLY;
+    sai.flags = VMA_ALLOCATION_CREATE_MAPPED_BIT | VMA_ALLOCATION_CREATE_HOST_ACCESS_RANDOM_BIT;
+    if (vmaCreateBuffer(m_Impl->vmaAllocator, &bi, &sai, &staging, &sAlloc, &sInfo) != VK_SUCCESS ||
+        !sInfo.pMappedData)
+        return false;
+
+    bool ok = false;
+    VkCommandPool pool = GetOrCreateThreadCommandPool();
+    VkCommandBufferAllocateInfo ai{VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO};
+    ai.commandPool = pool; ai.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY; ai.commandBufferCount = 1;
+    VkCommandBuffer cmd = VK_NULL_HANDLE;
+    if (vkAllocateCommandBuffers(m_Impl->device, &ai, &cmd) == VK_SUCCESS) {
+        VkCommandBufferBeginInfo cbi{VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO};
+        cbi.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
+        vkBeginCommandBuffer(cmd, &cbi);
+        VkImageMemoryBarrier b{VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER};
+        b.srcAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT | VK_ACCESS_SHADER_READ_BIT;
+        b.dstAccessMask = VK_ACCESS_TRANSFER_READ_BIT;
+        b.oldLayout = tex->GetLayout();
+        b.newLayout = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;
+        b.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+        b.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+        b.image = tex->GetVkImage();
+        b.subresourceRange = { VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1 };
+        vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT |
+                                 VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT,
+                             VK_PIPELINE_STAGE_TRANSFER_BIT, 0,
+                             0, nullptr, 0, nullptr, 1, &b);
+        VkBufferImageCopy copy{};
+        copy.imageSubresource = { VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1 };
+        copy.imageExtent = { w, h, 1 };
+        vkCmdCopyImageToBuffer(cmd, tex->GetVkImage(), VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+                               staging, 1, &copy);
+        // 回读会改变图像布局，读回后交还给调用方继续使用：留在 TRANSFER_SRC 是不安全的。
+        VkImageMemoryBarrier back = b;
+        back.srcAccessMask = VK_ACCESS_TRANSFER_READ_BIT;
+        back.dstAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT | VK_ACCESS_SHADER_READ_BIT;
+        back.oldLayout = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;
+        back.newLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
+        vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_TRANSFER_BIT,
+                             VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT |
+                             VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT, 0,
+                             0, nullptr, 0, nullptr, 1, &back);
+        vkEndCommandBuffer(cmd);
+        VkSubmitInfo si{VK_STRUCTURE_TYPE_SUBMIT_INFO};
+        si.commandBufferCount = 1; si.pCommandBuffers = &cmd;
+        VkFenceCreateInfo fci{VK_STRUCTURE_TYPE_FENCE_CREATE_INFO};
+        VkFence fence = VK_NULL_HANDLE;
+        vkCreateFence(m_Impl->device, &fci, nullptr, &fence);
+        vkQueueSubmit(GetGraphicsQueue(), 1, &si, fence);
+        vkWaitForFences(m_Impl->device, 1, &fence, VK_TRUE, UINT64_MAX);
+        vkDestroyFence(m_Impl->device, fence, nullptr);
+        vkFreeCommandBuffers(m_Impl->device, pool, 1, &cmd);
+        tex->SetLayout(VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL);
+        out.assign(static_cast<uint8_t*>(sInfo.pMappedData),
+                   static_cast<uint8_t*>(sInfo.pMappedData) + static_cast<size_t>(bytes));
+        ok = true;
+    }
+    vmaDestroyBuffer(m_Impl->vmaAllocator, staging, sAlloc);
+    return ok;
+}
+
 VkDescriptorSet VulkanDevice::AllocateDescriptorSet(VkDescriptorSetLayout layout) noexcept {
     if (layout == VK_NULL_HANDLE || m_Impl->descriptorPool == VK_NULL_HANDLE) return VK_NULL_HANDLE;
     VkDescriptorSetAllocateInfo ai{VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO};
@@ -636,11 +715,14 @@ auto tex = std::make_shared<VulkanTexture>();
       const bool isDepth = IsDepthFormat(desc.format);
       ii.usage = isDepth ? (VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT)
                          : (VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT);
-      // 有初始数据时需要走 staging 上传：VK_IMAGE_TILING_OPTIMAL 的图像不能被
-      // CPU 直接写入，必须经 TRANSFER_DST。此前 TextureDesc::initialData 被完全
-      // 忽略，调用方拿到的纹理内容是未定义的。
+      // TRANSFER_SRC 始终加上：ReadbackTexture 需要它。纹理若「有的能读有的不能」，
+      // 验证路径就得先猜创建参数 —— 深度测试这类验证正是卡在这里。
+      ii.usage |= VK_IMAGE_USAGE_TRANSFER_SRC_BIT;
+      // 有初始数据时还需 TRANSFER_DST 走 staging 上传：VK_IMAGE_TILING_OPTIMAL 的
+      // 图像不能被 CPU 直接写入。此前 TextureDesc::initialData 被完全忽略，调用方
+      // 拿到的纹理内容是未定义的。
       const bool hasUpload = desc.initialData != nullptr;
-      if (hasUpload) ii.usage |= VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT;
+      if (hasUpload) ii.usage |= VK_IMAGE_USAGE_TRANSFER_DST_BIT;
       VkImage vkImg; VmaAllocation alloc; VmaAllocationInfo allocInfo{};
       // pAllocationCreateInfo 不能为 nullptr：VMA 直接断言它非空。此前这里传的是
       // nullptr，于是 **CreateTexture 从未成功执行过** —— 只是没有任何验证路径调用它，

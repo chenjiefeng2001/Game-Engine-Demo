@@ -261,9 +261,12 @@ for (uint32 ch = 0; ch < 4; ++ch) a.clearValue.color.float32[ch] = desc.clearCol
             depthAttachment.sType      = VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO;
             depthAttachment.imageView  = dtex->GetVkImageView();
             depthAttachment.imageLayout = VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_OPTIMAL;
-            depthAttachment.loadOp     = desc.clear ? VK_ATTACHMENT_LOAD_OP_CLEAR : VK_ATTACHMENT_LOAD_OP_LOAD;
-            depthAttachment.storeOp    = VK_ATTACHMENT_STORE_OP_STORE;
-            dtex->SetLayout(VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_OPTIMAL);
+depthAttachment.loadOp     = desc.clear ? VK_ATTACHMENT_LOAD_OP_CLEAR : VK_ATTACHMENT_LOAD_OP_LOAD;
+              depthAttachment.storeOp    = VK_ATTACHMENT_STORE_OP_STORE;
+              // 必须给深度清除值：零初始化的 0.0 意味着「只有 z<0 的片元能通过
+              // Less 系列的深度测试」，等于把整帧丢掉。
+              depthAttachment.clearValue.depthStencil = { desc.depthClearValue, 0 };
+              dtex->SetLayout(VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_OPTIMAL);
             hasDepth = true;
         }
     }
