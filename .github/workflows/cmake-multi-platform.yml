@@ -197,6 +197,49 @@ jobs:
     - name: Build
       run: cmake --build ${{ steps.strings.outputs.build-output-dir }} --config ${{ matrix.build_type }}
 
+    # .gitignore 排除了 *.scene 与 *.manifest.json，所以干净 checkout 里根本没有
+    # 场景文件，只有 manifest.json 与 .lua 脚本入库。ctest 又以
+    # WORKING_DIRECTORY=CMAKE_SOURCE_DIR 运行、直接读 assets/... 的相对路径，
+    # 于是 test_bridge / test_gp01 / test_content 在干净 checkout 上必然失败
+    # （"manifest load failed"）—— 这不是代码问题，是 fixture 缺失。
+    #
+    # 这里在跑测试之前用**已入库的** manifest 重新生成场景，使 checkout 自给自足。
+    # 生成器是 AssetBakery（见 37b8543 / 1e794a3），刻意走引擎自己的
+    # SceneSerializerV1，避免手写 JSON 与加载器漂移。
+    #
+    # 不静默跳过：生成失败就让本步失败，否则下游会呈现为一堆看不懂的
+    # "manifest load failed"。
+    - name: Generate scene fixtures
+      shell: bash
+      run: |
+        set -euo pipefail
+        BUILD_DIR="${{ steps.strings.outputs.build-output-dir }}"
+        # 多配置生成器（Windows/MSVC）把可执行文件放进 <Config>/ 子目录。
+        if [[ "${{ runner.os }}" == "Windows" ]]; then
+          BAKERY="$BUILD_DIR/sandbox/AssetBakery/${{ matrix.build_type }}/AssetBakery.exe"
+        else
+          BAKERY="$BUILD_DIR/sandbox/AssetBakery/AssetBakery"
+        fi
+        if [[ ! -x "$BAKERY" && ! -f "$BAKERY" ]]; then
+          echo "AssetBakery not found at $BAKERY"
+          find "$BUILD_DIR" -name 'AssetBakery*' -type f 2>/dev/null | head -5
+          exit 1
+        fi
+        "$BAKERY" --gp01-scene assets/gp01/manifest.json assets/gp01/Main.scene
+        "$BAKERY" --dogfood-scenes assets/scenes
+        # 立刻验证产物落在测试真正会去读的位置，而不是相信命令返回 0。
+        for f in assets/gp01/Main.scene \
+                 assets/scenes/dogfood03.scene assets/scenes/dogfood03.manifest.json \
+                 assets/scenes/dogfood05.scene assets/scenes/dogfood05.manifest.json \
+                 assets/scenes/dogfood06.scene assets/scenes/dogfood06.manifest.json \
+                 assets/scenes/dogfood07.scene assets/scenes/dogfood07.manifest.json; do
+          if [[ ! -s "$f" ]]; then
+            echo "expected fixture missing or empty: $f"
+            exit 1
+          fi
+          echo "  fixture OK: $f ($(wc -c < "$f") bytes)"
+        done
+
     # Headless Vulkan 离屏三角形：在 lavapipe（软件 Vulkan）上验证引擎后端能真正
     # 光栅化并回读像素。这是该后端的第一份运行时证据——此前它从未被任何 CI 编译过，
     # 更没运行过。断言是像素而不是退出码：clear 为黑、片元固定输出固定色。
