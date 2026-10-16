@@ -273,6 +273,205 @@ static bool GenerateGp01Scene(const std::string& manifestPath, const std::string
 }
 
 // ════════════════════════════════════════════════════════════
+// dogfood 场景 fixture 生成器
+// ════════════════════════════════════════════════════════════
+
+/// dogfood 清单里的一条资产。
+///
+/// 与 gp01 不同，这里的 GUID 是 fixture 自身的标识（写死在场景与清单里、
+/// 互为引用），不是从资产注册表派生的，所以按字面量给出。
+struct DogfoodAsset {
+    const char* guid;
+    const char* path;
+    const char* type;   // "Script" | "Texture"
+};
+
+/// 实体引用资产时用**下标**而不是 GUID 字符串，避免同一串十六进制在表里
+/// 抄错却看不出来：下标错了会在下面 resolve 阶段报「未定义下标」而 fail-fast。
+struct DogfoodEntity {
+    const char* name;
+    float x, y, z;
+    int spriteAsset;   // -1 = 无 sprite
+    int scriptAsset;   // -1 = 无 script
+};
+
+struct DogfoodSpec {
+    const char* id;                          // "dogfood03"
+    const DogfoodAsset* assets;
+    size_t assetCount;
+    const DogfoodEntity* entities;
+    size_t entityCount;
+};
+
+static const DogfoodAsset kDf03Assets[] = {
+    { "df03aabbccddeeff0011223344556677", "assets/scripts/dogfood03_game.lua", "Script" },
+    // 三个不同 GUID 指向同一张 test.png：df03 的脚本按 GUID 分别取三张贴图，
+    // 用来验证「多张贴图可共存」。LoadManifest 直接写 m_ByGuid/m_ByPath，
+    // 不走 RegisterExplicit 的重复检测，所以同路径多 GUID 是允许的。
+    { "df03c3d4e5f6a7b8c9d0e1f2a3b4c5d6", "assets/textures/test.png", "Texture" },
+    { "df03e5f6a7b8c9d0e1f2a3b4c5d6e7f8", "assets/textures/test.png", "Texture" },
+    { "df03a9b8c7d6e5f4a3b2c1d0e9f8a7b6", "assets/textures/test.png", "Texture" },
+};
+
+// 实体表转录自 provisioned 工作区的 fixtures，理由同 kGp01Entities：
+// 坐标是 df03_game.lua 追逐/拾取/边界判定所依赖的玩法几何。
+static const DogfoodEntity kDf03Entities[] = {
+    { "Player",      0.0f, 0.0f,  0.0f, -1, 0 },
+    { "Chaser1",    -4.0f, 0.0f, -4.0f,  1, -1 },
+    { "Chaser2",     4.0f, 0.0f, -4.0f,  1, -1 },
+    { "Pickup_A",   -3.0f, 0.0f, -2.0f,  2, -1 },
+    { "Pickup_B",    3.0f, 0.0f, -2.0f,  2, -1 },
+    { "Pickup_C",    0.0f, 0.0f, -4.0f,  2, -1 },
+    { "Pickup_D",   -3.5f, 0.0f, -6.0f,  2, -1 },
+    { "Pickup_E",    3.5f, 0.0f, -6.0f,  2, -1 },
+    { "Wall_Left",  -6.0f, 0.0f, -3.0f,  3, -1 },
+    { "Wall_Right",  6.0f, 0.0f, -3.0f,  3, -1 },
+    { "Wall_Top",    0.0f, 0.0f, -8.0f,  3, -1 },
+    { "GoalZone",    0.0f, 0.0f, -9.5f,  3, -1 },
+    { "SpawnPad",    0.0f, 0.0f,  2.0f,  3, -1 },
+};
+
+static const DogfoodAsset kDf05Assets[] = {
+    { "df05aabbccddeeff0011223344556677", "assets/scripts/dogfood05_game.lua", "Script" },
+};
+
+static const DogfoodEntity kDf05Entities[] = {
+    { "Player",        0.0f, 0.0f,   3.0f, -1, 0 },
+    { "Enemy_Alpha",  -4.0f, 0.0f,  -4.0f, -1, -1 },
+    { "Enemy_Beta",    4.0f, 0.0f,  -4.0f, -1, -1 },
+    { "Enemy_Gamma",   0.0f, 0.0f,  -7.0f, -1, -1 },
+    { "Enemy_Delta",  -5.0f, 0.0f,  -6.5f, -1, -1 },
+    { "Enemy_Epsilon", 5.0f, 0.0f,  -6.5f, -1, -1 },
+    { "Wall_North",    0.0f, 0.0f, -10.0f, -1, -1 },
+    { "Wall_South",    0.0f, 0.0f,   8.0f, -1, -1 },
+    { "Wall_West",    -8.0f, 0.0f,  -1.0f, -1, -1 },
+    { "Wall_East",     8.0f, 0.0f,  -1.0f, -1, -1 },
+    { "Pickup_Health",-5.0f, 0.0f,  -3.0f, -1, -1 },
+    { "Pickup_Speed",  5.0f, 0.0f,  -3.0f, -1, -1 },
+    { "Pickup_Damage", 0.0f, 0.0f,  -6.0f, -1, -1 },
+};
+
+static const DogfoodAsset kDf06Assets[] = {
+    { "df06aabbccddeeff0011223344556677", "assets/scripts/dogfood06_game.lua", "Script" },
+};
+
+static const DogfoodEntity kDf06Entities[] = {
+    { "Player",        0.0f, 0.0f,   3.0f, -1, 0 },
+    { "Enemy_Grunt1", -2.0f, 0.0f,  -2.0f, -1, -1 },
+    { "Enemy_Grunt2",  2.0f, 0.0f,  -2.0f, -1, -1 },
+    { "Enemy_Ranged",  0.0f, 0.0f,  -6.0f, -1, -1 },
+    { "Enemy_Tank",   -4.0f, 0.0f,  -5.0f, -1, -1 },
+    { "Enemy_Scout",   4.0f, 0.0f,  -5.0f, -1, -1 },
+    { "Enemy_Boss",    0.0f, 0.0f,  -9.0f, -1, -1 },
+    { "Enemy_Minion1",-1.0f, 0.0f,  -7.0f, -1, -1 },
+    { "Enemy_Minion2", 1.0f, 0.0f,  -7.0f, -1, -1 },
+    { "Pickup_HP",    -5.0f, 0.0f,  -1.0f, -1, -1 },
+    { "Pickup_DMG",    5.0f, 0.0f,  -1.0f, -1, -1 },
+    { "Pickup_SPD",   -5.0f, 0.0f,  -6.0f, -1, -1 },
+    { "Wall_N",        0.0f, 0.0f, -11.0f, -1, -1 },
+    { "Wall_S",        0.0f, 0.0f,   5.0f, -1, -1 },
+    { "GoalZone",      0.0f, 0.0f, -10.5f, -1, -1 },
+};
+
+static const DogfoodAsset kDf07Assets[] = {
+    { "df07aabbccddeeff0011223344556677", "assets/scripts/dogfood07_game.lua", "Script" },
+};
+
+static const DogfoodEntity kDf07Entities[] = {
+    { "Player",    0.0f, 0.0f,  4.0f, -1, 0 },
+    { "Turret_A", -3.0f, 0.0f, -1.0f, -1, -1 },
+    { "Turret_B",  0.0f, 0.0f, -3.0f, -1, -1 },
+    { "Turret_C",  3.0f, 0.0f, -1.0f, -1, -1 },
+    { "Gem_1",    -4.0f, 0.0f, -5.0f, -1, -1 },
+    { "Gem_2",    -2.0f, 0.0f, -6.0f, -1, -1 },
+    { "Gem_3",     0.0f, 0.0f, -7.0f, -1, -1 },
+    { "Gem_4",     2.0f, 0.0f, -6.0f, -1, -1 },
+    { "Gem_5",     4.0f, 0.0f, -5.0f, -1, -1 },
+    { "Base_Core", 0.0f, 0.0f,  0.0f, -1, -1 },
+};
+
+static const DogfoodSpec kDogfoodSpecs[] = {
+    { "dogfood03", kDf03Assets, std::size(kDf03Assets), kDf03Entities, std::size(kDf03Entities) },
+    { "dogfood05", kDf05Assets, std::size(kDf05Assets), kDf05Entities, std::size(kDf05Entities) },
+    { "dogfood06", kDf06Assets, std::size(kDf06Assets), kDf06Entities, std::size(kDf06Entities) },
+    { "dogfood07", kDf07Assets, std::size(kDf07Assets), kDf07Entities, std::size(kDf07Entities) },
+};
+
+/// 清单没有任何引擎侧写入 API（LoadManifest 只读），所以这里直接发 JSON。
+static bool WriteDogfoodManifest(const DogfoodSpec& spec, const std::string& dir) {
+    nlohmann::json j;
+    j["version"] = 1;
+    j["assets"] = nlohmann::json::array();
+    for (size_t i = 0; i < spec.assetCount; ++i) {
+        const DogfoodAsset& a = spec.assets[i];
+        Engine::ResourceGUID g = Engine::ResourceGUID::FromHex(a.guid);
+        if (g.IsNull()) {
+            std::fprintf(stderr, "[Dogfood] %s: unparseable guid %s\n", spec.id, a.guid);
+            return false;
+        }
+        j["assets"].push_back({ { "guid", a.guid }, { "path", a.path }, { "type", a.type } });
+    }
+
+    const std::string path = dir + "/" + spec.id + ".manifest.json";
+    std::ofstream out(path, std::ios::binary);
+    if (!out.is_open()) {
+        std::fprintf(stderr, "[Dogfood] cannot write %s\n", path.c_str());
+        return false;
+    }
+    out << j.dump(2) << "\n";
+    return true;
+}
+
+static bool GenerateDogfoodScenes(const std::string& outputDir) {
+    fs::create_directories(outputDir);
+
+    for (const auto& spec : kDogfoodSpecs) {
+        Engine::Content::SceneSnapshot snap;
+        snap.version = 1;
+
+        for (size_t i = 0; i < spec.entityCount; ++i) {
+            const DogfoodEntity& e = spec.entities[i];
+            Engine::Content::SerializedEntity se;
+            se.name = e.name;
+            se.px = e.x;
+            se.py = e.y;
+            se.pz = e.z;
+
+            auto bind = [&](int idx, Engine::ResourceGUID& guid, const char* what) -> bool {
+                if (idx < 0) return true;
+                if (static_cast<size_t>(idx) >= spec.assetCount) {
+                    std::fprintf(stderr, "[Dogfood] %s/%s: %s asset index %d out of range\n",
+                                 spec.id, e.name, what, idx);
+                    return false;
+                }
+                guid = Engine::ResourceGUID::FromHex(spec.assets[idx].guid);
+                if (guid.IsNull()) {
+                    std::fprintf(stderr, "[Dogfood] %s/%s: bad guid for asset %d\n",
+                                 spec.id, e.name, idx);
+                    return false;
+                }
+                return true;
+            };
+
+            if (!bind(e.spriteAsset, se.spriteGuid, "sprite")) return false;
+            if (!bind(e.scriptAsset, se.scriptGuid, "script")) return false;
+            snap.entities.push_back(std::move(se));
+        }
+
+        const std::string scenePath = outputDir + "/" + spec.id + ".scene";
+        if (!Engine::Content::SaveSnapshotToFile(snap, scenePath)) {
+            std::fprintf(stderr, "[Dogfood] SaveSnapshotToFile failed: %s\n", scenePath.c_str());
+            return false;
+        }
+        if (!WriteDogfoodManifest(spec, outputDir)) return false;
+
+        std::printf("[Dogfood] %s: %zu entities, %zu asset(s)\n",
+                    spec.id, snap.entities.size(), spec.assetCount);
+    }
+    return true;
+}
+
+// ════════════════════════════════════════════════════════════
 // 入口
 // ════════════════════════════════════════════════════════════
 
@@ -288,30 +487,48 @@ static void PrintUsage() {
         "                The .scene files are gitignored (*.scene), so a clean\n"
         "                checkout has no scene; run this before any test or gate\n"
         "                that opens assets/gp01.\n"
+        "  --dogfood-scenes <dir>\n"
+        "                Regenerate the dogfood03/05/06/07 scene + manifest pairs.\n"
+        "                Their Lua scripts ARE tracked; only the scenes and the\n"
+        "                *.manifest.json files are missing from a clean checkout.\n"
         "  --help        Show this help\n"
     );
 }
 
 int main(int argc, char* argv[]) {
-    if (argc < 4) {
+    // 各模式参数个数不同（烘焙要 2 个路径，dogfood 只要 1 个目录），因此在这里
+    // 只要求「模式 + 至少一个参数」，再由各分支自己校验所需个数。
+    if (argc < 3) {
         PrintUsage();
         return 1;
     }
 
     std::string type = argv[1];
     std::string inputDir = argv[2];
-    std::string outputDir = argv[3];
+    std::string outputDir = (argc > 3) ? argv[3] : std::string();
 
     bool result = false;
 
-    if (type == "--shaders") {
-        ShaderBaker baker;
-        result = baker.ProcessDirectory(inputDir, outputDir);
-    } else if (type == "--materials") {
-        MaterialBaker baker;
-        result = baker.ProcessDirectory(inputDir, outputDir);
+    if (type == "--shaders" || type == "--materials") {
+        if (argc < 4) {
+            std::fprintf(stderr, "%s requires <input_dir> <output_dir>\n", type.c_str());
+            return 1;
+        }
+        if (type == "--shaders") {
+            ShaderBaker baker;
+            result = baker.ProcessDirectory(inputDir, outputDir);
+        } else {
+            MaterialBaker baker;
+            result = baker.ProcessDirectory(inputDir, outputDir);
+        }
     } else if (type == "--gp01-scene") {
+        if (argc < 4) {
+            std::fprintf(stderr, "--gp01-scene requires <manifest.json> <output.scene>\n");
+            return 1;
+        }
         result = GenerateGp01Scene(inputDir, outputDir);
+    } else if (type == "--dogfood-scenes") {
+        result = GenerateDogfoodScenes(inputDir);
     } else {
         std::fprintf(stderr, "Unknown type: %s\n", type.c_str());
         PrintUsage();
