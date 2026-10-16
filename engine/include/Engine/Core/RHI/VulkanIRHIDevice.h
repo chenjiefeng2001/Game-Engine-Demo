@@ -53,6 +53,14 @@ class VulkanDeferredDeletion;
         /** 设备共享采样器（线性过滤 + 钳制边缘）。组合式图像采样描述符需要它，
          *  而此前引擎里根本没有任何采样器。 */
         VkSampler GetSampler() const noexcept;
+        /**
+         * 回读任意 RGBA8 纹理（图像 → 暂存缓冲 → CPU）。
+         *
+         * 此前引擎只能读回 VulkanOffscreenTarget 自带的那一张，于是「渲染到自建
+         * 纹理再验证」这类路径根本做不了 —— 深度测试、离屏渲染的验证都卡在这里。
+         * 回读后图像被交还到 COLOR_ATTACHMENT_OPTIMAL，可继续使用。
+         */
+        bool ReadbackTexture(IRHITexture* texture, std::vector<uint8_t>& out) noexcept;
 
         VkDevice        GetVkDevice() const noexcept;
         VmaAllocator    GetVmaAllocator() const noexcept;

@@ -78,6 +78,11 @@ namespace RHI {
 
         float clearColor[4] = { 0.0f, 0.0f, 0.0f, 1.0f };
         bool  clear         = true;   ///< false 则保留附件原有内容（loadOp = LOAD）
+        /** 深度清除值，默认 1.0（Vulkan 约定中 1.0 为最远）。
+         *  此前该字段根本不存在，深度附件的 clearValue.depthStencil 保持零初始化，
+         *  于是深度总被清成 0.0；而 Less 系列的比较会把所有 z>0 的片元判为失败 ——
+         *  深度测试形同虚设，渲染结果只剩颜色清除。 */
+        float depthClearValue = 1.0f;
     };
 
     // ============================================================

@@ -42,6 +42,10 @@ VkFormat FormatToVk(RHI::Format format);
     bool IsDepthFormat(RHI::Format format) noexcept;
     bool IsStencilFormat(RHI::Format format) noexcept;
     VkImageAspectFlags FormatToAspect(RHI::Format format) noexcept;
+    /** RHI 深度比较函数 → Vulkan 比较算子。此前管线里 depthCompareOp 被硬编码为
+     *  VK_COMPARE_OP_LESS，完全忽略调用方在 DepthStencilDesc 里选的函数 ——
+     *  默认值是 LessEqual，两者对等深度像素的行为并不相同。 */
+    VkCompareOp CompareFuncToVk(RHI::CompareFunc f) noexcept;
     /** RHI 描述符类型 → Vulkan 描述符类型。 */
     VkDescriptorType DescriptorKindToVk(RHI::DescriptorKind kind) noexcept;
 

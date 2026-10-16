@@ -182,7 +182,7 @@ std::shared_ptr<IRHIPipelineState> CreateGraphicsPipeline(
     VkPipelineDepthStencilStateCreateInfo depthStencil{VK_STRUCTURE_TYPE_PIPELINE_DEPTH_STENCIL_STATE_CREATE_INFO};
     depthStencil.depthTestEnable = desc.depthStencil.depthTest ? VK_TRUE : VK_FALSE;
     depthStencil.depthWriteEnable = desc.depthStencil.depthWrite ? VK_TRUE : VK_FALSE;
-    depthStencil.depthCompareOp = VK_COMPARE_OP_LESS;
+    depthStencil.depthCompareOp = CompareFuncToVk(desc.depthStencil.depthFunc);
 
     // 颜色混合
     VkPipelineColorBlendAttachmentState blendAttachment{};
