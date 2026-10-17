@@ -1,6 +1,6 @@
 # 交接：CI 全量套件的剩余失败
 
-**最新证据**：run `39016478050`（`300c887`）—— **7 个 job 全绿**，四个构建 job
+**最新证据**：run `39023923581`（`174150c`）—— **7 个 job 全绿**，四个构建 job
 均为 `100% tests passed out of 13`。
 
 | job | 结果 |
@@ -12,7 +12,10 @@
 
 下文 §1–§3 是本文最初的 3 项 Linux 失败，已由 AssetBakery fixture 生成器关闭；
 §4 已由「把 ASan 运行时放进 PATH」关闭；§5 已按方案 1（Windows 显式声明
-`GPU_SKINNING_NO_GL46=1`）关闭；§6 是刚被发现、尚未关闭的一项。
+`GPU_SKINNING_NO_GL46=1`）关闭；§6 已关闭。
+
+**仍未关闭的是像素验证本身**：四个 runner 上它一次都没有真正执行过，全部是显式
+SKIP。CI 绿指的是「其余一切通过」，不是「GPU 像素已验证」。终点见 §5 方案 2。
 
 ---
 
@@ -216,7 +219,7 @@ Linux 测试步骤声明 `GPU_SKINNING_NO_GL46=1`，Windows 侧此前没有声�
 
 ---
 
-## 6. Windows 上「GPU 蒙皮状态报告」步骤静默退化（`39016478050` 实测发现）
+## 6. ~~Windows 上「GPU 蒙皮状态报告」步骤静默退化~~ 已关闭（`174150c`，run `39023923581`）
 
 run `39016478050` 全绿之后，两个 Windows job 的 Report 步骤打印的是：
 
@@ -232,13 +235,22 @@ GPU-SKINNING-STATUS: pixel verification requires a GL 4.6 capable machine.
 ```
 
 原因是该步骤硬编码了 `BIN=tests/test_renderer`，而多配置生成器（Windows/MSVC）
-把可执行文件放在 `tests/test_renderer/<Config>/test_renderer.exe`。这与 `481d202`
+把可执行文件放在 `tests/<Config>/test_renderer.exe`。这与 `481d202`
 在 fixture 步骤里修掉的是**同一个坑**：那次是路径被 bash 的转义处理吃掉，这次是
 布局假设错误。
 
 **为什么值得单独修**：这一存在的唯一理由，是让「像素验证没跑」在绿色对勾之外仍然
 显式可见。§5 采纳方案 1 之后，Windows 上四个用例不再失败，这份证据就成了**仅剩的
-承载点**——而它恰恰在 Windows 上不产出任何东西。用 `find` 定位后，两个平台行为一致。
+承载点**——而它恰恰在 Windows 上不产出任何东西。改用 `find` 后，run `39023923581`
+两个 Windows job 恢复为：
+
+```
+using test_renderer: tests/Release/test_renderer.exe
+[  SKIPPED ] GPUSkinningPixelTest.BindPoseDrawsGeometryInCentreBandOnly (0 ms)
+...（4 条）
+GPU-SKINNING-STATUS: NOT VERIFIED on this runner (explicit skip above).
+GPU-SKINNING-STATUS: pixel verification requires a GL 4.6 capable machine.
+```
 
 > 教训：一个用 `exit 0` 兜底、且兜底文案与真实结论同形的步骤（"nothing was
 > verified"），失败时不会引起任何人注意。**兜底分支应当与成功分支长得不一样。**
