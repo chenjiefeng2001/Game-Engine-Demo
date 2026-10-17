@@ -90,6 +90,15 @@ case Format::RGBA8_SInt:   return VK_FORMAT_R8G8B8A8_SINT;
         case Format::BGRA8_sRGB:   return VK_FORMAT_B8G8R8A8_SRGB;
         case Format::RGBA16_Float: return VK_FORMAT_R16G16B16A16_SFLOAT;
         case Format::RGBA32_Float: return VK_FORMAT_R32G32B32A32_SFLOAT;
+        // 与 RG32_Float 同一类缺口：这些 4 分量格式此前全部落到 default，而 0 是
+        // 「非法值」不是「未知」，于是建出非法管线。骨骼索引（ivec4）需要
+        // RGBA32_SInt，GPU 蒙皮像素验证在 Vulkan 上就撞上了这个。
+        case Format::RGBA16_UNorm: return VK_FORMAT_R16G16B16A16_UNORM;
+        case Format::RGBA16_SNorm: return VK_FORMAT_R16G16B16A16_SNORM;
+        case Format::RGBA16_UInt:  return VK_FORMAT_R16G16B16A16_UINT;
+        case Format::RGBA16_SInt:  return VK_FORMAT_R16G16B16A16_SINT;
+        case Format::RGBA32_UInt:  return VK_FORMAT_R32G32B32A32_UINT;
+        case Format::RGBA32_SInt:  return VK_FORMAT_R32G32B32A32_SINT;
         case Format::D32_Float:    return VK_FORMAT_D32_SFLOAT;
         case Format::D24_UNorm_S8_UInt: return VK_FORMAT_D24_UNORM_S8_UINT;
         case Format::D32_Float_S8_UInt: return VK_FORMAT_D32_SFLOAT_S8_UINT;
