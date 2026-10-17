@@ -10,7 +10,7 @@
 | `windows-latest` RelWithDebInfo cl **ASan=ON** | 停在「Generate scene fixtures」，见 §4 |
 
 下文 §1–§3 是本文最初的 3 项 Linux 失败，现已全部关闭，保留原文以说明各自的真实根因；
-§4–§5 是当前仍未关闭的两项。
+§4 是当前仍未关闭的一项；§5 已按方案 1 关闭，但保留代价说明与退路。
 
 ---
 
@@ -180,7 +180,7 @@ Exception: SpirVTest failed with exit -1073741515
 
 ---
 
-## 5. Windows Release —— `test_renderer` 需要 runner 给不出的 GL 4.6
+## 5. ~~Windows Release —— `test_renderer` 需要 runner 给不出的 GL 4.6~~ 已按方案 1 关闭
 
 Windows Release 是 12/13，唯一失败的是 `test_renderer`，4 个
 `GPUSkinningPixelTest` 用例：
@@ -197,15 +197,20 @@ GPUSkinningPixelTest.cpp:355: no GL 4.6 core context; GPU skinning verification 
 | Linux（llvmpipe） | 4.5 core 可创建，4.6 core 创建失败 → 能力不足 |
 | Windows | `[GLPROBE] default context: CREATE FAILED` → **连默认上下文都建不出来** |
 
-Linux 测试步骤声明 `GPU_SKINNING_NO_GL46=1`，Windows 侧没有声明，因此按设计失败。
-两条候选路线：
+Linux 测试步骤声明 `GPU_SKINNING_NO_GL46=1`，Windows 侧此前没有声明，因此按设计失败。
+两条候选路线，本轮选了第 1 条：
 
-1. **与 Linux 对齐**：Windows 测试步骤同样声明 `GPU_SKINNING_NO_GL46=1`。这是既有
-   opt-in 机制，能力证据由 `gl-capability-probe` job 持续采集。代价：Windows 上
-   不再有「像素验证没跑」的红色信号，而该信号目前只靠这一处失败承载。
-2. **把像素验证做成后端无关**（`docs/Handoff-Vulkan-Headless-GPU-Verification.md` §4.8）：
-   4 个用例改走 Vulkan/lavapipe——那条路径已在 CI 中拿到真实像素证据并常开验证。
-   做完之后 `GPU_SKINNING_NO_GL46` 这个开关本身就可以删掉。这是有实质工作量的一条。
+1. **与 Linux 对齐（已采用）**：Windows 测试步骤同样声明 `GPU_SKINNING_NO_GL46=1`。
+   这是既有 opt-in 机制，能力证据由 `gl-capability-probe` job 持续采集。
+   **代价要说清楚**：Windows 上「像素验证没跑」不再表现为红灯，改由 `Report GPU
+   skinning verification status` 步骤打印的 `GPU-SKINNING-STATUS: NOT VERIFIED` 承担
+   （该步骤 `if: always()`，且不因此让 job 变红，与 Linux 行为一致）。
+   真正变窄的是：Windows 上从此不再有任何用例会因为「GL 用例跑不起来」而失败，
+   一次 GL 环境彻底损坏将表现为 SKIP 而不是红灯。
+2. **把像素验证做成后端无关**（`docs/Handoff-Vulkan-Headless-GPU-Verification.md` §4.8，
+   未做）：4 个用例改走 Vulkan/lavapipe——那条路径已在 CI 中拿到真实像素证据并常开
+   验证。做完之后 `GPU_SKINNING_NO_GL46` 这个开关本身就可以删掉，第 1 条的代价随之
+   消失。这是有实质工作量的一条，也是这条退路的终点。
 
 ---
 

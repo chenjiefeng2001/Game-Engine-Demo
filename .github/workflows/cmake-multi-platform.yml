@@ -376,12 +376,21 @@ jobs:
         # GPUSkinningPixelTest 用例在此声明下**显式 SKIP**，而不是伪装通过。
         # 这不是把门禁放宽：不设该变量时拿不到上下文依旧失败，只有 runner 自己
         # 声明无 4.6 能力时才 skip。要真正验证这些像素，仍需 4.6 能力的机器。
+        #
+        # Windows 侧同样声明，理由与 Linux 不同、程度更重：gl-capability-probe 实测
+        # `[GLPROBE] default context: CREATE FAILED`——连**不带任何版本提示**的默认
+        # 上下文都建不出来，此前 4 个用例以 `[FATAL] GL 4.6 core context creation
+        # failed` 失败。不声明时 Windows 两个 job 会一直红，而红的原因是环境能力，
+        # 不是回归；能力证据同样由 gl-capability-probe job 持续采集。
+        # 代价是「像素验证没跑」不再表现为红灯——它由下方 Report 步骤打印的
+        # GPU-SKINNING-STATUS: NOT VERIFIED 显式承担，与 Linux 一致。
         if [[ "${{ runner.os }}" == "Linux" ]]; then
           xvfb-run -a -s "-screen 0 1280x800x24" \
             env LIBGL_ALWAYS_SOFTWARE=1 XDG_SESSION_TYPE=x11 GPU_SKINNING_NO_GL46=1 \
             ctest --build-config ${{ matrix.build_type }} --output-on-failure
         else
-          ctest --build-config ${{ matrix.build_type }} --output-on-failure
+          env GPU_SKINNING_NO_GL46=1 \
+            ctest --build-config ${{ matrix.build_type }} --output-on-failure
         fi
 
     # ctest 只在失败时打印用例输出，而 SKIP 计入 Passed。因此上面一行
@@ -406,7 +415,7 @@ jobs:
             env LIBGL_ALWAYS_SOFTWARE=1 XDG_SESSION_TYPE=x11 GPU_SKINNING_NO_GL46=1 \
             "$BIN" --gtest_filter="$FILTER" 2>&1) || true
         else
-          out=$("$BIN" --gtest_filter="$FILTER" 2>&1) || true
+          out=$(env GPU_SKINNING_NO_GL46=1 "$BIN" --gtest_filter="$FILTER" 2>&1) || true
         fi
         echo "$out" | grep -E '\[  SKIPPED \]|\[       OK \]|\[  FAILED  \]|DID NOT RUN|tests? from' || true
         if grep -q 'DID NOT RUN' <<<"$out"; then
