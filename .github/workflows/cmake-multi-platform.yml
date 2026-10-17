@@ -404,11 +404,20 @@ jobs:
       shell: bash
       working-directory: ${{ steps.strings.outputs.build-output-dir }}
       run: |
-        BIN=tests/test_renderer
-        if [[ ! -x "$BIN" ]]; then
-          echo "GPU-SKINNING-STATUS: $BIN not found; nothing was verified"
+        # 多配置生成器（Windows/MSVC）把可执行文件放进 <Config>/ 子目录，单配置
+        # （Linux）直接放在目标目录 —— 与 fixture 步骤踩的是同一个坑（481d202）。
+        # 假设布局的后果不是报错，而是静默退化成 "not found; nothing was verified"：
+        # 实测 run 39016478050 的两个 Windows job 都打印了这一行，也就是说这一步
+        # **恰好在 Windows 上不再产出它唯一的证据**，而 Windows 正是刚刚改成靠它
+        # 来显式声明「像素验证没跑」的那一侧。
+        BIN="$(find tests -maxdepth 3 -type f \
+                 \( -name 'test_renderer' -o -name 'test_renderer.exe' \) 2>/dev/null | head -1)"
+        if [[ -z "$BIN" ]]; then
+          echo "GPU-SKINNING-STATUS: test_renderer not found under tests/; nothing was verified"
+          find tests -name 'test_renderer*' 2>/dev/null | head -5
           exit 0
         fi
+        echo "using test_renderer: $BIN"
         FILTER='GPUSkinningPixelTest.*'
         if [[ "${{ runner.os }}" == "Linux" ]]; then
           out=$(xvfb-run -a -s "-screen 0 1280x800x24" \
