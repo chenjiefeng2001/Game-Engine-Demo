@@ -197,6 +197,40 @@ jobs:
     - name: Build
       run: cmake --build ${{ steps.strings.outputs.build-output-dir }} --config ${{ matrix.build_type }}
 
+    # MSVC 的 /fsanitize=address 产出的是**动态** ASan 运行时：每个可执行文件都
+    # 依赖 clang_rt.asan_dynamic-x86_64.dll（dumpbin /dependents 可见），而该 DLL
+    # 只存在于 VS 工具链的 bin/Hostx64/x64 下，runner 的 PATH 里没有它。
+    # 后果不是「某个测试失败」，而是**本 job 里没有一个编译出来的可执行文件能启动**：
+    #   SpirVTest.exe    -> exit -1073741515 (0xC0000135 STATUS_DLL_NOT_FOUND)
+    #   AssetBakery.exe  -> Git Bash 报 exit 127，且**没有任何错误信息**
+    # 后者尤其误导：127 在 bash 里通常意味着「命令不存在」，会让人以为是路径拼错，
+    # 于是去改 find/路径——而路径是对的，二进制就在那里（见 481d202）。
+    #
+    # 本机复现（VS 2022 17.14 + Git Bash）：同一个 ASan 产物，PATH 含工具链目录时
+    # 正常启动；把它去掉后 pwsh 报 -1073741515、Git Bash 报 127 且无输出。
+    # 也就是说 127 与 -1073741515 是同一件事的两种呈现。
+    #
+    # 只在这一组开启：非 ASan 的产物不依赖该 DLL。
+    - name: Put the MSVC ASan runtime on PATH
+      if: runner.os == 'Windows' && matrix.enable_asan == 'ON'
+      shell: pwsh
+      run: |
+        $ErrorActionPreference = 'Stop'
+        $vswhere = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
+        if (-not (Test-Path $vswhere)) { throw "vswhere not found at $vswhere" }
+        $inst = (& $vswhere -products * -latest -property installationPath | Select-Object -First 1)
+        if (-not $inst) { throw 'vswhere found no Visual Studio instance' }
+        $dll = Get-ChildItem -Path (Join-Path $inst 'VC\Tools\MSVC') -Recurse `
+                 -Filter 'clang_rt.asan_dynamic-*.dll' -ErrorAction SilentlyContinue |
+               Where-Object { $_.FullName -like '*\bin\Hostx64\x64\*' } |
+               Select-Object -First 1
+        if (-not $dll) { throw "clang_rt.asan_dynamic-*.dll not found under $inst" }
+        Write-Host "ASan runtime: $($dll.FullName)"
+        "$($dll.Directory.FullName)" >> $env:GITHUB_PATH
+        # 记录到构建目录，便于事后核对「产物依赖的 DLL 来自哪里」
+        New-Item -ItemType Directory -Force -Path $env:GITHUB_WORKSPACE\build | Out-Null
+        Copy-Item $dll.FullName -Destination $env:GITHUB_WORKSPACE\build -Force
+
     # .gitignore 排除了 *.scene 与 *.manifest.json，所以干净 checkout 里根本没有
     # 场景文件，只有 manifest.json 与 .lua 脚本入库。ctest 又以
     # WORKING_DIRECTORY=CMAKE_SOURCE_DIR 运行、直接读 assets/... 的相对路径，
