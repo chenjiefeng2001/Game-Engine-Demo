@@ -55,12 +55,22 @@ target_link_libraries(test_job PRIVATE ${COMMON_LIBS})
 add_test(NAME test_job COMMAND test_job)
 
 # ── L2: 无头 GPU 测试 ──
+# 蒙皮像素验证的四个用例在这里（GPUSkinningPixelTest.cpp），用例与断言在
+# SkinningPixelCases.cpp 里只写一份；GL 与 Vulkan 各提供一份后端实现。
+# Vulkan 后端文件本身用 ENGINE_HAS_VULKAN / ENGINE_HAS_SHADERC 守卫，未编译
+# Vulkan 时它只提供一个返回 nullptr 的桩，因此这里无条件列出。
 add_executable(test_renderer
     test_renderer/GL46DeviceTest.cpp
     test_renderer/RenderGraphSG6Test.cpp
+    test_renderer/GPUSkinningPixelTest.cpp
+    test_renderer/SkinningPixelCases.cpp
+    test_renderer/SkinningPixelBackend.cpp
+    test_renderer/SkinningPixelBackendGL.cpp
+    test_renderer/SkinningPixelBackendVulkan.cpp
     main.cpp
 )
 target_link_libraries(test_renderer PRIVATE ${COMMON_LIBS} glfw)
+target_include_directories(test_renderer PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/test_renderer)
 add_test(NAME test_renderer COMMAND test_renderer)
 # GL 4.6 core context 创建 + compute dispatch + 两次 gl.Finish() 同步，
 # 属真实 GPU 工作量（与 test_pick 同档）。此前本 target 是唯一没有
@@ -69,7 +79,10 @@ add_test(NAME test_renderer COMMAND test_renderer)
 # 超时（当前无法复现，机制未确认），因此这里只补齐基础设施缺口：
 # 给一个确定的上界，让挂起被确定性终止并报为 TIMEOUT/FAILED。
 # 不加 retry、不加 delay、不改测试逻辑、不改 renderer。
-set_tests_properties(test_renderer PROPERTIES TIMEOUT 180)
+# 上界因此放宽到 300s：新增的 Vulkan 后端会在 lavapipe 上真实光栅化并回读像素，
+# 那是 CPU 光栅化的工作量（软件 Vulkan 单帧数十毫秒量级），180s 在慢 runner 上
+# 余量不足。
+set_tests_properties(test_renderer PROPERTIES TIMEOUT 300)
 
 # ── L2: 脚本 C-ABI 绑定测试 ──
 add_executable(test_scripting

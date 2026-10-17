@@ -369,24 +369,21 @@ jobs:
         # 之类的失败在日志里只有一行 ***Failed，无法区分是断言失败、SKIP 还是
         # 段错误，等于没有诊断信息。
         #
-        # GPU_SKINNING_NO_GL46=1：显式声明本 runner 提供不了 GL 4.6 上下文。
+        # GPU_SKINNING_NO_GL46=1：显式声明本 runner 提供不了像素验证所需的后端。
         # 证据由 gl-capability-probe job 持续采集，已实测：llvmpipe 最高 4.5 core
         # （4.6 CREATE FAILED），Zink+lavapipe 亦无法初始化
-        # （ZINK: failed to choose pdev）。引擎要求 4.6，因此 4 个
-        # GPUSkinningPixelTest 用例在此声明下**显式 SKIP**，而不是伪装通过。
-        # 这不是把门禁放宽：不设该变量时拿不到上下文依旧失败，只有 runner 自己
-        # 声明无 4.6 能力时才 skip。要真正验证这些像素，仍需 4.6 能力的机器。
+        # （ZINK: failed to choose pdev）；Windows 上连默认上下文都建不出来。
         #
-        # Windows 侧同样声明，理由与 Linux 不同、程度更重：gl-capability-probe 实测
-        # `[GLPROBE] default context: CREATE FAILED`——连**不带任何版本提示**的默认
-        # 上下文都建不出来，此前 4 个用例以 `[FATAL] GL 4.6 core context creation
-        # failed` 失败。不声明时 Windows 两个 job 会一直红，而红的原因是环境能力，
-        # 不是回归；能力证据同样由 gl-capability-probe job 持续采集。
-        # 代价是「像素验证没跑」不再表现为红灯——它由下方 Report 步骤打印的
-        # GPU-SKINNING-STATUS: NOT VERIFIED 显式承担，与 Linux 一致。
+        # **Linux 侧不再声明**：像素验证已能落在 Vulkan/lavapipe 上真实执行，
+        # 声明留着会把「Vulkan 建不起来」变成一次静默跳过 —— 正好盖住最需要被
+        # 发现的回归。因此 Linux 上 Vulkan 不可用即为**失败**。Windows 侧仍然
+        # 声明：那里既没有 GL 4.6 也没有软件 Vulkan 驱动（CI 从不安装 Vulkan SDK），
+        # 两种后端都不存在，属环境能力而非缺陷。
+        #
+        # 声明本身仍是 opt-in：不设时拿不到后端依旧失败。
         if [[ "${{ runner.os }}" == "Linux" ]]; then
           xvfb-run -a -s "-screen 0 1280x800x24" \
-            env LIBGL_ALWAYS_SOFTWARE=1 XDG_SESSION_TYPE=x11 GPU_SKINNING_NO_GL46=1 \
+            env LIBGL_ALWAYS_SOFTWARE=1 XDG_SESSION_TYPE=x11 \
             ctest --build-config ${{ matrix.build_type }} --output-on-failure
         else
           env GPU_SKINNING_NO_GL46=1 \
@@ -419,9 +416,13 @@ jobs:
         fi
         echo "using test_renderer: $BIN"
         FILTER='GPUSkinningPixelTest.*'
+        # 这一步会真的建后端并光栅化。Linux 上是 Vulkan（lavapipe），因此打开
+        # validation layer：像素不对时 layer 能把 barrier / layout / 生命周期
+        # 问题指名报出，而不是只留一个"读回全 0"。
         if [[ "${{ runner.os }}" == "Linux" ]]; then
           out=$(xvfb-run -a -s "-screen 0 1280x800x24" \
-            env LIBGL_ALWAYS_SOFTWARE=1 XDG_SESSION_TYPE=x11 GPU_SKINNING_NO_GL46=1 \
+            env LIBGL_ALWAYS_SOFTWARE=1 XDG_SESSION_TYPE=x11 \
+                ENGINE_VULKAN_VALIDATION=1 ENGINE_VULKAN_SYNC_VALIDATION=1 \
             "$BIN" --gtest_filter="$FILTER" 2>&1) || true
         else
           out=$(env GPU_SKINNING_NO_GL46=1 "$BIN" --gtest_filter="$FILTER" 2>&1) || true
