@@ -17,9 +17,13 @@
  */
 #include "SkinningPixelRig.h"
 
-#include <GLFW/glfw3.h>
+// 顺序是硬性的，不是风格问题：glfw3.h 默认会 include 系统 <GL/gl.h>（用
+// GLFW_INCLUDE_NONE 才不引），而 glad/gl.h 见到 __gl_h_ 已定义就直接 #error。
+// 因此 glad 必须排在 GLFW 之前 —— GL46DeviceTest.cpp 之前是靠 GL46AZDODevice.h
+// 间接把 glad 先拉进来的，从没显式写过这个顺序，所以一搬出来就踩到。
 // glad/gl.h（不是 glad/glad.h）是本工程 vendor 的头，提供 GladGLContext。
 #include <glad/gl.h>
+#include <GLFW/glfw3.h>
 
 #include "Engine/Core/GameObject/MeshRendererComponent.h"
 #include "Engine/Core/IGraphicsFactory.h"
