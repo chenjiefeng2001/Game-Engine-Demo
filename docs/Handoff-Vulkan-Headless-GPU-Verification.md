@@ -1047,8 +1047,15 @@ lavapipe 上设备初始化成功，`GetDeviceName()` 返回真实名称。
    未安装 Vulkan SDK 时它照样编译并引用未链接的符号（4 个 LNK2019 / LNK1120）。
    两个 Windows job 现已通过构建，分别停在既有的 `Test (full suite)` 与
    `Verify SPIR-V activation`。
-8. 接下来把 `GPUSkinningPixelTest` 抽象为后端无关；届时把
-   `GPU_SKINNING_NO_GL46=1` 从 Linux 测试步骤中移除。
+8. ~~接下来把 `GPUSkinningPixelTest` 抽象为后端无关；届时把
+   `GPU_SKINNING_NO_GL46=1` 从 Linux 测试步骤中移除。~~ **已完成（`630bfa3` /
+   `1d3b27e`，run `39074497601`）**，Linux 上 1–3 号用例用 Vulkan/lavapipe 真实执行了
+   像素断言，`GPU_SKINNING_NO_GL46=1` 已从 Linux 测试步骤移除。细节与仍未覆盖的部分见
+   `docs/Handoff-CI-Remaining-Failures.md` §7。要点：真正做成「一份代码两个驱动」需要
+   先补齐 GL 后端的 `IRHICommandList` 光栅化路径（目前全是空桩），因此落地形式是
+   **用例与断言共享、后端各自出像素**；第 4 个用例仍 GL 专属，因为它验的是
+   `Engine::DrawSkinnedMeshIndexed`（签名就绑定 GL 的 `Shader`/`VertexArray`）。
+   Windows 侧仍保留该声明：那里既无 GL 4.6 上下文也无软件 Vulkan 驱动。
 
 ### CI 现状
 

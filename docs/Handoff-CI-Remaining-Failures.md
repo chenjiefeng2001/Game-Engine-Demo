@@ -1,6 +1,6 @@
 # 交接：CI 全量套件的剩余失败
 
-**最新证据**：run `39023923581`（`174150c`）—— **7 个 job 全绿**，四个构建 job
+**最新证据**：run `39074497601`（`1d3b27e`）—— **7 个 job 全绿**，四个构建 job
 均为 `100% tests passed out of 13`。
 
 | job | 结果 |
@@ -10,12 +10,16 @@
 | `windows-latest` RelWithDebInfo cl **ASan=ON** | **13/13 通过**（此前从未跑到过这一步） |
 | `gl-capability-probe` / `vulkan-backend-compile` / `jolt-link-diagnose` | 成功 |
 
+**像素验证不再是缺席状态**：Linux runner 上 4 个蒙皮像素用例中的 3 个用 Vulkan
+（lavapipe）真实执行了像素断言，这是它们历史上第一次在 CI 里真正运行。证据见 §7。
+
 下文 §1–§3 是本文最初的 3 项 Linux 失败，已由 AssetBakery fixture 生成器关闭；
-§4 已由「把 ASan 运行时放进 PATH」关闭；§5 已按方案 1（Windows 显式声明
-`GPU_SKINNING_NO_GL46=1`）关闭；§6 已关闭。
+§4 已由「把 ASan 运行时放进 PATH」关闭；§5 与 §6 已关闭；§7 记录像素验证本次落地
+的范围与仍未覆盖的部分。
 
 **仍未关闭的是像素验证本身**：四个 runner 上它一次都没有真正执行过，全部是显式
 SKIP。CI 绿指的是「其余一切通过」，不是「GPU 像素已验证」。终点见 §5 方案 2。
+（本行写于方案 2 落地之前；现状见 §7。）
 
 ---
 
@@ -257,9 +261,68 @@ GPU-SKINNING-STATUS: pixel verification requires a GL 4.6 capable machine.
 
 ---
 
-## GPU 像素验证的独立限制（已在 CI 中显式记录）
+## 7. 蒙皮像素验证落地：Linux 上真实执行（`630bfa3` / `1d3b27e`，run `39074497601`）
 
-4 个 `GPUSkinningPixelTest` 用例在 Linux runner 上**不会真正执行像素验证**，CI 会输出：
+```
+[skin-pixel] backend: Vulkan (llvmpipe (LLVM 20.1.2, 256 bits))
+[       OK ] GPUSkinningPixelTest.BindPoseDrawsGeometryInCentreBandOnly (5 ms)
+[       OK ] GPUSkinningPixelTest.TranslatedBoneMovesGeometryIntoRightBand (0 ms)
+[       OK ] GPUSkinningPixelTest.SkinnedProgramIsInUseAndBackgroundIsStable (0 ms)
+[  SKIPPED ] GPUSkinningPixelTest.ProductDrawBranchChangesPixelsWithPose (0 ms)
+GPU-SKINNING-STATUS: ran for real on this runner.
+```
+
+这是这四个用例**第一次**在 CI 里真正跑起来。此前它们在每一个 runner 上都是 SKIP：
+纯 GL 实现（自建 GLFW 4.6 窗口 + 私有 FBO + `glReadPixels`），而引擎要求 GL 4.6。
+
+### 「后端无关」做不到「一份代码两个驱动」，这里做的是别的
+
+GL 后端的 `IRHICommandList` 光栅化路径**全是空桩**：`SetVertexBuffer` /
+`SetIndexBuffer` / `Draw` / `BeginRendering` / `Submit` 全是 `{}`，`CreateTexture`
+返回空纹理。GL 的渲染完全走另一套抽象（`IGraphicsFactory` / `IRenderContext`）。
+因此真正做成「同一份代码跑两个后端」需要先补齐 GL 的 IRHI 光栅化，那是另一件
+量级的事。
+
+本次落地的是：**用例、顶点数据、骨骼矩阵、分带分析、断言只写一遍**（1–3 号用例
+的函数体在 `SkinningPixelCases.cpp`，GL 与 Vulkan 两个后端跑的是同一段代码），
+像素怎么弄出来由后端各自负责。后端挑选顺序为 GL 4.6 → Vulkan；两者都没有时
+fixture 报出**两次尝试各自的实测原因**。
+
+### 各后端必须显式处理的地方
+
+| | GL | Vulkan |
+|---|---|---|
+| 着色器 | 产品 `skinned_lit.*`（GLSL 330 + 松散 uniform） | 自带 GLSL 450，uniform 放进 UBO，shaderc 编译成 SPIR-V |
+| 属性 | 声明 location 0..5（产品着色器要求） | 只声明用得到的 3 个并在着色器里重新编号 |
+| 骨骼索引格式 | `ivec4` | `RGBA32_SInt` —— 该映射此前缺失（`606b024` 补上） |
+| 回读朝向 | 自下而上 | 自上而下，**翻行**后再交给共享断言 |
+| 剔除 | 默认不剔除 | `VulkanPipelineState` 硬编码 `cullMode=BACK` + `frontFace=CLOCKWISE`，绕序有约束 |
+
+`FormatToVk` 的缺口是本次撞出来的：`RGBA16_UNorm/SNorm/UInt/SInt` 与
+`RGBA32_UInt/SInt` 全部落到 `default` 返回 `VK_FORMAT_UNDEFINED`，而 0 是**非法值**
+不是「未知」，于是会建出非法管线。与此前 `RG32_Float` 是同一类缺陷，因此一次补齐
+整批而不是只补 `RGBA32_SInt`。
+
+### 仍未覆盖的部分
+
+1. **第 4 个用例仍是 GL 专属。** 它验的是 `Engine::DrawSkinnedMeshIndexed`，签名就是
+   `(Shader&, VertexArray&, ...)`，内部 `shader.Bind()` + `SetMat4`。在非 GL 后端
+   上它显式跳过并写明理由。要让它在 Vulkan 上跑，等于把**产品的蒙皮绘制路径**移植
+   到 Vulkan —— 功能移植，不是测试移植。
+2. **Windows 上仍然是显式 SKIP。** 那里既没有 GL 4.6 上下文，也没有软件 Vulkan
+   驱动（CI 从不给它装 Vulkan SDK），两种后端都不存在。这不是可以靠改代码解决的。
+3. **`GPU_SKINNING_NO_GL46` 因此保留，但只对 Windows 生效。** Linux 侧已撤掉：
+   留着会把「Vulkan 建不起来」变成一次静默跳过，正好盖住最需要被发现的回归。
+4. **Vulkan 侧的蒙皮着色器是内联源码**，不共用产品那份 `.vert/.frag`（产品那份是
+   GLSL 330 + 松散 uniform，编译不成 SPIR-V）。等 `ShaderCompileRule` 真正产出
+   `.spv`（Vulkan 交接 §4.6）之后，这一份才有条件回到 `assets/shaders`。
+
+---
+
+## GPU 像素验证的独立限制（历史记录，见 §7 为现状）
+
+4 个 `GPUSkinningPixelTest` 用例**在 Windows runner 上**不会真正执行像素验证，
+Linux 上已由 §7 解决。Windows 侧 CI 输出：
 
 ```
 GPU-SKINNING-STATUS: NOT VERIFIED on this runner (explicit skip above).
@@ -277,6 +340,7 @@ Zink + kopper | CREATE FAILED | CREATE FAILED |
 lavapipe 本身正常（Vulkan 枚举到 CPU 设备），但 Mesa 25.2.8 的 Zink 报
 `ZINK: failed to choose pdev` 并拒绝加载，即使不限制 ICD 也一样。
 
-**门禁未被放宽**：声明 `GPU_SKINNING_NO_GL46=1` 是 opt-in，不设时拿不到上下文依旧失败。
+**门禁未被放宽**：声明 `GPU_SKINNING_NO_GL46=1` 是 opt-in，不设时拿不到后端依旧
+失败（fixture 直接 `FAIL()`）。Linux 侧已撤掉该声明，Windows 侧保留，理由见 §7。
 详见 `docs/Handoff-GLAD-Loader-Minimum-Context.md`（其中测得 GL 4.5 才是引擎真实的
 下限，4.6 是唯一超过实际调用需求的版本）。Windows 侧的同类情况见 §5。
