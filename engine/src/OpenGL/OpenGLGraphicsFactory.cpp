@@ -152,6 +152,23 @@ namespace Engine {
 	std::shared_ptr<Texture> OpenGLGraphicsFactory::CreateTexture(
 		const std::string& path)
 	{
+		// 没有**当前 GL 上下文**时必须拒绝，即使 glad 的入口指针非空。
+		//
+		// 指针非空不等于上下文存在：本工厂构造时用 glfwGetProcAddress 填表，
+		// 那一步只要 GLFW 初始化成功就会返回非空的 libGL 分派入口。但在没有
+		// current context 的情况下调用它们会跳进空的分派槽 —— Linux CI 上表现为
+		// project-open 路径里的 SIGSEGV，且 faulting 指令是 `call *%rcx`（间接调用），
+		// 因此「检查指针是否为 null」这种修法抓不到它。
+		//
+		// test_bridge / test_gp01 只用引擎的内容管线，从不创建 GL 上下文，
+		// 但它们会经 EditorSession::OpenProject → InstantiateScene → SetTexture
+		// 走到这里。返回 nullptr 是既有契约：TextureManager::Load 对空结果
+		// 不入缓存并原样返回。
+		if (!glfwGetCurrentContext()) {
+			s_Log.Error("CreateTexture('{}') refused: no current OpenGL context", path);
+			return nullptr;
+		}
+
 		if (m_Allocator) {
 			StackAllocatorAdaptor<OpenGLTexture> adaptor(m_Allocator);
 			return std::allocate_shared<OpenGLTexture>(adaptor, path, m_GL);
