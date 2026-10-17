@@ -427,15 +427,30 @@ jobs:
         else
           out=$(env GPU_SKINNING_NO_GL46=1 "$BIN" --gtest_filter="$FILTER" 2>&1) || true
         fi
-        echo "$out" | grep -E '\[  SKIPPED \]|\[       OK \]|\[  FAILED  \]|DID NOT RUN|tests? from' || true
-        if grep -q 'DID NOT RUN' <<<"$out"; then
-          echo "GPU-SKINNING-STATUS: NOT VERIFIED on this runner (explicit skip above)."
-          echo "GPU-SKINNING-STATUS: pixel verification requires a GL 4.6 capable machine."
-        elif grep -q '\[  FAILED  \]' <<<"$out"; then
+        # 保留两类行：用例结论，以及用例自己打印的实测数字（后端名、每个姿势的
+        # 分带计数）。此前只保留第一类，于是日志只说「ran for real」却不给出
+        # 是哪个后端、每条带多少亮像素 —— 结论成立但不可复核。
+        echo "$out" | grep -E '\[  SKIPPED \]|\[       OK \]|\[  FAILED  \]|DID NOT RUN|tests? from|\[skin-pixel\]|bind pose \(|moved pose:|product path:' || true
+        # 只数带 "(N ms)" 的逐用例行；gtest 结尾的清单行没有时长，会被重复计数。
+        # 用 wc -l 而不是 grep -c：grep 无匹配时退出码为 1，在 pipefail 下会中断本步，
+        # 而"0 个用例执行"恰恰是最需要正常报出来的一种情况。
+        ok_cases=$(grep -E '^\[       OK \].*\([0-9]+ ms\)$' <<<"$out" | wc -l | tr -d ' ' || true)
+        skip_cases=$(grep -E '^\[  SKIPPED \].*\([0-9]+ ms\)$' <<<"$out" | wc -l | tr -d ' ' || true)
+        if grep -q '\[  FAILED  \]' <<<"$out"; then
           echo "GPU-SKINNING-STATUS: FAILED (see output above)."
           exit 1
+        elif grep -q 'DID NOT RUN' <<<"$out"; then
+          echo "GPU-SKINNING-STATUS: NOT VERIFIED on this runner (explicit skip above)."
+          echo "GPU-SKINNING-STATUS: no backend could rasterise the rig here; see both attempts above."
+        elif [[ "$ok_cases" -eq 0 ]]; then
+          # 一个用例都没执行时**不能**说 "ran for real"：那正是本项目文档反复警告的
+          # 假绿 —— 绿色的对勾底下什么都没验证。
+          echo "GPU-SKINNING-STATUS: NOT VERIFIED on this runner (0 cases executed, ${skip_cases} skipped)."
+          grep -E '^\[  SKIPPED \].*\([0-9]+ ms\)$' <<<"$out" | sed 's/^/GPU-SKINNING-SKIPPED-CASE: /' || true
         else
-          echo "GPU-SKINNING-STATUS: ran for real on this runner."
+          echo "GPU-SKINNING-STATUS: ran for real on this runner (${ok_cases} case(s) executed, ${skip_cases} skipped)."
+          # 跳过的用例逐条点名，不让「4 个里有 1 个没跑」只体现成一个数字。
+          grep -E '^\[  SKIPPED \].*\([0-9]+ ms\)$' <<<"$out" | sed 's/^/GPU-SKINNING-SKIPPED-CASE: /' || true
         fi
 
     - name: Upload HRC test receipt
