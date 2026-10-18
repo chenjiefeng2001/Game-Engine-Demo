@@ -306,9 +306,51 @@ fixture 报出**两次尝试各自的实测原因**。
 ### 仍未覆盖的部分
 
 1. **第 4 个用例仍是 GL 专属**（已实测工作量，见下）。
-2. **Windows 上的后端**（已实测，见下）。
-3. **`GPU_SKINNING_NO_GL46` 因此保留，但只对 Windows 生效。** Linux 侧已撤掉：
-   留着会把「Vulkan 建不起来」变成一次静默跳过，正好盖住最需要被发现的回归。
+2. ~~**Windows 上没有后端**~~ **已关闭**（见下）。`GPU_SKINNING_NO_GL46` 因此两个
+   平台都不再声明：任一平台拿不到后端都是**失败**，而不是静默跳过。
+
+### 未覆盖项 2：Windows 现在有软件 Vulkan 设备（已关闭，`37c0865`，run `39098083475`）
+
+Windows runner 给不出 GL 4.6（实测连默认上下文都 CREATE FAILED）。它**也没有**任何
+软件 Vulkan 驱动：CI 从不安装 Vulkan SDK，`find_package(Vulkan)` 恒失败 →
+`ENGINE_HAS_VULKAN` 未定义 → `engine/src/Vulkan/*` 被完全排除。两条合起来才是
+「Windows 上像素验证只能跳过」的完整原因：只补 SDK 不够，还需要一个设备。
+
+| 阶段 | 用什么 | 状态 |
+| --- | --- | --- |
+| 编译期 | LunarG Vulkan SDK（`vulkan-sdk` 1.4.363，头文件 + `vulkan-1.lib`） | 已装；Windows 因此**第一次编译并链接** Vulkan 后端 |
+| 运行期 | Mesa lavapipe（`mesa-dist-win` 26.2.4 的 `vulkan_lvp.dll`） | 已装；整棵 `x64` 目录一起用，否则驱动依赖会缺 |
+| 发现方式 | **注册表** `HKLM\SOFTWARE\Khronos\Vulkan\Drivers` | 见下 |
+
+实测证据：
+
+```
+registered ICD manifest in HKLM:\SOFTWARE\Khronos\Vulkan\Drivers
+[VKPROBE] physical devices = 1
+[VKPROBE] device: llvmpipe (LLVM 23.1.2, 256 bits)
+[VKPROBE]   driverVersion = 26.2.4  apiVersion = 1.4.354  type = 4
+[VKPROBE]   graphics queue family = 0 (count=1)
+[VKPROBE]   R8G8B8A8_UNORM color attachment = YES
+WINDOWS-VULKAN-CAPABILITY: llvmpipe (LLVM 23.1.2, 256 bits)
+```
+
+与 Linux 同族（那边是 `llvmpipe (LLVM 20.1.2, 256 bits)`）：CPU 设备、有图形队列、
+支持 R8G8B8A8 颜色附件 —— 像素验证需要的能力齐了。
+
+**环境变量这条路在 Windows 上必然无效**，值得单独记：loader 的 debug 输出写着
+`Loader is running with elevated permissions. Environment variable ... will be ignored`，
+同一机制适用于 `VK_ICD_FILENAMES` / `VK_DRIVER_FILES`，而 GitHub 的 Windows runner 就是
+管理员会话。环境变量设得再对，loader 也只查注册表，而那里是空的 →
+`vkCreateInstance` 返回 `VK_ERROR_INCOMPATIBLE_DRIVER`（-9），日志里只有一句
+`Registry lookup failed to get ICD manifest files. Possibly missing Vulkan driver?`。
+ICD 必须按 Windows 原生方式登记进注册表（mesa-dist-win 自己的部署脚本也是这么做的）。
+
+> 这一条花了三次迭代：先只从包里挑两个文件（驱动依赖缺失），再环境变量发现（被
+> elevated 忽略）。两次在读 workflow 时都显得合理，只有 loader 自己说出它在搜哪里，
+> 才能定位。
+
+顺带的结果：Windows 上 Vulkan 后端第一次进入 CI 的编译与链接。这既是新覆盖，也可能是
+新的失败面 —— `5586e16` 那次 Windows 链接错误之所以隐形，恰恰是因为后端被排除了。
 
 ### 未覆盖项 1 的实测结论：这是多周的功能移植，不是测试改动
 
@@ -342,27 +384,6 @@ sandbox 测试触及」），这就是那件事本身。
 `assets/shaders/skin_pixel.{vert,frag}`，并在那两个文件的头注释里写下「为什么不能
 直接复用产品 skinned_lit.*」——这是移植要跨过的第一道门，写在代码里而不是只写在
 交接文档里。
-
-### 未覆盖项 2 的实测结论：Windows 需要装一个软件 Vulkan 栈
-
-Windows runner 给不出 GL 4.6（实测连默认上下文都 CREATE FAILED），也没有任何软件
-Vulkan 驱动（CI 从不安装 Vulkan SDK，`find_package(Vulkan)` 恒失败 →
-`ENGINE_HAS_VULKAN` 未定义 → Vulkan 后端在 Windows 上**从未被编译过**）。
-
-可行拼图有两块，缺一不可：
-
-| 阶段 | 需要什么 | 来源 |
-| --- | --- | --- |
-| 编译期 | 头文件 + `vulkan-1.lib` | LunarG Vulkan SDK（choco 包 `vulkan-sdk`）。`FindVulkan` 认 `$ENV{VULKAN_SDK}` |
-| 运行期 | 一个真的 Vulkan 设备 | Mesa **lavapipe**（CPU 版 Vulkan 驱动），`mesa-dist-win` 有 Windows 预编译包：`vulkan_lvp.dll` + `lvp_icd.x86_64.json`，由 loader 经 ICD 发现机制加载 |
-
-两条都不便宜：SDK 是几百 MB 的第三方安装，lavapipe 是第三方 7z 包。**因此先测量再
-接线**——新增的 probe 步骤只打印 `WINDOWS-VULKAN-CAPABILITY:` 一行，不 gate 任何用例；
-像素验证是否改用 Vulkan，由这一行的实测结果决定，而不是先改声明再祈祷它能跑。
-
-顺带一个此前没人提过的事实：装上 SDK 之后，Windows 会**第一次真正编译并链接 Vulkan
-后端**。这既可能让 Windows 构建出问题（此前该后端被完全排除，`5586e16` 的链接错误
-正是这么被掩盖的），也是 Windows 上第一次对它有编译级覆盖。
 
 ---
 
