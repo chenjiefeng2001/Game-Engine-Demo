@@ -152,16 +152,23 @@ TEST(ShaderCompileRule, EmitsRealSpirvFile)
         << "the registry words and the file must be the same compilation";
 }
 
-// ── 编译失败必须是失败 ───────────────────────────────────────────────────────
+// ── 编译失败必须是失败，且原因要指向"编译" ─────────────────────────────────
 TEST(ShaderCompileRule, BadGlslFailsAndAdvertisesNothing)
 {
     Scratch scratch("bad");
     const std::string src = scratch.writeSource("rule_bad.vert", kBadGlsl);
     ASSERT_FALSE(src.empty());
+    // 先证明源文件本身可读：否则「读不到源文件」也会让 Process 失败，本用例就会
+    // 因为**错误的原因**通过 —— 那正是它要防的那类假绿。
+    ASSERT_TRUE(FileSystem::Exists(src)) << "probe shader was not written: " << src;
 
     const PipelineResult result = RunRule(scratch, src, "rule_bad.vert");
     EXPECT_FALSE(result.success)
         << "a GLSL syntax error must fail the pipeline, not return success with a .spv entry";
+    // 规则把失败原因写进 metadata["validation_error"]，RunRule 会抄进 errorMessage。
+    // 断言它指向编译，否则「源文件读不到」与「GLSL 写错了」无法区分。
+    EXPECT_NE(result.errorMessage.find("compile"), std::string::npos)
+        << "the failure must be attributable to the compile step, got: " << result.errorMessage;
     for (const std::string& f : result.outputFiles) {
         EXPECT_FALSE(FileSystem::Exists(FileSystem::ResolvePath(f)))
             << "a failed compile must not leave an output file behind: " << f;

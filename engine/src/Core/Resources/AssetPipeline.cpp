@@ -199,6 +199,17 @@ namespace Engine {
     // ============================================================
 
     bool ShaderCompileRule::Execute(PipelineContext& ctx) {
+        // 失败必须**说得清原因**。AssetPipeline::Process 不设置 ctx.onProgress，
+        // 所以规则里的进度回调在生产路径上永远是空指针；而 RunRule 只把
+        // metadata["validation_error"] 抄进 PipelineResult::errorMessage。
+        // 两者都不写的话，CI 上只会看到 "Rule 'ShaderCompile' failed"，
+        // 失败原因需要再复现一次才能拿到。
+        const auto fail = [&ctx](const std::string& reason) {
+            ctx.metadata["validation_error"] = reason;
+            if (ctx.onProgress) ctx.onProgress(1.0f, reason);
+            return false;
+        };
+
         if (ctx.onProgress)
             ctx.onProgress(0.0f, "Compiling shader: " + ctx.entry->path);
 
@@ -226,6 +237,7 @@ namespace Engine {
         else if (ext == "tesc" || ext == "tcs")  stage = ShaderStageType::TessControl;
         else if (ext == "tese" || ext == "tes")  stage = ShaderStageType::TessEvaluation;
         else {
+            // 不适用 ≠ 失败：不产出文件、不写 metadata，返回 true 让规则安静退出。
             if (ctx.onProgress) {
                 ctx.onProgress(1.0f, "Shader stage unknown for " + ctx.entry->fileName +
                                      " (extension '" + ext + "'); nothing was compiled");
@@ -238,11 +250,9 @@ namespace Engine {
             ctx.sourcePath.empty() ? ctx.entry->path : ctx.sourcePath);
         std::ifstream src(sourcePath, std::ios::binary);
         if (!src) {
-            if (ctx.onProgress)
-                ctx.onProgress(1.0f, "Shader source unreadable: " + sourcePath);
             // 源文件读不到是**失败**：NeedsRebuild 对缺失源文件返回 false（当作
-            // 「不需要重建」），于是这里也返回 true 就形成了一条静默跳过。
-            return false;
+            // 「不需要重建」），于是这里再返回 true 就形成了一条静默跳过。
+            return fail("Shader source unreadable: " + sourcePath);
         }
         const std::string glsl((std::istreambuf_iterator<char>(src)),
                                std::istreambuf_iterator<char>());
@@ -258,11 +268,9 @@ namespace Engine {
 #if defined(ENGINE_HAS_VULKAN)
         // ShaderRegistry 位于 Engine::RHI，而本文件在 Engine 命名空间内，需显式限定。
         if (!RHI::ShaderRegistry::Get().RegisterSource(stem, stage, glsl)) {
-            if (ctx.onProgress)
-                ctx.onProgress(1.0f, "Shader compile failed: " + stem);
             // 此前编译失败只打印一行，然后照样 return true，于是「GLSL 写错了」
             // 会得到 success=true **加上**一个 .spv 条目。
-            return false;
+            return fail("Shader compile failed: " + stem);
         }
 
         // 真正写出 .spv。注册表是唯一的 SPIR-V 出处（Find 是公开的唯一取词途径），
@@ -270,19 +278,21 @@ namespace Engine {
         const std::vector<uint32_t>* words =
             RHI::ShaderRegistry::Get().Find(StringID::Runtime(stem), stage);
         if (!words || words->empty()) {
-            if (ctx.onProgress)
-                ctx.onProgress(1.0f, "Shader compiled but absent from the registry: " + stem);
-            return false;
+            return fail("Shader compiled but absent from the registry: " + stem);
         }
 
         const std::string outputPath = ctx.outputDir + "/" + stem + ".spv";
-        // WriteFile 自己会建父目录，但显式建一次能让「目录建不出来」以明确原因
-        // 失败，而不是退化成写入失败。Process 只创建 outputDir/.intermediate，
-        // 从不创建 outputDir 本身。
-        if (!FileSystem::CreateDirectory(ctx.outputDir)) {
-            if (ctx.onProgress)
-                ctx.onProgress(1.0f, "Cannot create shader output directory: " + ctx.outputDir);
-            return false;
+        // **只在目录确实不存在时创建**，并且「仍然不存在」才算失败。
+        // fs::create_directories 对「目录已存在」返回 false，而 Process 早一步就
+        // 建过 outputDir/.intermediate（顺带建好了 outputDir），因此无条件调用它
+        // 会把一次**成功**的编译报成失败 —— 这正是上一轮 CI 里
+        // "Rule 'ShaderCompile' failed" 的真实原因，而规则内的原因只走 onProgress，
+        // Process 又从不设置它，于是日志里什么线索都没有。
+        if (!FileSystem::Exists(ctx.outputDir) && !FileSystem::CreateDirectory(ctx.outputDir)) {
+            return fail("Cannot create shader output directory: " + ctx.outputDir);
+        }
+        if (!FileSystem::Exists(ctx.outputDir)) {
+            return fail("Shader output directory is still missing: " + ctx.outputDir);
         }
 
         // SPIR-V 是 32 位字流；逐字拷贝而不是把 vector<uint32> 当字节数组，
@@ -296,9 +306,7 @@ namespace Engine {
             bytes.push_back(static_cast<uint8>((word >> 24) & 0xFFu));
         }
         if (!FileSystem::WriteFile(outputPath, bytes)) {
-            if (ctx.onProgress)
-                ctx.onProgress(1.0f, "Cannot write SPIR-V: " + outputPath);
-            return false;
+            return fail("Cannot write SPIR-V: " + outputPath);
         }
 
         // 只有文件真的存在才登记为产物。
