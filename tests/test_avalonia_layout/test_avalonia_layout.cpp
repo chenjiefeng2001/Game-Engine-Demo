@@ -514,12 +514,20 @@ TEST(AvaloniaMainWindowLayout, ViewportReportsItsSizeToTheEngine) {
 
     // Gate 7-A「窗口 resize 时 FBO 自动重建」：控件尺寸必须转发给引擎，
     // 否则相机宽高比会停在打开工程那一刻，拖动分隔条后视口被拉伸。
-    EXPECT_NE(xaml.find("SizeChanged=\"OnViewportSizeChanged\""), std::string::npos)
-        << "ViewportBorder 没有接 SizeChanged，视口尺寸变化不会上报引擎";
-    EXPECT_NE(code.find("OnViewportSizeChanged"), std::string::npos)
-        << "XAML 绑定了 OnViewportSizeChanged，但代码后置里没有该处理器";
+    //
+    // 订阅刻意写在代码后置而不是 XAML 的 SizeChanged="..."：写 XAML 处理器
+    // 就必须写出事件参数的类型名，而 Avalonia 11 的 SizeChangedEventArgs
+    // 所在命名空间并非 Avalonia（首次 CI 运行 CS0234 证伪）。lambda 订阅让
+    // 编译器自行推断参数类型。断言因此检查订阅点，而不是 XAML 属性。
+    EXPECT_EQ(xaml.find("SizeChanged="), std::string::npos)
+        << "XAML 又出现了 SizeChanged=\"...\" 处理器：它要求手写事件参数类型名，"
+        << "而该类型名曾被写错过（CI CS0234）。请用代码后置的 lambda 订阅。";
+    EXPECT_NE(code.find("ViewportBorder.SizeChanged"), std::string::npos)
+        << "代码后置没有订阅 ViewportBorder.SizeChanged，视口尺寸变化不会上报引擎";
+    EXPECT_NE(code.find("ReportViewportSize"), std::string::npos)
+        << "缺少 ReportViewportSize()";
     EXPECT_NE(code.find("SetViewportSize"), std::string::npos)
-        << "OnViewportSizeChanged 没有把尺寸转发给引擎";
+        << "ReportViewportSize 没有把尺寸转发给引擎（Vm.SetViewportSize）";
 }
 
 TEST(AvaloniaMainWindowLayout, StatusOverlayIsBoundRatherThanHardcoded) {
