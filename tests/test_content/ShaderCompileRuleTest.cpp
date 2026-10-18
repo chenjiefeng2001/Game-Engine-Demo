@@ -55,6 +55,16 @@ void main() {
 }
 )";
 
+// 片元着色器单独一份：**不能**拿顶点阶段的 SPIR-V 去当片元模块。SPIR-V 模块的
+// 入口点带阶段，用错阶段是规范违规（validation 会报），而 CreateGraphicsPSO 在
+// 查不到片元模块时只打印一行就继续 —— 那会造出一条「看起来建成了」的非法管线，
+// 恰好是本用例要排除的东西。
+const char* const kGoodFragGlsl = R"(#version 450
+layout(location = 0) in vec4 inColor;
+layout(location = 0) out vec4 outColor;
+void main() { outColor = inColor; }
+)";
+
 // 故意写错：`this is not glsl`。存在的意义是证明编译失败会**失败**。
 const char* const kBadGlsl = R"(#version 450
 void main() { this is not glsl at all; }
@@ -199,19 +209,24 @@ TEST(ShaderCompileRule, MissingSourceFailsInsteadOfSilentlySkipping)
 TEST(ShaderCompileRule, EmittedSpirvFeedsGraphicsPso)
 {
     Scratch scratch("pso");
-    const std::string src = scratch.writeSource("rule_pso.vert", kGoodGlsl);
-    ASSERT_FALSE(src.empty());
+    const std::string vsSrc = scratch.writeSource("rule_vs.vert", kGoodGlsl);
+    const std::string fsSrc = scratch.writeSource("rule_fs.frag", kGoodFragGlsl);
+    ASSERT_FALSE(vsSrc.empty());
+    ASSERT_FALSE(fsSrc.empty());
 
-    const PipelineResult result = RunRule(scratch, src, "rule_pso.vert");
-    ASSERT_TRUE(result.success) << result.errorMessage;
-    const std::string spv = result.outputFiles.front();
-    ASSERT_TRUE(FileSystem::Exists(FileSystem::ResolvePath(spv)));
+    const PipelineResult vs = RunRule(scratch, vsSrc, "rule_vs.vert");
+    ASSERT_TRUE(vs.success) << vs.errorMessage;
+    const PipelineResult fs = RunRule(scratch, fsSrc, "rule_fs.frag");
+    ASSERT_TRUE(fs.success) << fs.errorMessage;
 
     // **只从磁盘读**，不从注册表拿：否则这个用例证明的还是内存路径，
     // 而磁盘产物的意义恰恰在于它是别的进程/别的时刻能读到的东西。
     ASSERT_TRUE(RHI::ShaderRegistry::Get().RegisterSpirvFile(
-                    "rule_pso_from_disk", ShaderStageType::Vertex, spv))
-        << "the emitted SPIR-V must load back through RegisterSpirvFile";
+                    "rule_vs_from_disk", ShaderStageType::Vertex, vs.outputFiles.front()))
+        << "the emitted vertex SPIR-V must load back through RegisterSpirvFile";
+    ASSERT_TRUE(RHI::ShaderRegistry::Get().RegisterSpirvFile(
+                    "rule_fs_from_disk", ShaderStageType::Fragment, fs.outputFiles.front()))
+        << "the emitted fragment SPIR-V must load back through RegisterSpirvFile";
 
     std::unique_ptr<RHI::IRHIDevice> device =
         RHI::CreateRHIDevice(RHI::Backend::Vulkan, nullptr, 16, 16);
@@ -221,13 +236,13 @@ TEST(ShaderCompileRule, EmittedSpirvFeedsGraphicsPso)
     }
 
     RHI::GraphicsPSODesc pso;
-    pso.vertexShader = StringID::Runtime("rule_pso_from_disk");
-    pso.pixelShader  = StringID::Runtime("rule_pso_from_disk");   // 同一个着色器兼作片元
+    pso.vertexShader = StringID::Runtime("rule_vs_from_disk");
+    pso.pixelShader  = StringID::Runtime("rule_fs_from_disk");
     pso.rtvCount = 1;
     pso.rtvFormats[0] = RHI::Format::RGBA8_UNorm;
     pso.vertexInput.buffers.push_back({ 0u, 12u, RHI::VertexInputRate::Vertex });
     pso.vertexInput.attributes.push_back({ 0u, 0u, RHI::Format::RGB32_Float, 0u });
-    // 着色器声明了 set 0 / binding 0 的 UBO，pipeline layout 必须同样声明它：
+    // 顶点着色器声明了 set 0 / binding 0 的 UBO，pipeline layout 必须同样声明它：
     // layout 少了这个 set，vkCreateGraphicsPipelines 就是非法调用（validation 会报
     // "shader binding not declared in layout"），而不开 validation 时它只是静静地
     // 接受一个不合法的管线。

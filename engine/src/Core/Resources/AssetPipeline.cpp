@@ -469,11 +469,18 @@ namespace Engine {
                 continue;
             }
 
-            bool ruleOk = RunRule(*rule, ctx).success;
-            if (!ruleOk) {
+            const PipelineResult ruleResult = RunRule(*rule, ctx);
+            if (!ruleResult.success) {
                 result.success = false;
                 result.errorMessage = "Rule '" + std::string(rule->GetName()) +
                                       "' failed for " + entry.path;
+                // 保留规则自己给出的原因。RunRule 会把 metadata["validation_error"]
+                // 抄进 ruleResult.errorMessage，而此前 Process 只取 .success 并把
+                // 原因覆盖掉 —— 于是每一条规则失败到了调用方手里都只剩一个规则名，
+                // 排查必须先复现一次才看得到真正的原因。
+                if (!ruleResult.errorMessage.empty()) {
+                    result.errorMessage += ": " + ruleResult.errorMessage;
+                }
                 result.lastStage = rule->GetStage();
                 auto endTime = std::chrono::steady_clock::now();
                 result.elapsedSeconds = std::chrono::duration<double>(
