@@ -551,24 +551,27 @@ jobs:
         # 段错误，等于没有诊断信息。
         #
         # GPU_SKINNING_NO_GL46=1：显式声明本 runner 提供不了像素验证所需的后端。
-        # 证据由 gl-capability-probe job 持续采集，已实测：llvmpipe 最高 4.5 core
-        # （4.6 CREATE FAILED），Zink+lavapipe 亦无法初始化
-        # （ZINK: failed to choose pdev）；Windows 上连默认上下文都建不出来。
+        # 证据由 gl-capability-probe job 与本文上方的 Windows Vulkan probe 持续采集。
         #
-        # **Linux 侧不再声明**：像素验证已能落在 Vulkan/lavapipe 上真实执行，
-        # 声明留着会把「Vulkan 建不起来」变成一次静默跳过 —— 正好盖住最需要被
-        # 发现的回归。因此 Linux 上 Vulkan 不可用即为**失败**。Windows 侧仍然
-        # 声明：那里既没有 GL 4.6 也没有软件 Vulkan 驱动（CI 从不安装 Vulkan SDK），
-        # 两种后端都不存在，属环境能力而非缺陷。
+        # **两个平台都不再声明**（run 39098083475 起）。此前的实测：
+        #   Linux  llvmpipe 最高 4.5 core（4.6 CREATE FAILED），Zink+lavapipe 亦
+        #          无法初始化（ZINK: failed to choose pdev）
+        #   Windows 连不带版本提示的默认 GL 上下文都建不出来
+        # 两者都缺 GL 4.6，于是像素验证改走 Vulkan：Linux 用系统 lavapipe，
+        # Windows 用 mesa-dist-win 的 lavapipe（经注册表登记，见上方 probe 步骤）。
+        # 现在两边都实测到了设备：
+        #   Linux  llvmpipe (LLVM 20.1.2, 256 bits)
+        #   Windows llvmpipe (LLVM 23.1.2, 256 bits)，apiVersion 1.4.354，CPU 设备
         #
-        # 声明本身仍是 opt-in：不设时拿不到后端依旧失败。
+        # 撤掉声明是刻意的：留着会把「Vulkan 建不起来」变成一次静默跳过，
+        # 正好盖住最需要被发现的回归。现在任一平台拿不到后端都是**失败**。
+        # 声明机制本身仍保留（它是 opt-in 的），只是当前没有平台再声明。
         if [[ "${{ runner.os }}" == "Linux" ]]; then
           xvfb-run -a -s "-screen 0 1280x800x24" \
             env LIBGL_ALWAYS_SOFTWARE=1 XDG_SESSION_TYPE=x11 \
             ctest --build-config ${{ matrix.build_type }} --output-on-failure
         else
-          env GPU_SKINNING_NO_GL46=1 \
-            ctest --build-config ${{ matrix.build_type }} --output-on-failure
+          ctest --build-config ${{ matrix.build_type }} --output-on-failure
         fi
 
     # ctest 只在失败时打印用例输出，而 SKIP 计入 Passed。因此上面一行
@@ -606,7 +609,7 @@ jobs:
                 ENGINE_VULKAN_VALIDATION=1 ENGINE_VULKAN_SYNC_VALIDATION=1 \
             "$BIN" --gtest_filter="$FILTER" 2>&1) || true
         else
-          out=$(env GPU_SKINNING_NO_GL46=1 "$BIN" --gtest_filter="$FILTER" 2>&1) || true
+          out=$("$BIN" --gtest_filter="$FILTER" 2>&1) || true
         fi
         # 保留两类行：用例结论，以及用例自己打印的实测数字（后端名、每个姿势的
         # 分带计数）。此前只保留第一类，于是日志只说「ran for real」却不给出
