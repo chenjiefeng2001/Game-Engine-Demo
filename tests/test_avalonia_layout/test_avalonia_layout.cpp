@@ -25,6 +25,7 @@
 #include <filesystem>
 #include <fstream>
 #include <map>
+#include <regex>
 #include <set>
 #include <sstream>
 #include <string>
@@ -443,6 +444,94 @@ TEST(AvaloniaMainWindowLayout, ViewportImageIsNotStretchedNone) {
         << "应使用 Uniform 等比缩放";
     EXPECT_TRUE(stretch == "Uniform" || stretch == "UniformToFill")
         << "ViewportImage 的 Stretch 应为 Uniform 系列，实际 '" << stretch << "'";
+}
+
+// ────────────────────────────────────────────────────────────────────
+// 跨文件接线：XAML 绑定 ↔ ViewModel 成员
+//
+// 本仓库反复出现的失效模式是「两端都有，中间没有」：
+//   · GizmoSpace 的 ABI 与 ViewModel 属性都存在，工具栏却没有控件
+//   · ViewportCamX/Y/Z 三个字段声明后从未被引用，没有任何可绑定的面
+//   · SetViewportCameraPosition / GetViewportCameraPosition 成对存在且从不被调用
+// 这些都不会编译失败、不会运行报错，只是功能缺席。因此这里断言
+// 「XAML 里绑定的成员在 ViewModel 里确实存在」。
+// ────────────────────────────────────────────────────────────────────
+
+std::string LoadViewModel() {
+    const fs::path p = FindRepoRoot() / "editor_avalonia" / "ViewModels" / "MainViewModel.cs";
+    EXPECT_FALSE(p.empty()) << "从 " << fs::current_path() << " 向上找不到仓库根";
+    return ReadWholeFile(p);
+}
+
+std::string LoadCodeBehind() {
+    const fs::path p = FindRepoRoot() / "editor_avalonia" / "MainWindow.axaml.cs";
+    return ReadWholeFile(p);
+}
+
+bool ViewModelDeclares(const std::string& vm, const std::string& member) {
+    // public <type> Member  或  private <type> _member
+    const std::string pattern =
+        "(public|private|protected)[^;{]*[ \\t]" + member + "\\b";
+    return std::regex_search(vm, std::regex(pattern));
+}
+
+TEST(AvaloniaMainWindowLayout, BoundViewportAndGizmoMembersExistOnTheViewModel) {
+    const std::string xaml = LoadXaml();
+    const std::string vm = LoadViewModel();
+    ASSERT_FALSE(vm.empty()) << "读不到 MainViewModel.cs";
+
+    // 这些是视口/Gizmo/编辑器相机的可绑定面。缺任何一个都意味着
+    // 「UI 看着有、实际推不到引擎」或「ABI 有、UI 无处设置」。
+    const char* kMembers[] = {
+        "GizmoMode",        "GizmoSpace",      "GizmoSpaceLocal",
+        "GizmoSnapEnabled", "GizmoSnapValue",  "ViewportGridVisible",
+        "ViewportCamX",     "ViewportCamY",    "ViewportCamZ",
+        "ViewportProjection", "ViewportZoom",  "ViewportStatusText",
+        "SetViewportSize",  "UpdateViewportStatus",
+    };
+    for (const char* m : kMembers) {
+        EXPECT_TRUE(ViewModelDeclares(vm, m))
+            << "MainViewModel 上不存在 " << m
+            << " —— XAML/调用点绑定或调用了它，绑定会静默失败（得到默认值）";
+    }
+}
+
+TEST(AvaloniaMainWindowLayout, GizmoSpaceAndSnapAreEditableFromTheToolbar) {
+    const std::string xaml = LoadXaml();
+
+    // 7-C 的 ABI（SetGizmoSpace / SetGizmoSnap）此前无 UI 入口。
+    EXPECT_NE(xaml.find("GizmoSpaceLocal"), std::string::npos)
+        << "Gizmo 工具栏没有坐标空间控件，GizmoSpace 无从设置";
+    EXPECT_NE(xaml.find("GizmoSnapEnabled"), std::string::npos)
+        << "Gizmo 工具栏没有吸附开关控件，GizmoSnapEnabled 无从设置";
+    EXPECT_NE(xaml.find("GizmoSnapValue"), std::string::npos)
+        << "Gizmo 工具栏没有吸附步长输入，GizmoSnapValue 无从设置";
+}
+
+TEST(AvaloniaMainWindowLayout, ViewportReportsItsSizeToTheEngine) {
+    const std::string xaml = LoadXaml();
+    const std::string code = LoadCodeBehind();
+
+    // Gate 7-A「窗口 resize 时 FBO 自动重建」：控件尺寸必须转发给引擎，
+    // 否则相机宽高比会停在打开工程那一刻，拖动分隔条后视口被拉伸。
+    EXPECT_NE(xaml.find("SizeChanged=\"OnViewportSizeChanged\""), std::string::npos)
+        << "ViewportBorder 没有接 SizeChanged，视口尺寸变化不会上报引擎";
+    EXPECT_NE(code.find("OnViewportSizeChanged"), std::string::npos)
+        << "XAML 绑定了 OnViewportSizeChanged，但代码后置里没有该处理器";
+    EXPECT_NE(code.find("SetViewportSize"), std::string::npos)
+        << "OnViewportSizeChanged 没有把尺寸转发给引擎";
+}
+
+TEST(AvaloniaMainWindowLayout, StatusOverlayIsBoundRatherThanHardcoded) {
+    const std::string xaml = LoadXaml();
+
+    // 左下角叠加层此前是硬编码的静态 "Viewport" 文本 —— 一个不随任何东西
+    // 变化的标签。它必须绑定 ViewportStatusText 才有信息量。
+    const size_t at = xaml.find("ViewportStatusText");
+    ASSERT_NE(at, std::string::npos)
+        << "视口叠加信息没有绑定 ViewportStatusText（是否退回成静态文本？）";
+    EXPECT_NE(xaml.rfind("Text=\"", at), std::string::npos)
+        << "ViewportStatusText 出现在非 Text 属性里，绑定可能写错了位置";
 }
 
 }  // namespace

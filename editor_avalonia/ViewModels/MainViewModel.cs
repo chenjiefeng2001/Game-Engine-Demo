@@ -296,15 +296,73 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
     /// 触发视口重绘（每帧调用）
     public void ViewportTick(float dt) => _host.ViewportTick(dt);
 
+    private string _viewportStatusText = "viewport: (no frame yet)";
+    /// <summary>
+    /// 视口左下角叠加信息。此前该处是硬编码的静态 "Viewport" 文本 ——
+    /// 一个不随任何东西变化的标签，等于没有信息。
+    /// 这里显示的是**真实呈现过**的那一帧的凭据：帧号、尺寸、非清屏像素数。
+    /// 不显示 FPS：呈现节奏由 33ms 的 DispatcherTimer 决定，回显它只是把定时器
+    /// 频率换个说法，并不反映引擎实际产帧速度；没有真实帧计时来源之前，
+    /// 显示一个假的"FPS"比不显示更糟。
+    /// </summary>
+    public string ViewportStatusText
+    {
+        get => _viewportStatusText;
+        private set => Set(ref _viewportStatusText, value);
+    }
+
+    public void UpdateViewportStatus(ulong frameId, int width, int height, int nonClearPixels)
+    {
+        ViewportStatusText = string.Format(
+            System.Globalization.CultureInfo.InvariantCulture,
+            "frame {0}  {1}x{2}  non-clear {3} px", frameId, width, height, nonClearPixels);
+    }
+
     // ── Viewport Camera ──
 
     private float _viewportCamX = 0f;
     private float _viewportCamY = 0f;
     private float _viewportCamZ = 5f;
 
+    // 这三个字段此前**声明后从未被引用**（无公开属性、无 setter、无读取），
+    // 即视口相机位置有 ABI、有方法，却没有任何可绑定的面 —— UI 无法编辑位置。
+    // 三个分量各自独立编辑；ABI 只有 SetViewportCameraPosition(x,y,z)、
+    // 没有单分量版本，所以任意一个分量变化都要推完整三元组。
+    // 刻意不加去抖/批处理：相机位置应逐字符实时跟手。
+
+    /// 视口相机 X。绑定到 TextBox 后每敲一个字符都会触发。
+    public float ViewportCamX
+    {
+        get => _viewportCamX;
+        set { if (Set(ref _viewportCamX, value)) PushViewportCameraPosition(); }
+    }
+
+    /// 视口相机 Y
+    public float ViewportCamY
+    {
+        get => _viewportCamY;
+        set { if (Set(ref _viewportCamY, value)) PushViewportCameraPosition(); }
+    }
+
+    /// 视口相机 Z
+    public float ViewportCamZ
+    {
+        get => _viewportCamZ;
+        set { if (Set(ref _viewportCamZ, value)) PushViewportCameraPosition(); }
+    }
+
+    private void PushViewportCameraPosition()
+    {
+        _host.SetViewportCameraPosition(_viewportCamX, _viewportCamY, _viewportCamZ);
+    }
+
     /// 设置视口相机位置
     public void SetViewportCameraPosition(float x, float y, float z)
     {
+        // 同步三个可绑定分量，否则 UI 文本框不会跟着这次程序化赋值更新。
+        Set(ref _viewportCamX, x);
+        Set(ref _viewportCamY, y);
+        Set(ref _viewportCamZ, z);
         _host.SetViewportCameraPosition(x, y, z);
     }
 
@@ -380,7 +438,26 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
         set
         {
             if (Set(ref _gizmoSpace, value))
+            {
+                // 同步布尔视图。不经 GizmoSpaceLocal 的 setter，避免多推一次 host。
+                Set(ref _gizmoSpaceLocal, value == 1);
                 _host.SetGizmoSpace(value);
+            }
+        }
+    }
+
+    private bool _gizmoSpaceLocal = false;
+    /// Gizmo 空间的布尔视图：XAML 的 CheckBox/ToggleButton 只能绑 bool，
+    /// 而 GizmoSpace 是 int。把 IsChecked 直接绑到 int 属性会依赖 Avalonia 的
+    /// 隐式 bool↔int 转换，那既不是公开契约也会随版本变化，故显式提供布尔面。
+    /// 反向（写 GizmoSpaceLocal）仍经 GizmoSpace，以保持 host 只被推一次。
+    public bool GizmoSpaceLocal
+    {
+        get => _gizmoSpaceLocal;
+        set
+        {
+            if (Set(ref _gizmoSpaceLocal, value))
+                GizmoSpace = value ? 1 : 0;
         }
     }
 
