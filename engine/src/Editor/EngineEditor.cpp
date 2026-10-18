@@ -614,29 +614,46 @@ namespace Engine {
         // ── 4. 渲染所有面板 ──
         // 每个面板的 ImGui::Begin() 窗口名必须固定，
         // imgui.ini 通过窗口名 + DockSpace ID 记忆停靠位置
+
+        // 停靠面板可见性的**双向**同步。
+        //
+        // 背景：菜单项写的是 PanelVisibility::<field>，而面板的
+        // ImGui::Begin(标题, &m_Visible) 里的关闭按钮写的是面板自己的
+        // m_Visible —— 同一件事有两个 bool。历史上二者互不同步，后果是：
+        //   · 只看菜单：Console 默认 m_Visible=false，OnImGui 开头早退，
+        //     View > Console 成为死控件，规范布局里给它的 Tab 永不出现；
+        //   · 只看面板：菜单项切了没有任何可见效果。
+        // 双向同步让两者在每帧末恒等，关闭按钮与菜单项不再互相打架。
+        //
+        // SetVisible 只在**真正变化**时调用：ConsolePanel::SetVisible 在
+        // visible 时会 FocusInput()，每帧无条件调用会让控制台输入框永久
+        // 抢走键盘焦点。
+        auto SyncDockedPanelVisibility = [](bool& menuFlag, auto* panel, auto draw) {
+            if (!panel) return;
+            if (panel->IsVisible() != menuFlag)
+                panel->SetVisible(menuFlag);
+            if (!menuFlag) return;
+            draw(panel);
+            menuFlag = panel->IsVisible();   // 回读：关闭按钮的结果反映到菜单
+        };
+
         if (m_Visibility.viewport) {
             // ViewportPanel::OnImGui 内部调用 ImGui::Begin("Viewport")
             m_Viewport.OnImGui();
         }
-        if (m_Visibility.inspector && m_Inspector) {
+        if (m_Inspector) {
             // InspectorPanel::OnImGui 内部调用 ImGui::Begin("Inspector")
-            m_Inspector->OnImGui();
+            SyncDockedPanelVisibility(m_Visibility.inspector, m_Inspector,
+                                      [](InspectorPanel* p) { p->OnImGui(); });
         }
         if (m_Console) {
-            // 可见性由 View 菜单（PanelVisibility::console）单点拥有，逐帧同步到
-            // 面板。此前两边各有一份 bool 且互不同步：菜单切的是 m_Visibility，
-            // 面板自己的 m_Visible 恒为 false，OnImGui 开头即早退 ——
-            // 结果是 View > Console 是个死控件，而规范停靠布局里给 Console
-            // 留的那个 Tab 也永远不出现。
-            if (m_Console->IsVisible() != m_Visibility.console)
-                m_Console->SetVisible(m_Visibility.console);
-            if (m_Visibility.console) {
-                // ConsolePanel::OnImGui 内部调用 ImGui::Begin("Console")
-                m_Console->OnImGui();
-            }
+            // ConsolePanel::OnImGui 内部调用 ImGui::Begin("Console")
+            SyncDockedPanelVisibility(m_Visibility.console, m_Console,
+                                      [](ConsolePanel* p) { p->OnImGui(); });
         }
-        if (m_Visibility.performance && m_Performance) {
-            m_Performance->OnImGui();
+        if (m_Performance) {
+            SyncDockedPanelVisibility(m_Visibility.performance, m_Performance,
+                                      [](PerformanceWindow* p) { p->OnImGui(); });
         }
 
         // ── 可选面板 ──
@@ -659,15 +676,15 @@ namespace Engine {
             m_ScenePanel.OnImGui();
         } else {
             // 独立模式：三个面板各自独立渲染
-            if (m_Visibility.sceneHierarchy) {
-                m_SceneHierarchy->OnImGui();
+            if (m_SceneHierarchy) {
+                // SceneHierarchyPanel::OnImGui 内部调用 ImGui::Begin("Hierarchy")
+                SyncDockedPanelVisibility(m_Visibility.sceneHierarchy, m_SceneHierarchy,
+                                          [](SceneHierarchyPanel* p) { p->OnImGui(); });
             }
-            if (m_Visibility.sceneViewerPanel) {
-                m_SceneViewerPanel.OnImGui();
-            }
-            if (m_Visibility.sceneManager) {
-                m_SceneManagerPanel.OnImGui();
-            }
+            SyncDockedPanelVisibility(m_Visibility.sceneViewerPanel, &m_SceneViewerPanel,
+                                      [](SceneViewerPanel* p) { p->OnImGui(); });
+            SyncDockedPanelVisibility(m_Visibility.sceneManager, &m_SceneManagerPanel,
+                                      [](SceneManagerPanel* p) { p->OnImGui(); });
         }
 
         // ── View Mode Debug 面板 ──
