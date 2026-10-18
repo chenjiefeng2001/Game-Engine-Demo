@@ -258,6 +258,19 @@ add_executable(test_io
 target_link_libraries(test_io PRIVATE ${COMMON_LIBS})
 add_test(NAME test_io COMMAND test_io)
 
+# ── Phase 7-D: EditorCamera external input path ──
+# 依据 docs/Avalonia-Phase7-Viewport-Charter.md:37：7-D 的 orbit/pan/fly
+# 在此之前**零测试覆盖**（rg -i "editorcamera|orbit|externalinput" tests/ 命中 0）。
+# 刻意**不**链接 EditorBridge：这些是引擎内纯逻辑，bridge 只是转发通道。
+# 本 target 的价值在于全程不创建 ImGui context —— 修复前 orbit 分支硬编码
+# ImGui::IsMouseDown(ImGuiMouseButton_Left)，生产路径（headless EngineHost）
+# 没有 context，把 ImGui 依赖改回来会立刻在这里暴露。
+add_executable(test_editor_camera
+    test_editor_camera/test_editor_camera.cpp
+)
+target_link_libraries(test_editor_camera PRIVATE EngineCore GTest::gtest_main)
+add_test(NAME test_editor_camera COMMAND test_editor_camera)
+
 # NOTE: this block must stay at the END of the file.
 # get_property(... DIRECTORY PROPERTY TESTS) only returns the tests
 # registered so far. Placed mid-file, later targets (test_animation /
