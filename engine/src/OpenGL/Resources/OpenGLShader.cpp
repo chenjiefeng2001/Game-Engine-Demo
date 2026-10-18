@@ -6,6 +6,7 @@
 #include <vector>
 #include <algorithm>
 #include <glad/gl.h>
+#include <GLFW/glfw3.h>
 
 namespace {
     Engine::Logger s_Log("OpenGLShader");
@@ -48,11 +49,12 @@ namespace Engine {
     OpenGLShader::OpenGLShader(const std::string& vertexPath,
                                 const std::string& fragmentPath,
                                 GladGLContext& gl)
-        : Shader(vertexPath + "|" + fragmentPath)
-        , m_GL(gl)
-        , m_VertexPath(vertexPath)
-        , m_FragmentPath(fragmentPath)
-    {
+            : Shader(vertexPath + "|" + fragmentPath)
+            , m_GL(gl)
+            , m_OwnerThreadId(std::this_thread::get_id())
+            , m_VertexPath(vertexPath)
+            , m_FragmentPath(fragmentPath)
+        {
         // 构造时自动从文件加载两阶段版本（向后兼容）
         std::string vSource = ReadFile(vertexPath);
         std::string fSource = ReadFile(fragmentPath);
@@ -89,9 +91,16 @@ namespace Engine {
     }
 
     OpenGLShader::~OpenGLShader() {
-        if (m_RendererID) {
-            m_GL.DeleteProgram(m_RendererID);
+        // HRC-3 P1.1 B2 (c)：与 OpenGLFramebuffer 同款双重守卫。
+        // 只有"属主线程"且"当前有 GL context"时才 glDeleteProgram；
+        // 否则放弃删除，绝不发出无效的 GL 调用。
+        if (!m_RendererID) {
+            return;
         }
+        if (!IsOwnerThread() || !glfwGetCurrentContext()) {
+            return;
+        }
+        m_GL.DeleteProgram(m_RendererID);
     }
 
     // ════════════════════════════════════════════════
@@ -250,11 +259,11 @@ namespace Engine {
     void OpenGLShader::Bind() const { m_GL.UseProgram(m_RendererID); }
     void OpenGLShader::Unbind() const { m_GL.UseProgram(0); }
 
-    void OpenGLShader::SetMat4(const std::string& name, const float* data) {
-        GLint location = m_GL.GetUniformLocation(m_RendererID, name.c_str());
-        if (location != -1)
-            m_GL.UniformMatrix4fv(location, 1, GL_FALSE, data);
-    }
+void OpenGLShader::SetMat4(const std::string& name, const float* data) {
+    GLint location = m_GL.GetUniformLocation(m_RendererID, name.c_str());
+    if (location != -1)
+        m_GL.UniformMatrix4fv(location, 1, GL_FALSE, data);
+}
 
 void OpenGLShader::SetMat4Array(const std::string& name, const float* data, int count) {
     if (count <= 0) return;

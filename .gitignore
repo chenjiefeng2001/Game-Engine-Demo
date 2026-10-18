@@ -107,3 +107,4 @@ editor_avalonia/selftest.log
 
 # 测试运行时 scratch（test_bridge gate_p2 副本 / GP01EditorWorkflowTest kEd 产物）
 gp01_editor_scratch/
+gp01_hrc_a7_scratch/

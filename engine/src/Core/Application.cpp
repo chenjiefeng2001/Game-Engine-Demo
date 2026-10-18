@@ -28,19 +28,35 @@
 #include "Engine/Editor/ViewportPanel.h"
 #include "Engine/OpenGL/OpenGLFramebuffer.h"
 #include "Engine/OpenGL/OpenGLContext.h"
+// HRC-3 P1：production scene render（sprite batch 路径）。刻意**不**引入
+// ViewportPanel / EngineEditor 的任何渲染依赖（P1-H1 / P1-H2）。
+#include "Engine/Core/Scene/Scene.h"
+#include "Engine/Core/GameObject/GameObject.h"
+#include "Engine/Core/RHI/SceneRenderer.h"
+#include "Engine/Core/RHI/RenderQueue.h"
+#include "Engine/Core/RHI/RenderCommand.h"
+#include "Engine/Core/Renderer/OrthographicCamera.h"
+#include "Engine/Core/Renderer/SpriteBatch.h"
 #include <thread>
 #include <chrono>
+#include <cmath>
 
 namespace Engine {
 
 // 静态成员定义
 ConsolePanel* Application::s_ConsolePanel = nullptr;
+Application* Application::s_Instance = nullptr;
 
 // 供 CrashHandler 在崩溃时读取子系统分配器状态
 StackAllocator* g_SubsystemAllocator = nullptr;
 
-Application::Application(IGraphicsFactory &factory)
-    : m_Factory(factory), m_TextureManager(factory) {
+bool Application::IsSubsystemAllocatorPresent() {
+  return g_SubsystemAllocator != nullptr;
+}
+
+Application::Application(IGraphicsFactory &factory, bool headless)
+    : m_Factory(factory), m_TextureManager(factory), m_Headless(headless) {
+  s_Instance = this;
 
   m_SubsystemManager.Add("Window", SubsystemPhase::Platform,
                          [this]() { return InitWindow(); });
@@ -56,19 +72,25 @@ Application::Application(IGraphicsFactory &factory)
   m_SubsystemManager.Add(
       "ResourceManager", SubsystemPhase::Resources,
       [this]() {
+        if (m_Headless) return true;
         ResourceManager::Init(m_Factory);
         return ResourceManager::Get() != nullptr;
       },
-      []() { ResourceManager::Shutdown(); });
+      [this]() {
+        if (!m_Headless) ResourceManager::Shutdown();
+      });
 
   // ── 文件监视器（用于热加载） ──
   m_SubsystemManager.Add(
       "FileWatcher", SubsystemPhase::Resources,
-      []() {
+      [this]() {
+        if (m_Headless) return true;
         FileWatcher::Init();
         return FileWatcher::Get() != nullptr;
       },
-      []() { FileWatcher::Shutdown(); });
+      [this]() {
+        if (!m_Headless) FileWatcher::Shutdown();
+      });
 
   m_SubsystemManager.Add("Shader", SubsystemPhase::Resources,
                          [this]() { return InitShader(); });
@@ -76,6 +98,7 @@ Application::Application(IGraphicsFactory &factory)
   m_SubsystemManager.Add(
       "Texture", SubsystemPhase::Assets,
       [this]() {
+        if (m_Headless) return true;
         m_Texture = m_TextureManager.Load("assets/textures/test.png");
         return m_Texture != nullptr;
       },
@@ -86,12 +109,53 @@ Application::Application(IGraphicsFactory &factory)
 }
 
 Application::~Application() {
-  // SubsystemManager::Shutdown() 在 m_SubsystemManager 析构时自动调用
-  // 注意：SubsystemManager 的析构中会打印日志（s_Log.Info...），
-  // 因此 Log::Shutdown() 不能在此时调用。
-  // Log 的生命周期由 main() 函数末尾统一管理。
-
+  if (m_Headless) {
+    Shutdown();
+  }
+  if (s_Instance == this) s_Instance = nullptr;
+  g_SubsystemAllocator = nullptr;
   CrashHandler::Shutdown();
+}
+
+bool Application::InitializeHeadless() {
+  if (!m_Headless) return false;
+  if (m_Initialized) return true;
+  if (m_ShutdownComplete) return false;
+
+  Log::Init();
+  m_Factory.SetAllocator(&m_SubsystemAllocator);
+  g_SubsystemAllocator = &m_SubsystemAllocator;
+  CrashHandler::Init("crashes");
+
+  if (!m_SubsystemManager.Initialize()) {
+    Shutdown();
+    return false;
+  }
+  Time::Init();
+  OnStartup();
+  m_Initialized = true;
+  return true;
+}
+
+bool Application::PumpOneFrame(float32 dt) {
+  if (!m_Headless || !m_Initialized || !std::isfinite(dt) || dt < 0.0f) {
+    return false;
+  }
+  InternalUpdate(dt);
+  return true;
+}
+
+void Application::Shutdown() {
+  if (m_ShutdownComplete) return;
+  if (m_Initialized) {
+    m_SubsystemManager.Shutdown();
+    Time::Shutdown();
+    m_Initialized = false;
+  }
+  m_ShutdownComplete = true;
+  m_Factory.SetAllocator(nullptr);
+  if (s_Instance == this) s_Instance = nullptr;
+  g_SubsystemAllocator = nullptr;
 }
 
 void Application::RegisterSubsystem(std::string name, SubsystemPhase phase,
@@ -102,6 +166,7 @@ void Application::RegisterSubsystem(std::string name, SubsystemPhase phase,
 }
 
 bool Application::InitWindow() {
+  if (m_Headless) return true;
   m_Window = m_Factory.CreateWindow(800, 600, "Engine");
   if (!m_Window) {
     Log::Error("Failed to create window");
@@ -117,6 +182,7 @@ bool Application::InitCamera() {
 }
 
 bool Application::InitShader() {
+  if (m_Headless) return true;
   m_Shader = m_Factory.CreateShader("assets/shaders/vertex.glsl",
                                     "assets/shaders/fragment.glsl");
   if (!m_Shader) {
@@ -127,6 +193,7 @@ bool Application::InitShader() {
 }
 
 bool Application::InitVertexData() {
+  if (m_Headless) return true;
   float vertices[] = {-0.5f, -0.5f, 0.0f, 0.0f, 0.0f, 0.5f, -0.5f,
                       0.0f,  1.0f,  0.0f, 0.5f, 0.5f, 0.0f, 1.0f,
                       1.0f,  -0.5f, 0.5f, 0.0f, 0.0f, 1.0f};
@@ -154,6 +221,7 @@ bool Application::InitVertexData() {
 }
 
 bool Application::InitUI() {
+  if (m_Headless) return true;
   auto ui = m_Factory.CreateUIManager();
   if (!ui) {
     Log::Error("Failed to create UI manager");
@@ -262,7 +330,7 @@ void Application::DispatchSubsystemUpdates(float32 dt) {
   PROFILE_ZONE();
   auto* js = JobSystem::Get();
   bool isActive = true;
-  if (m_LoopMode == LoopMode::Adaptive) {
+  if (m_LoopMode == LoopMode::Adaptive && !m_Headless && m_Window) {
     isActive = m_Window->IsActive() && !m_Window->IsMinimized();
   }
 
@@ -476,6 +544,7 @@ void Application::ResizeViewportFBO(int w, int h) {
 
 void Application::InternalRender() {
   PROFILE_ZONE();
+  if (m_Headless) return;
 
   // ── 性能优化：当 EngineEditor 接管渲染时跳过 Application 的冗余 FBO ──
   // ViewportPanel 已自管理 MRT FBO，所有场景渲染在 Render3DScene 中完成
@@ -514,6 +583,254 @@ void Application::InternalRender() {
 
   // ── 子类扩展渲染（EditorDemo 中为空，不产生任何开销） ──
   OnRender();
+}
+
+// ================================================================
+// HRC-3 P1（V1-a）：production scene render
+//
+// 目的：让 headless / production 路径**真的把场景画出来**，而不是只清屏 + 读一个探针像素。
+// 所有权：渲染能力属于 Application（engine 侧），EngineHost 只负责编排（在既有 frame 内调用）。
+// 明确边界（docs/Editor-Avalonia-HRC3-P1P2-Contract.md P1-H1~H7）：
+//   - 不调用 ViewportPanel::OnUpdate，不依赖 legacy ViewportPanel / EngineEditor；
+//   - 不引入 tick 源（由调用方在既有 frame 里驱动）；
+//   - 不画 m_RenderDefaultQuad 之类的合成图案，只画 session 场景的真实 renderable；
+//   - 没有可渲染内容 ⇒ 返回 false（**不允许 clear-only 成功**）；
+//   - 任何失败 ⇒ 返回 false，由调用方转成 typed failure。
+// ================================================================
+
+bool Application::InitProductionRenderResources(IRenderContext &context) {
+  if (m_ProductionRenderReady) {
+    return true;
+  }
+  if (!m_Headless) {
+    // v1 只服务 headless/production 路径；窗口化路径继续走既有 InternalRender()。
+    return false;
+  }
+
+  // ── HRC-3 D3：production pick pass 必须拿到 GL context ──
+  //
+  // m_GL 此前**只**在 InitViewportFBO() 里赋值，而那条路径依赖非 headless 的
+  // m_Window。EngineHost 用的是 headless Application（无窗口），因此 m_GL 会是
+  // nullptr —— 结果 pick pass 静默跳过：不报错、也不写任何 ID。
+  // 那种「看起来正常、其实什么都没做」的失败正是 D3-C1 要排除的，
+  // 所以这里从传入的 render context 显式解析，而不是依赖窗口路径的副作用。
+  if (auto *oglCtx = dynamic_cast<OpenGLContext *>(&context)) {
+    m_GL = &oglCtx->GetGL();
+  }
+  if (!m_GL) {
+    Log::Error("[HRC-3 D3] production render context is not an OpenGLContext; "
+               "pick pass cannot run (it will NOT silently no-op)");
+  }
+
+  // sprite_batch.{vert,frag} 与 OpenGLSpriteBatch 的顶点布局一致
+  // （location 0 = vec2 pos，1 = vec2 uv，2 = vec4 color）。刻意不用
+  // vertex.glsl/fragment.glsl —— 那是 default-quad 的着色器，布局不匹配。
+  m_ProductionSpriteShader = m_Factory.CreateShader(
+      "assets/shaders/sprite_batch.vert", "assets/shaders/sprite_batch.frag");
+  // HRC-3 P1（P1-H7）：`CreateShader` 只会返回**非空**包装对象，即使编译/链接失败
+  // （`OpenGLShader` 在源文件读不到时只是 `SetState(Failed)` 且**不打印任何日志**）。
+  // 因此必须显式检查资源状态，否则"着色器没建成"会退化成"渲染了但没有内容"。
+  if (!m_ProductionSpriteShader) {
+    Log::Error("[HRC-3 P1] sprite_batch shader object is null");
+    return false;
+  }
+  if (m_ProductionSpriteShader->IsFailed() || !m_ProductionSpriteShader->IsLoaded()) {
+    Log::Error("[HRC-3 P1] sprite_batch shader failed to build "
+               "(vert=assets/shaders/sprite_batch.vert frag=assets/shaders/sprite_batch.frag)");
+    m_ProductionSpriteShader.reset();
+    return false;
+  }
+
+  m_ProductionSceneRenderer =
+      std::make_shared<SceneRenderer>(m_Factory, m_TextureManager);
+  m_ProductionSceneRenderer->SetRenderContext(context);
+  m_ProductionSceneRenderer->SetShader(m_ProductionSpriteShader);
+  m_ProductionCamera = std::make_unique<OrthographicCamera>(-1.0f, 1.0f, -1.0f, 1.0f);
+  m_ProductionSceneRenderer->SetCamera(m_ProductionCamera.get());
+
+  // ── HRC-3 D3：production pick pass 资源 ──
+  // 专用 pick shader（U3）：只声明 location=1 的 int 输出，不与 deferred/normal
+  // shader 共用 fragment-output contract（deferred_geom.frag 也占 location=1）。
+  m_ProductionPickShader = m_Factory.CreateShader(
+      "assets/shaders/pick.vert", "assets/shaders/pick.frag");
+  if (!m_ProductionPickShader ||
+      m_ProductionPickShader->IsFailed() || !m_ProductionPickShader->IsLoaded()) {
+    // 刻意 **不** 让 pick 资源失败拖垮 color pass：P1 的颜色证据必须不受 D3 影响。
+    // 但必须显式记录，否则会退化成"看起来正常、其实没写 ID"的静默失败。
+    Log::Error("[HRC-3 D3] pick shader failed to build "
+               "(vert=assets/shaders/pick.vert frag=assets/shaders/pick.frag)");
+    m_ProductionPickShader.reset();
+    m_ProductionPickReady = false;
+  } else {
+    m_ProductionPickSceneRenderer =
+        std::make_shared<SceneRenderer>(m_Factory, m_TextureManager);
+    m_ProductionPickSceneRenderer->SetRenderContext(context);
+    m_ProductionPickSceneRenderer->SetShader(m_ProductionPickShader);
+    // 共用**同一个** camera 指针：两个 pass 的 u_ViewProjection 必须完全一致。
+    m_ProductionPickSceneRenderer->SetCamera(m_ProductionCamera.get());
+    m_ProductionPickReady = true;
+    Log::Info("[HRC-3 D3] production pick pass resources ready");
+  }
+
+  m_ProductionRenderReady = true;
+  Log::Info("[HRC-3 P1] production sprite-batch render resources ready");
+  return true;
+}
+
+bool Application::RenderProductionFrame(IRenderContext &context, Scene &scene,
+                                        uint32_t targetWidth, uint32_t targetHeight) {
+  m_ProductionRenderableCount = 0;
+
+  if (!m_ProductionRenderReady && !InitProductionRenderResources(context)) {
+    return false;   // typed failure：shader / sprite batch 创建失败
+  }
+  if (targetWidth == 0 || targetHeight == 0) {
+    return false;
+  }
+
+  // ── 1. 收集真实 renderable，并按其世界坐标框定相机 ──
+  // 相机必须覆盖 sprite 的世界坐标（SpriteComponent 的 x/y 来自 world matrix 平移），
+  // 否则 quad 会落在视锥外，产出"看起来渲染了但整帧只有背景色"的假象。
+  //
+  // 用**自己的** RenderQueue 做统计/包围盒：SceneRenderer::GetRenderQueue() 返回
+  // const 引用，且 Render() 内部会自己 Clear + Collect，这里不碰它的队列。
+  RenderQueue probeQueue;
+  scene.CollectRenderCommands(probeQueue);
+  const auto &commands = probeQueue.GetCommands();
+  if (commands.empty()) {
+    // 「没有可渲染内容」**不是**运行时失败：运行态（例如 play 期间编辑场景被换出）下
+    // 编辑场景可能合法地没有 renderable。把这种情况做成 frame 失败会破坏 HRC-2 冻结的
+    // pump/frame 契约（曾经把 RuntimeSeamProofThreeCycles 打成 PumpOneFrame=-1）。
+    //
+    // 因此语义分层：
+    //   - 生产：没有内容 ⇒ 什么都不画，返回成功，renderable 计数为 0；
+    //   - 证据：gate 用 renderables > 0 作为前置断言，前置不成立就报
+    //     "insufficient scene content"，绝不把 clear-only 帧当成通过（P1-H5）。
+    m_ProductionRenderableCount = 0;
+    return true;
+  }
+
+  float minX = 0.0f, maxX = 0.0f, minY = 0.0f, maxY = 0.0f;
+  for (size_t i = 0; i < commands.size(); ++i) {
+    const auto &cmd = commands[i];
+    const float x = cmd.worldMatrix[12];
+    const float y = cmd.worldMatrix[13];
+    const float halfSpriteW = 0.5f * std::sqrt(cmd.worldMatrix[0] * cmd.worldMatrix[0] +
+                                                cmd.worldMatrix[1] * cmd.worldMatrix[1] +
+                                                cmd.worldMatrix[2] * cmd.worldMatrix[2]);
+    const float halfSpriteH = 0.5f * std::sqrt(cmd.worldMatrix[4] * cmd.worldMatrix[4] +
+                                                cmd.worldMatrix[5] * cmd.worldMatrix[5] +
+                                                cmd.worldMatrix[6] * cmd.worldMatrix[6]);
+    if (i == 0) {
+      minX = x - halfSpriteW; maxX = x + halfSpriteW;
+      minY = y - halfSpriteH; maxY = y + halfSpriteH;
+    } else {
+      minX = std::min(minX, x - halfSpriteW); maxX = std::max(maxX, x + halfSpriteW);
+      minY = std::min(minY, y - halfSpriteH); maxY = std::max(maxY, y + halfSpriteH);
+    }
+  }
+
+  const float aspect = static_cast<float>(targetWidth) / static_cast<float>(targetHeight);
+  const float cx = 0.5f * (minX + maxX);
+  const float cy = 0.5f * (minY + maxY);
+  float halfViewW = std::max(0.5f * (maxX - minX), 1.0f) * 1.10f;   // 10% 边距
+  float halfViewH = std::max(0.5f * (maxY - minY), 1.0f) * 1.10f;
+  // 保持目标宽高比：不足的一侧补齐，避免拉伸变形。
+  if (halfViewW / halfViewH < aspect) halfViewW = halfViewH * aspect;
+  else                               halfViewH = halfViewW / aspect;
+  m_ProductionCamera = std::make_unique<OrthographicCamera>(
+      cx - halfViewW, cx + halfViewW, cy - halfViewH, cy + halfViewH);
+  m_ProductionSceneRenderer->SetCamera(m_ProductionCamera.get());
+
+  // ── 2. 画进调用方已绑定的 framebuffer ──
+  m_ProductionSpriteShader->Bind();
+  // ISpriteBatch 需要绑定到 texture unit 0；其余按注释设置 uniform 数量 0，避免行数漂移
+  m_ProductionSpriteShader->SetInt("u_Texture", 0);
+  m_ProductionSceneRenderer->Render(scene);
+
+  m_ProductionRenderableCount = static_cast<uint32_t>(commands.size());
+
+  // ── HRC-3 D3：production pick pass（同一帧、同一批 command、同一 camera）──
+  //
+  // D3-C1：pick 真值必须是**当前** production frame 的 ID 表面，因此本 pass
+  // 与上面的 color pass 在同一次 RenderProductionFrame 内完成，而不是"事后"
+  // 对某个残留 buffer 采样（D3-C4 禁止"最近一次 pick buffer"语义）。
+  //
+  // 刻意复用 commands / ToSpriteData / camera / 同一个 sprite batch 实现：
+  // 只要这里自己重算一份几何，ID 就会与颜色错位且**不会报错**。
+  m_ProductionPickEntityCount = 0;
+  // D3-C1/U2：pick pass 只在**显式启用**时运行，默认关闭。
+  //
+  // 关闭的理由是 contract，而不是任何挂起：U2 冻结的语义是「pick-ID pass **仅当存在
+  // pending request** 时运行」，而当前**尚无 request channel**（那属于 D3 ABI
+  // mini-contract）。没有请求却每帧跑 ID pass 纯属浪费。
+  //
+  // 注：D3-H1 已证明 pick pass 本身**不存在**已证实的 hang —— 连续三帧 P0..P8 全部
+  // 完整执行。之前那次"挂起"来自 stale EditorBridge.dll，与 pick pass 无关。
+  const bool m_ProductionPickEnabledForThisFrame = m_ProductionPickPassEnabled;
+  if (m_ProductionPickEnabledForThisFrame && m_ProductionPickReady && m_GL &&
+      m_ProductionPickSceneRenderer) {
+    auto pickBatch = m_ProductionPickSceneRenderer->GetSpriteBatch();
+    if (pickBatch) {
+
+      // D3-C2：attachment 1 显式清成 sentinel **-1**。
+      // 绝不能用普通 glClear —— 那会清成 0，而 0 是 reserved/invalid，
+      // 未命中就会被读成假命中（false hit）。
+      const GLint kNoHitSentinel = -1;
+      const GLenum pickDrawBuffers[2] = {GL_NONE, GL_COLOR_ATTACHMENT1};
+      const GLenum colorDrawBuffers[2] = {GL_COLOR_ATTACHMENT0, GL_NONE};
+      m_GL->DrawBuffers(2, pickDrawBuffers);
+      m_GL->ClearBufferiv(GL_COLOR, 1,
+                          const_cast<GLint*>(&kNoHitSentinel));
+      m_GL->Clear(GL_DEPTH_BUFFER_BIT);
+
+      m_ProductionPickShader->Bind();
+      m_ProductionPickShader->SetMat4(
+          "u_ViewProjection",
+          m_ProductionCamera->GetViewProjectionMatrixPtr());
+      m_ProductionPickShader->SetInt("u_Texture", 0);
+
+      // 逐 entity 提交：u_EntityID 是 per-draw uniform，所以每个 command
+      // Draw + Flush 一次，保证 ID 与像素一一对应。
+      std::shared_ptr<Texture> currentTexture;
+      bool began = false;
+      for (const auto &cmd : commands) {
+        auto tex = cmd.texture;
+        if (!tex) {
+          continue;   // 与 color pass 相同的跳过规则，保持两 pass 像素一致
+        }
+        if (began && tex != currentTexture) {
+          pickBatch->End();
+          began = false;
+        }
+        if (!began) {
+          currentTexture = tex;
+          pickBatch->Begin(currentTexture);
+          began = true;
+        }
+        if (cmd.entityId == 0) {
+          // 0 = 未填充/无 owner。绝不写入 0（reserved），写 -1 保持 no-hit 语义。
+          m_ProductionPickShader->SetInt("u_EntityID", kNoHitSentinel);
+        } else {
+          m_ProductionPickShader->SetInt(
+              "u_EntityID", static_cast<int>(cmd.entityId));
+        }
+        SpriteData pickData;
+        m_ProductionSceneRenderer->ToSpriteData(cmd, pickData);
+        pickBatch->Draw(pickData);
+        pickBatch->Flush();
+        m_ProductionPickEntityCount += 1;
+      }
+      if (began) {
+        pickBatch->End();
+      }
+
+      // 恢复 color attachment 为唯一输出，避免污染后续 pass。
+      m_GL->DrawBuffers(2, colorDrawBuffers);
+    }
+  }
+
+  return true;
 }
 
 void Application::Run() {
@@ -794,6 +1111,15 @@ void Application::Run() {
 
     // ── 内存帧快照 ──
     MemoryTracker::FrameEnd();
+  }
+
+  // GP1-DX 启动调查（2026-08-26）：主循环退出点取证。若此前无
+  // "WindowClose: OS-initiated" 告警，则 ShouldClose 由内部置位
+  // （需排查 glfwSetWindowShouldClose 调用者）；有则来自 OS 关闭消息。
+  {
+    const double uptimeSec = Time::GetElapsedSinceInit();
+    Log::Warn("Main loop exited after {:.1f}s (see preceding "
+              "WindowClose warning for origin)", uptimeSec);
   }
 
   // ── 关闭场景管理器 ──

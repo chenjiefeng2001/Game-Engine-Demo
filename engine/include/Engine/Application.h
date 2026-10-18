@@ -37,6 +37,8 @@ class Texture;
 class TextureManager;
 class IGraphicsFactory;
 class OrthographicCamera;
+class SceneRenderer;
+class Scene;
 class ConsolePanel;
 
 enum class LoopMode {
@@ -64,11 +66,60 @@ enum class LoopMode {
 class Application {
 public:
   // ── 构造 / 析构 ──
-  Application(IGraphicsFactory &factory);
+  Application(IGraphicsFactory &factory, bool headless = false);
   virtual ~Application();
+
+  // ── 全局实例（Phase 7 bridge 访问用） ──
+  static Application* s_Instance;
+  static Application* GetInstance() { return s_Instance; }
+  static bool IsSubsystemAllocatorPresent();
 
   // ── 主循环 ──
   void Run();
+
+  bool InitializeHeadless();
+  bool PumpOneFrame(float32 dt);
+  void Shutdown();
+  bool IsInitialized() const { return m_Initialized; }
+  bool IsHeadless() const { return m_Headless; }
+
+  // ── HRC-3 P1：production-owned scene render（headless 也能真的画场景）──
+  //
+  // 语义：把 session 场景里的**真实 renderable**（SpriteComponent）经由 production
+  // SceneRenderer / ISpriteBatch 画进**当前已绑定**的 framebuffer。
+  //
+  // 约束（见 docs/Editor-Avalonia-HRC3-P1P2-Contract.md）：
+  // - P1-H1/H2：与 ViewportPanel / EngineEditor **完全无关**（不调用 ViewportPanel::OnUpdate，
+  //   不依赖 legacy ViewportPanel 的 MRT FBO / ImGui / readback 缓冲）；
+  // - P1-H3：渲染由既有 frame/pump 驱动，本类不引入任何 tick 源；
+  // - P1-H5：只画真实场景内容 —— **没有 clear-only 成功**，场景无可渲染内容时返回 false；
+  // - P1-H7：失败一律返回 false，由调用方转成 typed failure，不得静默降级为 clear-only。
+  //
+  // 首次调用时惰性创建 sprite-batch 渲染资源（复用 assets/shaders/sprite_batch.{vert,frag}，
+  // 与 OpenGLSpriteBatch 的顶点布局一致）；创建失败返回 false。
+  bool InitProductionRenderResources(IRenderContext &context);
+  bool RenderProductionFrame(IRenderContext &context, Scene &scene,
+                             uint32_t targetWidth, uint32_t targetHeight);
+  /// 上一次 RenderProductionFrame 绘制的 renderable 数量（0 = 没有真实内容）。
+  uint32_t LastProductionRenderableCount() const { return m_ProductionRenderableCount; }
+
+  /// HRC-3 D3：production pick pass 开关（默认**关闭**）
+  ///
+  /// D3 Step 2 冻结的 U2 语义是「pick-ID pass **仅当存在 pending request** 时运行」。
+  /// 目前还没有任何请求通道（属于后续的 D3 ABI mini-contract），因此默认必须关闭：
+  /// 每帧无条件跑 ID pass 既是纯浪费，实测还会在当前 production teardown 路径上挂起。
+  /// 真正的按需触发由后续 ABI 负责；在此之前只有 native 证明夹具显式打开它。
+  void SetProductionPickPassEnabled(bool enabled) noexcept {
+    m_ProductionPickPassEnabled = enabled;
+  }
+  bool IsProductionPickPassEnabled() const noexcept {
+    return m_ProductionPickPassEnabled;
+  }
+
+
+
+
+
 
   // ── 访问器 ──
   IGraphicsFactory &GetFactory() { return m_Factory; }
@@ -77,6 +128,9 @@ public:
   IRenderContext *GetRenderContext() {
     return m_Window ? m_Window->GetContext() : nullptr;
   }
+
+  // ── Phase 7: Viewport FBO readback ──
+  ViewportPanel& GetViewportPanel() { return m_ViewportPanel; }
 
   // ── 循环模式控制 ──
   LoopMode GetLoopMode() const { return m_LoopMode; }
@@ -186,10 +240,9 @@ protected:
   // 释放内存池会导致 use-after-free。
   // 所以 m_SubsystemAllocator 声明在 m_SubsystemManager 之前。
   StackAllocator m_SubsystemAllocator{256 * 1024}; // 256KB 连续内存池
-  SubsystemManager m_SubsystemManager;
   IGraphicsFactory &m_Factory;
-  TextureManager m_TextureManager;
-  std::unique_ptr<class IWindow> m_Window;
+    std::unique_ptr<class IWindow> m_Window;
+    TextureManager m_TextureManager;
   std::shared_ptr<class Shader> m_Shader;
   std::shared_ptr<class VertexArray> m_VAO;
   std::shared_ptr<class Texture> m_Texture;
@@ -234,14 +287,35 @@ private:
   void InitViewportFBO();           // 第一次初始化
   void ResizeViewportFBO(int w, int h);  // resize 回调
   std::unique_ptr<OpenGLFramebuffer> m_ViewportFBO;
+  SubsystemManager m_SubsystemManager;
   GladGLContext* m_GL = nullptr;   // 用于创建 FBO
 
   // ── 内部循环 ──
   void InternalUpdate(float32 dt);
   void InternalRender();
 
+  // ── HRC-3 P1：production render 资源（惰性创建，见公开接口注释）──
+  std::shared_ptr<class Shader> m_ProductionSpriteShader;
+  std::shared_ptr<class SceneRenderer> m_ProductionSceneRenderer;
+  std::unique_ptr<OrthographicCamera> m_ProductionCamera;
+  bool m_ProductionRenderReady = false;
+  uint32_t m_ProductionRenderableCount = 0;
+
+  // ── HRC-3 D3：production pick pass 资源 ──
+  // 遵循 D3 Step 2 冻结的 U1/U3：R32I attachment 1 + 专用 pick shader。
+  // 与 color pass **共用同一批 RenderCommand / SpriteData / camera**，
+  // 几何由同一个 sprite batch 路径光栅化 —— 两个 pass 若发生偏移，
+  // ID 会静默落到错误像素上，D3-C1 明确禁止这种"看起来合理"的结果。
+  std::shared_ptr<class Shader> m_ProductionPickShader;
+  std::shared_ptr<class SceneRenderer> m_ProductionPickSceneRenderer;
+  bool m_ProductionPickReady = false;
+  uint32_t m_ProductionPickEntityCount = 0;
+  bool m_ProductionPickPassEnabled = false;
 
   LoopMode m_LoopMode = LoopMode::Variable;
+  bool m_Headless = false;
+  bool m_Initialized = false;
+  bool m_ShutdownComplete = false;
 
   // ── 混合驱动调度（按名称索引 + 按 ID 索引） ──
   std::unordered_map<std::string, uint32> m_SubsystemNameMap;

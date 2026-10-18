@@ -15,10 +15,26 @@
     <PackageReference Include="Avalonia.Themes.Fluent" Version="11.2.7" />
   </ItemGroup>
   <ItemGroup>
-    <!-- Phase 0: 原生边界 DLL（CMake 构建产物）随宿主分发 -->
-    <None Include="..\build\bridge\Debug\EditorBridge.dll"
-          Condition="Exists('..\build\bridge\Debug\EditorBridge.dll')"
-          CopyToOutputDirectory="PreserveNewest" Link="EditorBridge.dll" />
+    <!-- Phase 0: 原生边界 DLL（CMake 构建产物）随宿主分发。
+
+         EditorBridge staging hygiene（S1/S2/S3）：
+           S1 配置感知：源路径必须用 $(Configuration)，不得硬编码 Debug。
+              否则 `dotnet build -c Release` 会把 **Debug** 的 DLL 部署进
+              bin\Release，Release 实际跑在 Debug native 上。
+           S2 增量正确性：CopyToOutputDirectory=Always。
+              PreserveNewest 在增量 build 下不会重新拷贝，会留下陈旧 bin DLL
+              （实测：源码已更新、bin 仍是旧的，且无任何警告）。
+              Always 让**普通** build 就完成 staging，不需要 -t:Rebuild、
+              也不需要手工 copy。
+           S3 身份一致：部署的就是 build/bridge/$(Configuration) 的那个字节，
+              因此 SHA256 天然相等（由 tools\run_d3_managed_gate.ps1 的 M8-A 复核）。
+           注意：M8-A 仍是最终安全网，不要因为本次修正就取消它。 -->
+    <None Include="..\build\bridge\$(Configuration)\EditorBridge.dll"
+          Condition="Exists('..\build\bridge\$(Configuration)\EditorBridge.dll')"
+          CopyToOutputDirectory="Always" Link="EditorBridge.dll" />
+    <!-- ⚠ 未纳入本次 slice：下面这行是**同一类**硬编码 Debug 缺陷
+         （Release 会部署 Debug 的 OpenAL32.dll）。属 build/deployment hygiene，
+         已单独记录待裁决，本次刻意不改，避免一个 slice 同时动两件事。 -->
     <None Include="..\build\sandbox\EditorDemo\Debug\OpenAL32.dll"
           Condition="Exists('..\build\sandbox\EditorDemo\Debug\OpenAL32.dll')"
           CopyToOutputDirectory="PreserveNewest" Link="OpenAL32.dll" />

@@ -45,18 +45,12 @@ public static class Phase0SelfTest
             // ── Round 3：保存 → 重开 → 持久化验证 ──
             if (!host.SaveProject()) return Fail("save failed: " + host.GetLastError());
             Log("[PASS] save");
-            host.Dispose();
+            host.CloseProject();
 
-            var host2 = new EditorHostService();
-            try
-            {
-                host2.CreateSession();
-                if (!host2.OpenProject(manifest, scene)) return Fail("reopen failed: " + host2.GetLastError());
-                int reopened = host2.GetCounts().entities;
-                Check(reopened == 11, $"persisted count==11 (got {reopened})");
-                Log($"[PASS] reopen: persisted objects={reopened}");
-            }
-            finally { host2.Dispose(); }
+            if (!host.OpenProject(manifest, scene)) return Fail("reopen failed: " + host.GetLastError());
+            int reopened = host.GetCounts().entities;
+            Check(reopened == 11, $"persisted count==11 (got {reopened})");
+            Log($"[PASS] reopen: persisted objects={reopened}");
 
             Log($"[PHASE0 GATE] ALL GREEN in {sw.ElapsedMilliseconds} ms");
             return 0;

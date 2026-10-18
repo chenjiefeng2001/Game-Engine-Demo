@@ -7,6 +7,7 @@
 #include "Engine/Core/IRenderContext.h"
 #include "Engine/Types.h"
 #include <glad/gl.h>
+#include <thread>
 #include <vector>
 
 namespace Engine {
@@ -43,6 +44,11 @@ namespace Engine {
 
         GladGLContext& m_GL;
         IRenderContext& m_RenderContext;
+
+        // HRC-3 P1.1 B2：创建这些 GL 对象的线程。析构时与"当前 context"一起做双重守卫，
+        // 避免在 context 已销毁之后发出无效的 glDelete*（与 OpenGLFramebuffer 同款不变量）。
+        std::thread::id m_OwnerThreadId;
+        bool IsOwnerThread() const { return m_OwnerThreadId == std::this_thread::get_id(); }
 
         // ── GPU 资源 ──
         GLuint m_VAO = 0;

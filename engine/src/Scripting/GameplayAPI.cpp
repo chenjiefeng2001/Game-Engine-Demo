@@ -337,6 +337,8 @@ void SetScene(Scene* scene) {
     if (!scene) Ctx().entities.clear();
 }
 
+bool HasScene() { return Ctx().scene != nullptr; }
+
 void SetInputProvider(IScriptInputProvider* provider) {
     Ctx().input = provider;
 }

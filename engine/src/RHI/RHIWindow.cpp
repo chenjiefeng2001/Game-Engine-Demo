@@ -11,16 +11,16 @@
  */
 
 #include "Engine/Core/RHI/RHIWindow.h"
+#include "Engine/Platform/GlfwLifetime.h"
 
 // For CreateVulkanSurface we need the Vulkan types from GLFW
 #define GLFW_INCLUDE_VULKAN
 #include <GLFW/glfw3.h>
 #include <cstdio>
+#include <exception>
 
-#if defined(_WIN32)
 #define GLFW_EXPOSE_NATIVE_WIN32
 #include <GLFW/glfw3native.h>
-#endif
 
 namespace Engine { namespace RHI {
 
@@ -29,8 +29,9 @@ RHIWindow::RHIWindow(int width, int height, const std::string& title, RHIBackend
     , m_Height(height)
     , m_Title(title)
     , m_Backend(backend)
+    , m_OwnerThreadId(std::this_thread::get_id())
 {
-    if (!glfwInit()) {
+    if (!Engine::AcquireGlfwLifetime(false)) {
         std::fprintf(stderr, "[RHIWindow] Failed to initialize GLFW\n");
         return;
     }
@@ -38,63 +39,86 @@ RHIWindow::RHIWindow(int width, int height, const std::string& title, RHIBackend
     if (backend == RHIBackend::Vulkan || backend == RHIBackend::D3D12) {
         glfwWindowHint(GLFW_CLIENT_API, GLFW_NO_API);
     } else {
+        glfwWindowHint(GLFW_CLIENT_API, GLFW_OPENGL_API);
         glfwWindowHint(GLFW_CONTEXT_VERSION_MAJOR, 4);
         glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, 6);
         glfwWindowHint(GLFW_OPENGL_PROFILE, GLFW_OPENGL_CORE_PROFILE);
     }
 
+    m_GlfwAcquired = true;
     m_Window = glfwCreateWindow(width, height, title.c_str(), nullptr, nullptr);
     if (!m_Window) {
         std::fprintf(stderr, "[RHIWindow] Failed to create GLFW window\n");
-        glfwTerminate();
+        Engine::ReleaseGlfwLifetime(false);
+        m_GlfwAcquired = false;
         return;
     }
 
-#if defined(_WIN32)
-        m_HWND = glfwGetWin32Window(m_Window);
-#else
-        // 非 Windows 平台没有 Win32 句柄。显式置空，不依赖成员初始化。
-        m_HWND = nullptr;
-#endif
+    m_HWND = glfwGetWin32Window(m_Window);
 
     std::printf("  [RHIWindow] Created %dx%d window (backend=%d)\n",
                 width, height, static_cast<int>(backend));
 }
 
 RHIWindow::~RHIWindow() {
+    if (m_OwnerThreadId != std::this_thread::get_id()) {
+        std::fprintf(stderr, "RHIWindow destroyed on non-owner thread\n");
+        std::terminate();
+    }
     if (m_Window) {
         glfwDestroyWindow(m_Window);
         m_Window = nullptr;
     }
+    if (m_GlfwAcquired) {
+        Engine::ReleaseGlfwLifetime(false);
+        m_GlfwAcquired = false;
+    }
 }
 
-void RHIWindow::PollEvents() { glfwPollEvents(); }
-bool RHIWindow::ShouldClose() const { return m_Window ? glfwWindowShouldClose(m_Window) : true; }
+void RHIWindow::PollEvents() {
+    if (m_OwnerThreadId != std::this_thread::get_id()) return;
+    glfwPollEvents();
+}
+bool RHIWindow::ShouldClose() const {
+    if (m_OwnerThreadId != std::this_thread::get_id()) return true;
+    return m_Window ? glfwWindowShouldClose(m_Window) : true;
+}
 
 void RHIWindow::SetTitle(const std::string& title) {
+    if (m_OwnerThreadId != std::this_thread::get_id()) return;
     m_Title = title;
     if (m_Window) glfwSetWindowTitle(m_Window, title.c_str());
 }
 
-void RHIWindow::Show() { if (m_Window) glfwShowWindow(m_Window); }
-void RHIWindow::Hide() { if (m_Window) glfwHideWindow(m_Window); }
+void RHIWindow::Show() {
+    if (m_OwnerThreadId != std::this_thread::get_id()) return;
+    if (m_Window) glfwShowWindow(m_Window);
+}
+void RHIWindow::Hide() {
+    if (m_OwnerThreadId != std::this_thread::get_id()) return;
+    if (m_Window) glfwHideWindow(m_Window);
+}
 
 // ── OpenGL ──
 
 bool RHIWindow::InitOpenGLContext() {
+    if (m_OwnerThreadId != std::this_thread::get_id()) return false;
     if (!m_Window || m_Backend != RHIBackend::OpenGL) return false;
     glfwMakeContextCurrent(m_Window);
+    if (glfwGetCurrentContext() != m_Window) return false;
     glfwSwapInterval(1);
     return true;
 }
 
 void RHIWindow::SwapGLBuffers() {
+    if (m_OwnerThreadId != std::this_thread::get_id()) return;
     if (m_Window && m_Backend == RHIBackend::OpenGL) glfwSwapBuffers(m_Window);
 }
 
 // ── Vulkan ──
 
 void* RHIWindow::CreateVulkanSurface(void* vkInstance) const {
+    if (m_OwnerThreadId != std::this_thread::get_id()) return nullptr;
 #if defined(ENGINE_HAS_VULKAN)
     if (!m_Window || !vkInstance || m_Backend != RHIBackend::Vulkan) return nullptr;
 

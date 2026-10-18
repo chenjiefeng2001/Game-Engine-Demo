@@ -8,13 +8,24 @@
 
 #include <gtest/gtest.h>
 #include "editor_bridge/capi.h"
+// HRC-3 P1：production render 的像素证据需要读回 presentation target。
+// P1 阶段**刻意不新增 C 导出**（那是 P2 的 additive Fetch op），因此这里白色盒地
+// 包含 bridge 内部头，只为 native contract test 取证。managed 侧通道留给 P2。
+#include "EngineHost.h"
 
+#include <cstddef>
+#include <cstdlib>
 #include <cstring>
 #include <filesystem>
 #include <fstream>
 #include <iterator>
+#include <limits>
 #include <string>
+#include <thread>
 #include <vector>
+#include <map>
+#include <algorithm>
+#include <cstdio>
 
 namespace {
 
@@ -29,9 +40,19 @@ static void CaptureCallback(int32_t type, const char* payload,
     log->push_back({type, payload ? payload : ""});
 }
 
+static void SetFailureFlag(const char* name, bool enabled) {
+#ifdef _WIN32
+    _putenv_s(name, enabled ? "1" : "");
+#else
+    if (enabled) setenv(name, "1", 1);
+    else unsetenv(name);
+#endif
+}
+
 class EditorBridgeTest : public ::testing::Test {
 protected:
     void SetUp() override {
+        ASSERT_EQ(EditorBridge_RegisterMainThread(), 1);
         m_Session = EditorSession_Create();
         ASSERT_NE(m_Session, nullptr);
     }
@@ -60,12 +81,532 @@ TEST_F(EditorBridgeTest, SessionLifecycle) {
     EXPECT_EQ(EditorSession_GetLastError(m_Session, buf, sizeof(buf)), 0);
 }
 
+TEST_F(EditorBridgeTest, LegacyExceptionStaysInsideCAbi) {
+    SetFailureFlag("EDITOR_BRIDGE_FAIL_LEGACY_OPERATION", true);
+    EXPECT_EQ(EditorSession_OpenProject(m_Session, kManifest, kScene), -1);
+    SetFailureFlag("EDITOR_BRIDGE_FAIL_LEGACY_OPERATION", false);
+}
+
 TEST_F(EditorBridgeTest, NullHandleContract) {
     EXPECT_EQ(EditorSession_GetEntityCount(nullptr), -1);
     EXPECT_EQ(EditorSession_GetAssetCount(nullptr), -1);
     EXPECT_EQ(EditorSession_CreateEntity(nullptr, "X"), -1);
     EXPECT_EQ(EditorSession_OpenProject(nullptr, "a", "b"), 0);
     EXPECT_NE(EditorSession_OpenProject(m_Session, nullptr, kScene), 1);
+}
+
+TEST(EngineHostAbiTest, ResultLayout) {
+    EXPECT_EQ(sizeof(RuntimeResult), 76u);
+    EXPECT_EQ(offsetof(RuntimeResult, operation_id), 16u);
+    EXPECT_EQ(offsetof(RuntimeResult, state_before), 48u);
+    EXPECT_EQ(offsetof(RuntimeResult, raw_dt_seconds), 68u);
+}
+
+TEST(EngineHostAbiTest, SkeletonLifecycle) {
+    RuntimeResult result = {};
+    EXPECT_EQ(EditorBridge_RegisterMainThread(), 1);
+    EXPECT_EQ(EngineHost_GetApiVersion(), ENGINE_HOST_ABI_VERSION);
+    int32_t baselineUsers = 0;
+    int32_t baselineInitCount = 0;
+    int32_t baselineTerminateCount = 0;
+    EXPECT_EQ(EngineHost_GetGlfwLifetimeState(&baselineUsers,
+                                             &baselineInitCount,
+                                             &baselineTerminateCount), 0);
+    EngineHostHandle host = EngineHost_Create(&result);
+    ASSERT_NE(host, nullptr);
+    EXPECT_EQ(result.struct_size, sizeof(RuntimeResult));
+    EXPECT_EQ(result.abi_version, static_cast<uint32_t>(ENGINE_HOST_ABI_VERSION));
+    EXPECT_EQ(result.status, ENGINE_HOST_STATUS_SUCCESS);
+    EXPECT_EQ(result.stage, ENGINE_HOST_STAGE_BOOTSTRAP);
+    EXPECT_EQ(result.state_after, ENGINE_HOST_STATE_READY);
+    const uint64_t ownerThreadId = result.owner_thread_id;
+    int32_t graphicsReady = 0;
+    int32_t graphicsCurrent = 0;
+    EXPECT_EQ(EngineHost_GetGraphicsState(host, &graphicsReady, &graphicsCurrent), 0);
+    EXPECT_EQ(graphicsReady, 1);
+    EXPECT_EQ(graphicsCurrent, 1);
+    EXPECT_EQ(EditorSession_Create(), nullptr);
+    RuntimeResult duplicateResult = {};
+    EXPECT_EQ(EngineHost_Create(&duplicateResult), nullptr);
+    EXPECT_EQ(duplicateResult.status, ENGINE_HOST_STATUS_INIT_FAILED);
+    EXPECT_EQ(duplicateResult.stage, ENGINE_HOST_STAGE_PLATFORM);
+    int32_t activeUsers = 0;
+    int32_t initCount = 0;
+    int32_t terminateCount = 0;
+    EXPECT_EQ(EngineHost_GetGlfwLifetimeState(&activeUsers,
+                                             &initCount,
+                                             &terminateCount), 0);
+    EXPECT_EQ(activeUsers, baselineUsers + 1);
+    EXPECT_GE(initCount, baselineInitCount + 1);
+    uint64_t makeCurrentCount = 0;
+    uint64_t uncurrentCount = 0;
+    int32_t emergencyRequested = 0;
+    int32_t emergencyCompleted = 0;
+    int32_t graphicsTeardownAttempted = 0;
+    int32_t graphicsTeardownSucceeded = 0;
+    int32_t lifecycleTimedOut = 0;
+    EXPECT_EQ(EngineHost_GetTeardownState(host,
+                                          &emergencyRequested,
+                                          &emergencyCompleted,
+                                          &graphicsTeardownAttempted,
+                                          &graphicsTeardownSucceeded,
+                                          &lifecycleTimedOut), 0);
+    EXPECT_EQ(emergencyRequested, 0);
+    EXPECT_EQ(emergencyCompleted, 0);
+    EXPECT_EQ(graphicsTeardownAttempted, 0);
+    EXPECT_EQ(graphicsTeardownSucceeded, 0);
+    EXPECT_EQ(lifecycleTimedOut, 0);
+    EXPECT_EQ(EngineHost_GetGraphicsCounters(host,
+                                            &makeCurrentCount,
+                                            &uncurrentCount), 0);
+    EXPECT_GE(makeCurrentCount, 1u);
+
+    EXPECT_EQ(EngineHost_PumpOneFrame(host, 0.016f, nullptr), -1);
+    EXPECT_EQ(EngineHost_OpenProject(host, "a", "b", &result), -1);
+    EXPECT_EQ(result.status, ENGINE_HOST_STATUS_SESSION_FAILED);
+    EXPECT_EQ(result.stage, ENGINE_HOST_STAGE_OPEN_PROJECT);
+
+    EXPECT_EQ(EngineHost_PumpOneFrame(host, 0.016f, &result), 0);
+    EXPECT_EQ(result.status, ENGINE_HOST_STATUS_SKIPPED_NOT_PLAYING);
+    EXPECT_EQ(result.stage, ENGINE_HOST_STAGE_TICK);
+    EXPECT_FLOAT_EQ(result.raw_dt_seconds, 0.016f);
+    EXPECT_FLOAT_EQ(result.effective_dt_seconds, 0.016f);
+    EXPECT_EQ(result.frame_id, 1u);
+
+    EXPECT_EQ(EngineHost_PumpOneFrame(host, -1.0f, &result), -1);
+    EXPECT_EQ(result.status, ENGINE_HOST_STATUS_TICK_FAULT);
+    EXPECT_EQ(result.stage, ENGINE_HOST_STAGE_TICK);
+    EXPECT_EQ(result.frame_id, 1u);
+    EXPECT_EQ(result.owner_thread_id, ownerThreadId);
+    const int32_t diagnosticLength = EngineHost_GetLastDiagnostic(host, nullptr, 0);
+    EXPECT_GT(diagnosticLength, 0);
+    char diagnosticCanary = 'x';
+    EXPECT_EQ(EngineHost_GetLastDiagnostic(host, &diagnosticCanary, 0),
+              diagnosticLength);
+    EXPECT_EQ(diagnosticCanary, 'x');
+    char diagnostic[128] = {};
+    EXPECT_EQ(EngineHost_GetLastDiagnostic(host, diagnostic, sizeof(diagnostic)),
+              diagnosticLength);
+    EXPECT_STRNE(diagnostic, "");
+
+    EXPECT_EQ(EngineHost_PumpOneFrame(host, 0.5f, &result), 0);
+    EXPECT_EQ(result.status, ENGINE_HOST_STATUS_SKIPPED_NOT_PLAYING);
+    EXPECT_FLOAT_EQ(result.raw_dt_seconds, 0.5f);
+    EXPECT_FLOAT_EQ(result.effective_dt_seconds, 0.1f);
+    EXPECT_EQ(result.frame_id, 2u);
+
+    EXPECT_EQ(EngineHost_Shutdown(host, &result), 0);
+    EXPECT_EQ(result.status, ENGINE_HOST_STATUS_SHUTDOWN_COMPLETE);
+    EXPECT_EQ(result.stage, ENGINE_HOST_STAGE_SHUTDOWN);
+    EXPECT_EQ(result.state_after, ENGINE_HOST_STATE_STOPPED);
+    EXPECT_EQ(EngineHost_GetTeardownState(host,
+                                          &emergencyRequested,
+                                          &emergencyCompleted,
+                                          &graphicsTeardownAttempted,
+                                          &graphicsTeardownSucceeded,
+                                          &lifecycleTimedOut), 0);
+    EXPECT_EQ(emergencyRequested, 0);
+    EXPECT_EQ(emergencyCompleted, 0);
+    EXPECT_EQ(graphicsTeardownAttempted, 1);
+    EXPECT_EQ(graphicsTeardownSucceeded, 1);
+    EXPECT_EQ(lifecycleTimedOut, 0);
+    EXPECT_EQ(EngineHost_Shutdown(host, &result), 0);
+    EXPECT_EQ(result.status, ENGINE_HOST_STATUS_SHUTDOWN_COMPLETE);
+    EXPECT_EQ(EngineHost_GetGraphicsCounters(host,
+                                            &makeCurrentCount,
+                                            &uncurrentCount), 0);
+    EXPECT_GE(makeCurrentCount, 1u);
+    EXPECT_GE(uncurrentCount, 1u);
+    EXPECT_EQ(EngineHost_Stop(host, &result), 0);
+    EXPECT_EQ(result.status, ENGINE_HOST_STATUS_SUCCESS);
+    EXPECT_EQ(EngineHost_GetGraphicsState(host, &graphicsReady, &graphicsCurrent), 0);
+    EXPECT_EQ(graphicsReady, 0);
+    EXPECT_EQ(graphicsCurrent, 0);
+
+    EXPECT_EQ(EngineHost_GetLastFrameResult(host, &result), 0);
+    EXPECT_EQ(result.status, ENGINE_HOST_STATUS_SKIPPED_NOT_PLAYING);
+    EXPECT_EQ(result.frame_id, 2u);
+    EXPECT_EQ(result.owner_thread_id, ownerThreadId);
+    EngineHost_Destroy(host);
+    EXPECT_EQ(EngineHost_GetGlfwLifetimeState(&activeUsers,
+                                             &initCount,
+                                             &terminateCount), 0);
+    EXPECT_EQ(activeUsers, baselineUsers);
+    EXPECT_GE(terminateCount, baselineTerminateCount + 1);
+
+    RuntimeResult secondResult = {};
+    EngineHostHandle secondHost = EngineHost_Create(&secondResult);
+    ASSERT_NE(secondHost, nullptr);
+    EXPECT_EQ(secondResult.status, ENGINE_HOST_STATUS_SUCCESS);
+    EXPECT_EQ(EngineHost_Shutdown(secondHost, &secondResult), 0);
+    EXPECT_EQ(secondResult.status, ENGINE_HOST_STATUS_SHUTDOWN_COMPLETE);
+    EngineHost_Destroy(secondHost);
+}
+
+TEST(EngineHostAbiTest, GraphicsFailureRollback) {
+    EXPECT_EQ(EditorBridge_RegisterMainThread(), 1);
+    const char* names[] = {
+        "EDITOR_BRIDGE_FAIL_GLFW_INIT",
+        "EDITOR_BRIDGE_FAIL_GL_CONTEXT",
+        "EDITOR_BRIDGE_FAIL_GLAD"
+    };
+    const int32_t stages[] = {
+        ENGINE_HOST_STAGE_PLATFORM,
+        ENGINE_HOST_STAGE_GL_CONTEXT,
+        ENGINE_HOST_STAGE_GLAD
+    };
+    for (size_t i = 0; i < sizeof(names) / sizeof(names[0]); ++i) {
+        SetFailureFlag(names[i], true);
+        RuntimeResult result = {};
+        EXPECT_EQ(EngineHost_Create(&result), nullptr);
+        EXPECT_EQ(result.stage, stages[i]);
+        SetFailureFlag(names[i], false);
+    }
+
+    RuntimeResult result = {};
+    EngineHostHandle host = EngineHost_Create(&result);
+    ASSERT_NE(host, nullptr);
+    EXPECT_EQ(result.status, ENGINE_HOST_STATUS_SUCCESS);
+    EXPECT_EQ(EngineHost_Shutdown(host, &result), 0);
+    EXPECT_EQ(result.status, ENGINE_HOST_STATUS_SHUTDOWN_COMPLETE);
+    EngineHost_Destroy(host);
+}
+
+TEST(EngineHostAbiTest, BootstrapFailureRollback) {
+    EXPECT_EQ(EditorBridge_RegisterMainThread(), 1);
+    SetFailureFlag("EDITOR_BRIDGE_FAIL_BOOTSTRAP_CURRENT", true);
+    RuntimeResult result = {};
+    EXPECT_EQ(EngineHost_Create(&result), nullptr);
+    EXPECT_EQ(result.status, ENGINE_HOST_STATUS_GL_FAILED);
+    EXPECT_EQ(result.stage, ENGINE_HOST_STAGE_GL_CONTEXT);
+    SetFailureFlag("EDITOR_BRIDGE_FAIL_BOOTSTRAP_CURRENT", false);
+}
+
+TEST(EngineHostAbiTest, RuntimeResourceFailureRollback) {
+    ASSERT_EQ(EditorBridge_RegisterMainThread(), 1);
+    int32_t baselineUsers = 0;
+    int32_t baselineInitCount = 0;
+    int32_t baselineTerminateCount = 0;
+    ASSERT_EQ(EngineHost_GetGlfwLifetimeState(&baselineUsers,
+                                              &baselineInitCount,
+                                              &baselineTerminateCount), 0);
+    struct FailureCase {
+        const char* name;
+        int32_t status;
+        int32_t stage;
+    };
+    const FailureCase cases[] = {
+        {"EDITOR_BRIDGE_FAIL_FBO", ENGINE_HOST_STATUS_GL_FAILED, ENGINE_HOST_STAGE_FBO},
+        {"EDITOR_BRIDGE_FAIL_APPLICATION_INIT", ENGINE_HOST_STATUS_INIT_FAILED, ENGINE_HOST_STAGE_ENGINE_SUBSYSTEM},
+        {"EDITOR_BRIDGE_FAIL_SESSION_ATTACH", ENGINE_HOST_STATUS_SESSION_FAILED, ENGINE_HOST_STAGE_SESSION},
+    };
+    for (const auto& failure : cases) {
+        SetFailureFlag(failure.name, true);
+        RuntimeResult result = {};
+        EXPECT_EQ(EngineHost_Create(&result), nullptr);
+        EXPECT_EQ(result.status, failure.status);
+        EXPECT_EQ(result.stage, failure.stage);
+        SetFailureFlag(failure.name, false);
+        int32_t users = 0;
+        int32_t initCount = 0;
+        int32_t terminateCount = 0;
+        ASSERT_EQ(EngineHost_GetGlfwLifetimeState(&users,
+                                                  &initCount,
+                                                  &terminateCount), 0);
+        EXPECT_EQ(users, baselineUsers);
+    }
+}
+
+TEST(EngineHostAbiTest, RuntimeFailureIsObservableAndBounded) {
+    EXPECT_EQ(EditorBridge_RegisterMainThread(), 1);
+    SetFailureFlag("EDITOR_BRIDGE_FAIL_RUNTIME_COMMAND", true);
+    RuntimeResult result = {};
+    EngineHostHandle host = EngineHost_Create(&result);
+    ASSERT_NE(host, nullptr);
+    EXPECT_EQ(EngineHost_PumpOneFrame(host, 0.016f, &result), -1);
+    EXPECT_EQ(result.status, ENGINE_HOST_STATUS_TICK_FAULT);
+    EXPECT_EQ(result.stage, ENGINE_HOST_STAGE_TICK);
+
+    int32_t emergencyRequested = 0;
+    int32_t emergencyCompleted = 0;
+    int32_t graphicsTeardownAttempted = 0;
+    int32_t graphicsTeardownSucceeded = 0;
+    int32_t lifecycleTimedOut = 0;
+    EXPECT_EQ(EngineHost_GetTeardownState(host,
+                                          &emergencyRequested,
+                                          &emergencyCompleted,
+                                          &graphicsTeardownAttempted,
+                                          &graphicsTeardownSucceeded,
+                                          &lifecycleTimedOut), 0);
+    EXPECT_EQ(emergencyRequested, 1);
+    EXPECT_EQ(emergencyCompleted, 0);
+    EXPECT_EQ(lifecycleTimedOut, 0);
+
+    EXPECT_EQ(EngineHost_Shutdown(host, &result), -1);
+    EXPECT_EQ(result.status, ENGINE_HOST_STATUS_SHUTDOWN_FAILED);
+    EXPECT_EQ(EngineHost_GetTeardownState(host,
+                                          &emergencyRequested,
+                                          &emergencyCompleted,
+                                          &graphicsTeardownAttempted,
+                                          &graphicsTeardownSucceeded,
+                                          &lifecycleTimedOut), 0);
+    EXPECT_EQ(emergencyRequested, 1);
+    EXPECT_EQ(emergencyCompleted, 1);
+    EXPECT_EQ(graphicsTeardownAttempted, 1);
+    EXPECT_EQ(graphicsTeardownSucceeded, 1);
+    SetFailureFlag("EDITOR_BRIDGE_FAIL_RUNTIME_COMMAND", false);
+    EngineHost_Destroy(host);
+}
+
+TEST(EngineHostAbiTest, EmergencyWithoutCurrentContextIsBounded) {
+    EXPECT_EQ(EditorBridge_RegisterMainThread(), 1);
+    RuntimeResult result = {};
+    EngineHostHandle host = EngineHost_Create(&result);
+    ASSERT_NE(host, nullptr);
+    SetFailureFlag("EDITOR_BRIDGE_FAIL_RUNTIME_COMMAND", true);
+    SetFailureFlag("EDITOR_BRIDGE_FAIL_BOOTSTRAP_CURRENT", true);
+    EXPECT_EQ(EngineHost_PumpOneFrame(host, 0.016f, &result), -1);
+    EXPECT_EQ(result.status, ENGINE_HOST_STATUS_TICK_FAULT);
+    SetFailureFlag("EDITOR_BRIDGE_FAIL_RUNTIME_COMMAND", false);
+
+    int32_t emergencyRequested = 0;
+    int32_t emergencyCompleted = 0;
+    int32_t graphicsTeardownAttempted = 0;
+    int32_t graphicsTeardownSucceeded = 0;
+    int32_t lifecycleTimedOut = 0;
+    EXPECT_EQ(EngineHost_GetTeardownState(host,
+                                          &emergencyRequested,
+                                          &emergencyCompleted,
+                                          &graphicsTeardownAttempted,
+                                          &graphicsTeardownSucceeded,
+                                          &lifecycleTimedOut), 0);
+    EXPECT_EQ(emergencyRequested, 1);
+
+    EXPECT_EQ(EngineHost_Shutdown(host, &result), -1);
+    EXPECT_EQ(result.status, ENGINE_HOST_STATUS_SHUTDOWN_FAILED);
+    EXPECT_EQ(EngineHost_GetTeardownState(host,
+                                          &emergencyRequested,
+                                          &emergencyCompleted,
+                                          &graphicsTeardownAttempted,
+                                          &graphicsTeardownSucceeded,
+                                          &lifecycleTimedOut), 0);
+    EXPECT_EQ(emergencyCompleted, 0);
+    EXPECT_EQ(graphicsTeardownAttempted, 1);
+    EXPECT_EQ(graphicsTeardownSucceeded, 1);
+    int32_t graphicsReady = 0;
+    int32_t graphicsCurrent = 0;
+    EXPECT_EQ(EngineHost_GetGraphicsState(host,
+                                           &graphicsReady,
+                                           &graphicsCurrent), -1);
+    SetFailureFlag("EDITOR_BRIDGE_FAIL_BOOTSTRAP_CURRENT", false);
+    EngineHost_Destroy(host);
+}
+
+TEST(EngineHostAbiTest, GraphicsTeardownFailureIsObservable) {
+    EXPECT_EQ(EditorBridge_RegisterMainThread(), 1);
+    RuntimeResult result = {};
+    EngineHostHandle host = EngineHost_Create(&result);
+    ASSERT_NE(host, nullptr);
+    SetFailureFlag("EDITOR_BRIDGE_FAIL_GRAPHICS_TEARDOWN", true);
+    EXPECT_EQ(EngineHost_Shutdown(host, &result), -1);
+    EXPECT_EQ(result.status, ENGINE_HOST_STATUS_SHUTDOWN_FAILED);
+
+    int32_t emergencyRequested = 0;
+    int32_t emergencyCompleted = 0;
+    int32_t graphicsTeardownAttempted = 0;
+    int32_t graphicsTeardownSucceeded = 0;
+    int32_t lifecycleTimedOut = 0;
+    EXPECT_EQ(EngineHost_GetTeardownState(host,
+                                          &emergencyRequested,
+                                          &emergencyCompleted,
+                                          &graphicsTeardownAttempted,
+                                          &graphicsTeardownSucceeded,
+                                          &lifecycleTimedOut), 0);
+    EXPECT_EQ(graphicsTeardownAttempted, 1);
+    EXPECT_EQ(graphicsTeardownSucceeded, 0);
+    int32_t graphicsReady = 0;
+    int32_t graphicsCurrent = 0;
+    EXPECT_EQ(EngineHost_GetGraphicsState(host,
+                                          &graphicsReady,
+                                          &graphicsCurrent), -1);
+    SetFailureFlag("EDITOR_BRIDGE_FAIL_GRAPHICS_TEARDOWN", false);
+    EngineHost_Destroy(host);
+}
+
+TEST(EngineHostAbiTest, CreationThreadContract) {
+    EXPECT_EQ(EditorBridge_RegisterMainThread(), 1);
+    EXPECT_EQ(EngineHost_GetApiVersion(), ENGINE_HOST_ABI_VERSION);
+    RuntimeResult result = {};
+    EngineHostHandle host = nullptr;
+    std::thread worker([&]() {
+        host = EngineHost_Create(&result);
+    });
+    worker.join();
+    EXPECT_EQ(host, nullptr);
+    EXPECT_EQ(result.status, ENGINE_HOST_STATUS_WRONG_THREAD);
+    EXPECT_EQ(result.stage, ENGINE_HOST_STAGE_PLATFORM);
+}
+
+TEST(EngineHostAbiTest, LegacyCreationRequiresRegisteredMainThread) {
+    EXPECT_EQ(EditorBridge_RegisterMainThread(), 1);
+    EditorSessionHandle session = nullptr;
+    std::thread worker([&]() {
+        session = EditorSession_Create();
+    });
+    worker.join();
+    EXPECT_EQ(session, nullptr);
+}
+
+TEST(EngineHostAbiTest, RuntimeSeamProofThreeCycles) {
+    ASSERT_EQ(EditorBridge_RegisterMainThread(), 1);
+    int32_t baselineUsers = 0;
+    int32_t baselineInitCount = 0;
+    int32_t baselineTerminateCount = 0;
+    ASSERT_EQ(EngineHost_GetGlfwLifetimeState(&baselineUsers,
+                                              &baselineInitCount,
+                                              &baselineTerminateCount), 0);
+
+    for (int cycle = 0; cycle < 3; ++cycle) {
+        RuntimeResult result = {};
+        EngineHostHandle host = EngineHost_Create(&result);
+        ASSERT_NE(host, nullptr) << "cycle=" << cycle;
+        EXPECT_EQ(result.status, ENGINE_HOST_STATUS_SUCCESS);
+
+        int32_t applicationReady = 0;
+        int32_t fboReady = 0;
+        int32_t sessionAttached = 0;
+        int32_t readbackVerified = 0;
+        uint32_t fboId = 0;
+        uint32_t fboWidth = 0;
+        uint32_t fboHeight = 0;
+        uint64_t frameCount = 0;
+        uint64_t tickCount = 0;
+        ASSERT_EQ(EngineHost_GetRuntimeProofState(host,
+                                                  &applicationReady,
+                                                  &fboReady,
+                                                  &sessionAttached,
+                                                  &readbackVerified,
+                                                  &fboId,
+                                                  &fboWidth,
+                                                  &fboHeight,
+                                                  &frameCount,
+                                                  &tickCount), 0);
+        EXPECT_EQ(applicationReady, 1);
+        EXPECT_EQ(fboReady, 1);
+        EXPECT_EQ(sessionAttached, 1);
+        EXPECT_EQ(readbackVerified, 0);
+        EXPECT_NE(fboId, 0u);
+        EXPECT_EQ(fboWidth, 64u);
+        EXPECT_EQ(fboHeight, 64u);
+        int32_t applicationPresent = 0;
+        int32_t timeInitialized = 0;
+        int32_t sceneInitialized = 0;
+        int32_t jobSystemPresent = 0;
+        int32_t resourceManagerPresent = 0;
+        int32_t fileWatcherPresent = 0;
+        ASSERT_EQ(EngineHost_GetGlobalProofState(host,
+                                                &applicationPresent,
+                                                &timeInitialized,
+                                                &sceneInitialized,
+                                                &jobSystemPresent,
+                                                &resourceManagerPresent,
+                                                &fileWatcherPresent), 0);
+        EXPECT_EQ(applicationPresent, 1);
+        EXPECT_EQ(timeInitialized, 1);
+        EXPECT_EQ(sceneInitialized, 0);
+        EXPECT_EQ(jobSystemPresent, 0);
+        EXPECT_EQ(resourceManagerPresent, 0);
+        EXPECT_EQ(fileWatcherPresent, 0);
+
+        ASSERT_EQ(EngineHost_OpenProject(host,
+                                         "assets/gp01/manifest.json",
+                                         "assets/gp01/Main.scene",
+                                         &result), 0)
+            << "cycle=" << cycle;
+        ASSERT_EQ(EngineHost_Play(host, -1, &result), 0)
+            << "cycle=" << cycle;
+        for (uint64_t frame = 1; frame <= 3; ++frame) {
+            ASSERT_EQ(EngineHost_PumpOneFrame(host, 0.016f, &result), 0);
+            EXPECT_EQ(result.frame_id, frame);
+            EXPECT_EQ(result.status, ENGINE_HOST_STATUS_SUCCESS);
+        }
+        ASSERT_EQ(EngineHost_GetRuntimeProofState(host,
+                                                  &applicationReady,
+                                                  &fboReady,
+                                                  &sessionAttached,
+                                                  &readbackVerified,
+                                                  &fboId,
+                                                  &fboWidth,
+                                                  &fboHeight,
+                                                  &frameCount,
+                                                  &tickCount), 0);
+        EXPECT_EQ(readbackVerified, 1);
+        EXPECT_EQ(frameCount, 3u);
+        EXPECT_EQ(tickCount, 3u);
+        EXPECT_EQ(EngineHost_Stop(host, &result), 0);
+        EXPECT_EQ(EngineHost_CloseProject(host, &result), 0);
+        EXPECT_EQ(sessionAttached, 1);
+        ASSERT_EQ(EngineHost_GetRuntimeProofState(host,
+                                                  &applicationReady,
+                                                  &fboReady,
+                                                  &sessionAttached,
+                                                  &readbackVerified,
+                                                  &fboId,
+                                                  &fboWidth,
+                                                  &fboHeight,
+                                                  &frameCount,
+                                                  &tickCount), 0);
+        EXPECT_EQ(applicationReady, 1);
+        EXPECT_EQ(fboReady, 1);
+        EXPECT_EQ(sessionAttached, 0);
+        EXPECT_EQ(EngineHost_Shutdown(host, &result), 0);
+        EXPECT_EQ(result.status, ENGINE_HOST_STATUS_SHUTDOWN_COMPLETE);
+        EXPECT_EQ(EngineHost_GetRuntimeProofState(host,
+                                                  &applicationReady,
+                                                  &fboReady,
+                                                  &sessionAttached,
+                                                  &readbackVerified,
+                                                  &fboId,
+                                                  &fboWidth,
+                                                  &fboHeight,
+                                                  &frameCount,
+                                                  &tickCount), 0);
+        EXPECT_EQ(applicationReady, 0);
+        EXPECT_EQ(fboReady, 0);
+        EXPECT_EQ(sessionAttached, 0);
+        EXPECT_EQ(fboId, 0u);
+        ASSERT_EQ(EngineHost_GetGlobalProofState(host,
+                                                &applicationPresent,
+                                                &timeInitialized,
+                                                &sceneInitialized,
+                                                &jobSystemPresent,
+                                                &resourceManagerPresent,
+                                                &fileWatcherPresent), 0);
+        EXPECT_EQ(applicationPresent, 0);
+        EXPECT_EQ(timeInitialized, 0);
+        EXPECT_EQ(sceneInitialized, 0);
+        EXPECT_EQ(jobSystemPresent, 0);
+        EXPECT_EQ(resourceManagerPresent, 0);
+        EXPECT_EQ(fileWatcherPresent, 0);
+        EngineHost_Destroy(host);
+
+        int32_t users = 0;
+        int32_t initCount = 0;
+        int32_t terminateCount = 0;
+        ASSERT_EQ(EngineHost_GetGlfwLifetimeState(&users,
+                                                  &initCount,
+                                                  &terminateCount), 0);
+        EXPECT_EQ(users, baselineUsers);
+    }
+}
+
+TEST(EngineHostAbiTest, NullContracts) {
+    EXPECT_EQ(EngineHost_Create(nullptr), nullptr);
+    RuntimeResult result = {};
+    EXPECT_EQ(EngineHost_Shutdown(nullptr, &result), -1);
+    EXPECT_EQ(result.status, ENGINE_HOST_STATUS_INVALID_STATE);
+    EXPECT_EQ(EngineHost_Shutdown(nullptr, nullptr), -1);
+    EngineHost_Destroy(nullptr);
 }
 
 TEST_F(EditorBridgeTest, OpenProjectRoundTrip) {
@@ -551,9 +1092,14 @@ TEST_F(EditorBridgeTest, DirtyStateContract) {
     EXPECT_EQ(EditorSession_IsDirty(m_Session), 1);   // Edit -> Dirty
 
     // Save 会写回磁盘（因此这里必须真实保存再恢复，保证后续用例基线干净）
-    EXPECT_EQ(EditorSession_SaveProject(m_Session), 1);
-    EXPECT_EQ(EditorSession_IsDirty(m_Session), 0);   // Save -> Clean
-}
+        EXPECT_EQ(EditorSession_SaveProject(m_Session), 1);
+        EXPECT_EQ(EditorSession_IsDirty(m_Session), 0);   // Save -> Clean
+        // HRC-3 P1.1 / B2-L4：与本文件其它所有 MakeScratchFacing() 调用点一致地恢复 CWD。
+        // 本用例此前**只**取 oldcwd 而从不恢复，导致进程 CWD 泄漏到 kScratchDir，
+        // 之后所有使用相对路径 assets/gp01/... 的用例都在 scratch 副本里解析资产。
+        (void)oldcwd;
+        std::filesystem::current_path(oldcwd);
+    }
 
 // ── Phase 3-D (P3-D)：Runtime Play / Reload(_PERSIST) / Stop / 错误恢复 ──
 
@@ -592,6 +1138,11 @@ TEST_F(EditorBridgeTest, RuntimePlayReloadPersistStop) {
 
     EXPECT_EQ(EditorSession_Play(m_Session, probeIdx), 1);
     EXPECT_EQ(EditorSession_IsPlaying(m_Session), 1);
+    EditorSessionRuntimeStats stats = {};
+    EXPECT_EQ(EditorSession_GetRuntimeStats(m_Session, &stats), 1);
+    EXPECT_EQ(stats.playing, 1);
+    EXPECT_EQ(stats.script_valid, 1);
+    EXPECT_EQ(stats.stop_count, 0u);
     EXPECT_EQ(EditorSession_RuntimePersistInt(m_Session, "n", 0), 1)
         << "fresh play: _PERSIST.n must be 1";
 
@@ -604,6 +1155,10 @@ TEST_F(EditorBridgeTest, RuntimePlayReloadPersistStop) {
     // Stop → 回编辑态
     EditorSession_Stop(m_Session);
     EXPECT_EQ(EditorSession_IsPlaying(m_Session), 0);
+    EXPECT_EQ(EditorSession_GetRuntimeStats(m_Session, &stats), 1);
+    EXPECT_EQ(stats.playing, 0);
+    EXPECT_EQ(stats.stop_count, 1u);
+    EXPECT_EQ(stats.hud_dirty, 0);
 
     (void)oldcwd;
     std::filesystem::current_path(oldcwd);
@@ -612,6 +1167,15 @@ TEST_F(EditorBridgeTest, RuntimePlayReloadPersistStop) {
 TEST_F(EditorBridgeTest, RuntimePlayDirectorAndTick) {
     const std::string oldcwd = MakeScratchFacing();
     ASSERT_EQ(EditorSession_OpenProject(m_Session, kManifest, kScene), 1);
+
+    SetFailureFlag("EDITOR_BRIDGE_FAIL_PLAY_BIND", true);
+    EXPECT_EQ(EditorSession_Play(m_Session, -1), 0);
+    SetFailureFlag("EDITOR_BRIDGE_FAIL_PLAY_BIND", false);
+    EditorSessionRuntimeStats rollbackStats = {};
+    EXPECT_EQ(EditorSession_GetRuntimeStats(m_Session, &rollbackStats), 1);
+    EXPECT_EQ(rollbackStats.playing, 0);
+    EXPECT_EQ(rollbackStats.script_valid, 0);
+    EXPECT_EQ(rollbackStats.hud_dirty, 0);
 
     // assetIndex<0 = 项目 director（场景首个 scriptGuid → game.lua），应可跑
     EXPECT_EQ(EditorSession_Play(m_Session, -1), 1);
@@ -647,6 +1211,19 @@ TEST_F(EditorBridgeTest, RuntimeLuaErrorRecovery) {
     EXPECT_GT(EditorSession_GetRuntimeError(m_Session, err, sizeof(err)), 0);
     EXPECT_GT(std::strlen(err), 0u) << "Lua syntax error must be surfaced";
 
+    WriteScratchScript("assets/gp01/create_fail.lua",
+        "function OnCreate() error('create failure') end\n");
+    const int32_t createFailIdx = EditorSession_ImportAsset(
+        m_Session, "assets/gp01/create_fail.lua", 1);
+    ASSERT_GE(createFailIdx, 0);
+    EXPECT_EQ(EditorSession_Play(m_Session, createFailIdx), 0);
+    EXPECT_EQ(EditorSession_IsPlaying(m_Session), 0);
+    EditorSessionRuntimeStats failedStats = {};
+    EXPECT_EQ(EditorSession_GetRuntimeStats(m_Session, &failedStats), 1);
+    EXPECT_EQ(failedStats.script_valid, 0);
+    EXPECT_EQ(failedStats.hud_dirty, 0);
+    EXPECT_EQ(failedStats.stop_count, 0u);
+
     // 修复后 Play 恢复
     WriteScratchScript("assets/gp01/broken.lua",
         "_PERSIST = _PERSIST or {}\nfunction OnUpdate(dt) end\n");
@@ -666,6 +1243,15 @@ TEST_F(EditorBridgeTest, RuntimeLuaErrorRecovery) {
         "_PERSIST = _PERSIST or {}\nfunction OnUpdate(dt) end\n");
     EXPECT_EQ(EditorSession_Reload(m_Session), 1);
     EXPECT_EQ(EditorSession_IsPlaying(m_Session), 1);
+
+    WriteScratchScript("assets/gp01/broken.lua",
+        "function OnCreate() error('reload create failure') end\n");
+    EXPECT_EQ(EditorSession_Reload(m_Session), 0);
+    EXPECT_EQ(EditorSession_IsPlaying(m_Session), 0);
+    EXPECT_EQ(EditorSession_GetRuntimeStats(m_Session, &failedStats), 1);
+    EXPECT_EQ(failedStats.script_valid, 0);
+    EXPECT_EQ(failedStats.hud_dirty, 0);
+    EXPECT_EQ(failedStats.stop_count, 1u);
 
     EditorSession_Stop(m_Session);
     EXPECT_EQ(EditorSession_IsPlaying(m_Session), 0);
@@ -1137,6 +1723,288 @@ TEST_F(EditorBridgeTest, F2ColliderNegativePaths) {
 
     (void)oldcwd;
     std::filesystem::current_path(oldcwd);
-}
+    }
+
+    // ================================================================
+    // HRC-3 P1（V1-a）：production scene render 的 native contract test
+    //
+    // 证明两件事（缺一不可）：
+    //   1. production render 路径**真的执行了**，且画的是 session 的真实 renderable；
+    //   2. presentation target 的像素**确定性地**不同于 clear-only 帧。
+    //
+    // 语义纪律（见 A3→HRC-3 契约）：
+    // - "像素 ≠ clear color" 只有在**前置条件成立**时才是场景内容证据：fixture 必须含
+    //   至少一个真实 SpriteComponent，且 production render 是唯一能产出该帧的路径。
+    //   前置不成立时报 "insufficient scene content" 失败，**不制造通过**。
+    // - 64×64 探针 FBO（G2P-01）与 presentation target 完全独立，本测试不碰探针语义。
+    // ================================================================
+    // HRC-3 P1：production render · 验收（**已激活**，P1 CLOSED）
+    // 历史：B1 为"合法 draw 却不产生任何片元"，根因是 presentation FBO 的
+    // Clear() 内部 Unbind 导致渲染画进默认帧缓冲；B2 为跨 host 拆除顺序 +
+    // DirtyStateContract 的 CWD 泄漏（测试隔离缺陷）。二者均已修复并验证。
+    // 门控 kEnableProductionSceneRender 现为 true，详见
+    // docs/Editor-Avalonia-HRC3-P1-Investigation-Report.md。
+    // 不允许用 clear-only 帧 / default quad / 合成图案伪造 scene proof。
+    TEST(EngineHostAbiTest, ProductionSceneFrameRendersSessionContent) {
+        ASSERT_EQ(EditorBridge_RegisterMainThread(), 1);
+        auto result = RuntimeResult{};
+        EngineHostHandle handle = EngineHost_Create(&result);
+        ASSERT_NE(handle, nullptr);
+        auto* host = static_cast<editor_bridge::EngineHost*>(handle);
+        // RuntimeResult 不带诊断字符串（诊断走 EngineHost_GetLastDiagnostic 独立缓冲）。
+        char diagnostic[256] = {};
+        const auto lastDiagnostic = [&]() {
+            EngineHost_GetLastDiagnostic(handle, diagnostic, sizeof(diagnostic));
+            return std::string(diagnostic);
+        };
+
+        // presentation target 的尺寸来自 capi.h 单一来源（D4 已后置 ⇒ 固定尺寸）。
+        EXPECT_EQ(host->PresentationTargetWidth(), ENGINE_HOST_PRESENTATION_WIDTH);
+        EXPECT_EQ(host->PresentationTargetHeight(), ENGINE_HOST_PRESENTATION_HEIGHT);
+
+        // 未打开 project 时不渲染任何内容（不是失败，也不是"渲染了空帧"）。
+        EXPECT_EQ(host->LastProductionRenderableCount(), 0u);
+
+        ASSERT_EQ(EngineHost_OpenProject(handle,
+                                         "assets/gp01/manifest.json",
+                                         "assets/gp01/Main.scene",
+                                         &result), 0)
+            << "gp01 open failed: " << lastDiagnostic();
+        ASSERT_EQ(EngineHost_PumpOneFrame(handle, 0.016f, &result), 0)
+            << "first frame failed: " << lastDiagnostic();
+    // HRC-3 P1（激活时修正的用例期望缺陷）：本用例不进入 play，按 HRC-2 冻结的 frame 契约，
+    // 帧状态是 SKIPPED_NOT_PLAYING（1）而不是 SUCCESS（0）——两者都是**非失败**状态。
+    // 原断言 `== SUCCESS` 把"未在播放"误当成失败。此处只断言"不是失败"，
+    // 不改动 HRC-2 的状态语义；"渲染未退化为 clear-only"由下面的 renderables>0 与像素断言承担。
+    EXPECT_TRUE(result.status == ENGINE_HOST_STATUS_SUCCESS ||
+                result.status == ENGINE_HOST_STATUS_SKIPPED_NOT_PLAYING)
+        << "production render must not degrade into a failure-free clear-only frame; status="
+        << result.status;
+
+        // ── 前置条件：fixture 必须真的有可渲染内容 ──
+        const uint32_t renderables = host->LastProductionRenderableCount();
+        ASSERT_GT(renderables, 0u)
+            << "insufficient scene content: gp01 produced 0 renderables, so a "
+               "pixel-difference assertion would be meaningless";
+
+        // 再 pump 一帧，让 presentation target 一定有稳定内容。
+        ASSERT_EQ(EngineHost_PumpOneFrame(handle, 0.016f, &result), 0)
+            << "second frame failed: " << lastDiagnostic();
+        EXPECT_GT(host->LastProductionRenderableCount(), 0u);
+
+        // ── 像素证据：目标帧必须不是"只有 clear color"的帧 ──
+        std::vector<uint8_t> pixels;
+        const int32_t readBytes = host->ReadPresentationPixels(pixels);
+        const size_t expectedBytes = static_cast<size_t>(host->PresentationTargetWidth()) *
+                                     static_cast<size_t>(host->PresentationTargetHeight()) * 4u;
+        ASSERT_EQ(static_cast<size_t>(readBytes), expectedBytes)
+            << "presentation readback returned " << readBytes << " bytes (expected "
+            << expectedBytes << ")";
+        ASSERT_FALSE(pixels.empty());
+
+        // production render 之前我们把 target 清成 (0.05, 0.05, 0.07, 1.0)。
+        // 统计"既不是 clear color 也不是纯黑"的像素数量：真实 sprite 帧必须有。
+        const uint8_t clearR = 13, clearG = 13, clearB = 18;   // 0.05/0.05/0.07 → 13/13/18
+        size_t contentPixels = 0;
+        std::map<uint32_t, size_t> histogram;   // 颜色 → 像素数（诊断用）
+        for (size_t i = 0; i + 3 < pixels.size(); i += 4) {
+            const int r = pixels[i], g = pixels[i + 1], b = pixels[i + 2];
+            const uint32_t key = (static_cast<uint32_t>(r) << 16) |
+                                 (static_cast<uint32_t>(g) << 8) |
+                                 static_cast<uint32_t>(b);
+            ++histogram[key];
+            const bool isClear = std::abs(r - clearR) <= 2 && std::abs(g - clearG) <= 2 &&
+                                 std::abs(b - clearB) <= 2;
+            const bool isBlack = r <= 2 && g <= 2 && b <= 2;
+            if (!isClear && !isBlack) ++contentPixels;
+        }
+        // 诊断：把出现最多的几种颜色写进失败信息，避免"0 像素"无从判断。
+        std::string histogramText;
+        {
+            std::vector<std::pair<size_t, uint32_t>> top;   // (count, color)
+            for (const auto& entry : histogram) top.emplace_back(entry.second, entry.first);
+            std::sort(top.begin(), top.end(), [](const auto& a, const auto& b) {
+                return a.first > b.first;
+            });
+            for (size_t i = 0; i < top.size() && i < 6; ++i) {
+                char buf[16];
+                std::snprintf(buf, sizeof(buf), "%06X", top[i].second);
+                histogramText += std::string(" #") + buf + "=" + std::to_string(top[i].first);
+            }
+        }
+        // 阈值取"确定但不为零"：清屏帧恒为 0，任何真实绘制都远大于此。
+        EXPECT_GT(contentPixels, static_cast<size_t>(1000))
+            << "presentation frame carries no scene content (" << contentPixels
+            << " non-background pixels) — clear-only success is not acceptable (P1-H5). "
+            << "renderables=" << renderables << " top colors:" << histogramText;
+
+        // determinism：同一状态再读一次，内容像素数必须完全一致（非 flaky）。
+        std::vector<uint8_t> pixelsAgain;
+        ASSERT_GT(host->ReadPresentationPixels(pixelsAgain), 0);
+        EXPECT_EQ(pixelsAgain, pixels) << "presentation readback is not deterministic";
+
+        EngineHost_Destroy(handle);
+    }
+
+    // ================================================================
+    // HRC-3 P2：Atomic Frame Fetch / ABI v1.2（native contract 层）
+    //
+    // 分层：本文件只证明 **native** 契约。
+    // managed mirror / viewport UI gate 属于后续层，不在此混合。
+    // ================================================================
+
+    TEST(EngineHostAbiTest, P2AbiVersionIncrementIsAdditiveOnly) {
+        // v1.1 -> v1.2：只允许新增一个 Fetch op；RuntimeResult 仍 76B、结构不变。
+        EXPECT_EQ(ENGINE_HOST_ABI_VERSION, (1 << 16) | 3);
+        EXPECT_EQ(ENGINE_HOST_OP_GET_PRESENTATION_FRAME, 28);
+        EXPECT_EQ(ENGINE_HOST_OP_PICK, 29);
+        EXPECT_EQ(ENGINE_HOST_OP_COUNT, 30);
+        // 既有 op 编号一个都不能动
+        EXPECT_EQ(ENGINE_HOST_OP_GET_ENTITY_POSITION, 27);
+        EXPECT_EQ(ENGINE_HOST_OP_ASSIGN_SPRITE, 26);
+        // 既有 status 取值不变，新值是追加
+        EXPECT_EQ(ENGINE_HOST_STATUS_EDIT_ACCEPTED, 10);
+        EXPECT_EQ(ENGINE_HOST_STATUS_NO_NEW_FRAME, 11);
+        EXPECT_EQ(ENGINE_HOST_STATUS_PICK_BUSY, 12);
+        // RuntimeResult 仍是 76B（ABI increment 不得改结构体）
+        EXPECT_EQ(sizeof(RuntimeResult), 76u);
+        // 静态容量：16B header + 800*600*4
+        EXPECT_EQ(ENGINE_HOST_FRAME_PACKET_HEADER_BYTES, 16);
+        EXPECT_EQ(ENGINE_HOST_FRAME_PACKET_BYTES,
+                  16 + ENGINE_HOST_PRESENTATION_WIDTH * ENGINE_HOST_PRESENTATION_HEIGHT * 4);
+    }
+
+    TEST(EngineHostAbiTest, P2FrameFetchIsAtomicAndSignalsNoNewFrame) {
+        ASSERT_EQ(EditorBridge_RegisterMainThread(), 1);
+        auto result = RuntimeResult{};
+        EngineHostHandle handle = EngineHost_Create(&result);
+        ASSERT_NE(handle, nullptr);
+
+        // -- Fetch-only 边界：Dispatch 必须拒绝 --
+        {
+            auto bad = RuntimeResult{};
+            EXPECT_EQ(EngineHost_Dispatch(handle, ENGINE_HOST_OP_GET_PRESENTATION_FRAME, 0, 0,
+                                           nullptr, nullptr, nullptr, nullptr, &bad),
+                      -1);
+            EXPECT_EQ(bad.status, ENGINE_HOST_STATUS_INVALID_STATE);
+        }
+
+        // -- 未开项目（因此还没有任何帧）：同样必须是明确的"没有新帧"，而不是失败，
+        //    而且一个字节都不能写。fetch 本身不是错误，只是此刻不存在可交出的新帧。
+        {
+            std::vector<uint8_t> noFrame(ENGINE_HOST_FRAME_PACKET_BYTES, 0xCD);
+            auto r = RuntimeResult{};
+            const int32_t rc = EngineHost_Fetch(handle, ENGINE_HOST_OP_GET_PRESENTATION_FRAME,
+                                                0, nullptr, nullptr, nullptr,
+                                                noFrame.data(),
+                                                static_cast<int32_t>(noFrame.size()), &r);
+            EXPECT_EQ(rc, 0);
+            EXPECT_EQ(r.status, ENGINE_HOST_STATUS_NO_NEW_FRAME);
+            for (size_t i = 0; i < noFrame.size(); ++i) {
+                ASSERT_EQ(noFrame[i], 0xCD) << "no frame yet must not write packet byte " << i;
+            }
+        }
+
+        ASSERT_EQ(EngineHost_OpenProject(handle, "assets/gp01/manifest.json",
+                                         "assets/gp01/Main.scene", &result), 0);
+
+        // -- 开项目但还没有任何帧：明确"没有新帧"，且不写任何字节 --
+        std::vector<uint8_t> packet(ENGINE_HOST_FRAME_PACKET_BYTES, 0xCD);
+        {
+            auto r = RuntimeResult{};
+            const int32_t rc = EngineHost_Fetch(handle, ENGINE_HOST_OP_GET_PRESENTATION_FRAME,
+                                                0, nullptr, nullptr, nullptr,
+                                                packet.data(),
+                                                static_cast<int32_t>(packet.size()), &r);
+            EXPECT_EQ(rc, 0);
+            EXPECT_EQ(r.status, ENGINE_HOST_STATUS_NO_NEW_FRAME);
+            for (size_t i = 0; i < packet.size(); ++i) {
+                ASSERT_EQ(packet[i], 0xCD) << "no-new-frame must not write packet byte " << i;
+            }
+        }
+
+        // -- 容量不足必须被拒 --
+        {
+            std::vector<uint8_t> tiny(ENGINE_HOST_FRAME_PACKET_BYTES - 1);
+            auto r = RuntimeResult{};
+            EXPECT_EQ(EngineHost_Fetch(handle, ENGINE_HOST_OP_GET_PRESENTATION_FRAME,
+                                       0, nullptr, nullptr, nullptr,
+                                       tiny.data(), static_cast<int32_t>(tiny.size()), &r),
+                      -1);
+            EXPECT_EQ(r.status, ENGINE_HOST_STATUS_INVALID_STATE);
+        }
+
+        // -- 泵一帧后：有新帧，packet 原子取到 frame_id + 像素 --
+        auto frameResult = RuntimeResult{};
+        ASSERT_EQ(EngineHost_PumpOneFrame(handle, 0.016f, &frameResult), 0);
+        uint64_t firstFrameId = 0;
+        {
+            std::fill(packet.begin(), packet.end(), 0xCD);
+            auto r = RuntimeResult{};
+            const int32_t rc = EngineHost_Fetch(handle, ENGINE_HOST_OP_GET_PRESENTATION_FRAME,
+                                                0, nullptr, nullptr, nullptr,
+                                                packet.data(),
+                                                static_cast<int32_t>(packet.size()), &r);
+            ASSERT_EQ(rc, ENGINE_HOST_FRAME_PACKET_BYTES);
+            ASSERT_EQ(r.status, ENGINE_HOST_STATUS_SUCCESS);
+
+            int32_t w = 0, h = 0;
+            uint64_t frameId = 0;
+            std::memcpy(&w, packet.data() + 0, sizeof(int32_t));
+            std::memcpy(&h, packet.data() + 4, sizeof(int32_t));
+            std::memcpy(&frameId, packet.data() + 8, sizeof(uint64_t));
+            EXPECT_EQ(w, ENGINE_HOST_PRESENTATION_WIDTH);
+            EXPECT_EQ(h, ENGINE_HOST_PRESENTATION_HEIGHT);
+            EXPECT_GT(frameId, 0u) << "frame_id must correspond to a completed frame";
+            // 原子性：packet 的 frame_id 必须等于本次 runtime 记录的 frame_id
+            EXPECT_EQ(frameId, frameResult.frame_id);
+            firstFrameId = frameId;
+
+            // 像素必须是真的 scene 内容（P1 已证明的 800x600 presentation FBO）
+            int32_t nonClear = 0;
+            for (size_t i = ENGINE_HOST_FRAME_PACKET_HEADER_BYTES; i + 3 < packet.size(); i += 4) {
+                const int rr = packet[i], gg = packet[i + 1], bb = packet[i + 2];
+                const bool isClear = std::abs(rr - 13) <= 2 && std::abs(gg - 13) <= 2 &&
+                                     std::abs(bb - 18) <= 2;
+                if (!isClear) ++nonClear;
+            }
+            EXPECT_GT(nonClear, 0) << "frame packet must carry real rendered scene content";
+        }
+
+        // -- 不再泵帧：明确"没有新帧"，不静默重发旧像素 --
+        {
+            std::fill(packet.begin(), packet.end(), 0xCD);
+            auto r = RuntimeResult{};
+            const int32_t rc = EngineHost_Fetch(handle, ENGINE_HOST_OP_GET_PRESENTATION_FRAME,
+                                                0, nullptr, nullptr, nullptr,
+                                                packet.data(),
+                                                static_cast<int32_t>(packet.size()), &r);
+            EXPECT_EQ(rc, 0);
+            EXPECT_EQ(r.status, ENGINE_HOST_STATUS_NO_NEW_FRAME);
+            for (size_t i = 0; i < packet.size(); ++i) {
+                ASSERT_EQ(packet[i], 0xCD) << "no-new-frame must not reuse the previous packet";
+            }
+        }
+
+        // -- 再泵一帧：又有新帧，且 frame_id 前进 --
+        {
+            auto fr2 = RuntimeResult{};
+            ASSERT_EQ(EngineHost_PumpOneFrame(handle, 0.016f, &fr2), 0);
+            std::fill(packet.begin(), packet.end(), 0xCD);
+            auto r = RuntimeResult{};
+            const int32_t rc = EngineHost_Fetch(handle, ENGINE_HOST_OP_GET_PRESENTATION_FRAME,
+                                                0, nullptr, nullptr, nullptr,
+                                                packet.data(),
+                                                static_cast<int32_t>(packet.size()), &r);
+            ASSERT_EQ(rc, ENGINE_HOST_FRAME_PACKET_BYTES);
+            ASSERT_EQ(r.status, ENGINE_HOST_STATUS_SUCCESS);
+            uint64_t frameId = 0;
+            std::memcpy(&frameId, packet.data() + 8, sizeof(uint64_t));
+            EXPECT_EQ(frameId, fr2.frame_id);
+            EXPECT_GT(frameId, firstFrameId);
+        }
+
+        EngineHost_Destroy(handle);
+    }
 
 } // namespace

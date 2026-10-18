@@ -151,6 +151,8 @@ namespace Engine {
                 m_Viewport.InitResources(&app->GetFactory(),
                                           "assets/shaders/3d_lit.vert",
                                           "assets/shaders/3d_lit.frag");
+                // Phase 7: Enable FBO readback for Avalonia texture interop
+                m_Viewport.EnableReadback(true);
             }
         }
 

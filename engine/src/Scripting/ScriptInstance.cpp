@@ -40,10 +40,24 @@ bool ScriptInstance::IsValid() const {
 
 bool ScriptInstance::Initialize(const std::string& scriptPath, const Config& config) {
     Shutdown();
+    m_LastError.clear();
+    m_OnCreateCount.store(0);
+    m_OnDestroyCount.store(0);
+    m_OnDestroyCalled.store(false);
+    m_HasOnCreate = false;
+    m_HasOnUpdate = false;
+    m_HasOnFixed = false;
+    m_HasOnDestroy = false;
 
     m_Lua = std::make_unique<LuaEngine>();
     m_Lua->EnableSandbox(config.sandbox);
-    if (!m_Lua->Init()) return false;
+    if (!m_Lua->Init()) {
+        m_LastError = m_Lua->GetLastError().message;
+        if (m_LastError.empty()) m_LastError = "Lua engine initialization failed";
+        m_Lua->Shutdown();
+        m_Lua.reset();
+        return false;
+    }
 
     // S2：注册稳定 API 边界（在脚本执行前就位）—— 基础域 + gameplay 三域
     ScriptAPI::RegisterAll(*m_Lua);
@@ -54,8 +68,11 @@ bool ScriptInstance::Initialize(const std::string& scriptPath, const Config& con
 
     m_Path = scriptPath;
     if (!m_Lua->RunFile(m_Path)) {
-        s_Log.Error("Load failed: {} ({})", m_Path, m_Lua->GetLastError().message);
+        m_LastError = m_Lua->GetLastError().message;
+        s_Log.Error("Load failed: {} ({})", m_Path, m_LastError);
         m_Loaded = false;
+        m_Lua->Shutdown();
+        m_Lua.reset();
         return false;
     }
 
@@ -78,31 +95,47 @@ void ScriptInstance::Shutdown() {
     m_Lua.reset();
 }
 
-void ScriptInstance::OnCreate() {
-    if (!IsValid()) return;
+bool ScriptInstance::OnCreate() {
+    if (!IsValid()) return false;
+    if (!m_HasOnCreate) return true;
+    m_OnCreateCount.fetch_add(1);
     if (!m_Lua->CallFunctionVoid("OnCreate")) {
-        s_Log.Error("OnCreate: {}", m_Lua->GetLastError().message);
+        m_LastError = m_Lua->GetLastError().message;
+        s_Log.Error("OnCreate: {}", m_LastError);
+        return false;
     }
+    return true;
 }
 
-void ScriptInstance::OnUpdate(float dt) {
-    if (!IsValid()) return;
+bool ScriptInstance::OnUpdate(float dt) {
+    if (!IsValid()) return false;
+    if (!m_HasOnUpdate) return true;
     if (!m_Lua->CallFunctionVoidWithArg("OnUpdate", dt)) {
-        s_Log.Error("OnUpdate: {}", m_Lua->GetLastError().message);
+        m_LastError = m_Lua->GetLastError().message;
+        s_Log.Error("OnUpdate: {}", m_LastError);
+        return false;
     }
+    return true;
 }
 
-void ScriptInstance::OnFixedUpdate(float fixedDt) {
-    if (!IsValid()) return;
+bool ScriptInstance::OnFixedUpdate(float fixedDt) {
+    if (!IsValid()) return false;
+    if (!m_HasOnFixed) return true;
     if (!m_Lua->CallFunctionVoidWithArg("OnFixedUpdate", fixedDt)) {
-        s_Log.Error("OnFixedUpdate: {}", m_Lua->GetLastError().message);
+        m_LastError = m_Lua->GetLastError().message;
+        s_Log.Error("OnFixedUpdate: {}", m_LastError);
+        return false;
     }
+    return true;
 }
 
 void ScriptInstance::OnDestroy() {
     if (!m_Lua || !m_Lua->IsInitialized()) return;
+    if (m_OnDestroyCalled.exchange(true)) return;
+    if (m_HasOnDestroy) m_OnDestroyCount.fetch_add(1);
     if (!m_Lua->CallFunctionVoid("OnDestroy")) {
-        s_Log.Debug("OnDestroy: {}", m_Lua->GetLastError().message);
+        m_LastError = m_Lua->GetLastError().message;
+        s_Log.Debug("OnDestroy: {}", m_LastError);
     }
 }
 
@@ -132,7 +165,8 @@ bool ScriptInstance::Reload() {
     // ── S4 step4: 执行新代码 ──
     const bool ok = m_Lua->RunFile(m_Path);
     if (!ok) {
-        s_Log.Error("Reload failed: {} ({})", m_Path, m_Lua->GetLastError().message);
+        m_LastError = m_Lua->GetLastError().message;
+        s_Log.Error("Reload failed: {} ({})", m_Path, m_LastError);
         return false;
     }
 

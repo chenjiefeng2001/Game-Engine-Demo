@@ -132,13 +132,61 @@ add_test(NAME test_e2e COMMAND test_e2e)
 add_executable(test_bridge
     test_bridge/test_editor_capi.cpp
 )
-target_link_libraries(test_bridge PRIVATE EditorBridge GTest::gtest_main)
+target_link_libraries(test_bridge PRIVATE EditorBridge GTest::gtest_main)# HRC-3 P1：production scene render 的像素证据需要读回 presentation target。
+# P1 阶段刻意不新增 C 导出（那是 P2 的 additive Fetch op），因此该测试白色盒地
+# 包含 bridge 内部头。这**不改变 C ABI**，只是测试取证通道。
+target_include_directories(test_bridge PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/../bridge/src)
 add_test(NAME test_bridge COMMAND test_bridge)
+set_tests_properties(test_bridge PROPERTIES TIMEOUT 120)
+
+# ── HRC-3 D3：pick request/result transport contract（ABI v1.3）──
+# 刻意**独立成 target**，不并入 test_bridge：
+#   1) 这些用例会反复增删，放进 test_editor_capi.cpp（2000+ 行 P1/P2 综合证据）
+#      会让任何 block 移动都有破坏既有 evidence 的风险；
+#   2) 独立进程意味着本组用例若 abort，不会污染 test_bridge 的 44/44 信号。
+add_executable(test_pick_transport
+    test_bridge/test_pick_transport.cpp
+)
+target_link_libraries(test_pick_transport PRIVATE EditorBridge GTest::gtest_main)
+# presentation readback seam 需要 EngineHost 内部类型（与 test_bridge 同一理由：
+# 刻意只取 C++ 证据，不新增 C ABI）
+target_include_directories(test_pick_transport PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/../bridge/src)
+# D3-H3 发现的 artifact 缺陷：本 target 原本**没有**自己的 DLL staging，
+# 只能靠 test_bridge 的 POST_BUILD 副作用刷新，导致它可能加载**上一轮**的
+# EditorBridge.dll —— 而 exe 仍能正常启动、输出看似可信。
+# 与已记录的两次 stale-artifact 事件同类，因此这里自备 staging：
+# test_pick_transport.exe 依赖的必须是**同一次构建**的 EditorBridge.dll。
+add_custom_command(TARGET test_pick_transport POST_BUILD
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different
+            $<TARGET_FILE:EditorBridge> $<TARGET_FILE_DIR:test_pick_transport>)
+add_test(NAME test_pick_transport COMMAND test_pick_transport)
+set_tests_properties(test_pick_transport PROPERTIES TIMEOUT 180)
+
+# ── HRC-3 D3 Step 3.1：native known-pixel pick proof ──
+# 刻意**不**链接 EditorBridge：这是 native-only 证明，不经过 C ABI，
+# 因此 D3 的 spatial semantics 不会被 ABI 层"顺手兜住"或掩盖。
+# 链接 EngineCore 以直接使用 Application / Scene / OpenGLFramebuffer。
+add_executable(test_pick
+    test_pick/test_pick.cpp
+)
+target_link_libraries(test_pick PRIVATE EngineCore GTest::gtest_main)
+add_test(NAME test_pick COMMAND test_pick)
+# GL context 创建 + 双精灵渲染 + 逐像素 readback，比纯 CPU 测试慢
+set_tests_properties(test_pick PROPERTIES TIMEOUT 180)
+add_executable(test_hrc
+    test_hrc/test_hrc.cpp
+)
+target_link_libraries(test_hrc PRIVATE EditorBridge GTest::gtest_main)
+add_test(NAME test_hrc COMMAND test_hrc)
+set_tests_properties(test_hrc PROPERTIES TIMEOUT 120)
 if(TARGET EditorBridge AND WIN32)
     # DLL 与 exe 同目录，保证 add_test 直接可跑
     add_custom_command(TARGET test_bridge POST_BUILD
         COMMAND ${CMAKE_COMMAND} -E copy_if_different
                 $<TARGET_FILE:EditorBridge> $<TARGET_FILE_DIR:test_bridge>)
+    add_custom_command(TARGET test_hrc POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                $<TARGET_FILE:EditorBridge> $<TARGET_FILE_DIR:test_hrc>)
 endif()
 
 # ════════════════════════════════════════════════════════════════
@@ -153,7 +201,6 @@ foreach(_t IN LISTS _ctest_test_targets)
         WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}")
 endforeach()
 unset(_ctest_test_targets)
-
 
 # ── P1: Animation 子系统测试 ──
 # 依据 docs/Engine-Capability-Audit.md §4：Animation 有 58 文件 / ~13k 行，

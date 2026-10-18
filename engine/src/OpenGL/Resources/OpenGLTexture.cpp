@@ -1,5 +1,7 @@
 #include "OpenGLTexture.h"
 
+#include <GLFW/glfw3.h>
+
 #include "Engine/Core/Log.h"
 #include "stb_image.h"
 
@@ -73,7 +75,7 @@ namespace Engine {
 	}
 
 	OpenGLTexture::~OpenGLTexture() {
-		if (m_RendererID) {
+		if (m_RendererID && glfwGetCurrentContext()) {
 			m_GL.DeleteTextures(1, &m_RendererID);
 		}
 	}

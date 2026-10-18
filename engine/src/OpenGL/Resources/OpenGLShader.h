@@ -5,6 +5,7 @@
 #include "Engine/Types.h"
 #include <glad/gl.h>
 #include <string>
+#include <thread>
 #include <vector>
 
 namespace Engine {
@@ -18,8 +19,8 @@ namespace Engine {
 		// ── 旧接口 ──
 		virtual void Bind() const override;
 		virtual void Unbind() const override;
-		virtual void SetMat4(const std::string& name, const float32* data) override;
-		virtual void SetMat4Array(const std::string& name, const float32* data, int count) override;
+    virtual void SetMat4(const std::string& name, const float32* data) override;
+    virtual void SetMat4Array(const std::string& name, const float32* data, int count) override;
 		virtual void SetVec2(const std::string& name, const float32* data) override;
 		virtual void SetVec3(const std::string& name, const float32* data) override;
 		virtual void SetVec4(const std::string& name, const float32* data) override;
@@ -58,8 +59,12 @@ namespace Engine {
 		static unsigned int StageTypeToGL(ShaderStageType type);
 		static ShaderStageType GLToStageType(unsigned int glType);
 
-		GladGLContext& m_GL;
-		GLuint m_RendererID = 0;
+        GladGLContext& m_GL;
+        GLuint m_RendererID = 0;
+
+        // HRC-3 P1.1 B2：同上，析构时与"当前 context"一起做双重守卫。
+        std::thread::id m_OwnerThreadId;
+        bool IsOwnerThread() const { return m_OwnerThreadId == std::this_thread::get_id(); }
 
 		// 保存阶段描述以便热加载和查询
 		std::vector<ShaderStage> m_Stages;

@@ -7,8 +7,11 @@ add_library(EditorBridge SHARED
     src/capi.cpp
     src/EditorSession.cpp
     src/EditorSession.h
+    src/EngineHost.cpp
+    src/EngineHost.h
 )
 
 target_include_directories(EditorBridge PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
 target_compile_definitions(EditorBridge PRIVATE EDITOR_BRIDGE_EXPORTS)
-target_link_libraries(EditorBridge PRIVATE EngineCore)
+find_package(Threads REQUIRED)
+target_link_libraries(EditorBridge PRIVATE EngineCore Threads::Threads)
