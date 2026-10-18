@@ -38,9 +38,7 @@
 
 #include <cstddef>
 #include <cstdio>
-#include <filesystem>
 #include <string>
-#include <system_error>
 #include <vector>
 
 namespace Engine {
@@ -53,22 +51,6 @@ constexpr int kTargetHeight = 64;
 GladGLContext& GlOf(IRenderContext& ctx)
 {
     return static_cast<OpenGLContext&>(ctx).GetGL();
-}
-
-// 定位仓库资源根，使着色器无论进程从仓库根还是从 CMake 测试二进制目录启动都能
-// 解析（ctest 的工作目录是构建输出目录）。
-std::string ResolveShaderPath(const char* relative)
-{
-    std::error_code ec;
-    std::filesystem::path dir = std::filesystem::current_path(ec);
-    for (int i = 0; i < 8 && !dir.empty(); ++i) {
-        std::filesystem::path candidate = dir / relative;
-        if (std::filesystem::exists(candidate)) {
-            return candidate.string();
-        }
-        dir = dir.parent_path();
-    }
-    return std::string(relative);
 }
 
 // 着色器编译失败时打印 GLSL info log。生产层只记录一个 Failed 状态，因此没有
@@ -186,8 +168,8 @@ std::unique_ptr<GLSkinningPixelBackend> GLSkinningPixelBackend::Create(std::stri
 
 bool GLSkinningPixelBackend::BuildRig(Rig& rig, std::string* err)
 {
-    const std::string vertPath = ResolveShaderPath("assets/shaders/skinned_lit.vert");
-    const std::string fragPath = ResolveShaderPath("assets/shaders/skinned_lit.frag");
+    const std::string vertPath = ResolveRepoAssetPath("assets/shaders/skinned_lit.vert");
+    const std::string fragPath = ResolveRepoAssetPath("assets/shaders/skinned_lit.frag");
 
     const std::vector<SkinVertex> verts = SkinBuildQuadVertices();
     uint32_t indexCount = 0;

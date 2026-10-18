@@ -35,12 +35,31 @@
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
+#include <filesystem>
 #include <memory>
 #include <string>
+#include <system_error>
 #include <vector>
 
 namespace Engine {
 namespace Test {
+
+// 定位仓库资源根，使着色器无论进程从仓库根还是从 CMake 测试二进制目录启动都能
+// 解析（ctest 的工作目录是构建输出目录）。两个后端都要用它，所以放在共享头里
+// 而不是各写一份。
+inline std::string ResolveRepoAssetPath(const char* relative)
+{
+    std::error_code ec;
+    std::filesystem::path dir = std::filesystem::current_path(ec);
+    for (int i = 0; i < 8 && !dir.empty(); ++i) {
+        std::filesystem::path candidate = dir / relative;
+        if (std::filesystem::exists(candidate)) {
+            return candidate.string();
+        }
+        dir = dir.parent_path();
+    }
+    return std::string(relative);
+}
 
 // ── 共享顶点布局 ────────────────────────────────────────────────────────────
 // 与 assets/shaders/skinned_lit.vert 的 location 0..5 一一对应：

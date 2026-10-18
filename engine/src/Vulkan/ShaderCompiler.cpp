@@ -275,6 +275,46 @@ bool ShaderRegistry::RegisterSpirv(const std::string& name, ShaderStageType stag
     return RegisterCompiled(name, stage, std::vector<uint32_t>(data, data + wordCount));
 }
 
+bool ShaderRegistry::RegisterSpirvFile(const std::string& name, ShaderStageType stage,
+                                       const std::string& spvPath)
+{
+    std::ifstream in(spvPath, std::ios::binary);
+    if (!in.is_open()) {
+        std::fprintf(stderr, "[ShaderRegistry] cannot open SPIR-V '%s'\n", spvPath.c_str());
+        return false;
+    }
+    std::stringstream ss;
+    ss << in.rdbuf();
+    const std::string bytes = ss.str();
+
+    // 长度不是 4 的整数倍说明这文件不是 SPIR-V 字流。直接按字读会读出半个字，
+    // 而 vkCreateShaderModule 随后会以难以定位的方式失败 —— 在这里就报出来。
+    if (bytes.empty() || (bytes.size() % 4u) != 0u) {
+        std::fprintf(stderr, "[ShaderRegistry] '%s' is %zu bytes: not a whole number of "
+                             "32-bit SPIR-V words\n", spvPath.c_str(), bytes.size());
+        return false;
+    }
+    // SPIR-V 魔数 0x07230203。文件存在不等于内容是 SPIR-V：这里顺手验一道，
+    // 免得一个被截断或被别的格式覆盖的 .spv 安静地变成"注册成功"。
+    const uint32_t magic = static_cast<uint32_t>(
+        static_cast<uint8_t>(bytes[0])       | (static_cast<uint8_t>(bytes[1]) << 8) |
+        (static_cast<uint8_t>(bytes[2]) << 16) | (static_cast<uint8_t>(bytes[3]) << 24));
+    if (magic != 0x07230203u) {
+        std::fprintf(stderr, "[ShaderRegistry] '%s' does not start with the SPIR-V magic "
+                             "(got 0x%08x, want 0x07230203)\n", spvPath.c_str(), magic);
+        return false;
+    }
+
+    const size_t wordCount = bytes.size() / 4u;
+    std::vector<uint32_t> words(wordCount);
+    for (size_t i = 0; i < wordCount; ++i) {
+        const uint8_t* p = reinterpret_cast<const uint8_t*>(bytes.data()) + i * 4u;
+        words[i] = static_cast<uint32_t>(p[0]) | (static_cast<uint32_t>(p[1]) << 8) |
+                   (static_cast<uint32_t>(p[2]) << 16) | (static_cast<uint32_t>(p[3]) << 24);
+    }
+    return RegisterCompiled(name, stage, std::move(words));
+}
+
 const std::vector<uint32_t>* ShaderRegistry::Find(StringID id, ShaderStageType stage) const
 {
     Key key{ id.Value(), static_cast<uint8_t>(stage) };
