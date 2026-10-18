@@ -154,7 +154,7 @@ namespace Engine {
         }
 
         // ── 4. Alt + 左键（轨道旋转 Orbit） ──
-        if (altHeld && ImGui::IsMouseDown(ImGuiMouseButton_Left)) {
+        if (altHeld && leftDown) {
             m_Yaw += deltaX * 0.3f;
             m_Pitch -= deltaY * 0.3f;
             m_Pitch = std::clamp(m_Pitch, -89.0f, 89.0f);
