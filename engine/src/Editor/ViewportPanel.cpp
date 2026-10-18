@@ -572,11 +572,16 @@ void ViewportPanel::DrawOverlay() {
     const float spacing = ImGui::GetStyle().ItemSpacing.x;
     float content = 8.0f * 2.0f;                          // WindowPadding
     const int btnCount = 5 + 1 + 1 + 1;                   // 工具×5 + 空间切换 + 磁铁 + 网格
+    // Snap 数值框**恒定计入**，不按 m_SnapEnabled 条件化：宽度在 BeginChild 之前
+    // 计算，而磁铁点击发生在其之后，按当前值预留会让宽度在开启 snap 的那一帧
+    // 少算约 48px 并随后跳变。恒定预留换来宽度与帧无关。
     content += static_cast<float>(btnCount) * btnW
-             + (m_SnapEnabled ? 48.0f + spacing : 0.0f)   // Snap 数值框
+             + 48.0f + spacing                             // Snap 数值框
              + sepW * 3.0f + spacing * 9.0f;
     const float maxW = (m_ViewportBounds[1].x - m_ViewportBounds[0].x) - 20.0f;
-    const float childW = std::min(std::max(content, 200.0f), std::max(maxW, 200.0f));
+    // 上限取 max(maxW, 1) 而非 200：视口窄于约 220px 时，200px 的下限会让子窗口
+    // 宽于视口边框本身。宁可子窗口内部裁切内容，也不要让它溢出边框。
+    const float childW = std::min(std::max(content, 200.0f), std::max(maxW, 1.0f));
     if (ImGui::BeginChild("##VPToolbar", ImVec2(childW, 32), false,
                           ImGuiWindowFlags_NoScrollbar)) {
     ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0, 0, 0, 0));

@@ -238,7 +238,7 @@ P1-c 结构债维持开放（Toolbar 桥接或摘除 / 双 PIE 入口隔离 / Un
 | CAT-1 | View > Scene Panels 子菜单内 "Hierarchy (Entity Tree)" 与核心组 "Scene Hierarchy" 绑定**同一 bool** —— 同一组件出现在两个类别，开关互相干扰且语义重复 | 混类 | ✅ 摘除子菜单内副本（MainMenuBar.cpp DrawViewMenu） |
 | CAT-2 | Tools 菜单把 Dear ImGui 内置调试三件套（Demo/Metrics/StackTool）排在内容创作编辑器之前，两类别仅一条分隔线且顺序反直觉 | 混类(轻) | ✅ 平铺分组重排：创作工具在前、ImGui 调试组隔离置后；**未引入子菜单层级** |
 | CAT-3 | GP01 Production 窗口单行混排三类控件：工程 IO（Open/Save）+ 播放控制（Play/Stop/Reload）+ 实体创建（+ Entity） | 混类 | ✅ 竖分隔线分三组；提示文案拆为 edit/play 两行各归其类（GP01ProductionSession.h DrawProductionWindow） |
-| OBS-T1 | Toolbar W/E/R 全局键拦截（Toolbar.cpp:38-42）在 Play 态与游戏 WASD 输入语义冲突（当前回调为空无可见影响） | 登记 | P1-c Toolbar 桥接/摘除决策时强制一并处理 |
+| OBS-T1 | Toolbar W/E/R 全局键拦截（Toolbar.cpp:38-42）在 Play 态与游戏 WASD 输入语义冲突（当前回调为空无可见影响） | 登记 | ✅ 已消解：随 TLB-1 清理摘除。Toolbar.cpp 现有 **零** `ImGuiKey_*` / `IsKeyPressed` / 快捷键引用（原 38-42 行现为「组2：渲染模式」），冲突源不复存在 |
 
 ### 7.2 准则②菜单深度
 
@@ -253,9 +253,9 @@ Add...；AssetBrowser 右键 Create）—— 合规，无需收敛。本轮全�
 | FONT-1 | `IconsFontAwesome6.h`（自定义 70 宏子集）与真实 FA7 Solid 字体脱节：**4 码位不在 cmap**（ROTATE_LEFT f3e2 / ROTATE_RIGHT f3e3 / MAP_LOCATION_DOT f620 / WATER f777）；**2 个字节↔注释不符**（ARROWS 字节实为 U+F071=警告三角，注释写 f07b=folder；WATER 字节 f777 注释写 f77b） | Toolbar/Viewport 浮层 Rotate 按钮、SceneManager 窗口标题、流式分组图标渲染为 "?"；**移动工具按钮显示警告三角**（图标语义错误） | ✅ 5 宏替换为经 cmap 验证的等义码位：ROTATE_LEFT→f0e2、ROTATE_RIGHT→f01e、MAP_LOCATION_DOT→f5a0、WATER→f773、ARROWS→f0b2(move)；复验 **70/70 全部存在于字体** |
 | FONT-2 | `SetScale` 运行期静默 no-op：Begin() 经 LoadFont(null) 被 `m_CjkFontAttempted` 短路，ApplyEngineStyle 也未调用 —— 字体与样式均不变，**日志却打印 "Scale set to ..."**（GP-DX-007 假成功家族第 5 例） | 缩放功能整体失效且排障被假日志误导（ImGuiTest/ImGuiDemo 宿主实际触发路径） | ✅ Begin() 帧间（NewFrame 前）`RebuildFontAtlas(newSize)` + `ApplyEngineStyle(pending)`；1.92 动态纹理系统按 WantCreate/WantDestroy 自动重建 GPU 纹理；过时的"禁用 Clear()"注释更正为官方口径（Clear 仅禁止帧中调用） |
 | POS-1 | MainMenuBar 右侧版本文本固定 `SameLine(Width−160)`，窗口偏窄时与左侧菜单重叠 | 重叠遮挡 | ✅ 实测文本宽 + 余量守卫，空间不足跳过绘制 |
-| OBS-P1 | Viewport 浮层工具条固定 400px 宽，snap 展开时内容估宽 ~360px 接近上限（窄视口折行裁切风险） | 观察 | 低危，P1-c 一并评估 |
-| OBS-P2 | StatusBar 右侧簇按硬编码 ~300px 预留，长分支名可左侵任务区 | 观察 | 低危，P1-c 一并评估 |
-| OBS-P3 | ViewportPanel 浮层水平流内用 `Separator()`（短横线）而 Toolbar 用自绘竖线 —— 分隔符语言不统一 | 观察 | 纯视觉一致性，P1-c |
+| OBS-P1 | Viewport 浮层工具条固定 400px 宽，snap 展开时内容估宽 ~360px 接近上限（窄视口折行裁切风险） | 观察 | ✅ 已修：改为按当前字体度量估算（ViewportPanel.cpp DrawOverlay 内，标注 P1-c/OBS-P1）。2026-10-18 复核并加固两点残余：① 上限不再以 200px 兜底（视口窄于 ~220px 时子窗口会宽于边框本身）；② snap 数值框宽度恒定计入，不再按 `m_SnapEnabled` 条件化（宽度在 `BeginChild` 前计算，按当帧值预留会导致开启 snap 那一帧宽度跳变） |
+| OBS-P2 | StatusBar 右侧簇按硬编码 ~300px 预留，长分支名可左侵任务区 | 观察 | ✅ 已修：StatusBar.cpp 右对齐簇改为 `ImGui::CalcTextSize` 逐段实测宽度（标注 P1-c/OBS-P2），并以 `GetCursorPosX() < rightOffset` 守卫，任务区已越过偏移点时跳过 `SameLine`，保证右侧簇不会左侵 |
+| OBS-P3 | ViewportPanel 浮层水平流内用 `Separator()`（短横线）而 Toolbar 用自绘竖线 —— 分隔符语言不统一 | 观察 | ✅ 已修：ViewportPanel.cpp 内 `VSep()` lambda 自绘竖线，与 Toolbar/GP01 的 `VerticalSeparator()` 统一（标注 OBS-P3）；浮层内已无 `Separator()` 短横线 |
 
 ### 7.4 验证记录
 
@@ -306,35 +306,38 @@ P1-c 余项（维持开放）：双 PIE 入口隔离收尾观察、UndoSystem �
 （S4b 已接线）、死代码簇清扫余量（PropertyDrawer 孤儿库处置需单独裁决
 —— 与 PluginSystem 抽屉注册子系统耦合，涉插件 API 面；
 DockspaceBuilder 经查为 Application 非 Editor 宿主在用，非孤儿）、
-§7 OBS-P1/P2/P3 低危布局项。
+§7 OBS-P1/P2/P3 低危布局项 —— **已于 2026-10-18 复核：三项在代码中均已实现**
+（ViewportPanel.cpp 的字体度量测宽与 VSep 自绘竖线、StatusBar.cpp 的逐段实测
+右对齐），故本条不再列为开放余项；OBS-T1 亦随 TLB-1 清理消解。复核同时加固了
+OBS-P1 修复内部的两处残余缺陷（200px 下限、snap 宽度帧相关跳变）。
 
 
 ---
 
-## 8.2 �����᰸���ⲿ WM_CLOSE �����ڣ�2026-08-26 ���磩
+## 8.2 �����᰸���ⲿ WM_CLOSE �����ڣ�2026-08-26 ���磩
 
-> ��8.1 ��������"����ֵ������ ~6s �ⲿ WM_CLOSE����Դδ����"��
-> 5 �����ʵ�� + Win32 ��ȡ֤������**�᰸��������ر���**��
+> ��8.1 ��������"����ֵ������ ~6s �ⲿ WM_CLOSE����Դδ����"��
+> 5 �����ʵ�� + Win32 ��ȡ֤������**�᰸��������ر���**��
 
-| ʵ�� | ��� | ���� |
+| ʵ�� | ��� | ���� |
 |------|------|------|
-| T1 WMI �ѹ��������� env�� | ~6s ��Ĭ�˳� exit=1������־ | **ASan ���� CHECK ʧ���Ի�**��interception_win.cpp:193�������ⲿ�رգ�Human-Run �� `ASAN_WIN_CONTINUE_ON_INTERCEPTION_FAILURE=1` ��Ӳǰ�� |
-| T2 WMI �ѹ��������� env�� | 15.0s �յ� WM_CLOSE | ��ʱ�����������棬��Ϊ�ر� |
-| T3 �༭�� vs charmap ���� | �༭�� 14.5s �� / charmap ��� | ��ȫ������ɨ�� |
-| T4 "Engine" ������±��ն� | ���±����� / �༭����� >95s | �ޱ���ƥ����ɨ�������رվ�Ϊ��Ϊѡ�� |
-| T5 ���˸�Ԥ 60s+372s | **ȫ�̴��**�����տ������ֶ��� X �ر� | ���� |
+| T1 WMI �ѹ��������� env�� | ~6s ��Ĭ�˳� exit=1������־ | **ASan ���� CHECK ʧ���Ի�**��interception_win.cpp:193�������ⲿ�رգ�Human-Run �� `ASAN_WIN_CONTINUE_ON_INTERCEPTION_FAILURE=1` ��Ӳǰ�� |
+| T2 WMI �ѹ��������� env�� | 15.0s �յ� WM_CLOSE | ��ʱ�����������棬��Ϊ�ر� |
+| T3 �༭�� vs charmap ���� | �༭�� 14.5s �� / charmap ��� | ��ȫ������ɨ�� |
+| T4 "Engine" ������±��ն� | ���±����� / �༭����� >95s | �ޱ���ƥ����ɨ�������رվ�Ϊ��Ϊѡ�� |
+| T5 ���˸�Ԥ 60s+372s | **ȫ�̴��**�����տ������ֶ��� X �ر� | ���� |
 
-### ȡ֤����������GlfwWindow::OnClose��
+### ȡ֤����������GlfwWindow::OnClose��
 
-CloseForensics ������ϵͳ����������б�`GetLastInputInfo`����
+CloseForensics ������ϵͳ����������б�`GetLastInputInfo`����
 
-- `lastInputAgeMs < 750` �� **HUMAN-LIKE (recent input)**���˵� X/�������رգ�
-- ��֮ �� **PROGRAMMATIC (no recent input)**�����ⲿͶ�ݣ���������
-- ʵ�⣺�������ֶ��رձ���ȷ��� `HUMAN-LIKE`��via=SendMessage��������·������fgPid=explorer.exe
+- `lastInputAgeMs < 750` �� **HUMAN-LIKE (recent input)**���˵� X/�������رգ�
+- ��֮ �� **PROGRAMMATIC (no recent input)**�����ⲿͶ�ݣ���������
+- ʵ�⣺�������ֶ��رձ���ȷ��� `HUMAN-LIKE`��via=SendMessage��������·������fgPid=explorer.exe
 
-### �þ�
+### �þ�
 
-- ��8.1 "captured twice" �����ιر��뱾�� T2/T3 һ�£�**��Ϊ������������˳�ֹرյ���**��
-  ���ϸ� session ��ʵ��ʱ�����Ǻϡ�����ֵ�����鲻���ڡ�
-- ����ð��Э�飺����ֵ���ж���"���̴�� + ��Ⱦ CPU"Ϊ׼����8 ���أ�����־ CloseForensics
-  �п���֤�ر���Դ����������ר�
+- ��8.1 "captured twice" �����ιر��뱾�� T2/T3 һ�£�**��Ϊ������������˳�ֹرյ���**��
+  ���ϸ� session ��ʵ��ʱ�����Ǻϡ�����ֵ�����鲻���ڡ�
+- ����ð��Э�飺����ֵ���ж���"���̴�� + ��Ⱦ CPU"Ϊ׼����8 ���أ�����־ CloseForensics
+  �п���֤�ر���Դ����������ר�
