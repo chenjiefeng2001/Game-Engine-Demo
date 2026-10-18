@@ -309,6 +309,23 @@ add_test(NAME test_editor_layout COMMAND test_editor_layout)
 # 运行而找不到 engine/src。ctest 里表现为「扫描为空」的假失败。
 set_tests_properties(test_editor_layout PROPERTIES WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}")
 
+# ── Avalonia 主窗口四区布局结构守卫 ──
+# 网格区域位置是声明式的（Grid.Column/Row/RowSpan/ColumnSpan），两个控件
+# 抢占同一批单元格时编译期无法发现：Avalonia 不报重叠错误，后声明者直接画在
+# 上层，被盖住的内容直接消失且无任何告警。2026-10-18 的复核就撞到了实例
+# （视口与 Inspector 都 RowSpan=3，与底部 TabControl 压掉各 220px）。
+#
+# 放在 C++ 侧而不是托管侧：dotnet restore 在部分环境不可用（NuGet 源不可达、
+# 无本地包缓存），托管侧一个断言都跑不了；而布局重叠是纯结构事实，从 XAML
+# 文本即可判定。**本 target 不验证 XAML 能否被 Avalonia 编译器接受**，
+# 那需要 dotnet build。
+add_executable(test_avalonia_layout
+    test_avalonia_layout/test_avalonia_layout.cpp
+)
+target_link_libraries(test_avalonia_layout PRIVATE EngineCore GTest::gtest_main)
+add_test(NAME test_avalonia_layout COMMAND test_avalonia_layout)
+set_tests_properties(test_avalonia_layout PROPERTIES WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}")
+
 # NOTE: this block must stay at the END of the file.
 # get_property(... DIRECTORY PROPERTY TESTS) only returns the tests
 # registered so far. Placed mid-file, later targets (test_animation /
