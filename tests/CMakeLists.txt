@@ -271,6 +271,26 @@ add_executable(test_editor_camera
 target_link_libraries(test_editor_camera PRIVATE EngineCore GTest::gtest_main)
 add_test(NAME test_editor_camera COMMAND test_editor_camera)
 
+# ── Phase 7-C: Gizmo ABI ↔ ViewportPanel state ──
+# 依据 docs/Avalonia-Phase7-Viewport-Charter.md §3.4：9 个 Gizmo ABI 此前只写
+# EditorSession 自己的成员，既不触达 ViewportPanel 也无消费者。本 target 锁住
+# 修复后的映射与状态往返。
+# 重点是 ABI 的 4 值协议（Select/Translate/Rotate/Scale）与 ViewportTool 的
+# 5 值枚举（多一个 Hand）下标不对齐 —— 直接强转会静默错位一档。
+# 刻意不构造 Application 来验证转发：那需要 GL factory + headless 初始化，
+# 成本远高于本组用例能证明的东西。
+add_executable(test_viewport_gizmo
+    test_viewport_gizmo/test_viewport_gizmo.cpp
+)
+target_link_libraries(test_viewport_gizmo PRIVATE EngineCore EditorBridge GTest::gtest_main)
+target_include_directories(test_viewport_gizmo PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/../bridge/include)
+add_test(NAME test_viewport_gizmo COMMAND test_viewport_gizmo)
+if(TARGET EditorBridge AND WIN32)
+    add_custom_command(TARGET test_viewport_gizmo POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                $<TARGET_FILE:EditorBridge> $<TARGET_FILE_DIR:test_viewport_gizmo>)
+endif()
+
 # NOTE: this block must stay at the END of the file.
 # get_property(... DIRECTORY PROPERTY TESTS) only returns the tests
 # registered so far. Placed mid-file, later targets (test_animation /
