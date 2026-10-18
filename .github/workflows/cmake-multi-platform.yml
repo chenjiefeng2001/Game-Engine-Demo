@@ -266,7 +266,24 @@ jobs:
             Get-ChildItem $lvpDir -File | Select-Object -ExpandProperty Name | Write-Host
 
             $icdOut = $icd.FullName
-            # loader 的新旧两种变量名都给上：不同版本只认其中之一。
+            # **注册表登记**，这是 Windows 上唯一可靠的 ICD 发现方式。
+            # 环境变量在这台机器上**必然无效**：run 的 loader debug 输出写着
+            #   Loader is running with elevated permissions. Environment variable
+            #   VK_IMPLICIT_LAYER_PATH will be ignored
+            # 同一句提示也适用于 VK_ICD_FILENAMES / VK_DRIVER_FILES —— 以管理员
+            # 身份运行时 loader 会忽略这些变量（安全措施），而 GitHub 的 Windows
+            # runner 本来就是管理员会话。因此上一版「设好环境变量就能找到驱动」
+            # 的假设是错的，表现为 vkCreateInstance 返回 -9
+            # （VK_ERROR_INCOMPATIBLE_DRIVER）且日志里只有一句
+            # "Registry lookup failed to get ICD manifest files"。
+            # 环境变量仍然一并设置：非管理员场景下它有效，且不冲突。
+            $driversKey = 'HKLM:\SOFTWARE\Khronos\Vulkan\Drivers'
+            New-Item -Path $driversKey -Force | Out-Null
+            New-ItemProperty -Path $driversKey -Name $icdOut -Value 0 -PropertyType DWord -Force |
+                Out-Null
+            Write-Host "registered ICD manifest in $driversKey"
+            Get-ItemProperty -Path $driversKey | Format-List | Out-String | Write-Host
+
             "VK_ICD_FILENAMES=$icdOut" >> $env:GITHUB_ENV
             "VK_DRIVER_FILES=$icdOut" >> $env:GITHUB_ENV
             $env:VK_ICD_FILENAMES = $icdOut
