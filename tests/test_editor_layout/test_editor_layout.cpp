@@ -409,9 +409,8 @@ std::string ReadRepoFile(const std::string& relative) {
 
 TEST(EditorLayoutSpec, ConsoleIsDockedAndThereforeMustStartVisible) {
     const std::string panelH = ReadRepoFile("engine/include/Engine/ConsolePanel.h");
-    const std::string panelCpp = ReadRepoFile("engine/src/Core/ConsolePanel.cpp");
     const std::string editorCpp = ReadRepoFile("engine/src/Editor/EngineEditor.cpp");
-    ASSERT_FALSE(panelH.empty() || panelCpp.empty() || editorCpp.empty())
+    ASSERT_FALSE(panelH.empty() || editorCpp.empty())
         << "读不到 ConsolePanel / EngineEditor 源码";
 
     // 1) 登记表把 Console 停靠在底部 —— 若这一步被删，本用例也应随之失效
@@ -422,16 +421,44 @@ TEST(EditorLayoutSpec, ConsoleIsDockedAndThereforeMustStartVisible) {
     EXPECT_NE(panelH.find("m_Visible = true"), std::string::npos)
         << "ConsolePanel::m_Visible 仍默认 false —— OnImGui 开头即早退，"
         << "停靠区里 Console 的 Tab 不会出现，View > Console 成为死控件";
+}
 
-    // 3) EngineEditor 必须把菜单状态同步到面板（单点所有者 = View 菜单）
-    EXPECT_NE(editorCpp.find("SetVisible(m_Visibility.console)"), std::string::npos)
-        << "EngineEditor 未把 PanelVisibility::console 同步到 ConsolePanel，"
-        << "菜单项改了也不会生效";
+// ────────────────────────────────────────────────────────────────────
+// 所有停靠面板都必须走双向可见性同步
+//
+// 菜单项写 PanelVisibility::<field>，面板 Begin 的关闭按钮写自己的
+// m_Visible —— 同一件事两个 bool。不同步时的两种失效都是静默的：
+// Console 曾因此整个面板永不出现（m_Visible 默认 false）。
+// 统一走 SyncDockedPanelVisibility 后，两者在每帧末恒等。
+// ────────────────────────────────────────────────────────────────────
 
-    // 4) 面板不得再自带第二个可见性来源（关闭按钮）
-    EXPECT_EQ(panelCpp.find("ImGui::Begin(\"Console\", &m_Visible)"), std::string::npos)
-        << "ConsolePanel 的 Begin 仍传 &m_Visible —— 关闭按钮写的是面板自己的 "
-        << "bool，菜单写的是 PanelVisibility，两边会失步（关闭后弹回 / 菜单无效）";
+TEST(EditorLayoutSpec, EveryDockedPanelGoesThroughTwoWayVisibilitySync) {
+    const std::string editorCpp = ReadRepoFile("engine/src/Editor/EngineEditor.cpp");
+    ASSERT_FALSE(editorCpp.empty()) << "读不到 EngineEditor.cpp";
+
+    // 停靠登记表里、由 EngineEditor 拥有并逐帧绘制的面板。
+    // 字段名取自 PanelVisibility，与 View 菜单写的是同一批 bool。
+    const char* kFields[] = {
+        "sceneHierarchy", "inspector", "console", "performance",
+        "sceneViewerPanel", "sceneManager",
+    };
+    for (const char* f : kFields) {
+        const std::string call = std::string("SyncDockedPanelVisibility(m_Visibility.") + f;
+        EXPECT_NE(editorCpp.find(call), std::string::npos)
+            << "m_Visibility." << f
+            << " 对应的面板没有走 SyncDockedPanelVisibility —— "
+            << "菜单与面板关闭按钮各写一个 bool，失步时要么菜单无效、"
+            << "要么关闭按钮按了又弹回";
+    }
+
+    // 同步必须是真的双向：绘制后回读面板状态覆盖菜单值。
+    EXPECT_NE(editorCpp.find("menuFlag = panel->IsVisible()"), std::string::npos)
+        << "同步助手没有回读面板状态，关闭按钮的结果不会反映到菜单项上";
+    // 且 SetVisible 只在变化时调用 —— ConsolePanel::SetVisible 在 visible
+    // 时会 FocusInput()，每帧无条件调用会让控制台永久抢键盘焦点。
+    EXPECT_NE(editorCpp.find("panel->IsVisible() != menuFlag"), std::string::npos)
+        << "同步助手无条件调用 SetVisible —— ConsolePanel::SetVisible 带 "
+        << "FocusInput() 副作用，会让控制台输入框永久抢走键盘焦点";
 }
 
 // ────────────────────────────────────────────────────────────────────

@@ -161,11 +161,11 @@ namespace Engine {
 
         ImGui::SetNextWindowSize(ImVec2(640, 300), ImGuiCond_FirstUseEver);
         ImGui::SetNextWindowSizeConstraints(ImVec2(320, 150), ImVec2(FLT_MAX, FLT_MAX));
-        // p_open 传 nullptr：**可见性的唯一所有者是 View 菜单**。
-        // 若这里仍传 &m_Visible，标签页上的关闭按钮会写面板自己的 m_Visible，
-        // 而菜单项写的是 PanelVisibility::console —— 两个来源一旦失步，
-        // 要么菜单项无效，要么关闭按钮按了又弹回来。去掉第二个来源。
-        ImGui::Begin("Console", nullptr);
+        // p_open 指向面板自己的 m_Visible。菜单项写的是 PanelVisibility::console，
+        // 两者是两个 bool —— 因此 EngineEditor 每帧做**双向**同步
+        // （菜单 → 面板，绘制后回读面板 → 菜单），关闭按钮与菜单项才恒等。
+        // 单向同步会让关闭按钮按了又弹回，单留 p_open 则菜单项失效。
+        ImGui::Begin("Console", &m_Visible);
 
         // ── 工具栏 ──
         ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(4, 2));
