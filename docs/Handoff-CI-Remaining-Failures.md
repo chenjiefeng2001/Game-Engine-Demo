@@ -305,17 +305,64 @@ fixture 报出**两次尝试各自的实测原因**。
 
 ### 仍未覆盖的部分
 
-1. **第 4 个用例仍是 GL 专属。** 它验的是 `Engine::DrawSkinnedMeshIndexed`，签名就是
-   `(Shader&, VertexArray&, ...)`，内部 `shader.Bind()` + `SetMat4`。在非 GL 后端
-   上它显式跳过并写明理由。要让它在 Vulkan 上跑，等于把**产品的蒙皮绘制路径**移植
-   到 Vulkan —— 功能移植，不是测试移植。
-2. **Windows 上仍然是显式 SKIP。** 那里既没有 GL 4.6 上下文，也没有软件 Vulkan
-   驱动（CI 从不给它装 Vulkan SDK），两种后端都不存在。这不是可以靠改代码解决的。
+1. **第 4 个用例仍是 GL 专属**（已实测工作量，见下）。
+2. **Windows 上的后端**（已实测，见下）。
 3. **`GPU_SKINNING_NO_GL46` 因此保留，但只对 Windows 生效。** Linux 侧已撤掉：
    留着会把「Vulkan 建不起来」变成一次静默跳过，正好盖住最需要被发现的回归。
-4. **Vulkan 侧的蒙皮着色器是内联源码**，不共用产品那份 `.vert/.frag`（产品那份是
-   GLSL 330 + 松散 uniform，编译不成 SPIR-V）。等 `ShaderCompileRule` 真正产出
-   `.spv`（Vulkan 交接 §4.6）之后，这一份才有条件回到 `assets/shaders`。
+
+### 未覆盖项 1 的实测结论：这是多周的功能移植，不是测试改动
+
+第 4 个用例验的是 `Engine::DrawSkinnedMeshIndexed`
+（`engine/include/Engine/Animation/SkinnedMeshDraw.h:38-43`），全仓库只有两个调用者：
+产品路径 `sandbox/src/EditorDemo/EditorDemoApp.h:415` 与本用例的 GL 后端。
+
+**阻塞点是签名，不是函数体**：
+
+| 产品侧的东西 | Vulkan 侧的对应物 | 状态 |
+| --- | --- | --- |
+| `Shader&` + `Bind()` + `SetMat4/SetMat4Array`（按名字寻址） | `IRHICommandList::SetPipelineState` + `SetConstantBuffer(set,binding,buf,...)` | 语义不同：GL 是每次绘制按名上传，Vulkan 是**常驻 UBO**，其生命周期是一个设计决定，当前 API 无处表达 |
+| `VertexArray&` + `VertexAttribute{location,size,stride,offset}` | `GraphicsPSODesc::vertexInput`（每个属性要显式 `Format`） | 模型形状不同；骨骼索引还要 `RGBA32_SInt`（本次才补上） |
+| `IRenderContext` / `IGraphicsFactory` / `IWindow` | 无 | **Vulkan 一个都没有实现**，全仓库只有 `OpenGL*` 实现这三个接口 |
+| `skinned_lit.vert`（GLSL 330 + 松散 uniform） | 需要 `#version 450` + `std140` UBO | 松散 uniform 是**刻意**选的（GL 里 block 成员按名寻址返回 -1），SPIR-V 无此概念 |
+| GL 的 `IRHICommandList` 光栅化路径 | —— | 全是空桩，两套栈**在绘制这一层根本没接上**，没有可搬过去的共同抽象 |
+
+结论：需要动的文件至少有 `SkinnedMeshDraw.h`（改签名，破坏两个调用者）、
+`EditorDemoApp.h`（`BuildSkinnedMeshResource` / `RenderSkinnedGameObject` / 同函数的
+非蒙皮分支）、`RenderResources/{Shader,VertexArray,VertexBuffer,IndexBuffer}.h`、
+`EngineEditor.cpp` + `ViewportPanel.cpp`（视口 FBO 是 raw GL），
+以及**三个尚不存在的 Vulkan 后端类**（Vulkan 版 `IRenderContext`/`IGraphicsFactory`/
+`IWindow`）。按本仓库自己的说法（`RHIDeviceFactory.h:7-9`：Vulkan 后端「只能被
+sandbox 测试触及」），这就是那件事本身。
+
+**本轮为什么不做**：给 Vulkan 造一个「产品绘制分支」替身、只让用例去调它，
+等于验证一个生产代码不调用的函数——那比显式跳过更糟（它会把「没人用的抽象是对的」
+写成「产品路径已验证」）。因此选择显式跳过并写明理由。
+
+**本轮实际做的替代动作**：把 Vulkan 蒙皮着色器从测试内联字符串移到
+`assets/shaders/skin_pixel.{vert,frag}`，并在那两个文件的头注释里写下「为什么不能
+直接复用产品 skinned_lit.*」——这是移植要跨过的第一道门，写在代码里而不是只写在
+交接文档里。
+
+### 未覆盖项 2 的实测结论：Windows 需要装一个软件 Vulkan 栈
+
+Windows runner 给不出 GL 4.6（实测连默认上下文都 CREATE FAILED），也没有任何软件
+Vulkan 驱动（CI 从不安装 Vulkan SDK，`find_package(Vulkan)` 恒失败 →
+`ENGINE_HAS_VULKAN` 未定义 → Vulkan 后端在 Windows 上**从未被编译过**）。
+
+可行拼图有两块，缺一不可：
+
+| 阶段 | 需要什么 | 来源 |
+| --- | --- | --- |
+| 编译期 | 头文件 + `vulkan-1.lib` | LunarG Vulkan SDK（choco 包 `vulkan-sdk`）。`FindVulkan` 认 `$ENV{VULKAN_SDK}` |
+| 运行期 | 一个真的 Vulkan 设备 | Mesa **lavapipe**（CPU 版 Vulkan 驱动），`mesa-dist-win` 有 Windows 预编译包：`vulkan_lvp.dll` + `lvp_icd.x86_64.json`，由 loader 经 ICD 发现机制加载 |
+
+两条都不便宜：SDK 是几百 MB 的第三方安装，lavapipe 是第三方 7z 包。**因此先测量再
+接线**——新增的 probe 步骤只打印 `WINDOWS-VULKAN-CAPABILITY:` 一行，不 gate 任何用例；
+像素验证是否改用 Vulkan，由这一行的实测结果决定，而不是先改声明再祈祷它能跑。
+
+顺带一个此前没人提过的事实：装上 SDK 之后，Windows 会**第一次真正编译并链接 Vulkan
+后端**。这既可能让 Windows 构建出问题（此前该后端被完全排除，`5586e16` 的链接错误
+正是这么被掩盖的），也是 Windows 上第一次对它有编译级覆盖。
 
 ---
 
