@@ -221,8 +221,15 @@ jobs:
                      Sort-Object Name -Descending | Select-Object -First 1)
         if ($sdkRoot.Count -gt 0) {
             "VULKAN_SDK=$($sdkRoot[0].FullName)" >> $env:GITHUB_ENV
-            Write-Host "Vulkan SDK root: $($sdkRoot[0].FullName)"
+            # loader（vulkan-1.dll）跟着 SDK 装在 Bin 下。DLL 搜索顺序是
+            # 「可执行文件所在目录 → System32 → PATH」，探针和测试二进制都在
+            # RUNNER_TEMP / build 目录下，因此必须把 SDK 的 Bin 放进 PATH，
+            # 否则它们会以「找不到 vulkan-1.dll」起不来 —— 那看起来像"没有 Vulkan
+            # 设备"，而实际是 loader 根本没被加载。
+            "$($sdkRoot[0].FullName)\Bin" >> $env:GITHUB_PATH
             $env:VULKAN_SDK = $sdkRoot[0].FullName
+            $env:PATH = "$($sdkRoot[0].FullName)\Bin;$env:PATH"
+            Write-Host "Vulkan SDK root: $($sdkRoot[0].FullName)"
         } else {
             Write-Host "WINDOWS-VULKAN-CAPABILITY: NONE (no C:\VulkanSDK after install; the Vulkan backend will stay off in this build)"
         }
@@ -271,14 +278,28 @@ jobs:
             exit 0
         }
         $probe = Join-Path $env:RUNNER_TEMP 'vkprobe.exe'
-        Push-Location $env:GITHUB_WORKSPACE
-        try {
-            cmd /c "`"$env:VULKAN_SDK\Bin\VC\tools\vcvars64.bat`" >nul 2>&1 && cl /nologo /std:c++17 /EHsc /I `"$env:VULKAN_SDK\Include`" tools\vk_capability_probe.cpp /Fe:`"$probe`" /link /LIBPATH:`"$env:VULKAN_SDK\Lib`" vulkan-1.lib" | Out-String | Write-Host
-        } finally {
-            Pop-Location
-        }
+        # 编译探针写成 .bat 再执行，而不是在 pwsh 里嵌套 cmd /c "..." 的多层引号：
+        # 上一轮那样写的结果是 cl 一行输出都没有、二进制也没生成，而日志里看不出
+        # 是没跑还是跑了失败。批处理只有一层转义，cl 的报错也能原样进日志。
+        #
+        # 内容用**数组字面量**而不是 here-string：YAML 的块标量里，未缩进的行会
+        # 直接结束该块并被当成新 token（上一版就是这么把 workflow 弄成非法 YAML
+        # 的）。数组的每一行都带缩进，且不需要 cmd 的 `^` 续行。
+        $buildBat = Join-Path $env:RUNNER_TEMP 'build_vkprobe.bat'
+        $batLines = @(
+            '@echo off',
+            'call "%VULKAN_SDK%\Bin\VC\tools\vcvars64.bat" >nul',
+            'cd /d "%GITHUB_WORKSPACE%"',
+            'cl /nologo /std:c++17 /EHsc /I "%VULKAN_SDK%\Include" tools\vk_capability_probe.cpp /Fe:"%RUNNER_TEMP%\vkprobe.exe" /link /LIBPATH:"%VULKAN_SDK%\Lib" vulkan-1.lib',
+            'exit /b %ERRORLEVEL%'
+        )
+        Set-Content -Path $buildBat -Value $batLines -Encoding ascii
+        $out = & $buildBat 2>&1
+        $rc = $LASTEXITCODE        # `&` 返回的是**输出**，退出码在 $LASTEXITCODE
+        $out | Write-Host
+        if ($rc -ne 0) { Write-Host "probe build exited $rc" }
         if (-not (Test-Path $probe)) {
-            Write-Host 'WINDOWS-VULKAN-CAPABILITY: NONE (probe failed to build)'
+            Write-Host 'WINDOWS-VULKAN-CAPABILITY: NONE (probe failed to build; see cl output above)'
             exit 0
         }
         $out = & $probe 2>&1 | Out-String
