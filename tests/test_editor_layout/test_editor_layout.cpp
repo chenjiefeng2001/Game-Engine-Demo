@@ -385,10 +385,85 @@ TEST(EditorLayoutSpec, StartupVisibleFieldMapCoversEveryTrueField) {
     for (const std::string& f : fields) {
         if (titleOf.count(f) == 0) unmapped.push_back(f);
     }
-    std::ostringstream msg;
-    msg << "这些 m_Visibility 字段启动为 true 但未在测试里映射窗口标题: ";
-    for (const std::string& f : unmapped) msg << f << " ";
-    EXPECT_TRUE(unmapped.empty()) << msg.str();
+    std::ostringstream missing;
+    missing << "这些 m_Visibility 字段启动为 true 但未在测试里映射窗口标题: ";
+    for (const std::string& f : unmapped) missing << f << " ";
+    EXPECT_TRUE(unmapped.empty()) << missing.str();
+}
+
+// ────────────────────────────────────────────────────────────────────
+// 停靠的窗口必须真的会出现
+//
+// 登记表把 Console 放进底部 Tab 区，EngineEditor::Init 也把
+// PanelVisibility::console 置 true —— 但 ConsolePanel::m_Visible 默认 false，
+// OnImGui 开头即早退。结果：规范布局给 Console 留的那个 Tab 永远不出现，
+// View > Console 是死控件，而这一切没有任何报错。停靠「声明」与「实际出现」
+// 分属两套状态，是这类静默失效的根源。
+// ────────────────────────────────────────────────────────────────────
+
+std::string ReadRepoFile(const std::string& relative) {
+    const fs::path p = FindRepoRoot() / fs::path(relative);
+    if (!fs::exists(p)) return {};
+    return ReadWholeFile(p);
+}
+
+TEST(EditorLayoutSpec, ConsoleIsDockedAndThereforeMustStartVisible) {
+    const std::string panelH = ReadRepoFile("engine/include/Engine/ConsolePanel.h");
+    const std::string panelCpp = ReadRepoFile("engine/src/Core/ConsolePanel.cpp");
+    const std::string editorCpp = ReadRepoFile("engine/src/Editor/EngineEditor.cpp");
+    ASSERT_FALSE(panelH.empty() || panelCpp.empty() || editorCpp.empty())
+        << "读不到 ConsolePanel / EngineEditor 源码";
+
+    // 1) 登记表把 Console 停靠在底部 —— 若这一步被删，本用例也应随之失效
+    ASSERT_NE(Engine::FindEditorDockEntry("Console"), nullptr)
+        << "Console 已不在停靠登记表里；若是有意移除，请一并撤掉本用例";
+
+    // 2) 面板自身必须默认可见
+    EXPECT_NE(panelH.find("m_Visible = true"), std::string::npos)
+        << "ConsolePanel::m_Visible 仍默认 false —— OnImGui 开头即早退，"
+        << "停靠区里 Console 的 Tab 不会出现，View > Console 成为死控件";
+
+    // 3) EngineEditor 必须把菜单状态同步到面板（单点所有者 = View 菜单）
+    EXPECT_NE(editorCpp.find("SetVisible(m_Visibility.console)"), std::string::npos)
+        << "EngineEditor 未把 PanelVisibility::console 同步到 ConsolePanel，"
+        << "菜单项改了也不会生效";
+
+    // 4) 面板不得再自带第二个可见性来源（关闭按钮）
+    EXPECT_EQ(panelCpp.find("ImGui::Begin(\"Console\", &m_Visible)"), std::string::npos)
+        << "ConsolePanel 的 Begin 仍传 &m_Visible —— 关闭按钮写的是面板自己的 "
+        << "bool，菜单写的是 PanelVisibility，两边会失步（关闭后弹回 / 菜单无效）";
+}
+
+// ────────────────────────────────────────────────────────────────────
+// 孤儿声明：只有声明、没有定义
+//
+// EngineEditor 曾有一整族 Draw*Window 包装器，12 个成员零调用者，其中 4 个
+// 只有声明没有定义（与已删除的 InitDockingLayout 同型，被调用即链接失败）。
+// 这类东西编译器不报、链接器也不报（没人用），于是能长期存活。
+// ────────────────────────────────────────────────────────────────────
+
+TEST(EditorLayoutSpec, NoDrawWindowDeclarationsWithoutDefinitions) {
+    const std::string header = ReadRepoFile("engine/include/Engine/Editor/EngineEditor.h");
+    const std::string source = ReadRepoFile("engine/src/Editor/EngineEditor.cpp");
+    ASSERT_FALSE(header.empty() || source.empty()) << "读不到 EngineEditor 源码";
+
+    static const std::regex declRe(R"(void\s+(Draw\w+)\s*\(\s*\)\s*;)");
+    std::vector<std::string> orphans;
+    for (std::sregex_iterator it(header.begin(), header.end(), declRe), end; it != end; ++it) {
+        const std::string name = (*it)[1].str();
+        // 定义形如 EngineEditor::Name(
+        if (source.find("EngineEditor::" + name + "(") == std::string::npos)
+            orphans.push_back(name);
+    }
+
+    if (!orphans.empty()) {
+        std::ostringstream msg;
+        msg << "EngineEditor.h 声明了这些 Draw*Window，却没有定义：\n";
+        for (const std::string& o : orphans) msg << "  - " << o << "\n";
+        msg << "被调用即链接失败，而无人调用时编译器与链接器都不会报 —— "
+               "与已删除的 InitDockingLayout 同型。请删除声明或补上定义。";
+        FAIL() << msg.str();
+    }
 }
 
 }  // namespace

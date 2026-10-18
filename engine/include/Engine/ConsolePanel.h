@@ -75,7 +75,11 @@ namespace Engine {
         void HistoryNext();
 
         // ── 状态 ──
-        bool m_Visible = false;
+        // 默认可见：本面板已被登记进规范停靠布局的底部区（与 Performance
+        // 同区成 Tab），且 EngineEditor::Init 把 PanelVisibility::console
+        // 初始化为 true。此前默认 false 使 OnImGui 在开头早退，于是
+        // View > Console 这个菜单项永远没有可见效果 —— 一个死控件。
+        bool m_Visible = true;
         bool m_AutoScroll = true;
         bool m_ScrollToBottom = false;
 

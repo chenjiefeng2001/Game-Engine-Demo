@@ -622,9 +622,18 @@ namespace Engine {
             // InspectorPanel::OnImGui 内部调用 ImGui::Begin("Inspector")
             m_Inspector->OnImGui();
         }
-        if (m_Visibility.console && m_Console) {
-            // ConsolePanel::OnImGui 内部调用 ImGui::Begin("Console")
-            m_Console->OnImGui();
+        if (m_Console) {
+            // 可见性由 View 菜单（PanelVisibility::console）单点拥有，逐帧同步到
+            // 面板。此前两边各有一份 bool 且互不同步：菜单切的是 m_Visibility，
+            // 面板自己的 m_Visible 恒为 false，OnImGui 开头即早退 ——
+            // 结果是 View > Console 是个死控件，而规范停靠布局里给 Console
+            // 留的那个 Tab 也永远不出现。
+            if (m_Console->IsVisible() != m_Visibility.console)
+                m_Console->SetVisible(m_Visibility.console);
+            if (m_Visibility.console) {
+                // ConsolePanel::OnImGui 内部调用 ImGui::Begin("Console")
+                m_Console->OnImGui();
+            }
         }
         if (m_Visibility.performance && m_Performance) {
             m_Performance->OnImGui();
@@ -713,24 +722,21 @@ namespace Engine {
     }
 
     // ============================================================
-    // 包裹窗口（供外部独立调用）
+    // 曾经的「包裹窗口（供外部独立调用）」一整族 Draw*Window 已删除。
+    //
+    // 删除理由不是「暂时用不到」，而是它们**有害**：
+    //   1. 整族 12 个成员零调用者 —— 真实渲染在 OnImGui() 里内联完成
+    //      （见本文件 618-631，那里的注释明写「各面板 OnImGui 内部调用
+    //      ImGui::Begin(...)」）。
+    //   2. 包裹器在面板自己的 Begin 之外又套了一层同名 Begin，
+    //      例如 DrawConsoleWindow 会在 ConsolePanel::OnImGui()（内部已
+    //      Begin("Console")）外再 Begin("Console")。同名窗口二次 Begin
+    //      会让 BeginCount=2、内容互相覆盖 —— 一旦有人把它接回去就出 bug。
+    //   3. 其中 4 个（DrawSceneManagerWindow / DrawSceneViewerWindow /
+    //      DrawViewModeWindow / DrawEditorSettingsWindow）**只有声明没有
+    //      定义**，被调用即链接失败 —— 与已删除的 InitDockingLayout 同型。
+    //
+    // 需要在别处单独绘制某个面板时，直接调该面板的 OnImGui()。
     // ============================================================
-
-    void EngineEditor::DrawSceneHierarchyWindow() {
-        if (m_SceneHierarchy) { ImGui::Begin("Scene Hierarchy"); m_SceneHierarchy->OnImGui(); ImGui::End(); }
-    }
-    void EngineEditor::DrawInspectorWindow() {
-        if (m_Inspector) { ImGui::Begin("Inspector"); m_Inspector->OnImGui(); ImGui::End(); }
-    }
-    void EngineEditor::DrawConsoleWindow() {
-        if (m_Console) { ImGui::Begin("Console"); m_Console->OnImGui(); ImGui::End(); }
-    }
-    void EngineEditor::DrawPerformanceWindow() {
-        if (m_Performance) { ImGui::Begin("Performance"); m_Performance->OnImGui(); ImGui::End(); }
-    }
-    void EngineEditor::DrawContentBrowserWindow() { m_ContentBrowser.OnImGui(); }
-    void EngineEditor::DrawAssetBrowserWindow()   { m_AssetBrowser.OnImGui(); }
-    void EngineEditor::DrawDepGraphWindow()       { m_DepGraph.OnImGui(); }
-    void EngineEditor::DrawViewportPanel()         { m_Viewport.OnImGui(); }
 
 } // namespace Engine
