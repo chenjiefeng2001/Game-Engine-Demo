@@ -10,8 +10,9 @@
 | `windows-latest` RelWithDebInfo cl **ASan=ON** | **13/13 通过**（此前从未跑到过这一步） |
 | `gl-capability-probe` / `vulkan-backend-compile` / `jolt-link-diagnose` | 成功 |
 
-**像素验证不再是缺席状态**：Linux runner 上 4 个蒙皮像素用例中的 3 个用 Vulkan
-（lavapipe）真实执行了像素断言，这是它们历史上第一次在 CI 里真正运行。证据见 §7。
+**像素验证不再是缺席状态**：4 个蒙皮像素用例中的 3 个在 **Linux 与 Windows 两个
+runner 上**都用 Vulkan（lavapipe）真实执行了像素断言 —— 这是它们历史上第一次在 CI 里
+真正运行，且第一次在两个平台上都运行。证据见 §7。
 
 下文 §1–§3 是本文最初的 3 项 Linux 失败，已由 AssetBakery fixture 生成器关闭；
 §4 已由「把 ASan 运行时放进 PATH」关闭；§5 与 §6 已关闭；§7 记录像素验证本次落地
@@ -261,19 +262,26 @@ GPU-SKINNING-STATUS: pixel verification requires a GL 4.6 capable machine.
 
 ---
 
-## 7. 蒙皮像素验证落地：Linux 上真实执行（`630bfa3` / `1d3b27e`，run `39074497601`）
+## 7. 蒙皮像素验证落地：两个 runner 上真实执行（`630bfa3` 起，Windows 部分 `6c542e4`）
 
 ```
-[skin-pixel] backend: Vulkan (llvmpipe (LLVM 20.1.2, 256 bits))
+[skin-pixel] backend: Vulkan (llvmpipe (LLVM 20.1.2, 256 bits))   ← Linux
+[skin-pixel] backend: Vulkan (llvmpipe (LLVM 23.1.2, 256 bits))   ← Windows
+  bind pose (64x64): centre=784 left=0 right=0 total=784
+  moved pose: centre=140 (bind 784) left=0 right=448
 [       OK ] GPUSkinningPixelTest.BindPoseDrawsGeometryInCentreBandOnly (5 ms)
 [       OK ] GPUSkinningPixelTest.TranslatedBoneMovesGeometryIntoRightBand (0 ms)
 [       OK ] GPUSkinningPixelTest.SkinnedProgramIsInUseAndBackgroundIsStable (0 ms)
 [  SKIPPED ] GPUSkinningPixelTest.ProductDrawBranchChangesPixelsWithPose (0 ms)
-GPU-SKINNING-STATUS: ran for real on this runner.
+GPU-SKINNING-STATUS: ran for real on this runner (3 case(s) executed, 1 skipped).
 ```
 
 这是这四个用例**第一次**在 CI 里真正跑起来。此前它们在每一个 runner 上都是 SKIP：
 纯 GL 实现（自建 GLFW 4.6 窗口 + 私有 FBO + `glReadPixels`），而引擎要求 GL 4.6。
+
+**两个 runner 上的分带计数完全一致**（784 / 140 / 448），分别是 llvmpipe 20.1.2 与
+23.1.2、Linux 与 Windows、Release 与 Release+ASan。断言不依赖具体驱动版本这件事，
+因此有了跨平台、跨驱动的旁证。
 
 ### 「后端无关」做不到「一份代码两个驱动」，这里做的是别的
 
