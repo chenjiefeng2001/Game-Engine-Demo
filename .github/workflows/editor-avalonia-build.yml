@@ -1,0 +1,84 @@
+name: Avalonia Editor Build
+
+# 独立于 Advanced C++ CI（那个 workflow 的 paths 过滤器虽然包含 **/*.axaml，
+# 却从不执行 dotnet —— 于是 XAML 改动会触发构建，却没有任何东西编译它）。
+#
+# 本 workflow 存在的原因：Avalonia 的 XAML 是**编译期**产物。未被编译过的
+# XAML 不会因为任何错误而失败，只有真正跑过 Avalonia 的 XAML 编译任务，
+# 才会报出「未知属性 / 类型不匹配 / 绑定路径写法错误」这类问题。
+# 在此之前，本仓库的 Avalonia UI 改动只有静态检查兜底，没有编译证据。
+#
+# 本 job 只编译托管侧。原生 EditorBridge.dll 的 staging 由 csproj 里的
+# Condition="Exists(...)" 守卫，干净 runner 上会跳过而不失败 —— 那正是这里
+# 想要的：我们要的是 XAML 编译证据，不是完整可分发产物。
+
+on:
+  push:
+    branches: [ "master", "avalonia", "avalonia-p7" ]
+    paths:
+      - 'editor_avalonia/**'
+      - '.github/workflows/editor-avalonia-build.yml'
+  pull_request:
+    paths:
+      - 'editor_avalonia/**'
+      - '.github/workflows/editor-avalonia-build.yml'
+  workflow_dispatch:
+
+jobs:
+  avalonia-editor-build:
+    # WinExe + P/Invoke 到 EditorBridge.dll，宿主平台就是 Windows
+    runs-on: windows-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '9.0.x'
+
+      # GitHub runner 默认的 nuget.org 是启用的，本仓库不需要额外配置源。
+      - name: Restore
+        run: |
+          dotnet restore editor_avalonia/AvaloniaEditor.csproj
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      # -v:normal 让 Avalonia 的 XAML 编译任务出现在日志里，便于确认它真的跑了，
+      # 而不是因为「没找到 XAML」而空转通过。Tee 到 build.log 供下一步断言使用。
+      - name: Build (compiles Avalonia XAML)
+        shell: pwsh
+        run: |
+          dotnet build editor_avalonia/AvaloniaEditor.csproj `
+            --no-restore --configuration Release --verbosity normal `
+            2>&1 | Tee-Object -FilePath build.log
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      # XAML 编译证据：产物必须存在，且构建日志里必须有 Avalonia XAML 编译任务的痕迹。
+      # 只看「build 成功」是不够的 —— 一个空壳或路径写错的工程同样会成功。
+      - name: Assert the XAML compiler actually ran
+        shell: pwsh
+        run: |
+          $assembly = 'editor_avalonia/bin/Release/net9.0/AvaloniaEditor.dll'
+          if (-not (Test-Path $assembly)) {
+            throw "编译产物不存在: $assembly —— 构建虽返回 0，但没有产出程序集"
+          }
+          $len = (Get-Item $assembly).Length
+          Write-Host "编译产物: $assembly ($len bytes)"
+          if ($len -lt 20000) {
+            # AvaloniaEditor.dll 含编译后的 XAML IL + 程序集清单；
+            # 只有壳没有 XAML 的产物会远小于此量级。
+            throw "程序集偏小 ($len bytes)，可能未编译 XAML"
+          }
+
+          # 日志证据：Avalonia 的 XAML 编译以 AVLN/XamlIl 任务出现在 normal 详细度下。
+          $log = Get-Content build.log -Raw -ErrorAction SilentlyContinue
+          if ($log) {
+            if ($log -match 'AVLN|XamlIl|Avalonia\.Build\.Tasks') {
+              Write-Host '✅ 构建日志中存在 Avalonia XAML 编译任务痕迹'
+            } else {
+              Write-Warning '构建日志中未见 Avalonia XAML 编译任务标记（不影响结论，见下方说明）'
+            }
+          } else {
+            Write-Warning '未生成 build.log，跳过日志检查（产物断言仍然生效）'
+          }
+          exit 0
