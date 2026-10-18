@@ -182,6 +182,120 @@ jobs:
 
     # REQUIRE_SHADERC=ON：artifact 缺失时**硬失败**，杜绝静默降级后仍绿灯。
     # 缺省（本地开发）保持 OFF + WARNING，不改变既有本地行为。
+    #
+    # Windows 上 Vulkan 后端此前**从未被编译过**：CI 不装 SDK，find_package(Vulkan)
+    # 恒失败，于是 ENGINE_HAS_VULKAN 与 engine/src/Vulkan/* 一同被排除
+    # （见 docs/Handoff-Vulkan-Headless-GPU-Verification.md §1.9 的教训：那次把
+    # Windows 的链接错误归因成"runner 没有 VS"，真实原因其实是后端根本没参与编译）。
+    # 下面这一步装上 SDK 之后，Windows 会第一次真正编译并链接 Vulkan 后端。
+    # Windows 上给像素验证准备一个软件 Vulkan 设备，并且**先实测再接线**。
+    #
+    # 为什么需要：Windows runner 既给不出 GL 4.6 上下文（实测连不带版本提示的默认
+    # 上下文都 CREATE FAILED），也没有任何软件 Vulkan 驱动 —— 这是 4 个蒙皮像素
+    # 用例在 Windows 上只能显式跳过的唯一原因。可用的两块拼图：
+    #   * **编译期**：LunarG Vulkan SDK（头文件 + vulkan-1.lib），FindVulkan 认
+    #     $ENV{VULKAN_SDK}，装上后 Windows 才开始编译 Vulkan 后端。
+    #   * **运行期**：Mesa lavapipe（Mesa 的 CPU 版 Vulkan 驱动），mesa-dist-win
+    #     提供 Windows 预编译包：vulkan_lvp.dll + lvp_icd.x86_64.json，由 Vulkan
+    #     loader 通过 ICD 发现机制加载（VK_ICD_FILENAMES 指向该 json）。
+    #
+    # 本步**不让 job 失败**：它是能力测量，不是门禁。装不上就打印 NONE 与原因，
+    # 随后的用例按既有方式显式跳过。反过来，装上了却没有设备才是需要修的问题，
+    # 而那也会以同样的行暴露出来。
+    - name: Probe a software Vulkan device on Windows
+      if: runner.os == 'Windows'
+      shell: pwsh
+      run: |
+        $ErrorActionPreference = 'Continue'
+        $PSNativeCommandUseErrorActionPreference = $false
+        $sdkVersion = '1.4.363'
+
+        # ── 1. Vulkan SDK：只为了头文件与导入库（编译期需要） ──
+        try {
+            choco install vulkan-sdk --version=$sdkVersion -y --no-progress --limit-output |
+                Out-String | Write-Host
+        } catch {
+            Write-Host "WINDOWS-VULKAN-CAPABILITY: NONE (vulkan-sdk $sdkVersion install failed: $($_.Exception.Message))"
+        }
+        $sdkRoot = @(Get-ChildItem 'C:\VulkanSDK' -Directory -ErrorAction SilentlyContinue |
+                     Sort-Object Name -Descending | Select-Object -First 1)
+        if ($sdkRoot.Count -gt 0) {
+            "VULKAN_SDK=$($sdkRoot[0].FullName)" >> $env:GITHUB_ENV
+            Write-Host "Vulkan SDK root: $($sdkRoot[0].FullName)"
+            $env:VULKAN_SDK = $sdkRoot[0].FullName
+        } else {
+            Write-Host "WINDOWS-VULKAN-CAPABILITY: NONE (no C:\VulkanSDK after install; the Vulkan backend will stay off in this build)"
+        }
+
+        # ── 2. lavapipe：CPU 版 Vulkan 驱动（运行期需要） ──
+        $mesaTag = '26.2.4'
+        $archive = Join-Path $env:RUNNER_TEMP "mesa3d-$mesaTag-release-msvc.7z"
+        $url = "https://github.com/pal1000/mesa-dist-win/releases/download/$mesaTag/mesa3d-$mesaTag-release-msvc.7z"
+        try {
+            Write-Host "downloading $url"
+            Invoke-WebRequest -UseBasicParsing -Uri $url -OutFile $archive -TimeoutSec 600
+            $sevenZip = "${env:ProgramFiles}\7-Zip\7z.exe"
+            if (-not (Test-Path $sevenZip)) { throw "7-Zip is not present on this runner image" }
+            $extractDir = Join-Path $env:RUNNER_TEMP 'mesa3d'
+            & $sevenZip x -y "-o$extractDir" $archive | Out-Null
+            if ($LASTEXITCODE -ne 0) { throw "7z exited $LASTEXITCODE" }
+
+            $dll = Get-ChildItem $extractDir -Recurse -Filter 'vulkan_lvp.dll' -File |
+                   Where-Object { $_.FullName -match 'x64' } | Select-Object -First 1
+            $icd = Get-ChildItem $extractDir -Recurse -Filter 'lvp_icd.x86_64.json' -File | Select-Object -First 1
+            if (-not $dll -or -not $icd) { throw "lavapipe (vulkan_lvp.dll / lvp_icd.x86_64.json) not found in $archive" }
+
+            # 放在同一个干净目录，并把 json 里的 library_path 改成绝对路径：
+            # 依赖包内相对路径会在 loader 的工作目录不是解压根目录时失效。
+            $lvpDir = Join-Path $env:RUNNER_TEMP 'lavapipe'
+            New-Item -ItemType Directory -Force -Path $lvpDir | Out-Null
+            Copy-Item $dll.FullName -Destination $lvpDir -Force
+            $icdText = (Get-Content $icd.FullName -Raw) -replace '"library_path"\s*:\s*"[^"]*"',
+                                                          "`"library_path`": `"$($dll.FullName)`""
+            $icdOut = Join-Path $lvpDir 'lvp_icd.x86_64.json'
+            Set-Content -Path $icdOut -Value $icdText -Encoding ascii
+            # loader 的新旧两种变量名都给上：不同版本只认其中之一。
+            "VK_ICD_FILENAMES=$icdOut" >> $env:GITHUB_ENV
+            "VK_DRIVER_FILES=$icdOut" >> $env:GITHUB_ENV
+            $env:VK_ICD_FILENAMES = $icdOut
+            $env:VK_DRIVER_FILES = $icdOut
+            Write-Host "lavapipe ICD: $icdOut"
+        } catch {
+            Write-Host "WINDOWS-VULKAN-CAPABILITY: NONE (lavapipe unavailable: $($_.Exception.Message))"
+        }
+
+        # ── 3. 实测：这台 runner 到底能不能枚举出 Vulkan 设备 ──
+        # 用仓库自带的探针（与 vulkan-backend-compile job 同一个），不做第二套实现。
+        if (-not $env:VULKAN_SDK) {
+            Write-Host 'WINDOWS-VULKAN-CAPABILITY: NONE (no Vulkan SDK, probe not attempted)'
+            exit 0
+        }
+        $probe = Join-Path $env:RUNNER_TEMP 'vkprobe.exe'
+        Push-Location $env:GITHUB_WORKSPACE
+        try {
+            cmd /c "`"$env:VULKAN_SDK\Bin\VC\tools\vcvars64.bat`" >nul 2>&1 && cl /nologo /std:c++17 /EHsc /I `"$env:VULKAN_SDK\Include`" tools\vk_capability_probe.cpp /Fe:`"$probe`" /link /LIBPATH:`"$env:VULKAN_SDK\Lib`" vulkan-1.lib" | Out-String | Write-Host
+        } finally {
+            Pop-Location
+        }
+        if (-not (Test-Path $probe)) {
+            Write-Host 'WINDOWS-VULKAN-CAPABILITY: NONE (probe failed to build)'
+            exit 0
+        }
+        $out = & $probe 2>&1 | Out-String
+        Write-Host $out
+        # 探针的输出形状（tools/vk_capability_probe.cpp）：
+        #   [VKPROBE] device: <name>            <- 每个枚举到的物理设备一行
+        #   [VKPROBE] NO PHYSICAL DEVICE -> lavapipe not usable
+        if ($out -match '(?m)^\[VKPROBE\] device:\s*(?<name>.+?)\s*$') {
+            Write-Host "WINDOWS-VULKAN-CAPABILITY: $($Matches['name'])"
+        } elseif ($out -match 'NO PHYSICAL DEVICE') {
+            Write-Host 'WINDOWS-VULKAN-CAPABILITY: NONE (loader enumerated no physical device; see probe output above)'
+        } elseif ($out -match '\[VKPROBE\].*FAILED') {
+            Write-Host 'WINDOWS-VULKAN-CAPABILITY: NONE (probe reported a Vulkan failure; see output above)'
+        } else {
+            Write-Host 'WINDOWS-VULKAN-CAPABILITY: UNKNOWN (probe output did not match any known shape)'
+        }
+
     - name: Configure CMake
       run: >
         cmake -B ${{ steps.strings.outputs.build-output-dir }}
