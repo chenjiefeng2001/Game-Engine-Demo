@@ -15,6 +15,7 @@
 #include "Engine/ConsolePanel.h"
 #include "Engine/PerformanceWindow.h"
 #include "Engine/Editor/UndoSystem.h"
+#include "Engine/Editor/EditorLayoutSpec.h"
 #include "Engine/Core/GameObject/GameObject.h"
 #include "Engine/Core/IWindow.h"
 #include "Engine/Core/IRenderContext.h"
@@ -570,27 +571,29 @@ namespace Engine {
 
             ImGuiID mainNode = dockspaceID;
             const ImGuiID dockBottom = ImGui::DockBuilderSplitNode(
-                mainNode, ImGuiDir_Down, 0.25f, nullptr, &mainNode);
+                mainNode, ImGuiDir_Down, kLayoutBottomFraction, nullptr, &mainNode);
             const ImGuiID dockRight = ImGui::DockBuilderSplitNode(
-                mainNode, ImGuiDir_Right, 0.24f, nullptr, &mainNode);
+                mainNode, ImGuiDir_Right, kLayoutRightFraction, nullptr, &mainNode);
             const ImGuiID dockLeft = ImGui::DockBuilderSplitNode(
-                mainNode, ImGuiDir_Left, 0.22f, nullptr, &mainNode);
-
-            // 窗口名必须与各面板 Begin() 的实际标题一致（P1-c 已全部去图标）
-            ImGui::DockBuilderDockWindow("Hierarchy", dockLeft);
-            ImGui::DockBuilderDockWindow("Console", dockBottom);
-            ImGui::DockBuilderDockWindow("Performance", dockBottom); // 与 Console 同区成 Tab
-            ImGui::DockBuilderDockWindow("Viewport", mainNode);      // 中央区
+                mainNode, ImGuiDir_Left, kLayoutLeftFraction, nullptr, &mainNode);
 
             // 右列：上 Inspector / 下 GP01 生产三件套 Tab 组
             //（宿主级窗口，GP1-DX 启动调查：此前漂浮为独立 OS 窗口撕裂工作区）
             ImGuiID dockRightMut = dockRight;
             const ImGuiID dockProd = ImGui::DockBuilderSplitNode(
-                dockRightMut, ImGuiDir_Down, 0.45f, nullptr, &dockRightMut);
-            ImGui::DockBuilderDockWindow("Inspector", dockRightMut);
-            ImGui::DockBuilderDockWindow("GP01 Production", dockProd);
-            ImGui::DockBuilderDockWindow("Content (Registry)", dockProd);
-            ImGui::DockBuilderDockWindow("Script Editor", dockProd);
+                dockRightMut, ImGuiDir_Down, kLayoutRightBottomFraction, nullptr, &dockRightMut);
+
+            // 窗口名必须与各面板 Begin() 的实际标题一致（P1-c 已全部去图标）。
+            // 登记表是 EditorLayoutSpec.h 的 kEditorDockEntries：漏登记**不会**产生
+            // 任何编译或运行错误，只会静默退化成漂浮 OS 窗，所以
+            // tests/test_editor_layout 会对 engine/src 做源码扫描来兜住这一类。
+            const ImGuiID zoneNode[kEditorZoneCount] = {
+                dockLeft, mainNode, dockBottom, dockRightMut, dockProd};
+            for (size_t i = 0; i < kEditorDockEntryCount; ++i) {
+                const int zone = static_cast<int>(kEditorDockEntries[i].Zone);
+                ImGui::DockBuilderDockWindow(kEditorDockEntries[i].WindowTitle,
+                                             zoneNode[zone]);
+            }
 
             ImGui::DockBuilderFinish(dockspaceID);
             Log::Info("Editor layout rebuilt (bootstrap or user reset)");

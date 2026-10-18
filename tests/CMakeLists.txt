@@ -291,6 +291,24 @@ if(TARGET EditorBridge AND WIN32)
                 $<TARGET_FILE:EditorBridge> $<TARGET_FILE_DIR:test_viewport_gizmo>)
 endif()
 
+# ── 编辑器规范停靠布局登记完整性 ──
+# 依据 docs/GP1-DX-UI-Audit.md §INV-2：引导链路已通，但窗口名→停靠节点的
+# 映射原先是 lambda 里的硬编码字符串，漏登记既不编译失败也不运行失败，
+# 只是静默退化成一个漂浮 OS 窗（SceneViewer/SceneManager 就是这样长期漏网）。
+# 本 target 扫 engine/src 源码做守卫，让「默认可见但未停靠」变成显式失败。
+# 刻意不创建 ImGui context、不建窗口：断言的是本仓库的登记完整性，不是
+# ImGui 的行为。「OS 窗口数实际降到 1」那一层需要实机 EnumWindows 取证。
+add_executable(test_editor_layout
+    test_editor_layout/test_editor_layout.cpp
+)
+target_link_libraries(test_editor_layout PRIVATE EngineCore GTest::gtest_main)
+add_test(NAME test_editor_layout COMMAND test_editor_layout)
+# 本 target 读源码树，必须显式给工作目录：上面那段
+# `get_property(... DIRECTORY PROPERTY TESTS)` 循环只覆盖**它之前**注册的测试，
+# 本 target 注册在循环之后（与 test_animation 等同理），默认会在 build/tests 下
+# 运行而找不到 engine/src。ctest 里表现为「扫描为空」的假失败。
+set_tests_properties(test_editor_layout PROPERTIES WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}")
+
 # NOTE: this block must stay at the END of the file.
 # get_property(... DIRECTORY PROPERTY TESTS) only returns the tests
 # registered so far. Placed mid-file, later targets (test_animation /

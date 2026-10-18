@@ -108,3 +108,10 @@ editor_avalonia/selftest.log
 # 测试运行时 scratch（test_bridge gate_p2 副本 / GP01EditorWorkflowTest kEd 产物）
 gp01_editor_scratch/
 gp01_hrc_a7_scratch/
+
+# ImGui 窗口布局持久化文件。由 ImGui 在进程退出时写到 CWD（imgui.cpp 的
+# io.IniFilename 默认值），属于**本机状态**：提交它会把某台机器的
+# DockSpace 几何强加给所有人。此前确实被签入过一份 DockSpaceOverViewport
+# 时代的残留（内含 WindowOverViewport_11111111 与 Pos=372,395 的错误
+# dockspace 几何），从仓库根启动即被读到。
+imgui.ini
