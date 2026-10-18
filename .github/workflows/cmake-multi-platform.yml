@@ -279,16 +279,32 @@ jobs:
         }
         $probe = Join-Path $env:RUNNER_TEMP 'vkprobe.exe'
         # 编译探针写成 .bat 再执行，而不是在 pwsh 里嵌套 cmd /c "..." 的多层引号：
-        # 上一轮那样写的结果是 cl 一行输出都没有、二进制也没生成，而日志里看不出
-        # 是没跑还是跑了失败。批处理只有一层转义，cl 的报错也能原样进日志。
+        # 那样写的结果是 cl 一行输出都没有、二进制也没生成，日志里看不出是没跑还是
+        # 跑失败了。批处理只有一层转义，cl 的报错也能原样进日志。
         #
-        # 内容用**数组字面量**而不是 here-string：YAML 的块标量里，未缩进的行会
-        # 直接结束该块并被当成新 token（上一版就是这么把 workflow 弄成非法 YAML
-        # 的）。数组的每一行都带缩进，且不需要 cmd 的 `^` 续行。
+        # 内容用**数组字面量**而不是 here-string：YAML 块标量里未缩进的行会直接
+        # 结束该块并被当成新 token（here-string 那版把 workflow 弄成了非法 YAML）。
+        # 数组每行都带缩进，也不需要 cmd 的 `^` 续行。
+        #
+        # vcvars64 的路径**不能猜**：LunarG SDK 并不自带 MSVC 的 vcvars，路径猜错
+        # 时 cmd 报 9009（"找不到命令"），而上一版把 call 的输出重定向到 nul，
+        # 于是连这一行都没进日志 —— 只剩一个 9009，完全看不出是哪一步找不到东西。
+        # 这里用 vswhere 解析（与 ASan 运行时那一步同一套办法），并逐项打印存在性。
+        $vswhere = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
+        $vsInst = (& $vswhere -products * -latest -property installationPath | Select-Object -First 1)
+        $vcvars = if ($vsInst) { Join-Path $vsInst 'VC\Auxiliary\Build\vcvars64.bat' } else { '' }
+        Write-Host "vcvars64 candidate: $vcvars (exists=$(Test-Path $vcvars))"
+        if (-not $vcvars -or -not (Test-Path $vcvars)) {
+            Write-Host 'WINDOWS-VULKAN-CAPABILITY: NONE (cannot locate vcvars64.bat for the probe build)'
+            exit 0
+        }
+        $env:PROBE_VCVARS = $vcvars
+
         $buildBat = Join-Path $env:RUNNER_TEMP 'build_vkprobe.bat'
         $batLines = @(
             '@echo off',
-            'call "%VULKAN_SDK%\Bin\VC\tools\vcvars64.bat" >nul',
+            'call "%PROBE_VCVARS%" >nul',
+            'if errorlevel 1 echo VCVARS CALL FAILED: %PROBE_VCVARS%',
             'cd /d "%GITHUB_WORKSPACE%"',
             'cl /nologo /std:c++17 /EHsc /I "%VULKAN_SDK%\Include" tools\vk_capability_probe.cpp /Fe:"%RUNNER_TEMP%\vkprobe.exe" /link /LIBPATH:"%VULKAN_SDK%\Lib" vulkan-1.lib',
             'exit /b %ERRORLEVEL%'
