@@ -97,11 +97,12 @@
           <Grid>
             <!-- 视口内容区 -->
             <Border Background="#1E1E1E" x:Name="ViewportBorder"
-                    PointerPressed="OnViewportPointerPressed"
-                    PointerReleased="OnViewportPointerReleased"
-                    PointerMoved="OnViewportPointerMoved"
-                    PointerWheelChanged="OnViewportPointerWheelChanged"
-                    KeyDown="OnViewportKeyDown"
+        PointerPressed="OnViewportPointerPressed"
+                PointerReleased="OnViewportPointerReleased"
+                PointerMoved="OnViewportPointerMoved"
+                PointerWheelChanged="OnViewportPointerWheelChanged"
+                SizeChanged="OnViewportSizeChanged"
+                KeyDown="OnViewportKeyDown"
                     KeyUp="OnViewportKeyUp"
                     Focusable="True">
               <Panel>
@@ -120,7 +121,7 @@
               </Panel>
             </Border>
 
-            <!-- Gizmo 工具栏（右上角叠加） -->
+            <!-- Gizmo 工具栏（右上角叠加）-->
             <StackPanel Orientation="Horizontal" Spacing="4" Margin="8"
                         HorizontalAlignment="Right" VerticalAlignment="Top">
               <Button Content="Q" Width="28" Height="28" ToolTip.Tip="Select (Q)"
@@ -132,12 +133,34 @@
               <Button Content="R" Width="28" Height="28" ToolTip.Tip="Scale (R)"
                       Click="OnGizmoScale"/>
               <Separator Width="1" Background="#44FFFFFF" Margin="4,0"/>
+
+              <!-- 坐标空间 World/Local。ABI（SetGizmoSpace）与 ViewModel 属性
+                   本就存在，此前工具栏却没有对应控件，GizmoSpace 无从设置。
+                   用静态字形 + ToolTip 表达状态，不引入转换器/资源：
+                   未勾选=World，勾选=Local。与 ImGui 版工具栏同一做法
+                   （那里是 m_GizmoLocal ? CUBE : DOT_CIRCLE）。 -->
+              <ToggleButton Content="W/L" Width="40" Height="28"
+                            IsChecked="{Binding GizmoSpaceLocal, Mode=TwoWay}"
+                            ToolTip.Tip="Gizmo space — unchecked: World, checked: Local"/>
+
+              <!-- 吸附开关 + 步长。步长绑 float 属性，Avalonia 原生支持
+                   string↔float 双向转换；仅在吸附开启时可编辑。 -->
+              <ToggleButton Content="S" Width="28" Height="28"
+                            IsChecked="{Binding GizmoSnapEnabled, Mode=TwoWay}"
+                            ToolTip.Tip="Snap to grid"/>
+              <TextBox Width="54" Text="{Binding GizmoSnapValue, Mode=TwoWay}"
+                       Watermark="snap"
+                       IsEnabled="{Binding GizmoSnapEnabled, Mode=OneWay}"
+                       VerticalAlignment="Center" ToolTip.Tip="Snap step"/>
+
+              <Separator Width="1" Background="#44FFFFFF" Margin="4,0"/>
               <Button Content="G" Width="28" Height="28" ToolTip.Tip="Toggle Grid (G)"
                       Click="OnToggleGrid"/>
             </StackPanel>
 
-            <!-- 视口统计信息（左下角叠加） -->
-            <TextBlock Text="Viewport" HorizontalAlignment="Left"
+            <!-- 视口叠加信息（左下角）。此前是硬编码的静态 "Viewport" 文本，
+                 不随任何东西变化；现在绑定真实呈现帧的凭据。 -->
+            <TextBlock Text="{Binding ViewportStatusText}" HorizontalAlignment="Left"
                        VerticalAlignment="Bottom" Margin="8,0,0,4"
                        Opacity="0.5" FontSize="11"/>
           </Grid>
@@ -164,6 +187,39 @@
               <TextBox Grid.Row="2" Grid.Column="1" Text="{Binding PosZ}" Margin="2"/>
             </Grid>
             <Button x:Name="ApplyTransformBtn" Content="Apply Transform" Click="OnApplyTransform" HorizontalAlignment="Left"/>
+
+            <!-- 视口相机（编辑器视角，非所选实体的 Camera 组件）。
+                 ABI 与 ViewModel 属性此前都已存在，但 Inspector 里没有任何可编辑面，
+                 Gate 7-D 的「相机位置/缩放可编辑」「Perspective/Orthographic 切换」
+                     因此无法在 UI 上完成。 -->
+            <TextBlock Text="Viewport Camera" FontWeight="Bold" Margin="2,10,0,2"/>
+            <Grid ColumnDefinitions="Auto,*" Margin="2">
+              <TextBlock Grid.Column="0" Text="Pos X" VerticalAlignment="Center" Margin="0,0,8,0"/>
+              <TextBox Grid.Column="1" Text="{Binding ViewportCamX, Mode=TwoWay}"/>
+            </Grid>
+            <Grid ColumnDefinitions="Auto,*" Margin="2">
+              <TextBlock Grid.Column="0" Text="Pos Y" VerticalAlignment="Center" Margin="0,0,8,0"/>
+              <TextBox Grid.Column="1" Text="{Binding ViewportCamY, Mode=TwoWay}"/>
+            </Grid>
+            <Grid ColumnDefinitions="Auto,*" Margin="2">
+              <TextBlock Grid.Column="0" Text="Pos Z" VerticalAlignment="Center" Margin="0,0,8,0"/>
+              <TextBox Grid.Column="1" Text="{Binding ViewportCamZ, Mode=TwoWay}"/>
+            </Grid>
+            <Grid ColumnDefinitions="Auto,*" Margin="2">
+              <TextBlock Grid.Column="0" Text="Zoom" VerticalAlignment="Center" Margin="0,0,8,0"/>
+              <TextBox Grid.Column="1" Text="{Binding ViewportZoom, Mode=TwoWay}"
+                       Watermark="ortho zoom"/>
+            </Grid>
+            <Grid ColumnDefinitions="Auto,*" Margin="2">
+              <TextBlock Grid.Column="0" Text="Projection" VerticalAlignment="Center" Margin="0,0,8,0"/>
+              <!-- ComboBox 的 SelectedIndex 与 ViewportProjection(int) 同型，
+                   无需转换器。0=Perspective, 1=Orthographic -->
+              <ComboBox Grid.Column="1" SelectedIndex="{Binding ViewportProjection, Mode=TwoWay}"
+                        HorizontalAlignment="Stretch">
+                <ComboBoxItem Content="Perspective"/>
+                <ComboBoxItem Content="Orthographic"/>
+              </ComboBox>
+            </Grid>
 
             <!-- F1 (Component Contract)：Camera Inspector（反射元数据驱动）-->
             <TextBlock Text="Camera" FontWeight="Bold" Margin="2,10,0,2"/>

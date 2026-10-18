@@ -572,6 +572,29 @@ public partial class MainWindow : Window
         return (ndcX, ndcY);
     }
 
+    /// <summary>
+    /// 视口控件尺寸变化 → 通知引擎重建视口（charter Gate 7-A「窗口 resize 时
+    /// FBO 自动重建」）。
+    ///
+    /// 为什么必须转发：引擎侧 EditorCamera 的宽高比只由
+    /// EditorSession_SetViewportSize 更新（EditorSession.cpp 的实现会调用
+    /// ViewportPanel 的 SetViewportSize + MarkDirty）。不转发的话，投影矩阵的
+    /// 宽高比会停留在打开工程那一刻的值，拖动分隔条或缩放窗口后视口会被拉伸。
+    ///
+    /// 这里不去抖：SizeChanged 在拖动中连续触发，而引擎侧
+    /// SetViewportSize 自带「尺寸未变则早退」的判断，且 MarkDirty 只是置位一个
+    /// 布尔，重复调用无额外代价。加去抖反而会让首次布局多等一帧。
+    /// </summary>
+    private void OnViewportSizeChanged(object? sender, Avalonia.SizeChangedEventArgs e)
+    {
+        if (!AcceptViewportInput()) return;
+        int w = (int)Math.Round(e.NewSize.Width);
+        int h = (int)Math.Round(e.NewSize.Height);
+        // 布局过程中会出现 0 尺寸；引擎侧对 <=0 直接忽略，这里同样不推。
+        if (w <= 0 || h <= 0) return;
+        Vm.SetViewportSize(w, h);
+    }
+
     private void OnViewportPointerPressed(object? sender, Avalonia.Input.PointerPressedEventArgs e)
     {
         if (!AcceptViewportInput()) return;
@@ -700,6 +723,15 @@ public partial class MainWindow : Window
 
         // 消费该帧；没有新帧就什么都不做
         _viewportPresenter.PresentLatestFrame(_host);
+
+        // 左下角叠加信息。
+        // 复用 presenter 的 LastDisplayed 而不是自行记录帧号：presenter 已经
+        // 拒绝了乱序/回退帧（Present 里比较 frame.FrameId <= _displayedFrameId），
+        // 所以这里的 FrameId 必然是**真实呈现过**的那一帧。
+        var shown = _viewportPresenter.LastDisplayed;
+        if (shown is null) return;
+        Vm.UpdateViewportStatus(shown.DisplayedFrameId, shown.Width, shown.Height,
+                                shown.NonClearPixels);
     }
 
     private static EditorHostService RequireInjectedHost()
