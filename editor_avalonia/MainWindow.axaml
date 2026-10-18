@@ -101,7 +101,6 @@
                 PointerReleased="OnViewportPointerReleased"
                 PointerMoved="OnViewportPointerMoved"
                 PointerWheelChanged="OnViewportPointerWheelChanged"
-                SizeChanged="OnViewportSizeChanged"
                 KeyDown="OnViewportKeyDown"
                     KeyUp="OnViewportKeyUp"
                     Focusable="True">

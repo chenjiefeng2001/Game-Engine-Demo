@@ -41,6 +41,12 @@ public partial class MainWindow : Window
         Vm.PropertyChanged += OnVmPropertyChanged;
         Vm.LogToConsole("shell ready (P2 Editor Core)");
 
+        // 视口尺寸上报（charter Gate 7-A）。见 ReportViewportSize 的注释：
+        // 刻意用 lambda 订阅而非 XAML 的 SizeChanged="..."，以免写出错误的
+        // 事件参数类型名。
+        if (ViewportBorder is not null)
+            ViewportBorder.SizeChanged += (_, _) => ReportViewportSize();
+
         // ── Phase 7: Viewport texture update timer ──
         // A7-C03：legacy viewport timer 只在 LegacySession backend 下存在。
         // EngineHost 模式由 EditorHostService 持有唯一 pump，UI 不得再驱动任何 tick。
@@ -576,20 +582,24 @@ public partial class MainWindow : Window
     /// 视口控件尺寸变化 → 通知引擎重建视口（charter Gate 7-A「窗口 resize 时
     /// FBO 自动重建」）。
     ///
-    /// 为什么必须转发：引擎侧 EditorCamera 的宽高比只由
-    /// EditorSession_SetViewportSize 更新（EditorSession.cpp 的实现会调用
-    /// ViewportPanel 的 SetViewportSize + MarkDirty）。不转发的话，投影矩阵的
-    /// 宽高比会停留在打开工程那一刻的值，拖动分隔条或缩放窗口后视口会被拉伸。
+    /// 为什么在代码后置里订阅而不是写成 XAML 的 SizeChanged="..."：
+    /// 写 XAML 处理器就必须写出事件参数的具体类型名，而我把
+    /// Avalonia.SizeChangedEventArgs 写错了（CI 首次运行 CS0234 证伪）。
+    /// 用 lambda 订阅则由编译器从事件签名自行推断参数类型，不需要知道
+    /// 类型名 —— 这类「API 类型名记不准」的错误本就不该由人肉去猜。
     ///
-    /// 这里不去抖：SizeChanged 在拖动中连续触发，而引擎侧
-    /// SetViewportSize 自带「尺寸未变则早退」的判断，且 MarkDirty 只是置位一个
-    /// 布尔，重复调用无额外代价。加去抖反而会让首次布局多等一帧。
+    /// 为什么不去抖：SizeChanged 在拖动中连续触发，而引擎侧 SetViewportSize
+    /// 自带「尺寸未变则早退」的判断，且 MarkDirty 只是置位一个布尔，重复调用
+    /// 无额外代价。加去抖反而让首次布局多等一帧。
     /// </summary>
-    private void OnViewportSizeChanged(object? sender, Avalonia.SizeChangedEventArgs e)
+    private void ReportViewportSize()
     {
+        var border = ViewportBorder;
+        if (border is null) return;
         if (!AcceptViewportInput()) return;
-        int w = (int)Math.Round(e.NewSize.Width);
-        int h = (int)Math.Round(e.NewSize.Height);
+
+        int w = (int)Math.Round(border.Bounds.Width);
+        int h = (int)Math.Round(border.Bounds.Height);
         // 布局过程中会出现 0 尺寸；引擎侧对 <=0 直接忽略，这里同样不推。
         if (w <= 0 || h <= 0) return;
         Vm.SetViewportSize(w, h);
