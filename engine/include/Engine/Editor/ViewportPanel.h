@@ -45,6 +45,25 @@ namespace Engine {
         ViewportTool GetTool() const { return m_CurrentTool; }
         void CycleGizmoTool();
 
+        // ── Phase 7-C: gizmo 状态对外入口 ──
+        // 此前 m_GizmoLocal / m_SnapEnabled / m_SnapValue 只能由本类的 ImGui
+        // 浮层按钮写入（ViewportPanel.cpp 的 TB lambda），外部没有任何 setter，
+        // 因此 bridge 的 9 个 Gizmo ABI 即使被调用也落不到这里。
+        void SetGizmoSpace(bool local) { m_GizmoLocal = local; }
+        bool GetGizmoSpace() const { return m_GizmoLocal; }
+        void SetGizmoSnapEnabled(bool enabled) { m_SnapEnabled = enabled; }
+        bool GetGizmoSnapEnabled() const { return m_SnapEnabled; }
+        void SetGizmoSnapValue(float value) { m_SnapValue = value; }
+        float GetGizmoSnapValue() const { return m_SnapValue; }
+
+        /// 把 ABI 的 4 值 Gizmo 模式（Select/Translate/Rotate/Scale）映射到
+        /// ViewportTool。**不能直接强转**：ViewportTool 多一个 Hand
+        /// （Select=0,Hand=1,Translate=2,Rotate=3,Scale=4），强转会把
+        /// Translate 变成 Hand、Scale 变成 Rotate，静默错位。
+        /// 越界值退回 Select。
+        static bool TryGizmoModeFromAbi(int32_t mode, ViewportTool& outTool);
+        static int32_t GizmoModeToAbi(ViewportTool tool);
+
         void SetSelectionMode(SelectionMode mode) { m_SelectionMode = mode; }
         SelectionMode GetSelectionMode() const { return m_SelectionMode; }
         void SetSnapMode(SnapMode mode);

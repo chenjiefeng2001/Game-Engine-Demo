@@ -28,13 +28,14 @@
 ### Phase 7-C: Gizmo 工具栏
 - [x] 工具栏 UI（Q/W/E/R 选择/平移/旋转/缩放）
 - [x] Gizmo 模式/空间/吸附状态管理
-- [ ] Gizmo 渲染（engine-side ImGuizmo 或 Avalonia-side）
+- [x] ABI → ViewportPanel 断链已修复（9 个 Gizmo ABI 真正转发到 ViewportPanel）
+- [ ] Gizmo **渲染**：ImGuizmo 无法脱离 ImGui draw list，生产路径仍不可达（见 §2.3 补充）
 
 ### Phase 7-D: 相机控制
 - [x] 相机位置设置/获取
 - [x] 相机投影类型切换（Perspective/Orthographic）
 - [x] 相机缩放（正交模式）
-- [ ] EditorCamera 输入处理（orbit/pan/fly）
+- [x] EditorCamera 输入处理（orbit/pan/fly）—— External 路径已补齐并有测试覆盖
 
 ---
 
@@ -65,6 +66,33 @@
 - 保持 ImGuizmo 在引擎侧渲染
 - Avalonia 工具栏仅设置 GizmoMode
 - 后续可迁移到 Avalonia-side 渲染（更清晰的分离）
+
+#### 补充：这条选择只在 legacy 路径成立（2026-10-18 实测）
+
+调查发现三个此前未被记录的事实，它们决定 7-C 的剩余工作量：
+
+1. **ABI 与 ViewportPanel 此前完全断开**。§3.4 的 9 个 Gizmo 函数虽然都已声明并实现，
+   但实现只写 `EditorSession` 自己的成员，既不触达 `ViewportPanel`，其成员也没有任何
+   消费者 —— ABI 存在但完全空转。已修复（新增 `ViewportPanel` 的 gizmo setter，
+   `EditorSession` 在有 `Application` 时转发过去；无 `Application` 时退回成员缓存，
+   legacy 行为不变）。
+
+2. **ImGuizmo 原理上离不开 ImGui**。`SetDrawlist()` 落到 `ImGui::GetWindowDrawList()`
+   （`ImGuizmo.cpp:970`），`Manipulate` 第一行无条件解引用 `mDrawList`
+   （`ImGuizmo.cpp:2734`）。没有活动的 ImGui 窗口就没有 draw list，gizmo 画不出来。
+
+3. **gizmo 绘制在生产路径不可达**。`DrawGizmos()` 的唯一调用者是 `OnImGui()`，
+   而 `OnImGui()` 只被 legacy `EngineEditor.cpp:616/731` 调用；headless 下
+   `Application::InternalRender()` 首行即 return（`Application.cpp:547`），
+   `Application.cpp:594` 的设计注释明写「不依赖 legacy ViewportPanel」。
+
+因此要让 gizmo 在生产路径工作，只有三条路，都超出「限定 legacy 修断链」的范围：
+给 headless 引入最小 ImGui 叠层（与 `Application.cpp:594` 的设计直接冲突）、
+或迁到 Avalonia 侧（Avalonia 拿不到 GL 的 ID buffer，gizmo 拾取需另做映射）。
+
+**当前边界**：gizmo 状态经 ABI 已真实生效，但仅在 legacy backend 下；
+默认生产 backend 的 `SupportsViewport => false`（`EditorHostService.cs:207`），
+Gizmo ABI 在生产路径按设计抛 `HostCapabilityNotAvailableException`。
 
 ---
 
@@ -151,8 +179,10 @@ int32_t EditorSession_GetViewportGridVisible(EditorSessionHandle h);
 - [ ] 左键点击拾取实体（Hierarchy 选中）
 
 ### Gate 7-C: Gizmo
-- [ ] Q/W/E/R 工具切换
-- [ ] Gizmo 模式状态同步到引擎
+- [x] Q/W/E/R 工具切换（经 ABI 转发到 ViewportPanel）
+- [x] Gizmo 模式状态同步到引擎
+- [ ] Gizmo 在 legacy 视口中实际可见（需 legacy 编辑器运行取证）
+- [ ] Gizmo 在生产路径可见（受阻，见 §2.3 补充）
 
 ### Gate 7-D: 相机控制
 - [ ] 相机位置/缩放可编辑

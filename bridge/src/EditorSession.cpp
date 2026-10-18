@@ -1110,30 +1110,81 @@ int32_t EditorSession::ViewportPick(float ndcX, float ndcY) {
     return -1;
 }
 
+// ────────────────────────────────────────────────────────────────────
+// Phase 7-C: Gizmo 状态
+//
+// 此前这 9 个函数只写 EditorSession 自己的成员，既不触达 ViewportPanel，
+// 也没有任何消费者 —— ABI 存在但完全空转。现在改为：成员仍作缓存，
+// 同时在有 Application 时把状态真正推给 ViewportPanel，getter 也优先读
+// 真实状态。没有 Application 时（默认构造的 session）退回成员缓存，
+// 保持既有可观测行为不变。
+// ────────────────────────────────────────────────────────────────────
+
 void EditorSession::SetGizmoMode(int32_t mode) {
     m_GizmoMode = mode;
+    auto* app = m_Application;
+    if (!app) return;
+    auto& vp = app->GetViewportPanel();
+    Engine::ViewportTool tool = Engine::ViewportTool::Select;
+    if (Engine::ViewportPanel::TryGizmoModeFromAbi(mode, tool)) {
+        vp.SetTool(tool);
+        return;
+    }
+    // 越界值：不落到 ViewportPanel，但缓存已记下，便于 getter 回读出调用方传了什么。
 }
 
 void EditorSession::SetGizmoSpace(int32_t space) {
     m_GizmoSpace = space;
+    auto* app = m_Application;
+    if (!app) return;
+    app->GetViewportPanel().SetGizmoSpace(space != 0);
 }
 
 void EditorSession::SetGizmoSnap(int32_t enabled, float value) {
     m_GizmoSnapEnabled = enabled;
     m_GizmoSnapValue = value;
+    auto* app = m_Application;
+    if (!app) return;
+    auto& vp = app->GetViewportPanel();
+    vp.SetGizmoSnapEnabled(enabled != 0);
+    vp.SetGizmoSnapValue(value);
 }
 
-int32_t EditorSession::GetGizmoMode() const { return m_GizmoMode; }
-int32_t EditorSession::GetGizmoSpace() const { return m_GizmoSpace; }
-int32_t EditorSession::GetGizmoSnapEnabled() const { return m_GizmoSnapEnabled; }
-float EditorSession::GetGizmoSnapValue() const { return m_GizmoSnapValue; }
+int32_t EditorSession::GetGizmoMode() const {
+    auto* app = m_Application;
+    if (!app) return m_GizmoMode;
+    return Engine::ViewportPanel::GizmoModeToAbi(app->GetViewportPanel().GetTool());
+}
+
+int32_t EditorSession::GetGizmoSpace() const {
+    auto* app = m_Application;
+    if (!app) return m_GizmoSpace;
+    return app->GetViewportPanel().GetGizmoSpace() ? 1 : 0;
+}
+
+int32_t EditorSession::GetGizmoSnapEnabled() const {
+    auto* app = m_Application;
+    if (!app) return m_GizmoSnapEnabled;
+    return app->GetViewportPanel().GetGizmoSnapEnabled() ? 1 : 0;
+}
+
+float EditorSession::GetGizmoSnapValue() const {
+    auto* app = m_Application;
+    if (!app) return m_GizmoSnapValue;
+    return app->GetViewportPanel().GetGizmoSnapValue();
+}
 
 void EditorSession::SetViewportGridVisible(int32_t visible) {
     m_ViewportGridVisible = visible;
+    auto* app = m_Application;
+    if (!app) return;
+    app->GetViewportPanel().SetShowGrid(visible != 0);
 }
 
 int32_t EditorSession::GetViewportGridVisible() const {
-    return m_ViewportGridVisible;
+    auto* app = m_Application;
+    if (!app) return m_ViewportGridVisible;
+    return app->GetViewportPanel().IsShowGrid() ? 1 : 0;
 }
 
 // ── Phase 7-B: Camera external input mode ──

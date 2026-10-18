@@ -62,6 +62,42 @@ void ViewportPanel::CycleGizmoTool() {
     break;
   }
 }
+bool ViewportPanel::TryGizmoModeFromAbi(int32_t mode, ViewportTool& outTool) {
+  switch (mode) {
+  case 0:
+    outTool = ViewportTool::Select;
+    return true;
+  case 1:
+    outTool = ViewportTool::Translate;
+    return true;
+  case 2:
+    outTool = ViewportTool::Rotate;
+    return true;
+  case 3:
+    outTool = ViewportTool::Scale;
+    return true;
+  default:
+    return false;
+  }
+}
+
+int32_t ViewportPanel::GizmoModeToAbi(ViewportTool tool) {
+  switch (tool) {
+  case ViewportTool::Select:
+    return 0;
+  case ViewportTool::Translate:
+    return 1;
+  case ViewportTool::Rotate:
+    return 2;
+  case ViewportTool::Scale:
+    return 3;
+  case ViewportTool::Hand:
+    // ABI 协议里没有 Hand；映射到 Select 而不是静默当成 Translate。
+    return 0;
+  }
+  return 0;
+}
+
 void ViewportPanel::SetSnapMode(SnapMode mode) {
   if (m_Camera)
     m_Camera->SetSnapMode(mode);
