@@ -247,20 +247,25 @@ jobs:
             & $sevenZip x -y "-o$extractDir" $archive | Out-Null
             if ($LASTEXITCODE -ne 0) { throw "7z exited $LASTEXITCODE" }
 
-            $dll = Get-ChildItem $extractDir -Recurse -Filter 'vulkan_lvp.dll' -File |
-                   Where-Object { $_.FullName -match 'x64' } | Select-Object -First 1
-            $icd = Get-ChildItem $extractDir -Recurse -Filter 'lvp_icd.x86_64.json' -File | Select-Object -First 1
-            if (-not $dll -or -not $icd) { throw "lavapipe (vulkan_lvp.dll / lvp_icd.x86_64.json) not found in $archive" }
+            # 整棵 x64 目录一起用，而不是只挑 vulkan_lvp.dll 与 json 两个文件：
+            # Mesa 的驱动依赖同包里的其它 DLL，只挑两样会让 loader 在加载 ICD 时
+            # 找不到依赖，而它对这种失败的报法是 VK_ERROR_INCOMPATIBLE_DRIVER
+            # （VkResult=-9）—— 看上去像"这台机器没有可用驱动"，实际是缺文件。
+            $x64 = Get-ChildItem $extractDir -Recurse -Directory -Filter 'x64' |
+                   Select-Object -First 1
+            if (-not $x64) { throw "the mesa package has no x64 directory (looked under $extractDir)" }
+            $lvpDir = Join-Path $env:RUNNER_TEMP 'mesa-x64'
+            Copy-Item $x64.FullName -Destination $lvpDir -Recurse -Force
 
-            # 放在同一个干净目录，并把 json 里的 library_path 改成绝对路径：
-            # 依赖包内相对路径会在 loader 的工作目录不是解压根目录时失效。
-            $lvpDir = Join-Path $env:RUNNER_TEMP 'lavapipe'
-            New-Item -ItemType Directory -Force -Path $lvpDir | Out-Null
-            Copy-Item $dll.FullName -Destination $lvpDir -Force
-            $icdText = (Get-Content $icd.FullName -Raw) -replace '"library_path"\s*:\s*"[^"]*"',
-                                                          "`"library_path`": `"$($dll.FullName)`""
-            $icdOut = Join-Path $lvpDir 'lvp_icd.x86_64.json'
-            Set-Content -Path $icdOut -Value $icdText -Encoding ascii
+            $icd = Get-ChildItem $lvpDir -Recurse -Filter 'lvp_icd.x86_64.json' -File | Select-Object -First 1
+            if (-not $icd) { throw "lvp_icd.x86_64.json not found under $($x64.FullName)" }
+            Write-Host "--- lavapipe ICD manifest ---"
+            Get-Content $icd.FullName | Write-Host
+            Write-Host "--- vulkan_lvp.dll present: $(Test-Path (Join-Path $lvpDir 'vulkan_lvp.dll')) ---"
+            Write-Host "--- x64 top level ---"
+            Get-ChildItem $lvpDir -File | Select-Object -ExpandProperty Name | Write-Host
+
+            $icdOut = $icd.FullName
             # loader 的新旧两种变量名都给上：不同版本只认其中之一。
             "VK_ICD_FILENAMES=$icdOut" >> $env:GITHUB_ENV
             "VK_DRIVER_FILES=$icdOut" >> $env:GITHUB_ENV
@@ -318,8 +323,16 @@ jobs:
             Write-Host 'WINDOWS-VULKAN-CAPABILITY: NONE (probe failed to build; see cl output above)'
             exit 0
         }
-        $out = & $probe 2>&1 | Out-String
-        Write-Host $out
+        # 再跑一次，带上 loader 的诊断输出。VkResult=-9（VK_ERROR_INCOMPATIBLE_DRIVER）
+        # 本身不说明是哪个 ICD、因为什么被拒绝；loader 的 debug 输出会说。
+        # 这一跑只用于取证，不改变结论判定。
+        $env:VK_LOADER_DEBUG = 'all'
+        $dbg = & $probe 2>&1 | Out-String
+        Write-Host "--- probe run with VK_LOADER_DEBUG=all ---"
+        Write-Host $dbg
+        $env:VK_LOADER_DEBUG = ''
+
+        $out = $dbg
         # 探针的输出形状（tools/vk_capability_probe.cpp）：
         #   [VKPROBE] device: <name>            <- 每个枚举到的物理设备一行
         #   [VKPROBE] NO PHYSICAL DEVICE -> lavapipe not usable
