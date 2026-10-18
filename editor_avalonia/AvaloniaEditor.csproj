@@ -32,11 +32,15 @@
     <None Include="..\build\bridge\$(Configuration)\EditorBridge.dll"
           Condition="Exists('..\build\bridge\$(Configuration)\EditorBridge.dll')"
           CopyToOutputDirectory="Always" Link="EditorBridge.dll" />
-    <!-- ⚠ 未纳入本次 slice：下面这行是**同一类**硬编码 Debug 缺陷
-         （Release 会部署 Debug 的 OpenAL32.dll）。属 build/deployment hygiene，
-         已单独记录待裁决，本次刻意不改，避免一个 slice 同时动两件事。 -->
-    <None Include="..\build\sandbox\EditorDemo\Debug\OpenAL32.dll"
-          Condition="Exists('..\build\sandbox\EditorDemo\Debug\OpenAL32.dll')"
-          CopyToOutputDirectory="PreserveNewest" Link="OpenAL32.dll" />
+    <!-- 与上面 EditorBridge.dll 同一条规则 S1：源路径必须用 $(Configuration)，
+         不得硬编码 Debug。否则 `dotnet build -c Release` 会把 Debug 的
+         OpenAL32.dll 部署进 bin\Release，Release 实际跑在 Debug 原生库上 ——
+         与 EditorBridge 那行完全同型的缺陷，此前被刻意留到本 slice 之外，
+         现已一并修正。
+         S2 同样适用：CopyToOutputDirectory 必须 Always，PreserveNewest 在
+         增量 build 下不重新拷贝，会留下陈旧 bin DLL。 -->
+    <None Include="..\build\sandbox\EditorDemo\$(Configuration)\OpenAL32.dll"
+          Condition="Exists('..\build\sandbox\EditorDemo\$(Configuration)\OpenAL32.dll')"
+          CopyToOutputDirectory="Always" Link="OpenAL32.dll" />
   </ItemGroup>
 </Project>

@@ -91,23 +91,9 @@ namespace Engine {
     private:
         // P1-c 死代码摘除（GP1-DX 审计 §3.3/§4）：DrawGizmo 为第二套无调用者
         // 的 gizmo 实现（真实 gizmo 由 ViewportPanel 私有状态驱动）；
-        // InitDockingLayout 为从未定义的孤儿声明。
+         // InitDockingLayout 为从未定义的孤儿声明。
 
-        // ── 面板绘制 ──
-        void DrawSceneHierarchyWindow();
-        void DrawInspectorWindow();
-        void DrawConsoleWindow();
-        void DrawPerformanceWindow();
-        void DrawContentBrowserWindow();
-        void DrawAssetBrowserWindow();
-        void DrawDepGraphWindow();
-        void DrawViewportPanel();
-        void DrawSceneManagerWindow();
-        void DrawSceneViewerWindow();
-        void DrawViewModeWindow();
-        void DrawEditorSettingsWindow();
-
-        // ── 拥有的面板 ──
+         // ── 拥有的面板 ──
         MainMenuBar           m_MenuBar;
         Toolbar               m_Toolbar;
         StatusBar             m_StatusBar;
