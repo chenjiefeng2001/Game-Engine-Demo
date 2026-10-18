@@ -57,6 +57,18 @@ public:
                         const uint32_t* data, size_t wordCount);
 
     /**
+     * 以磁盘上的 .spv 文件登记。这是 ShaderCompileRule 产出物的**消费入口**：
+     * 在此之前，全仓库没有任何代码从磁盘读 .spv（RegisterFile 读的是 GLSL），
+     * 于是规则写出的文件即使存在也没有读者，闭环无法验证。
+     *
+     * 文件按 4 字节小端字读入（与 SPIR-V 规范及本编译器输出一致）。
+     * 文件不存在、长度为 0 或不是 4 的整数倍都返回 false 并说明原因 ——
+     * 一个「能打开但内容不是 SPIR-V」的文件必须在这里就暴露。
+     */
+    bool RegisterSpirvFile(const std::string& name, ShaderStageType stage,
+                           const std::string& spvPath);
+
+    /**
      * 按 GraphicsPSODesc 中的 StringID 取 SPIR-V。
      * 返回 nullptr 表示该 ID 未登记。
      */

@@ -102,6 +102,7 @@ add_executable(test_content
     test_content/VS01Test.cpp
     test_content/ResourceLifecycleTest.cpp
     test_content/DXGoldenGateTest.cpp
+    test_content/ShaderCompileRuleTest.cpp
 )
 target_link_libraries(test_content PRIVATE ${COMMON_LIBS} GTest::gtest_main)
 add_test(NAME test_content COMMAND test_content)

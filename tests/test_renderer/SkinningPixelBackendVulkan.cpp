@@ -17,12 +17,12 @@
  * 与 GL 后端的差异，都是必须显式处理的地方
  * --------------------------------------
  *   * **着色器**：GL 那份是 GLSL 330 + 松散 uniform；Vulkan 需要 SPIR-V，
- *     uniform 必须放进 UBO。因此这里自带一份 GLSL 450 着色器（源码内联，
- *     经 shaderc 编译后注册进 ShaderRegistry），不共用产品那份 .vert/.frag。
+ *     uniform 必须放进 UBO。因此用 assets/shaders/skin_pixel.{vert,frag}
+ *     —— 仓库里另一对 GLSL 450 着色器，而不是内联源码。原因（产品着色器为什么
+ *     不能直接复用）写在那两个文件的头注释里。
  *   * **属性**：共享同一块顶点内存，但只声明用得到的 3 个属性
  *     （position / 骨骼索引 / 骨骼权重），location 在着色器里重新编号。
- *     骨骼索引是 ivec4，需要 Format::RGBA32_SInt —— 该映射此前缺失，
- *     会落到 VK_FORMAT_UNDEFINED 并建出非法管线。
+ *     骨骼索引是 ivec4，需要 Format::RGBA32_SInt。
  *   * **朝向**：Vulkan 回读是自上而下，GL 是自下而上；这里翻行使两个后端
  *     交给共享断言的是同一种朝向。
  *   * **剔除**：VulkanPipelineState 目前**硬编码** cullMode=BACK 且
@@ -56,34 +56,9 @@ namespace {
 constexpr int    kWidth        = 64;
 constexpr int    kHeight       = 64;
 constexpr uint32 kUboSize      = 192;   // mat4 viewProjection + mat4 bones[2]，std140
-constexpr int    kBoneCount    = 2;
 
-// GLSL 450：uniform 必须放进 UBO。骨骼索引是 ivec4，与共享顶点布局一致。
-const char* const kSkinVertexGlsl = R"(
-#version 450
-layout(location = 0) in vec3  a_Position;
-layout(location = 1) in ivec4 a_BoneIndices;
-layout(location = 2) in vec4  a_BoneWeights;
-layout(set = 0, binding = 0, std140) uniform SkinParams {
-    mat4 u_ViewProjection;
-    mat4 u_BoneMatrices[2];
-} params;
-void main() {
-    mat4 skin = params.u_BoneMatrices[a_BoneIndices.x] * a_BoneWeights.x
-              + params.u_BoneMatrices[a_BoneIndices.y] * a_BoneWeights.y
-              + params.u_BoneMatrices[a_BoneIndices.z] * a_BoneWeights.z
-              + params.u_BoneMatrices[a_BoneIndices.w] * a_BoneWeights.w;
-    gl_Position = params.u_ViewProjection * (skin * vec4(a_Position, 1.0));
-}
-)";
-
-// 固定输出一个明显亮于清除色的颜色：清除色是 (0,0,0,1)，共享断言的口径是
-// 「任一通道 > 8 即为亮」，因此几何与背景在字节层面必然可区分。
-const char* const kSkinFragmentGlsl = R"(
-#version 450
-layout(location = 0) out vec4 outColor;
-void main() { outColor = vec4(0.25, 0.55, 0.85, 1.0); }
-)";
+const char* const kVertexShaderAsset   = "assets/shaders/skin_pixel.vert";
+const char* const kFragmentShaderAsset = "assets/shaders/skin_pixel.frag";
 
 class VulkanSkinningPixelBackend final : public ISkinningPixelBackend {
 public:
@@ -140,10 +115,14 @@ std::unique_ptr<VulkanSkinningPixelBackend> VulkanSkinningPixelBackend::Create(s
     }
     backend->name_ = std::string("Vulkan (") + backend->vk_->GetDeviceName() + ")";
 
-    if (!ShaderRegistry::Get().RegisterSource("skinpix_vs", ShaderStageType::Vertex, kSkinVertexGlsl) ||
-        !ShaderRegistry::Get().RegisterSource("skinpix_fs", ShaderStageType::Fragment, kSkinFragmentGlsl)) {
-        if (why) *why = "skinned GLSL failed to compile to SPIR-V (shaderc); the register "
-                        "call returns false and prints the compiler log";
+    // 从仓库资源读，而不是内联源码：着色器放在 assets/shaders 下，与产品那份
+    // skinned_lit.* 并列。两者不能合并的原因写在 skin_pixel.vert 的头注释里。
+    if (!ShaderRegistry::Get().RegisterFile("skinpix_vs", ShaderStageType::Vertex,
+                                            ResolveRepoAssetPath(kVertexShaderAsset)) ||
+        !ShaderRegistry::Get().RegisterFile("skinpix_fs", ShaderStageType::Fragment,
+                                            ResolveRepoAssetPath(kFragmentShaderAsset))) {
+        if (why) *why = "the skinned GLSL assets failed to compile to SPIR-V (shaderc); "
+                        "RegisterFile prints the compiler log";
         return nullptr;
     }
 
