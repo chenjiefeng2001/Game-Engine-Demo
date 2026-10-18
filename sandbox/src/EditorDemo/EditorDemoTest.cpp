@@ -147,6 +147,16 @@ namespace Engine {
 
         // ── 测试结果面板 ──
         if (m_ShowTestUI) {
+            // 本面板是沙箱专用调试窗口，**不参与** EngineEditor 的规范停靠布局
+            // （见 engine/include/Engine/Editor/EditorLayoutSpec.h：登记表只收
+            // 产品/宿主窗口）。它原先只有 SetNextWindowSize、没有 Pos，首帧位置
+            // 由 ImGui 级联默认值决定，会漂到屏幕中央并盖住视口。这里补一个基于
+            // 工作区右下角的确定位置。
+            const ImGuiViewport* demoVp = ImGui::GetMainViewport();
+            ImGui::SetNextWindowPos(
+                ImVec2(demoVp->WorkPos.x + demoVp->WorkSize.x - 420.0f,
+                       demoVp->WorkPos.y + demoVp->WorkSize.y - 540.0f),
+                ImGuiCond_FirstUseEver);
             ImGui::SetNextWindowSize(ImVec2(400, 500), ImGuiCond_FirstUseEver);
             ImGui::Begin("Editor Demo Test", &m_ShowTestUI);
 

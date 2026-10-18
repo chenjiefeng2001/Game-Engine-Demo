@@ -281,7 +281,7 @@ Add...；AssetBrowser 右键 Create）—— 合规，无需收敛。本轮全�
 | TLB-2 | Toolbar Reset 按钮（与 View>Reset Layout 同类双入口） | ✅ 摘除，布局重置唯一入口 = View 菜单 |
 | TLB-3 | `EngineEditor::DrawGizmo` 第二套无调用者 gizmo 实现（死状态唯一消费者） | ✅ 连同声明、ImGuizmo include 一并移除 |
 | TLB-4 | `InitDockingLayout()` 孤儿声明（只有声明无定义） | ✅ 摘除 |
-| RST-1 | **View>Reset Layout 自审计以来一直 DEAD**：信号在 Init 末尾被 `ConsumeResetLayoutSignal()` 读后丢弃（§3.2 判定复核成立） | ✅ 双修：删除 Init 期吞信号行 + OnImGui 每帧消费，以 docking 分支 DockBuilder 重建四区规范布局（左 Hierarchy 22% / 中 Viewport / 右 Inspector 24% / 底 Console+Performance Tab 组 25%） |
+| RST-1 | **View>Reset Layout 自审计以来一直 DEAD**：信号在 Init 末尾被 `ConsumeResetLayoutSignal()` 读后丢弃（§3.2 判定复核成立） | ✅ 双修：删除 Init 期吞信号行 + OnImGui 每帧消费，以 docking 分支 DockBuilder 重建四区规范布局（左 Hierarchy / 中 Viewport / 右 Inspector / 底 Console+Performance Tab 组） |
 
 ### 8.1 启动链路真因调查（2026-08-26 第二批，实机取证）
 
@@ -292,9 +292,56 @@ Add...；AssetBrowser 右键 Create）—— 合规，无需收敛。本轮全�
 | # | 真因 | 修复 | 验证 |
 |---|------|------|------|
 | INV-1 | **日志假卡死**：logger 为同步实现（注释误标 async），仅 `flush_on(warn)`、无周期刷盘 —— 纯 Info 启动序列滞留 CRT 缓冲数分钟，制造"启动停滞在纹理加载"假象（此前多轮误判根源） | `spdlog::flush_every(1s)`（Log.cpp） | 启动时间线秒级可信；0.7s 完成加载实测 |
-| INV-2 | **布局撕裂**：默认停靠从未引导（`InitDockingLayout` 死条目的真正含义）—— 实测编辑器被拆成 **14 个漂浮 OS 窗口**；且 11 处 `Begin()` 标题带 FontAwesome 图标，原生标题栏渲染为 "? Inspector" 等 | ① 引导式规范布局：Viewport 未停靠即 DockBuilder 重建（判定延后至窗口存在帧，否则绕过 ini 持久化——已复现并修正）；② 全部标题去图标；③ 布局映射对齐真实标题（"Hierarchy" 非 "Scene Hierarchy"）；④ GP01 三件套入右下 Tab 组 | 窗口数 14→1（主窗）；干净退出后重启零重建（持久化成立） |
+| INV-2 | **布局撕裂**：默认停靠从未引导（`InitDockingLayout` 死条目的真正含义）—— 实测编辑器被拆成 **14 个漂浮 OS 窗口**；且 11 处 `Begin()` 标题带 FontAwesome 图标，原生标题栏渲染为 "? Inspector" 等 | ① 引导式规范布局：Viewport 未停靠即 DockBuilder 重建（判定延后至窗口存在帧，否则绕过 ini 持久化——已复现并修正）；② 全部标题去图标；③ 布局映射对齐真实标题（"Hierarchy" 非 "Scene Hierarchy"）；④ GP01 三件套入右下 Tab 组 | 窗口数 14→1（主窗）；干净退出后重启零重建（持久化成立）。**2026-10-18 复核修正：引导机制本身正确，但「14→1」的结论不成立** —— 见下方补充 |
 | INV-3 | **关闭链路不可观测**：`WindowClose` 事件零消费者、无来源日志 —— 8 秒自退无法归因 | OnClose Warn 取证 + 主循环退出点带 uptime 日志 | WM_CLOSE→告警→干净退出全链路实测通过 |
 | INV-4 | **测试面板污染**：EditorDemoTest 无条件绘制私有 Console/Profiler/AssetBrowser，启动即生成与生产面板同类冲突的漂浮窗口 | 测试 Init 默认 SetVisible(false)（菜单通路保留） | 启动不再产生重复面板窗口 |
+
+#### INV-2 补充（2026-10-18 复核）
+
+「窗口数 14→1」这个结论**不成立**。引导机制（Viewport 未停靠即 DockBuilder 重建）
+是正确的，但当时用来判断的窗口名→停靠节点映射**漏登记**，而漏登记既不产生编译错误
+也不产生运行错误 —— 它只是让该窗口退化成漂浮窗，于是「全绿」掩盖了症状。
+
+具体：`SceneViewerPanel` 与 `SceneManagerPanel` 的 `m_Visible` 默认都是 `true`
+（`SceneViewerPanel.h:186` / `SceneManagerPanel.h:74`），`EngineEditor::Init` 里
+`m_Visibility.sceneViewerPanel` / `sceneManager` 也都初始化为 `true`，但两者都不在
+`DockBuilderDockWindow` 名单里，且连 `SetNextWindowPos` 都没有 —— 默认启动即产生
+两个**位置不可控**的漂浮 OS 窗。
+
+本次处置：
+- 把映射从 lambda 里的硬编码字符串提为单一事实源
+  `engine/include/Engine/Editor/EditorLayoutSpec.h`（区域枚举 + 比例 + 登记表）；
+- 补登 `Scene Viewer` / `Scene Manager` 到左区（与 Hierarchy 同区成 Tab）；
+- 沙箱专用窗口不进入产品布局，改由 `EditorDemoTest.cpp` 用 `SetNextWindowPos`
+  给出基于工作区右下角的确定位置；
+- 新增 `tests/test_editor_layout`，双向守卫：
+  ① **登记表 → 源码**：每条登记都必须在 `engine/src` 或 `sandbox/src` 里找到
+  对应的 `ImGui::Begin("<标题>"`。面板改名后忘改登记同样是静默失效
+  （`DockBuilderDockWindow` 对不存在的标题是 no-op）；
+  ② **启动可见面板 → 登记表**：解析 `EngineEditor::Init` 里
+  `m_Visibility.<field> = true` 的字段，要求对应窗口已登记。这条刻意不用
+  「扫描所有 Begin 再猜默认值」的启发式 —— 第一版那样写产生了 15 条假阳性
+  （`m_Visible` 在几十个面板里同名，全局搜成员名会张冠李戴）。
+- 一并移除被签入仓库的 `imgui.ini`：它是 `DockSpaceOverViewport` 时代的残留
+  （含 `WindowOverViewport_11111111` 与 `Pos=372,395` 的错误 dockspace 几何），
+  属于本机状态，已加入 `.gitignore`。
+
+**未覆盖**：本 target 只断言「登记完整性」，不断言「实际 OS 窗口数」。
+后者需要真实窗口 + `EnumWindows` 取证，是人工验证项。
+
+#### RST-1 比例修正
+
+原文「左 Hierarchy 22%」是 **切分参数** 而非实际占比。切分是对**剩余节点**依次
+做的，且 Down 只改高度不改宽度，故整屏实际占比为：
+
+| 区 | 切分参数 | 整屏实际占比 |
+|---|---|---|
+| 底部 | 0.25 | 高 25.0% |
+| 右列 | 0.24 | 宽 24.0% |
+| 左列 | 0.22（作用于 1−0.24 的剩余宽度） | 宽 **16.72%**，非 22% |
+| 中央（Viewport） | 余量 | 宽 59.28% |
+
+该换算已作为断言钉在 `DerivedWholeAreaFractionsMatchIntendedProportions`。
 
 **遗留开放项**：间歇性外部 WM_CLOSE 在无人值守启动后 ~6s 送达（取证日志已两次捕获，来源未明——疑似宿主环境回收所派生 GUI 进程）；人工操作会话不受影响，再次出现可经日志直接溯源。
 
