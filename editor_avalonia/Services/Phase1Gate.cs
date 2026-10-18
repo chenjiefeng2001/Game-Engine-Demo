@@ -52,7 +52,7 @@ public static class Phase1Gate
 
             // ── Step 5: 关闭 → 重开 → 一致性 ──
             vm.Dispose();
-            var vm2 = new MainViewModel();
+            var vm2 = new MainViewModel(vm.Host);
             try
             {
                 if (!vm2.OpenProject(manifest, scene))

@@ -134,7 +134,7 @@ public static class Phase3Gate
 
             // ── 6. Close → Reopen → 全一致 ──
             vm.Dispose();
-            var vm2 = new MainViewModel();
+            var vm2 = new MainViewModel(vm.Host);
             try
             {
                 Check2(log, gateName, vm2.OpenProject(manifest, scene), "reopen");
@@ -153,7 +153,7 @@ public static class Phase3Gate
             finally { vm2.Dispose(); }
 
             // ── 7. DL-02：新建实体 → Assign → Save → Reopen → 绑定不丢 ──
-            var vm3 = new MainViewModel();
+            var vm3 = new MainViewModel(vm.Host);
             try
             {
                 Check2(log, gateName, vm3.OpenProject(manifest, scene), "reopen for DL-02");
@@ -167,7 +167,7 @@ public static class Phase3Gate
                 Check2(log, gateName, vm3.AssignScriptToSelected(), "assign script DL-02");
                 Check2(log, gateName, vm3.SaveProject(), "save DL-02");
                 vm3.Dispose();
-                var vm4 = new MainViewModel();
+                var vm4 = new MainViewModel(vm.Host);
                 try
                 {
                     Check2(log, gateName, vm4.OpenProject(manifest, scene), "DL-02 reopen");
@@ -267,7 +267,7 @@ public static class Phase3Gate
             // ── 7. Save → reload → 全恢复 ──
             Check(vm.SaveProject(), "save project");
             vm.Dispose();
-            var vm2 = new MainViewModel();
+            var vm2 = new MainViewModel(vm.Host);
             try
             {
                 Check(vm2.OpenProject(manifest, scene), "reopen project");
@@ -368,9 +368,11 @@ public static class Phase3Gate
             Check2(log, gateName, vm.SaveProject(), "save project");
             Check2(log, gateName, !vm.IsDirty, "clean after save");
 
-            // ── 7. Reopen → 所有字段一致 ──
-            vm.Dispose();
-            var vm2 = new MainViewModel();
+             // ── 7. Reopen → 所有字段一致 ──
+             var savedSprite = vm.SelectedSprite;
+             var savedScript = vm.SelectedScript;
+             vm.Dispose();
+             var vm2 = new MainViewModel(vm.Host);
             try
             {
                 Check2(log, gateName, vm2.OpenProject(manifest, scene), "reopen");
@@ -378,10 +380,10 @@ public static class Phase3Gate
                 Check2(log, gateName, vm2.SelectedName == "Hero", "name consistent");
                 Check2(log, gateName, Math.Abs(Parse(vm2.PosZ) - (z0 + 5f)) < 1e-3,
                        "transform consistent");
-                Check2(log, gateName, vm2.SelectedSprite == vm.SelectedSprite,
-                       "sprite consistent");
-                Check2(log, gateName, vm2.SelectedScript == vm.SelectedScript,
-                       "script consistent");
+                 Check2(log, gateName, vm2.SelectedSprite == savedSprite,
+                        "sprite consistent");
+                 Check2(log, gateName, vm2.SelectedScript == savedScript,
+                        "script consistent");
             }
             finally { vm2.Dispose(); }
 
@@ -584,7 +586,7 @@ public static class Phase3Gate
             Check2(log, gateName, EncodingOfEquals(File.ReadAllText(gameLuaPath), d5Text),
                    "D5 disk content == edited content (not UI compare)");
 
-            var vm2 = new MainViewModel();
+            var vm2 = new MainViewModel(vm.Host);
             try
             {
                 Check2(log, gateName, vm2.OpenProject(manifest, scene), "D5 reopen");
@@ -737,7 +739,7 @@ public static class Phase3Gate
             Check2(log, gateName, !vm.IsOpen && !vm.IsRunning && !vm.HasScriptOpen,
                    "closed (session + runtime cleared)");
 
-            var vm2 = new MainViewModel();
+            var vm2 = new MainViewModel(vm.Host);
             int protIdx = -1;
             try
             {
@@ -784,7 +786,7 @@ public static class Phase3Gate
             vm.PosZ = "77.5"; vm.ApplyInspectorPosition();
             Check2(log, gateName, vm.IsDirty, "E1 dirty after edit (cancel path representable)");
             vm.ResetSession();                     // Discard（UI: ConfirmDialog）
-            var vm3 = new MainViewModel();
+            var vm3 = new MainViewModel(vm.Host);
             try
             {
                 Check2(log, gateName, vm3.OpenProject(manifest, scene), "E1 reopen after discard");

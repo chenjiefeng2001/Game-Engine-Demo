@@ -1,6 +1,8 @@
 #pragma once
 #include "Engine/Core/IWindow.h"
 #include "Engine/Core/IRenderContext.h"
+#include <functional>
+#include <thread>
 
 struct GLFWwindow;
 
@@ -8,7 +10,8 @@ namespace Engine {
 	class GlfwWindow : public IWindow {
 	public:
 		GlfwWindow(GLFWwindow* nativeWindow,
-			std::unique_ptr<IRenderContext> context);
+			std::unique_ptr<IRenderContext> context,
+			std::function<void()> onDestroy = {});
 		virtual ~GlfwWindow() override;
 
 		// ---- IWindow 接口 ----
@@ -40,7 +43,9 @@ namespace Engine {
 		virtual void* GetNativeHandle() const override { return m_Window; }
 	private:
 		GLFWwindow* m_Window;
+		std::thread::id m_OwnerThreadId;
 		std::unique_ptr<IRenderContext> m_Context;
+		std::function<void()> m_OnDestroy;
 		EventCallbackFn m_EventCallback;
 
 		// ── 窗口状态跟踪 ──

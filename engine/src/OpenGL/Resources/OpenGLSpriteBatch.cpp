@@ -1,9 +1,11 @@
 #include "OpenGLSpriteBatch.h"
 #include "Engine/Core/RenderResources/Texture.h"
 #include <glad/gl.h>
+#include <GLFW/glfw3.h>
 #include "Engine/Core/Log.h"
 #include <cmath>
 #include <cstring>
+#include <thread>
 
 namespace {
     Engine::Logger s_Log("OpenGLSpriteBatch");
@@ -13,6 +15,7 @@ namespace Engine {
     OpenGLSpriteBatch::OpenGLSpriteBatch(GladGLContext& gl, IRenderContext& renderContext)
         : m_GL(gl)
         , m_RenderContext(renderContext)
+        , m_OwnerThreadId(std::this_thread::get_id())
     {
         // 创建 GPU 资源
         m_GL.GenVertexArrays(1, &m_VAO);
@@ -45,6 +48,15 @@ namespace Engine {
     }
 
     OpenGLSpriteBatch::~OpenGLSpriteBatch() {
+        // HRC-3 P1.1 B2 (c)：与 OpenGLFramebuffer 同款双重守卫。
+        // 只有在"属主线程"且"当前有 GL context"时才发出 glDelete*；
+        // 否则放弃删除（资源随 context 一起消失），绝不发出无效的 GL 调用。
+        // 这是最后一道生命周期安全不变量：异常拆除顺序下（context 已销毁、
+        // Application 隐式析构）无守卫的 glDelete* 会污染进程，使同进程后续
+        // host 的 glfwInit() 失败。
+        if (!IsOwnerThread() || !glfwGetCurrentContext()) {
+            return;
+        }
         m_GL.DeleteVertexArrays(1, &m_VAO);
         m_GL.DeleteBuffers(1, &m_VBO);
         m_GL.DeleteBuffers(1, &m_EBO);

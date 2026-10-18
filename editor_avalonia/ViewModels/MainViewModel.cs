@@ -3,6 +3,7 @@ using System.Collections.ObjectModel;
 using System.ComponentModel;
 using System.Linq;
 using System.Runtime.CompilerServices;
+using Avalonia.Threading;
 using AvaloniaEditor.Native;
 using AvaloniaEditor.Services;
 
@@ -12,7 +13,9 @@ namespace AvaloniaEditor.ViewModels;
 /// 禁止 View 直接触碰 native 句柄或引擎对象。</summary>
 public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
 {
-    private readonly EditorHostService _host = new();
+    private readonly EditorHostService _host;
+
+    internal EditorHostService Host => _host;
 
     public ObservableCollection<EntityVm> Entities { get; } = new();
     public ObservableCollection<AssetVm> Assets { get; } = new();
@@ -54,6 +57,27 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
         private set => Set(ref _statusText, value);
     }
 
+    // ── A3/D2：选择意图（index 载体，刷新时解析）──────────────────────
+    // 绝不持 EntityVm 引用：ReloadCollectionsFromSession 每次都会重建 record。
+    private int? _pendingSelectionIndex;
+
+    /// <summary>最近一次选择意图的解析结果（A3/D2 evidence；null = 已丢弃）。</summary>
+    public int? SelectionIntentResolved { get; private set; }
+
+    /// <summary>最近一次 create 登记的选择意图（A3 evidence）。</summary>
+    public int? PendingSelectionIndex => _pendingSelectionIndex;
+
+    /// <summary>
+    /// A3/D2 evidence：create 登记意图时事件是否已经送达（即 create 走的是哪种时序）。
+    /// <c>event-before-return</c> = 集合里已能看到新实体；<c>return-before-event</c> = 还看不到。
+    /// 顺序不同，最终 selection 必须一致 —— 这正是 D2 要证明的不变量。
+    /// </summary>
+    public string LastCreateOrder { get; private set; } = "(none)";
+
+    /// <summary>最近一次 create 回执（A3/D3 evidence）。</summary>
+    public CreateEntityReceipt LastCreateReceipt { get; private set; }
+        = new(CreateEntityOutcome.Refused, -1, string.Empty, "(no create yet)");
+
     private bool _isDirty;
     public bool IsDirty
     {
@@ -61,7 +85,16 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
         private set => Set(ref _isDirty, value);
     }
 
-    public bool IsOpen => Entities.Count > 0;
+    /// <summary>
+    /// A3/D1：open 状态的**唯一**事实源是 Host（<c>IsOpen</c> + <c>State</c>）。
+    /// 本地集合是 Host 状态的投影（见 <see cref="ReconcileWithHostState"/>），
+    /// 不再由 <c>Entities.Count</c> 承担 open-state 语义。
+    /// </summary>
+    public bool IsOpen => _host.IsOpen && _host.State == HostRuntimeState.Ready;
+
+    /// <summary>A3/D1：Host 状态与本地投影最近一次对齐的原因（gate evidence）。</summary>
+    public string LastReconcileReason { get; private set; } = "(none)";
+
 
     // ── P3-A Hierarchy：Search ──
     /// 主列表（会话事实源）；FilteredEntities 为视图消费的过滤视图。
@@ -249,6 +282,143 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
         RefreshDirtyState();
     }
 
+    // ── Viewport（Phase 7）──
+
+    /// 获取视口 FBO 颜色纹理的 OpenGL 句柄（用于 Avalonia 纹理互操作）
+    public uint ViewportTextureHandle => _host.GetViewportTextureHandle();
+
+    /// 视口当前渲染尺寸
+    public (int width, int height) ViewportSize => _host.GetViewportSize();
+
+    /// 触发视口尺寸变化（Avalonia 控件 resize 时调用）
+    public void SetViewportSize(int width, int height) => _host.SetViewportSize(width, height);
+
+    /// 触发视口重绘（每帧调用）
+    public void ViewportTick(float dt) => _host.ViewportTick(dt);
+
+    // ── Viewport Camera ──
+
+    private float _viewportCamX = 0f;
+    private float _viewportCamY = 0f;
+    private float _viewportCamZ = 5f;
+
+    /// 设置视口相机位置
+    public void SetViewportCameraPosition(float x, float y, float z)
+    {
+        _host.SetViewportCameraPosition(x, y, z);
+    }
+
+    /// 获取视口相机位置
+    public (float x, float y, float z) GetViewportCameraPosition()
+    {
+        return _host.GetViewportCameraPosition();
+    }
+
+    /// 视口相机投影类型：0=Perspective, 1=Orthographic
+    private int _viewportProjection = 0;
+    public int ViewportProjection
+    {
+        get => _viewportProjection;
+        set
+        {
+            if (Set(ref _viewportProjection, value))
+                _host.SetViewportCameraProjection(value);
+        }
+    }
+
+    /// 视口相机缩放
+    private float _viewportZoom = 1.0f;
+    public float ViewportZoom
+    {
+        get => _viewportZoom;
+        set
+        {
+            if (Set(ref _viewportZoom, value))
+                _host.SetViewportCameraZoom(value);
+        }
+    }
+
+    // ── Viewport Input ──
+
+    /// 转发鼠标移动事件到视口
+    public void ViewportMouseMove(float x, float y) => _host.ViewportMouseMove(x, y);
+
+    /// 转发鼠标按钮事件到视口
+    public void ViewportMouseButton(int button, bool pressed) => _host.ViewportMouseButton(button, pressed);
+
+    /// 转发鼠标滚轮事件到视口
+    public void ViewportScroll(float delta) => _host.ViewportScroll(delta);
+
+    /// 转发键盘按键事件到视口
+    public void ViewportKeyDown(int key) => _host.ViewportKeyDown(key);
+
+    /// 转发键盘释放事件到视口
+    public void ViewportKeyUp(int key) => _host.ViewportKeyUp(key);
+
+    /// 视口鼠标拾取：返回实体索引（>=0），无命中返回 -1
+    public int ViewportPick(float ndcX, float ndcY) => _host.ViewportPick(ndcX, ndcY);
+
+    // ── Gizmo ──
+
+    private int _gizmoMode = 0;
+    /// Gizmo 操作模式：0=Select, 1=Translate, 2=Rotate, 3=Scale
+    public int GizmoMode
+    {
+        get => _gizmoMode;
+        set
+        {
+            if (Set(ref _gizmoMode, value))
+                _host.SetGizmoMode(value);
+        }
+    }
+
+    private int _gizmoSpace = 0;
+    /// Gizmo 坐标空间：0=World, 1=Local
+    public int GizmoSpace
+    {
+        get => _gizmoSpace;
+        set
+        {
+            if (Set(ref _gizmoSpace, value))
+                _host.SetGizmoSpace(value);
+        }
+    }
+
+    private bool _gizmoSnapEnabled = false;
+    public bool GizmoSnapEnabled
+    {
+        get => _gizmoSnapEnabled;
+        set
+        {
+            if (Set(ref _gizmoSnapEnabled, value))
+                _host.SetGizmoSnap(value, _gizmoSnapValue);
+        }
+    }
+
+    private float _gizmoSnapValue = 0.5f;
+    public float GizmoSnapValue
+    {
+        get => _gizmoSnapValue;
+        set
+        {
+            if (Set(ref _gizmoSnapValue, value))
+                _host.SetGizmoSnap(_gizmoSnapEnabled, value);
+        }
+    }
+
+    // ── Viewport Grid ──
+
+    private bool _viewportGridVisible = true;
+    public bool ViewportGridVisible
+    {
+        get => _viewportGridVisible;
+        set
+        {
+            if (Set(ref _viewportGridVisible, value))
+                _host.SetViewportGridVisible(value);
+        }
+    }
+
     // ── P2-F Script Editor ──
     private string _scriptText = "";
     public string ScriptText
@@ -292,17 +462,77 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
     /// 供外部（gate）在会话事件之外强制重算派生状态
     public event Action? DerivedStateChanged;
 
-    public MainViewModel()
+    public MainViewModel(EditorHostService host)
     {
+        _host = host ?? throw new ArgumentNullException(nameof(host));
         _host.NativeEvent += OnNativeEvent;
+        // A2/F2-05：pump/runtime 侧 typed failure 必须成为可观测 UI 状态。
+        _host.RuntimeFaulted += OnRuntimeFaulted;
+    }
+
+    // ── A3/D1：Host 状态 → UI 投影的唯一对齐入口 ──────────────────
+    // 契约：Host 是唯一事实源；集合/选择/状态栏都是它的投影。
+    // usable  → 重新从 Host 拉取集合（投影对齐）
+    // 不可用  → 清空投影（Closed / Fault 都不得呈现 stale state）
+    private void ReconcileWithHostState(string reason)
+    {
+        LastReconcileReason = reason;
+        if (_host.IsDisposed)
+        {
+            // A2/F2-08 契约：终态 Dispose 之后 view model **保留最后一帧状态**，
+            // 不得再驱动或清空投影 —— host 已经不存在，投影只是快照。
+            // D1 的四态不变式只适用于 host 存活期间（Closed/Opening/Fault）。
+            return;
+        }
+        if (_host.IsOpen && _host.State == HostRuntimeState.Ready)
+        {
+            ReloadCollectionsFromSession();
+            return;
+        }
+        ClearProjectProjection(reason);
+    }
+
+    /// <summary>
+    /// 清空"当前 project"投影。幂等：已经是空投影时直接返回（不刷屏）。
+    /// 关键：Fault 走这里，**不是**只把 <c>IsOpen</c> 置 false（A3/D1）。
+    /// </summary>
+    private void ClearProjectProjection(string reason)
+    {
+        _pendingSelectionIndex = null;      // D2：意图必须随投影一起丢弃
+        if (Entities.Count == 0 && Assets.Count == 0
+            && _selectedEntity is null && _selectedAsset is null)
+        {
+            return;
+        }
+        int dropped = Entities.Count;
+        Entities.Clear();
+        Assets.Clear();
+        SelectedEntity = null;
+        SelectedAsset = null;
+        RebuildFilteredEntities();
+        RebuildFilteredAssets();
+        HasCamera = false;
+        IsRunning = false;
+        StatusText = $"no project loaded ({reason})";
+        LogToConsole($"project projection cleared: {reason} (dropped {dropped} local entities)");
+        DerivedStateChanged?.Invoke();
     }
 
     // ── 会话生命周期（P1-B）────────────────────────────────
     public bool OpenProject(string manifestPath, string scenePath)
     {
-        if (!_host.OpenProject(manifestPath, scenePath))
+        // A2/F2-05：bootstrap / open 的 native typed failure 在此转成可观测状态，
+        // 绝不让异常逃进 XAML handler（否则会被反射派发包成 TargetInvocationException 并丢失诊断）。
+        if (!TryHost("open project", () => _host.OpenProject(manifestPath, scenePath), out bool opened))
+        {
+            ReconcileWithHostState("open failed");   // A3/D1：消除"旧集合 + host 已关闭"分叉
+            return false;
+        }
+        if (!opened)
         {
             LogToConsole("OPEN FAILED: " + _host.GetLastError());
+            StatusText = "open failed (see console)";
+            ReconcileWithHostState("open rejected");
             return false;
         }
         // E3 负路径：契约内缺失 GUID 资产的非致命告警（实体保留）入 Console
@@ -310,7 +540,7 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
         if (warns.Length > 0)
             foreach (var w in warns.Split('\n'))
                 if (w.Length > 0) LogToConsole("[WARN] " + w);
-        ReloadCollectionsFromSession();     // ProjectLoaded → 各 Pane 刷新
+        ReconcileWithHostState("open succeeded");   // 集合是 Host 的投影
         return true;
     }
 
@@ -330,11 +560,9 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
     /// P2-E 配套：清空当前会话（不落盘）。关闭工程用；丢弃未保存编辑。
     public void ResetSession()
     {
-        _host.Dispose();
-        Entities.Clear();
-        Assets.Clear();
-        SelectedEntity = null;
-        SelectedAsset = null;
+        _host.CloseProject();
+        // A3/D1：关闭工程走同一个投影清理入口（A1 的 Filtered* 重建语义保留在其中）。
+        ClearProjectProjection("session closed");
         _scriptAssetIndex = -1;
         ScriptTitle = "(no script)";
         ScriptText = "";
@@ -349,24 +577,79 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
         DerivedStateChanged?.Invoke();
     }
 
-    /// P2-C2：Create（VM 层统一入口；EV_ENTITY_CREATED 会自动刷新集合）
-    public bool CreateEntityFromVm(string? name = null)
+    /// <summary>A3/D3：create 统一入口（生产 handler 与 gate 共用同一份语义）。</summary>
+    public CreateEntityReceipt CreateEntity(string? name = null)
     {
-        if (!IsOpen)
+        // D1：可执行性判断只看 Host 事实源。
+        if (!_host.IsOpen || _host.State != HostRuntimeState.Ready)
         {
-            LogToConsole("+ Entity ignored: no project");
-            return false;
+            // 文案"A no project"是 A1(PP-01)/A2 冻结的断言内容，不得改写。
+            var refused = CreateEntityReceipt.Refused("no project");
+
+            LogToConsole("+ Entity ignored: " + refused.Diagnostic);
+            LastCreateReceipt = refused;
+            return refused;
         }
-        int idx = _host.CreateEntity(name);
-        if (idx < 0)
+
+        if (!TryHost("create entity", () => _host.CreateEntity(name), out int idx) || idx < 0)
         {
-            LogToConsole("CREATE FAILED: " + _host.GetLastError());
-            return false;
+            // host 侧失败：诊断必须可见（typed failure 已由 TryHost 记录，这里补结构化回执）
+            var failed = CreateEntityReceipt.Failed(_host.GetLastError());
+            LogToConsole("CREATE FAILED: " + failed.Diagnostic);
+            LastCreateReceipt = failed;
+            return failed;
         }
+
+        string created = _host.GetEntityName(idx) ?? $"#{idx}";
+        // D2：只登记索引意图；不解析事件 payload，不假设事件到达时机。
+        LastCreateOrder = Entities.Any(e => e.Index == idx)
+            ? "event-before-return"      // 事件已送达：集合里能看到新实体
+            : "return-before-event";     // 事件尚未送达（生产路径的常态）
+        _pendingSelectionIndex = idx;
+        // 顺序无关性由设计保证：解析点有两个 ——
+        //   strict=false：create 返回后立刻试解（legacy 顺序，事件已先到，集合已是最新）；
+        //   strict=true ：集合真正刷新时试解（EngineHost 顺序，事件后到）。
+        // 两种顺序最终收敛到同一 selection，不依赖时序假设。
+        ResolvePendingSelectionIntent(strict: false);
         RefreshDirtyState();
-        LogToConsole("entity created: " + (_host.GetEntityName(idx) ?? $"#{idx}"));
-        return true;
+        LogToConsole("entity created: " + created);
+        LastCreateReceipt = CreateEntityReceipt.Created(idx, created);
+        return LastCreateReceipt;
     }
+
+    /// <summary>
+    /// A3/D2：解析并消费选择意图。幂等；**不伪造选择**。
+    /// <paramref name="strict"/> 区分两个调用点的语义：
+    /// <list type="bullet">
+    /// <item>false（create 返回后）：集合可能仍是旧快照，目标暂时不在其中
+    ///       —— 这是 EngineHost 的常态，意图必须**保留**给随后的刷新。</item>
+    /// <item>true（刷新时）：集合已是最新，此时目标仍不存在说明意图确实不可满足
+    ///       —— 丢弃，绝不落到无关实体上。</item>
+    /// </list>
+    /// </summary>
+    private void ResolvePendingSelectionIntent(bool strict)
+    {
+        if (_pendingSelectionIndex is not int wanted) return;
+        var hit = Entities.FirstOrDefault(e => e.Index == wanted);
+        if (hit is null)
+        {
+            if (strict)
+            {
+                _pendingSelectionIndex = null;
+                SelectionIntentResolved = null;   // 不可满足的意图被丢弃
+                return;
+            }
+            return;                              // 保留意图，等真实刷新
+        }
+        _pendingSelectionIndex = null;
+        _selectedEntity = hit;                   // 直写避免 SelectedEntity setter 重入刷新
+        RefreshInspectorFromSession();
+        SelectionIntentResolved = wanted;
+        Raise(nameof(HasSelection));
+    }
+
+    /// <summary>P2-C2 兼容入口（HRC-1 gate 使用）；语义已收敛到 <see cref="CreateEntity"/>。</summary>
+    public bool CreateEntityFromVm(string? name = null) => CreateEntity(name).Succeeded;
 
     // ── P2-C2 实体回路：Rename / Delete ──
     public bool RenameSelected(string newName)
@@ -393,7 +676,12 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
         bool ok = _host.DeleteEntity(_selectedEntity.Index);
         LogToConsole(ok ? $"deleted: {_selectedEntity.Name}"
                         : "DELETE FAILED: " + _host.GetLastError());
-        if (ok) SelectedEntity = null;
+        if (ok)
+        {
+            // A3/D2：删除后索引失效，任何待解析意图都必须丢弃。
+            _pendingSelectionIndex = null;
+            SelectedEntity = null;
+        }
         return ok;
     }
 
@@ -514,7 +802,12 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
             LogToConsole("Play: saving unsaved script edits first");
             SaveScript();
         }
-        bool ok = _host.Play(assetIndex);
+        // A2/F2-05：Play 的 native typed failure 不得逃出 handler；失败已由 TryHost 呈现为 UI 状态。
+        if (!TryHost("play", () => _host.Play(assetIndex), out bool ok))
+        {
+            IsRunning = false;
+            return false;
+        }
         if (ok)
         {
             IsRunning = true;
@@ -538,7 +831,11 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
             LogToConsole("Reload ignored: not playing");
             return false;
         }
-        bool ok = _host.Reload();
+        if (!TryHost("reload", () => _host.Reload(), out bool ok))
+        {
+            IsRunning = false;
+            return false;
+        }
         if (ok)
         {
             ScriptError = "";
@@ -555,7 +852,13 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
     public void StopPlaying()
     {
         if (!IsRunning) return;
-        _host.Stop();
+        // A2/F2-05：faulted host 上 Stop 会返回 typed ShutdownFailed；
+        // 失败也必须结束"运行中"的 UI 状态（runtime 已不可用），并显式上报。
+        if (!TryHost("stop", _host.Stop))
+        {
+            IsRunning = false;
+            return;
+        }
         IsRunning = false;
         ScriptError = "";
         LogToConsole("STOP -> edit state restored");
@@ -584,8 +887,114 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
     }
 
     // ── Session 事件订阅（P1-B 事件流：Pane 不互相调用）─────
+
+    /// <summary>A7-C04/G2-05：事件必须已在 UI 线程消费；越界即视为契约违例。</summary>
+    public int OffUiThreadEventCount { get; private set; }
+    public int ConsumedEventCount { get; private set; }
+
+    /// <summary>A7-C03：GL 依赖 edit 在帧内失败时的对外报告入口。</summary>
+    public void ReportPendingEditFailure(string diagnostic)
+    {
+        ScriptError = diagnostic;
+        LogToConsole("PENDING EDIT FAILED: " + diagnostic);
+    }
+
+    // ── A2/F2-05：host 失败 → 可观测 UI 状态 ─────────────────
+
+    /// <summary>
+    /// 把 host 侧的显式失败（typed native failure / 三态 gate / 已释放）转成 Console + 状态栏。
+    /// 绝不向上抛：View 边界不允许异常逃进 XAML 反射派发。
+    /// 返回 <c>false</c> 表示调用失败，调用方据此走自己的失败分支。
+    /// </summary>
+    private bool TryHost<T>(string operation, Func<T> call, out T value)
+    {
+        try
+        {
+            value = call();
+            return true;
+        }
+        catch (Exception ex) when (ex is HostOperationException
+                                       or HostRuntimeNotReadyException
+                                       or HostRuntimeUnavailableException
+                                       or ObjectDisposedException)
+        {
+            ReportHostFailure(operation, ex);
+            value = default!;
+            return false;
+        }
+    }
+
+    private bool TryHost(string operation, Action call)
+    {
+        try
+        {
+            call();
+            return true;
+        }
+        catch (Exception ex) when (ex is HostOperationException
+                                       or HostRuntimeNotReadyException
+                                       or HostRuntimeUnavailableException
+                                       or ObjectDisposedException)
+        {
+            ReportHostFailure(operation, ex);
+            return false;
+        }
+    }
+
+    /// <summary>A2/F2-05：结构化失败在 UI 上的唯一呈现点（Console + 状态栏 + ScriptError）。</summary>
+    public void ReportHostFailure(string operation, Exception error)
+    {
+        string text = error is HostOperationException typed
+            ? $"{operation} failed: {HostOperationException.StatusText(typed.Status)}"
+              + $" / {HostOperationException.StageText(typed.Stage)}"
+              + (typed.Diagnostic.Length > 0 ? $" — {typed.Diagnostic}" : string.Empty)
+            : $"{operation} failed: {error.Message}";
+        LogToConsole(text);
+        StatusText = $"{operation} failed (see console)";
+        ScriptError = text;
+    }
+
+    /// <summary>pump/runtime 故障：runtime 已不可用，UI 必须停止假装在运行。</summary>
+    private void OnRuntimeFaulted(HostOperationException failure)
+    {
+        LogToConsole("RUNTIME FAULTED: " + failure.Message);
+        ScriptError = failure.Message;      // 诊断必须保留（D1：清投影 ≠ 吞诊断）
+        IsRunning = false;
+        // A3/D1：Fault → 投影清空，不得把已失效 project 呈现为"当前"。
+        ReconcileWithHostState("runtime faulted");
+    }
+
+    /// <summary>会触发 host 查询的事件类型；project 未打开时必须跳过。</summary>
+    private static bool RequiresOpenProject(int type) => type switch
+    {
+        EditorBridgeApi.EvProjectLoaded => false,
+        EditorBridgeApi.EvPlayStarted => false,
+        EditorBridgeApi.EvPlayStopped => false,
+        _ => true,
+    };
+
     private void OnNativeEvent(int type, string payload)
     {
+        if (!Dispatcher.UIThread.CheckAccess())
+        {
+            OffUiThreadEventCount++;
+            LogToConsole("EVENT OFF UI THREAD (A7-C04 violation): " + type);
+            return;
+        }
+        // A7-C04：teardown / 未打开 project 时到达的刷新类事件不得触碰 runtime。
+        // A2/F2-05：runtime 已 fault 时同样不得刷新（host 会显式拒绝，且会把 UI 清空成假状态）。
+        // 这里显式记录而不是让三态 gate 的异常冒泡到 UI 线程（不得静默 no-op）。
+        if (RequiresOpenProject(type) && (!_host.IsOpen || _host.State != HostRuntimeState.Ready))
+        {
+            LogToConsole($"EV {type} ignored: no usable project (host state={_host.State}, open={_host.IsOpen})");
+            // A3/D1：忽略事件的同时保证投影已经是空的（幂等）——
+            // 否则会出现"事件被挡住但旧 project 仍显示"的 stale state。
+            // 终态 Dispose 之后除外：A2/F2-08 要求保留最后状态快照。
+            if (!_host.IsDisposed)
+                ClearProjectProjection($"event {type} ignored (host state={_host.State})");
+            return;
+        }
+        ConsumedEventCount++;
         switch (type)
         {
             case EditorBridgeApi.EvProjectLoaded:
@@ -594,6 +1003,7 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
             case EditorBridgeApi.EvEntityCreated:
                 LogToConsole("EV EntityCreated: " + payload);
                 ReloadCollectionsFromSession();          // 单一事实源刷新
+                RefreshDirtyState();                     // 创建即脏：DIRTY 徽标必须随之点亮
                 break;
             case EditorBridgeApi.EvEntityMoved:
                 LogToConsole("EV EntityMoved: " + payload);
@@ -655,7 +1065,15 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
         // 删除路径由调用方显式清空选择。
         int? keepIdx = _selectedEntity?.Index;
 
-        var (entCount, assetCount) = _host.GetCounts();
+        // A2/F2-05：refresh 期间 host 可能已 fault/关闭；查询失败必须转成 Console 记录，
+        // 而不是让异常从 View handler 逃出（旧行为是 XAML 反射派发包成 TargetInvocationException）。
+        if (!TryHost("refresh collections", () => _host.GetCounts(), out var counts))
+        {
+            RebuildFilteredEntities();
+            RebuildFilteredAssets();
+            return;
+        }
+        var (entCount, assetCount) = counts;
         Entities.Clear();
         for (int i = 0; i < entCount; i++)
             Entities.Add(new EntityVm(i, _host.GetEntityName(i) ?? $"?{i}"));
@@ -666,7 +1084,13 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
                 _host.GetAssetType(i) switch { 0 => "Texture", 1 => "Script", _ => "Unknown" },
                 _host.GetAssetGuid(i)));
 
-        if (keepIdx is int idx)
+        // A3/D2：选择意图优先于"保持旧选择"；strict=true —— 集合此刻已是最新，
+        // 目标不在其中即视为不可满足并丢弃（不落到无关实体上）。
+        if (_pendingSelectionIndex is not null)
+        {
+            ResolvePendingSelectionIntent(strict: true);
+        }
+        else if (keepIdx is int idx)
         {
             var hit = Entities.FirstOrDefault(e => e.Index == idx);
             if (hit is not null)
@@ -716,10 +1140,15 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
             SelectedScript = "(none)";
             RefreshCamera(null);
         }
+        else if (!TryHost("refresh inspector",
+                     () => _host.GetEntityPosition(_selectedEntity.Index), out var p))
+        {
+            // runtime 不可用：保留上一次回填值，不伪造新状态。
+            RefreshCamera(null);
+        }
         else
         {
             SelectedName = _selectedEntity.Name;
-            var p = _host.GetEntityPosition(_selectedEntity.Index);
             PosX = Format(p.x); PosY = Format(p.y); PosZ = Format(p.z);
             SelectedSprite = _host.GetEntitySprite(_selectedEntity.Index);
             if (SelectedSprite.Length == 0) SelectedSprite = "(none)";
@@ -732,7 +1161,9 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
     /// F1：从会话读取 Camera 反射属性（存在则回填 Inspector 字段）
     private void RefreshCamera(int? entityIndex)
     {
-        if (entityIndex is not int idx || !_host.HasComponent(idx, "Camera"))
+        if (entityIndex is not int idx
+            || !TryHost("refresh camera", () => _host.HasComponent(idx, "Camera"), out bool has)
+            || !has)
         {
             HasCamera = false;
             return;
@@ -786,7 +1217,13 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
     private void Raise([CallerMemberName] string? name = null)
         => PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(name));
 
-    public void Dispose() => _host.Dispose();
+    public void Dispose()
+    {
+        _host.NativeEvent -= OnNativeEvent;
+        _host.RuntimeFaulted -= OnRuntimeFaulted;
+        if (!_host.IsDisposed)
+            ResetSession();
+    }
 }
 
 public sealed record EntityVm(int Index, string Name);

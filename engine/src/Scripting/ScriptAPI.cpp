@@ -104,6 +104,11 @@ double GetApiVersion() { return 2.1; }
 void SetHudText(const std::string& msg) { s_HudMsg = msg; s_HudDirty = true; }
 const char* GetHudText() { return s_HudDirty ? s_HudMsg.c_str() : nullptr; }
 void ClearHudText() { s_HudDirty = false; }
+bool HasHudText() { return s_HudDirty; }
+void Reset() {
+    s_HudMsg.clear();
+    s_HudDirty = false;
+}
 
 void RegisterAll(LuaEngine& engine) {
     lua_State* L = engine.GetState();

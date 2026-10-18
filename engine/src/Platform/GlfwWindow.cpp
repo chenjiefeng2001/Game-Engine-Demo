@@ -6,6 +6,8 @@
 #include "Engine/Core/Log.h"
 #include <GLFW/glfw3.h>
 #include <glad/gl.h>
+#include <cstdio>
+#include <exception>
 
 #ifdef _WIN32
 #define GLFW_EXPOSE_NATIVE_WIN32
@@ -22,9 +24,12 @@ namespace {
 namespace Engine {
 
 	GlfwWindow::GlfwWindow(GLFWwindow* nativeWindow,
-		std::unique_ptr<IRenderContext> context)
+		std::unique_ptr<IRenderContext> context,
+		std::function<void()> onDestroy)
 		: m_Window(nativeWindow)
+		, m_OwnerThreadId(std::this_thread::get_id())
 		, m_Context(std::move(context))
+		, m_OnDestroy(std::move(onDestroy))
 	{
 		if (!m_Window)
 		{
@@ -160,6 +165,7 @@ namespace Engine {
 	}
 
 	void GlfwWindow::WaitEvents(double timeoutSec) {
+		if (m_OwnerThreadId != std::this_thread::get_id()) return;
 		if (timeoutSec > 0.0) {
 			glfwWaitEventsTimeout(timeoutSec);
 		} else {
@@ -168,10 +174,12 @@ namespace Engine {
 	}
 
 	bool GlfwWindow::IsActive() const {
+		if (m_OwnerThreadId != std::this_thread::get_id()) return false;
 		return m_Window && glfwGetWindowAttrib(m_Window, GLFW_FOCUSED);
 	}
 
 	bool GlfwWindow::IsMinimized() const {
+		if (m_OwnerThreadId != std::this_thread::get_id()) return false;
 		return m_Window && glfwGetWindowAttrib(m_Window, GLFW_ICONIFIED);
 	}
 
@@ -181,21 +189,42 @@ namespace Engine {
 
 	GlfwWindow::~GlfwWindow()
 	{
-		m_Context.reset();
-
+		if (m_OwnerThreadId != std::this_thread::get_id()) {
+			std::fprintf(stderr, "GlfwWindow destroyed on non-owner thread\n");
+			std::terminate();
+		}
 		if (m_Window)
 		{
+			glfwMakeContextCurrent(m_Window);
+			if (glfwGetCurrentContext() == m_Window)
+			{
+				m_Context.reset();
+			}
+			else
+			{
+				std::fprintf(stderr, "GlfwWindow context current failure during teardown\n");
+				std::terminate();
+			}
+			if (glfwGetCurrentContext() == m_Window)
+			{
+				glfwMakeContextCurrent(nullptr);
+			}
+			glfwSetWindowUserPointer(m_Window, nullptr);
 			glfwDestroyWindow(m_Window);
 		}
+		if (m_OnDestroy) m_OnDestroy();
+		m_Window = nullptr;
 	}
 
 	void GlfwWindow::PollEvents()
 	{
+		if (m_OwnerThreadId != std::this_thread::get_id()) return;
 		glfwPollEvents();
 	}
 
 	void GlfwWindow::OnUpdate()
 	{
+		if (m_OwnerThreadId != std::this_thread::get_id()) return;
 		PollEvents();
 		if (m_Context)
 		{
@@ -205,11 +234,13 @@ namespace Engine {
 
 	bool GlfwWindow::ShouldClose() const
 	{
+		if (m_OwnerThreadId != std::this_thread::get_id()) return true;
 		return m_Window ? glfwWindowShouldClose(m_Window) : true;
 	}
 
 	void GlfwWindow::SetShouldClose(bool close)
 	{
+		if (m_OwnerThreadId != std::this_thread::get_id()) return;
 		if (m_Window) {
 			glfwSetWindowShouldClose(m_Window, close ? GLFW_TRUE : GLFW_FALSE);
 		}

@@ -6,28 +6,70 @@
 #include "EditorSession.h"
 #include "editor_bridge/capi.h"
 
+#include <Engine/Application.h>
 #include <Engine/Core/Content/SceneSerializerV1.h>
 #include <Engine/Core/GameObject/GameObject.h>
 #include <Engine/Core/GameObject/Component.h>
 #include <Engine/Core/GameObject/ComponentRegistry_Go.h>
 #include <Engine/Core/GameObject/SpriteComponent.h>
+#include <Engine/Core/RHI/RenderQueue.h>
+#include <Engine/Core/Scene/Scene.h>
 #include <Engine/Core/Log.h>
 #include <Engine/Scripting/GameplayAPI.h>
-#include <Engine/Scripting/ScriptInstance.h>
 #include <Engine/Scripting/LuaEngine.h>
+#include <Engine/Scripting/ScriptAPI.h>
 
 #include <algorithm>
 #include <cctype>
+#include <cstdlib>
+#include <cstring>
 #include <cstdio>
 #include <filesystem>
 #include <fstream>
 #include <sstream>
+#include <stdexcept>
 
 namespace fs = std::filesystem;
 
 namespace editor_bridge {
 
+EditorSession::EditorSession()
+    : m_OwnedGfx(std::make_unique<Engine::OpenGLGraphicsFactory>())
+    , m_Gfx(m_OwnedGfx.get())
+    , m_TexMgr(*m_Gfx) {
+}
+
+EditorSession::EditorSession(Engine::OpenGLGraphicsFactory& factory,
+                             Engine::Application* application)
+    : m_Gfx(&factory)
+    , m_Application(application)
+    , m_TexMgr(factory) {
+}
+
+EditorSession::~EditorSession() {
+    SetEventCallback(nullptr);
+    if (m_Playing.load()) Stop();
+    Engine::Scripting::GameplayAPI::Reset();
+    Engine::Scripting::ScriptAPI::Reset();
+    PublishRuntimeState();
+    if (m_Application) m_Application->SetPlaying(false);
+}
+
 namespace {
+
+    bool TestFailure(const char* name) {
+        const char* value = std::getenv(name);
+        return value && std::strcmp(value, "1") == 0;
+    }
+
+    std::string ScriptError(const Engine::Scripting::ScriptInstance& instance) {
+        if (instance.GetEngine()) {
+            return instance.GetEngine()->GetLastError().message;
+        }
+        return instance.GetLastError().empty() ? "(no engine)"
+                                               : instance.GetLastError();
+    }
+
     // ── 反射属性值 ↔ UTF-8 字符串（C ABI 边界）──
 
     std::string ComponentValueToString(const Engine::ComponentPropertyValue& v) {
@@ -89,15 +131,15 @@ bool EditorSession::OpenProject(const std::string& manifestPath,
     if (!Engine::Content::LoadSnapshotFromFile(scenePath, snap, err))
         return Fail("scene load failed: " + scenePath + " (" + err + ")");
 
-    // 若存在运行态，先无损拆卸（镜像 GP01 LoadProject 的 TeardownRuntime）
-    if (m_Playing) { Stop(); m_RuntimeError.clear(); }
-
     auto scene = std::make_shared<Engine::Scene>("AvaloniaSession");
-    Engine::Scripting::GameplayAPI::Reset();
-    Engine::Scripting::GameplayAPI::SetScene(scene.get());
     auto r = Engine::Content::InstantiateScene(snap, *scene, m_TexMgr, reg);
-    if (!r.ok)
+    if (!r.ok) {
         return Fail("instantiate failed: " + scenePath);
+    }
+    if (m_Playing.load()) { Stop(); m_RuntimeError.clear(); }
+    Engine::Scripting::GameplayAPI::Reset();
+    Engine::Scripting::ScriptAPI::Reset();
+    Engine::Scripting::GameplayAPI::SetScene(scene.get());
     // E3 负路径：契约内缺失 GUID 资产的非致命告警（实体保留），拼接供读取
     m_Warnings.clear();
     for (const auto& w : r.warnings) {
@@ -115,6 +157,7 @@ bool EditorSession::OpenProject(const std::string& manifestPath,
     m_AssetOrder.clear();
     for (const auto& e : m_Reg.GetAllEntries())
         m_AssetOrder.push_back(e.guid);
+    PublishRuntimeState();
 
     Engine::Log::Info("[EditorBridge] project loaded: {} objects, {} assets",
                       m_EditScene->GetObjectCount(), m_Reg.Count());
@@ -648,7 +691,7 @@ bool EditorSession::ScriptSave(int32_t assetIndex, const std::string& text) {
 
 bool EditorSession::Play(int32_t assetIndex) {
     m_RuntimeError.clear();
-    if (m_Playing) return Fail("play: already playing (stop first)");
+    if (m_Playing.load()) return Fail("play: already playing (stop first)");
     if (!m_EditScene) return Fail("play: no project loaded");
 
     RealignBindings();
@@ -676,73 +719,120 @@ bool EditorSession::Play(int32_t assetIndex) {
     m_RuntimeScriptPath = ResolveContentPath(scriptPath);
 
     // ── 克隆编辑场景为新建运行场景 ──
-    auto rt = std::make_shared<Engine::Scene>("AvaloniaRuntime");
-    auto r = Engine::Content::InstantiateScene(live, *rt, m_TexMgr, m_Reg);
-    if (!r.ok) return Fail("play: scene clone failed");
-
-    // ── 绑定 GameplayAPI 到运行场景并登记句柄 ──
-    Engine::Scripting::GameplayAPI::Reset();
-    Engine::Scripting::GameplayAPI::SetScene(rt.get());
-    for (const auto& o : rt->GetObjects())
-        Engine::Scripting::GameplayAPI::HandleAdopt(o);
-
-    // ── 加载并执行导演脚本（指令预算防死循环，沙箱已开）──
-    Engine::Scripting::ScriptInstance::Config cfg;
-    if (!m_Inst.Initialize(m_RuntimeScriptPath, cfg)) {
-        m_RuntimeError = m_Inst.GetEngine()
-                             ? m_Inst.GetEngine()->GetLastError().message
-                             : "(no engine)";
+    auto rollback = [this]() noexcept {
+        try {
+            m_Inst.Shutdown();
+        } catch (...) {
+        }
         Engine::Scripting::GameplayAPI::Reset();
+        Engine::Scripting::ScriptAPI::Reset();
         Engine::Scripting::GameplayAPI::SetScene(m_EditScene.get());
-        return Fail("play: director init failed: " + m_RuntimeError);
-    }
-    m_Inst.OnCreate();
+        m_Runtime.reset();
+        m_RuntimeScriptPath.clear();
+        m_Playing.store(false);
+        if (m_Application) m_Application->SetPlaying(false);
+        PublishRuntimeState();
+    };
 
-    m_Runtime = std::move(rt);
-    m_Playing = true;
-    Engine::Log::Info("[EditorBridge] PLAY (script={})", m_RuntimeScriptPath);
-    Emit(EV_PLAY_STARTED, "script=" + m_RuntimeScriptPath);
-    return true;
+    try {
+        auto rt = std::make_shared<Engine::Scene>("AvaloniaRuntime");
+        auto r = Engine::Content::InstantiateScene(live, *rt, m_TexMgr, m_Reg);
+        if (!r.ok) {
+            m_RuntimeScriptPath.clear();
+            PublishRuntimeState();
+            return Fail("play: scene clone failed");
+        }
+
+        // ── 绑定 GameplayAPI 到运行场景并登记句柄 ──
+        Engine::Scripting::GameplayAPI::Reset();
+        Engine::Scripting::GameplayAPI::SetScene(rt.get());
+        for (const auto& o : rt->GetObjects())
+            Engine::Scripting::GameplayAPI::HandleAdopt(o);
+        if (TestFailure("EDITOR_BRIDGE_FAIL_PLAY_BIND")) {
+            throw std::runtime_error("injected play binding failure");
+        }
+
+        // ── 加载并执行导演脚本（指令预算防死循环，沙箱已开）──
+        Engine::Scripting::ScriptInstance::Config cfg;
+        if (!m_Inst.Initialize(m_RuntimeScriptPath, cfg)) {
+            m_RuntimeError = ScriptError(m_Inst);
+            rollback();
+            return Fail("play: director init failed: " + m_RuntimeError);
+        }
+        const bool onCreateOk = m_Inst.OnCreate();
+        if (!onCreateOk) {
+            m_RuntimeError = ScriptError(m_Inst);
+            rollback();
+            return Fail("play: OnCreate failed: " + m_RuntimeError);
+        }
+
+        m_Runtime = std::move(rt);
+        m_Playing.store(true);
+        PublishRuntimeState();
+        if (m_Application) m_Application->SetPlaying(true);
+        Engine::Log::Info("[EditorBridge] PLAY (script={})", m_RuntimeScriptPath);
+        Emit(EV_PLAY_STARTED, "script=" + m_RuntimeScriptPath);
+        return true;
+    } catch (const std::exception& exception) {
+        m_RuntimeError = exception.what();
+        rollback();
+        return Fail("play: runtime initialization exception: " + m_RuntimeError);
+    } catch (...) {
+        m_RuntimeError = "unknown runtime initialization exception";
+        rollback();
+        return Fail("play: runtime initialization exception");
+    }
 }
 
 bool EditorSession::Reload() {
     m_RuntimeError.clear();
-    if (!m_Playing || !m_Inst.IsValid())
+    if (!m_Playing.load() || !m_Inst.IsValid())
         return Fail("reload: not playing");
     if (!m_Inst.Reload()) {
-        m_RuntimeError = m_Inst.GetEngine()
-                             ? m_Inst.GetEngine()->GetLastError().message
-                             : "(no engine)";
+        m_RuntimeError = ScriptError(m_Inst);
+        if (m_Application) Stop();
+        PublishRuntimeState();
         return Fail("reload failed: " + m_RuntimeError);
     }
-    m_Inst.OnCreate();
+    const bool onCreateOk = m_Inst.OnCreate();
+    if (!onCreateOk) {
+        m_RuntimeError = ScriptError(m_Inst);
+        Stop();
+        PublishRuntimeState();
+        return Fail("reload OnCreate failed: " + m_RuntimeError);
+    }
+    PublishRuntimeState();
     Engine::Log::Info("[EditorBridge] RELOAD ok (persist preserved): {}",
                       m_RuntimeScriptPath);
     return true;
 }
 
 void EditorSession::Stop() {
-    if (!m_Playing) return;
-    m_Inst.OnDestroy();
+    if (!m_Playing.load()) return;
+    m_StopCount.fetch_add(1);
     m_Inst.Shutdown();
     Engine::Scripting::GameplayAPI::Reset();
-    Engine::Scripting::GameplayAPI::SetScene(m_EditScene.get());   // 回到编辑态
+    Engine::Scripting::GameplayAPI::SetScene(m_EditScene.get());
+    Engine::Scripting::ScriptAPI::Reset();
     m_Runtime.reset();
     m_RuntimeScriptPath.clear();
-    m_Playing = false;
+    m_Playing.store(false);
+    PublishRuntimeState();
+    if (m_Application) m_Application->SetPlaying(false);
     Engine::Log::Info("[EditorBridge] STOP -> edit state restored");
     Emit(EV_PLAY_STOPPED, "");
 }
 
-void EditorSession::RuntimeTick(float dt) {
-    if (!m_Playing || !m_Inst.IsValid()) return;
-    m_Inst.OnUpdate(dt);
-    // OnUpdate 内运行时错误（如接触伤害路径）已由 ScriptInstance 内部 pcall
-    // 捕获并记录到 GetLastError；这里非阻断，Session 不崩。
+bool EditorSession::RuntimeTick(float dt) {
+    if (!m_Playing.load() || !m_Inst.IsValid()) return false;
+    const bool updated = m_Inst.OnUpdate(dt);
+    if (!updated) m_RuntimeError = ScriptError(m_Inst);
+    PublishRuntimeState();
+    return updated;
 }
 
 int32_t EditorSession::RuntimePersistInt(const std::string& key, int32_t def) {
-    if (!m_Playing || !m_Inst.IsValid() || !m_Inst.GetEngine()) return def;
+    if (!m_Playing.load() || !m_Inst.IsValid() || !m_Inst.GetEngine()) return def;
     if (key.empty()) return def;
     // 探针：`__p3d_persist_probe = _PERSIST[key] or nil`（key 按安全标识符/裸键引用）
     const std::string code =
@@ -783,8 +873,44 @@ bool EditorSession::AssetAt(int32_t index, Engine::Content::AssetEntry* out) con
     return false;
 }
 
+void EditorSession::SetEventCallback(EventFn cb) {
+    bool attached = false;
+    {
+        std::lock_guard<std::recursive_mutex> lock(m_EventMutex);
+        m_Event = std::move(cb);
+        attached = static_cast<bool>(m_Event);
+    }
+    m_CallbackAttached.store(attached);
+    PublishRuntimeState();
+}
+
 void EditorSession::Emit(int32_t type, const std::string& payload) {
+    std::lock_guard<std::recursive_mutex> lock(m_EventMutex);
     if (m_Event) m_Event(type, payload.c_str());
+}
+
+void EditorSession::PublishRuntimeState() noexcept {
+    std::lock_guard<std::mutex> lock(m_ProofMutex);
+    m_RuntimeScenePresent.store(static_cast<bool>(m_Runtime));
+    m_ScriptValid.store(m_Inst.IsValid());
+    m_PlayingSnapshot.store(m_Playing.load());
+    m_LastStats.stopCount = m_StopCount.load();
+    m_LastStats.onCreateCount = m_Inst.GetOnCreateCount();
+    m_LastStats.onDestroyCount = m_Inst.GetOnDestroyCount();
+    m_LastStats.gameplayHandleCount = Engine::Scripting::GameplayAPI::HandleCount();
+    m_LastStats.playing = m_PlayingSnapshot.load();
+    m_LastStats.runtimeScenePresent = m_RuntimeScenePresent.load();
+    m_LastStats.scriptValid = m_ScriptValid.load();
+    m_LastStats.callbackAttached = m_CallbackAttached.load();
+    m_LastStats.gameplayScenePresent = Engine::Scripting::GameplayAPI::HasScene();
+    m_LastStats.hudDirty = Engine::Scripting::ScriptAPI::HasHudText();
+}
+
+bool EditorSession::GetRuntimeStats(RuntimeStats* out) const {
+    if (!out) return false;
+    std::lock_guard<std::mutex> lock(m_ProofMutex);
+    *out = m_LastStats;
+    return true;
 }
 
 void EditorSession::RealignBindings() {
@@ -811,5 +937,288 @@ bool EditorSession::Fail(const std::string& msg) {
     Engine::Log::Error("[EditorBridge] {}", msg);
     return false;
 }
+
+// ── Viewport（Phase 7）── 所有操作转发到引擎 ViewportPanel ──
+
+uint32_t EditorSession::GetViewportTextureHandle() const {
+    auto* app = m_Application;
+    if (!app) return 0;
+    // 引擎 ViewportPanel 的 FBO 颜色纹理句柄
+    // 注意：当前为 CPU readback 路径，实际 GLuint 由引擎管理
+    return 0; // TODO: GPU interop 路径返回真实句柄
+}
+
+void EditorSession::GetViewportSize(int32_t* outWidth, int32_t* outHeight) const {
+    if (outWidth)  *outWidth  = m_ViewportWidth;
+    if (outHeight) *outHeight = m_ViewportHeight;
+}
+
+void EditorSession::SetViewportSize(int32_t width, int32_t height) {
+    if (width <= 0 || height <= 0) return;
+    if (width == m_ViewportWidth && height == m_ViewportHeight && m_ViewportInitialized)
+        return;
+    m_ViewportWidth = width;
+    m_ViewportHeight = height;
+    m_ViewportInitialized = true;
+
+    // 通知引擎 ViewportPanel 更新视口尺寸
+    auto* app = m_Application;
+    if (app) {
+        auto& vp = app->GetViewportPanel();
+        vp.GetCamera().SetViewportSize(static_cast<float>(width), static_cast<float>(height));
+        vp.MarkDirty();
+    }
+}
+
+void EditorSession::ViewportTick(float dt) {
+    // Phase 7-B: Flush accumulated input to engine EditorCamera
+    if (m_CameraExternalInput) {
+        auto* app = m_Application;
+        if (app) {
+            auto& cam = app->GetViewportPanel().GetCamera();
+            m_PendingInput.deltaTime = dt;
+            cam.SetExternalInput(m_PendingInput);
+            cam.SetActive(true);
+            cam.ProcessInput(dt);
+            cam.OnUpdate(dt);
+            // Reset per-frame accumulators
+            m_PendingInput.mouseDeltaX = 0.0f;
+            m_PendingInput.mouseDeltaY = 0.0f;
+            m_PendingInput.mouseWheel = 0.0f;
+        }
+    }
+}
+
+void EditorSession::SetViewportCameraPosition(float x, float y, float z) {
+    auto* app = m_Application;
+    if (app) {
+        app->GetViewportPanel().GetCamera().SetFocusPoint(
+            Engine::Vec3{x, y, z});
+    }
+}
+
+void EditorSession::GetViewportCameraPosition(float out3[3]) const {
+    if (!out3) return;
+    auto* app = m_Application;
+    if (app) {
+        auto pos = app->GetViewportPanel().GetCamera().GetPosition();
+        out3[0] = pos.x; out3[1] = pos.y; out3[2] = pos.z;
+    } else {
+        out3[0] = out3[1] = out3[2] = 0.0f;
+    }
+}
+
+void EditorSession::SetViewportCameraProjection(int32_t type) {
+    auto* app = m_Application;
+    if (app) {
+        auto& cam = app->GetViewportPanel().GetCamera();
+        cam.SetProjectionType(type == 0
+            ? Engine::CameraProjectionType::Perspective
+            : Engine::CameraProjectionType::Orthographic);
+    }
+}
+
+void EditorSession::SetViewportCameraZoom(float zoom) {
+    auto* app = m_Application;
+    if (app) {
+        auto& cam = app->GetViewportPanel().GetCamera();
+        cam.SetDistance(zoom);
+    }
+}
+
+void EditorSession::ViewportMouseMove(float x, float y) {
+    float dx = x - m_LastMouseX;
+    float dy = y - m_LastMouseY;
+    m_LastMouseX = x;
+    m_LastMouseY = y;
+
+    // Feed to engine EditorCamera
+    if (m_CameraExternalInput) {
+        m_PendingInput.mouseDeltaX += dx;
+        m_PendingInput.mouseDeltaY += dy;
+    }
+}
+
+void EditorSession::ViewportMouseButton(int32_t button, int32_t pressed) {
+    if (m_CameraExternalInput) {
+        if (button == 0) m_PendingInput.leftDown = (pressed != 0);
+        else if (button == 1) m_PendingInput.rightDown = (pressed != 0);
+        else if (button == 2) m_PendingInput.middleDown = (pressed != 0);
+    }
+}
+
+void EditorSession::ViewportScroll(float delta) {
+    if (m_CameraExternalInput) {
+        m_PendingInput.mouseWheel += delta;
+    }
+}
+
+void EditorSession::ViewportKeyDown(int32_t key) {
+    if (m_CameraExternalInput) {
+        // Avalonia Key enum → camera key mapping (Avalonia.Input.Key)
+        enum K {
+            Shift = 16, Alt = 18, Space = 32, Delete = 46,
+            A = 65, D = 68, E = 69, Q = 81, S = 83, W = 87,
+            Left = 104, Up = 106, Right = 107, Down = 108,
+        };
+        switch (key) {
+            case W: m_PendingInput.keyW = true; break;
+            case S: m_PendingInput.keyS = true; break;
+            case A: m_PendingInput.keyA = true; break;
+            case D: m_PendingInput.keyD = true; break;
+            case E: m_PendingInput.keyE = true; break;
+            case Q: m_PendingInput.keyQ = true; break;
+            case Up: m_PendingInput.keyUp = true; break;
+            case Down: m_PendingInput.keyDown = true; break;
+            case Left: m_PendingInput.keyLeft = true; break;
+            case Right: m_PendingInput.keyRight = true; break;
+            case Shift: m_PendingInput.shiftHeld = true; break;
+            case Alt: m_PendingInput.altHeld = true; break;
+        }
+    }
+}
+
+void EditorSession::ViewportKeyUp(int32_t key) {
+    if (m_CameraExternalInput) {
+        enum K {
+            Shift = 16, Alt = 18,
+            A = 65, D = 68, E = 69, Q = 81, S = 83, W = 87,
+            Left = 104, Up = 106, Right = 107, Down = 108,
+        };
+        switch (key) {
+            case W: m_PendingInput.keyW = false; break;
+            case S: m_PendingInput.keyS = false; break;
+            case A: m_PendingInput.keyA = false; break;
+            case D: m_PendingInput.keyD = false; break;
+            case E: m_PendingInput.keyE = false; break;
+            case Q: m_PendingInput.keyQ = false; break;
+            case Up: m_PendingInput.keyUp = false; break;
+            case Down: m_PendingInput.keyDown = false; break;
+            case Left: m_PendingInput.keyLeft = false; break;
+            case Right: m_PendingInput.keyRight = false; break;
+            case Shift: m_PendingInput.shiftHeld = false; break;
+            case Alt: m_PendingInput.altHeld = false; break;
+        }
+    }
+}
+
+int32_t EditorSession::ViewportPick(float ndcX, float ndcY) {
+    if (!m_ViewportInitialized || !m_EditScene) return -1;
+
+    // TODO: Phase 7-B 完成后，这里应从引擎 ViewportPanel 的 ID 纹理读取实体 ID
+    // 当前返回 -1 表示无命中
+    return -1;
+}
+
+void EditorSession::SetGizmoMode(int32_t mode) {
+    m_GizmoMode = mode;
+}
+
+void EditorSession::SetGizmoSpace(int32_t space) {
+    m_GizmoSpace = space;
+}
+
+void EditorSession::SetGizmoSnap(int32_t enabled, float value) {
+    m_GizmoSnapEnabled = enabled;
+    m_GizmoSnapValue = value;
+}
+
+int32_t EditorSession::GetGizmoMode() const { return m_GizmoMode; }
+int32_t EditorSession::GetGizmoSpace() const { return m_GizmoSpace; }
+int32_t EditorSession::GetGizmoSnapEnabled() const { return m_GizmoSnapEnabled; }
+float EditorSession::GetGizmoSnapValue() const { return m_GizmoSnapValue; }
+
+void EditorSession::SetViewportGridVisible(int32_t visible) {
+    m_ViewportGridVisible = visible;
+}
+
+int32_t EditorSession::GetViewportGridVisible() const {
+    return m_ViewportGridVisible;
+}
+
+// ── Phase 7-B: Camera external input mode ──
+
+void EditorSession::SetCameraExternalInput(int32_t enabled) {
+    m_CameraExternalInput = (enabled != 0);
+    auto* app = m_Application;
+    if (app) {
+        auto& vp = app->GetViewportPanel();
+        vp.GetCamera().SetExternalInputMode(m_CameraExternalInput);
+    }
+}
+
+int32_t EditorSession::GetCameraExternalInput() const {
+    return m_CameraExternalInput ? 1 : 0;
+}
+
+// ── Phase 7: Viewport FBO pixel readback ──
+
+int32_t EditorSession::GetViewportPixels(uint8_t* outBuffer, int32_t bufferSize) {
+    auto* app = m_Application;
+    if (!app) return 0;
+
+    auto& vp = app->GetViewportPanel();
+    int32_t w = vp.GetReadbackWidth();
+    int32_t h = vp.GetReadbackHeight();
+
+    // 数据布局：[int32 width][int32 height][uint8 RGBA × width×height]
+    int32_t headerSize = 8;
+    int32_t pixelDataSize = w * h * 4;
+    int32_t totalSize = headerSize + pixelDataSize;
+
+    if (!outBuffer || bufferSize < totalSize) {
+        return totalSize; // 返回所需字节数
+    }
+
+    std::memcpy(outBuffer, &w, 4);
+    std::memcpy(outBuffer + 4, &h, 4);
+    if (pixelDataSize > 0) {
+        vp.CopyReadbackPixels(outBuffer + headerSize, pixelDataSize);
+    }
+    return totalSize;
+}
+
+  // ── HRC-3 P1：编辑场景的可渲染内容计数（production render 的前置证据）──
+  //
+  // 与 production render step 用同一条收集路径（Scene::CollectRenderCommands），
+  // 因此"有内容"与"真的画得出来"是同一个判据，不会出现两套口径。
+  // 0 = insufficient scene content：调用方必须把它当 typed failure，而不是退化成 clear-only。
+  int32_t EditorSession::CountEditSceneRenderables() const {
+    if (!m_EditScene) return 0;
+    Engine::RenderQueue queue;
+    m_EditScene->CollectRenderCommands(queue);
+    return static_cast<int32_t>(queue.GetCommands().size());
+  }
+
+  // ── HRC-3 P1：把编辑场景的 sprite GUID 解析并绑到 SpriteComponent ──
+  //
+  // 幂等：已经有纹理的 sprite 直接跳过；不写 GUID、不改场景结构、不发事件，
+  // 因此这不是新的编辑能力，只是让"场景里已经声明的 sprite"真的能被渲染。
+  int32_t EditorSession::BindEditSceneSpriteTextures() {
+    if (!m_EditScene) return 0;
+    const auto& objs = m_EditScene->GetObjects();
+    const size_t count = std::min(objs.size(), m_Bindings.size());
+    int32_t bound = 0;
+    for (size_t i = 0; i < count; ++i) {
+      auto& guid = m_Bindings[i].spriteGuid;
+      if (guid.IsNull()) continue;
+      auto obj = objs[i];
+      if (!obj) continue;
+      auto* sprite = obj->GetComponent<Engine::SpriteComponent>();
+      if (sprite && sprite->GetTexture()) continue;   // 已有纹理（显式 AssignSprite 过）
+      const std::string path = m_Reg.ResolvePath(guid);
+      if (path.empty()) continue;
+      if (!sprite) {
+        sprite = obj->AddComponent<Engine::SpriteComponent>(m_TexMgr, path);
+      } else {
+        sprite->SetTexture(m_TexMgr, path);
+      }
+      if (sprite && sprite->GetTexture()) ++bound;
+    }
+    if (bound > 0) {
+      Engine::Log::Info("[HRC-3 P1] bound sprite textures for {} edit-scene object(s)", bound);
+    }
+    return bound;
+  }
 
 } // namespace editor_bridge

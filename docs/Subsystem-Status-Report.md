@@ -351,3 +351,9 @@ Promote to API / Reject
 ---
 
 *本文档由 milestone-1 基线自动扫描生成。下次更新请在完成新迭代后重新运行。*
+
+---
+
+> **补充**：完整子系统成熟度矩阵、与主流引擎对比、逐子系统验证状态矩阵
+> 与 P0–P3 演进规划，见 `docs/Engine-Capability-Audit.md`（审计基准 HEAD `d3ba590`）。
+> 其中 **Animation** 与 **Audio** 体量大但**零测试**，为当前风险加权最高的缺口。

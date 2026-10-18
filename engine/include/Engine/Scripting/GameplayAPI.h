@@ -44,6 +44,7 @@ namespace Scripting {
 
         // ── 进程级上下文注入（v2：单世界假设）──
         void SetScene(Scene* scene);
+        bool HasScene();
         void SetInputProvider(IScriptInputProvider* provider);
         void Reset();                       ///< 测试隔离：清空场景绑定与句柄表
 

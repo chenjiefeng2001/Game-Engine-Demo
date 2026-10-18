@@ -12,13 +12,18 @@
  * 拾取使用方式：
  * @code
  *   // 渲染场景时，用拾取 Shader 将 GameObject ID 写入 Pick Texture
- *   // 鼠标点击时：
- *   uint32 pickedID = fbo.ReadPixelID(mouseX, mouseY);
- *   GameObject* obj = scene->FindByID(pickedID);
+ *   // 鼠标点击时（HRC-3 D3：结构化结果，失败与未命中必须可区分）：
+ *   auto pick = fbo.ReadPickPixel(mouseX, mouseY, viewportMinX, viewportMinY);
+ *   if (pick.status == OpenGLFramebuffer::PickReadbackStatus::Hit) {
+ *       GameObject* obj = scene->FindByID(pick.entityId);  // entityId >= 1
+ *   } else if (pick.status == OpenGLFramebuffer::PickReadbackStatus::NoHit) {
+ *       // 正常未命中（sentinel -1），**不是错误**
+ *   }
  * @endcode
  */
 
 #include "Engine/Types.h"
+#include <thread>
 
 struct GladGLContext;
 
@@ -51,30 +56,57 @@ namespace Engine {
         void Bind();
 
         /** 解绑 FBO，恢复到默认帧缓冲 */
-        void Unbind();
+         void Unbind();
+         void Clear(float red, float green, float blue, float alpha);
+         bool ReadColorPixel(uint32 x, uint32 y, uint8_t out[4]) const;
+         void Abandon();
+         bool IsOwnerThread() const {
+             return m_OwnerThreadId == std::this_thread::get_id();
+         }
 
         // ── 纹理访问 ──
         /** 获取颜色附件的 OpenGL 纹理 ID（用于 ImGui::Image） */
         uint32 GetColorTextureID() const { return m_ColorTexture; }
 
         /** 检查 FBO 是否有效 */
-        bool IsValid() const { return m_FBO != 0; }
+         bool IsValid() const { return m_FBO != 0; }
+         uint32 GetFramebufferID() const { return m_FBO; }
 
     public:
         // ── ID 拾取 ──
         /**
-         * @brief 读取鼠标位置处的 GameObject ID（绝对屏幕坐标）
+         * @brief HRC-3 D3：结构化 pick readback 结果
+         *
+         * D3-C6 要求 **readback 失败 ≠ no-hit**。旧的 ReadPixelID 把两者都返回 0，
+         * 因此被废止（Step 2 废止条款 1）。
+         */
+        enum class PickReadbackStatus {
+            Hit,              ///< 命中，entityId >= 1（D3-C2 有效区间）
+            NoHit,            ///< 正常未命中：像素为 sentinel -1
+            InvalidCoordinate,///< 坐标非有限值
+            OutsideViewport,  ///< 越界 —— 显式拒绝，**绝不 clamp**（D3-C3）
+            NotReady          ///< 无拾取纹理 / 非 owner thread / 无 current context
+        };
+
+        struct PickReadback {
+            PickReadbackStatus status = PickReadbackStatus::NotReady;
+            uint32 entityId = 0;   ///< 仅 status == Hit 时有意义
+        };
+
+        /**
          * @param mouseX 绝对屏幕 X（物理像素）
          * @param mouseY 绝对屏幕 Y（物理像素）
          * @param viewportMinX 视口左上角绝对 X
          * @param viewportMinY 视口左上角绝对 Y
-         * @return GameObject ID，0 表示空白
+         * @return 结构化结果，区分 Hit / NoHit / InvalidCoordinate /
+         *         OutsideViewport / NotReady
          *
-         * 使用 glReadPixels 从拾取纹理（R32I）中读取像素值。
-         * mouseX/mouseY 为操作系统绝对坐标，viewportMinX/Y 为视口左上角。
+         * D3-C2：sentinel 为 **-1**；**不得**用 max(0, value) 之类的 clamp，
+         * 那会把 -1 变成 0 并摧毁 sentinel（Step 2 废止条款 2）。
+         * D3-C3：越界一律拒绝，禁止 clamp 到边缘像素（否则变成假命中）。
          */
-        uint32 ReadPixelID(float mouseX, float mouseY,
-                           float viewportMinX, float viewportMinY) const;
+        PickReadback ReadPickPixel(float mouseX, float mouseY,
+                                   float viewportMinX, float viewportMinY) const;
 
         /** 获取拾取纹理的 OpenGL ID（用于多渲染目标绑定） */
         uint32 GetPickTextureID() const { return m_PickTexture; }
@@ -90,6 +122,7 @@ namespace Engine {
         void Destroy();
 
         GladGLContext& m_GL;
+        std::thread::id m_OwnerThreadId;
 
         uint32 m_FBO           = 0;   // 帧缓冲对象
         uint32 m_ColorTexture  = 0;   // 颜色附件（RGBA8 纹理）

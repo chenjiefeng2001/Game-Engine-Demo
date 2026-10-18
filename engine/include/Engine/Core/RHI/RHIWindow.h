@@ -13,6 +13,7 @@
 #include "Engine/Types.h"
 #include <memory>
 #include <string>
+#include <thread>
 
 // 前向声明 GLFWwindow（不包含 glfw3.h 避免与 GLAD 冲突）
 struct GLFWwindow;
@@ -67,6 +68,8 @@ private:
     int m_Height;
     std::string m_Title;
     RHIBackend m_Backend;
+    bool m_GlfwAcquired = false;
+    std::thread::id m_OwnerThreadId;
 
     // Win32 句柄（由 GLFW 创建窗口后获取）
     void* m_HWND = nullptr;

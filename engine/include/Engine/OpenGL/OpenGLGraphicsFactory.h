@@ -5,14 +5,31 @@
 #include "Engine/Core/RHI/IRHIIndexBuffer.h"
 #include "Engine/Core/RHI/IRHIVertexArray.h"
 #include <glad/gl.h>
+#include <atomic>
+#include <string>
+#include <thread>
+
+struct GLFWwindow;
 
 namespace Engine {
 
 	class OpenGLGraphicsFactory : public IGraphicsFactory
 	{
 	public:
-		OpenGLGraphicsFactory();
+		explicit OpenGLGraphicsFactory(bool persistentMode = false);
 		virtual ~OpenGLGraphicsFactory() override;
+
+		bool InitializePersistentHiddenContext(int width, int height);
+		bool ShutdownPersistentContext();
+		bool MakePersistentContextCurrent();
+		bool UncurrentPersistentContext();
+		bool IsReady() const { return m_GlfwInitialized && m_GladReady; }
+		bool IsPersistentContextReady() const { return m_PersistentContextReady; }
+		bool IsPersistentContextCurrent() const;
+		GLFWwindow* GetPersistentWindow() const { return m_PersistentWindow; }
+		uint64_t GetMakeCurrentCount() const { return m_MakeCurrentCount.load(); }
+		uint64_t GetUncurrentCount() const { return m_UncurrentCount.load(); }
+		const std::string& GetLastError() const { return m_LastError; }
 
 		// ---- COntext with Window ----
 		virtual std::unique_ptr<IWindow> CreateWindow(
@@ -89,6 +106,17 @@ namespace Engine {
 
 	private:
 		GladGLContext m_GL;
+		GLFWwindow* m_PersistentWindow = nullptr;
+		std::atomic<bool> m_PersistentContextReady{false};
+		std::atomic<bool> m_PersistentContextCurrent{false};
+		bool m_GlfwInitialized = false;
+		bool m_GladReady = false;
+		bool m_PersistentLifetime = false;
+		std::thread::id m_OwnerThreadId;
+		std::string m_LastError;
+		std::atomic<uint64_t> m_MakeCurrentCount{0};
+		std::atomic<uint64_t> m_UncurrentCount{0};
+		std::atomic<int32> m_LiveWindowCount{0};
 		int32 m_SampleCount = 4;  // 默认启用 4x MSAA
 		/** 存储窗口指针，用于后续 AA 配置传递 */
 		mutable IRenderContext* m_RenderContext = nullptr;

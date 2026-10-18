@@ -102,7 +102,7 @@ public static class Phase2Gate
 
             // ── 8. Close → reopen → verify all state ──
             vm.Dispose();
-            var vm2 = new MainViewModel();
+            var vm2 = new MainViewModel(vm.Host);
             try
             {
                 Check(vm2.OpenProject(manifest, scene), "reopen project");

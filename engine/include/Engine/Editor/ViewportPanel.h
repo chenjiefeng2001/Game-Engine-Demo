@@ -9,6 +9,8 @@
 #include "Engine/Core/IRenderContext.h"
 #include <memory>
 #include <string>
+#include <vector>
+#include <mutex>
 #include <functional>
 
 #include <imgui.h>
@@ -80,6 +82,15 @@ namespace Engine {
 
         void MarkDirty() { m_RenderDirty = true; }
 
+        // ── Phase 7: FBO readback for Avalonia texture interop ──
+        void EnableReadback(bool enable) { m_ReadbackEnabled = enable; }
+        bool IsReadbackEnabled() const { return m_ReadbackEnabled; }
+        /// 线程安全：拷贝最近一次 readback 的 RGBA 像素数据到 dst
+        /// 返回拷贝的字节数；dst 为 nullptr 或 size 不足时返回所需字节数
+        int32 CopyReadbackPixels(uint8* dst, int32 dstSize) const;
+        int32 GetReadbackWidth() const { return m_ReadbackWidth; }
+        int32 GetReadbackHeight() const { return m_ReadbackHeight; }
+
     private:
         void InitMRTFramebuffer();
         void Render3DScene();
@@ -133,6 +144,13 @@ namespace Engine {
         SelectionMode m_SelectionMode = SelectionMode::Object;
         bool m_GizmoLocal = false, m_SnapEnabled = false;
         float m_SnapValue = 0.5f;
+
+        // ── Phase 7: FBO readback ──
+        bool m_ReadbackEnabled = false;
+        std::vector<uint8> m_ReadbackPixels;
+        mutable std::mutex m_ReadbackMutex;
+        int32 m_ReadbackWidth = 0;
+        int32 m_ReadbackHeight = 0;
     };
 
 } // namespace Engine

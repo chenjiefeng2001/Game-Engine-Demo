@@ -59,14 +59,49 @@ namespace Engine {
     void EditorCamera::ProcessInput(float32 dt) {
         if (!m_Active) return;
 
-        ImGuiIO& io = ImGui::GetIO();
-        float deltaX = io.MouseDelta.x;
-        float deltaY = io.MouseDelta.y;
-        float scroll = io.MouseWheel;
+        float deltaX, deltaY, scroll;
+        bool rightDown, middleDown, leftDown, altHeld, shiftHeld;
+        bool keyW, keyS, keyA, keyD, keyE, keyQ;
+        bool keyUp, keyDown, keyLeft, keyRight;
 
-        bool rightDown = ImGui::IsMouseDown(ImGuiMouseButton_Right);
-        bool middleDown = ImGui::IsMouseDown(ImGuiMouseButton_Middle);
-        bool altHeld = io.KeyAlt;
+        if (m_ExternalInput) {
+            // Phase 7: Use external input from Bridge/Avalonia
+            const auto& ext = m_ExternalInputState;
+            deltaX = ext.mouseDeltaX;
+            deltaY = ext.mouseDeltaY;
+            scroll = ext.mouseWheel;
+            rightDown = ext.rightDown;
+            middleDown = ext.middleDown;
+            leftDown = ext.leftDown;
+            altHeld = ext.altHeld;
+            shiftHeld = ext.shiftHeld;
+            keyW = ext.keyW; keyS = ext.keyS;
+            keyA = ext.keyA; keyD = ext.keyD;
+            keyE = ext.keyE; keyQ = ext.keyQ;
+            keyUp = ext.keyUp; keyDown = ext.keyDown;
+            keyLeft = ext.keyLeft; keyRight = ext.keyRight;
+        } else {
+            // Legacy: Read from ImGui
+            ImGuiIO& io = ImGui::GetIO();
+            deltaX = io.MouseDelta.x;
+            deltaY = io.MouseDelta.y;
+            scroll = io.MouseWheel;
+            rightDown = ImGui::IsMouseDown(ImGuiMouseButton_Right);
+            middleDown = ImGui::IsMouseDown(ImGuiMouseButton_Middle);
+            leftDown = ImGui::IsMouseDown(ImGuiMouseButton_Left);
+            altHeld = io.KeyAlt;
+            shiftHeld = io.KeyShift;
+            keyW = ImGui::IsKeyDown(ImGuiKey_W);
+            keyS = ImGui::IsKeyDown(ImGuiKey_S);
+            keyA = ImGui::IsKeyDown(ImGuiKey_A);
+            keyD = ImGui::IsKeyDown(ImGuiKey_D);
+            keyE = ImGui::IsKeyDown(ImGuiKey_E);
+            keyQ = ImGui::IsKeyDown(ImGuiKey_Q);
+            keyUp = ImGui::IsKeyDown(ImGuiKey_UpArrow);
+            keyDown = ImGui::IsKeyDown(ImGuiKey_DownArrow);
+            keyLeft = ImGui::IsKeyDown(ImGuiKey_LeftArrow);
+            keyRight = ImGui::IsKeyDown(ImGuiKey_RightArrow);
+        }
 
         // ── 计算当前相机的局部方向系（基于欧拉角） ──
         float yawRad = glm::radians(m_Yaw);
@@ -86,7 +121,7 @@ namespace Engine {
         }
 
         // ── 2. 中键平移 (Pan) — 移动 FocusPoint ──
-        if (middleDown || (altHeld && ImGui::IsMouseDown(ImGuiMouseButton_Middle))) {
+        if (middleDown || (altHeld && leftDown)) {
             float panSpeed = m_Distance * 0.0015f;
             glm::vec3 panDelta = -right * (deltaX * panSpeed) + up * (deltaY * panSpeed);
             m_FocusPoint = ToEngine(ToGlm(m_FocusPoint) + panDelta);
@@ -102,16 +137,16 @@ namespace Engine {
 
             // 键盘移动（WASD + 方向键），焦点同步移动
             glm::vec3 move(0.0f);
-            if (ImGui::IsKeyDown(ImGuiKey_W) || ImGui::IsKeyDown(ImGuiKey_UpArrow))    move += forward;
-            if (ImGui::IsKeyDown(ImGuiKey_S) || ImGui::IsKeyDown(ImGuiKey_DownArrow))  move -= forward;
-            if (ImGui::IsKeyDown(ImGuiKey_A) || ImGui::IsKeyDown(ImGuiKey_LeftArrow))  move -= right;
-            if (ImGui::IsKeyDown(ImGuiKey_D) || ImGui::IsKeyDown(ImGuiKey_RightArrow)) move += right;
-            if (ImGui::IsKeyDown(ImGuiKey_E)) move += glm::vec3(0.0f, 1.0f, 0.0f);
-            if (ImGui::IsKeyDown(ImGuiKey_Q)) move -= glm::vec3(0.0f, 1.0f, 0.0f);
+            if (keyW || keyUp)    move += forward;
+            if (keyS || keyDown)  move -= forward;
+            if (keyA || keyLeft)  move -= right;
+            if (keyD || keyRight) move += right;
+            if (keyE) move += glm::vec3(0.0f, 1.0f, 0.0f);
+            if (keyQ) move -= glm::vec3(0.0f, 1.0f, 0.0f);
 
             if (glm::length(move) > 0.0f) {
                 float speed = m_FlySpeed * dt;
-                if (io.KeyShift) speed *= 3.0f;
+                if (shiftHeld) speed *= 3.0f;
                 glm::vec3 moveDelta = glm::normalize(move) * speed;
                 m_FocusPoint = ToEngine(ToGlm(m_FocusPoint) + moveDelta);
             }

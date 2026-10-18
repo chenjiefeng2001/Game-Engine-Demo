@@ -24,6 +24,7 @@
  *   其余全局/局部  —— Reload 后随新代码重建
  */
 
+#include <atomic>
 #include <memory>
 #include <string>
 
@@ -31,29 +32,12 @@ namespace Engine { namespace Scripting {
 
     class LuaEngine;
 
-    namespace detail {
-    /**
-     * 脚本实例配置。
-     *
-     * 定义在命名空间作用域而不是 ScriptInstance 内部：外围类定义中的默认实参
-     * 属于该外围类的 complete-class context，而嵌套类型的默认成员初始化器
-     * 不属于外围类的 complete-class context。因此把 Config 连同其默认成员
-     * 初始化器留在类内时，`Initialize(..., config = {})` 在要求该完整性规则的
-     * 前端上不成立。该规则由 GCC 88165 与 Clang 36032 跟踪。
-     *
-     * 提到命名空间作用域后，默认实参在所有前端上均为良构；类内通过别名保持
-     * `ScriptInstance::Config` 的源码调用形式不变。
-     */
-    struct ScriptInstanceConfig {
-        uint64_t instructionBudget = 20000000ull;  ///< 每次回调的 VM 指令上限
-        bool     sandbox           = true;
-    };
-    } // namespace detail
-
     class ScriptInstance {
     public:
-        /// 源码 API 保持 `ScriptInstance::Config` 不变。
-        using Config = detail::ScriptInstanceConfig;
+        struct Config {
+            uint64_t instructionBudget = 20000000ull;  ///< 每次回调的 VM 指令上限
+            bool     sandbox           = true;
+        };
 
         ScriptInstance() = default;
         ~ScriptInstance();
@@ -62,15 +46,30 @@ namespace Engine { namespace Scripting {
         ScriptInstance& operator=(const ScriptInstance&) = delete;
 
         /// 创建独立 VM、注册 API 边界、加载并执行脚本文件
-        bool Initialize(const std::string& scriptPath, const Config& config = {});
+        // 注意：此处**不能**写成 `const Config& config = {}`。
+        //
+        // Config 是本类的**嵌套**类型且带默认成员初始化器（NSDMI）。按 [class.mem]，
+        // NSDMI 在外层类定义体内、成员函数之外尚不可见，因此外层类成员函数声明中
+        // 的 `= {}` 无法读取 instructionBudget / sandbox 的默认值 —— 这是**标准
+        // 规定的行为**，不是 GCC 13 的缺陷。clang 的诊断可证：
+        //   "default member initializer for 'b' needed within definition of
+        //    enclosing class 'Outer' outside of member functions"
+        //
+        // 契约保持：保留原两参签名（const Config&），另加一个单参重载转发到
+        // Config{}，使 `Initialize(path)` 与 `Initialize(path, Config{...})`
+        // 两种调用形态都不变。
+        bool Initialize(const std::string& scriptPath, const Config& config);
+
+        /// 单参重载：等价于 `Initialize(scriptPath, Config{})`。
+        bool Initialize(const std::string& scriptPath) { return Initialize(scriptPath, Config{}); }
 
         /// 触发 OnDestroy（若脚本定义）并销毁 VM
         void Shutdown();
 
         // ── S3 生命周期（脚本未定义对应函数时为安全空操作）──
-        void OnCreate();
-        void OnUpdate(float dt);
-        void OnFixedUpdate(float fixedDt);
+        bool OnCreate();
+        bool OnUpdate(float dt);
+        bool OnFixedUpdate(float fixedDt);
         void OnDestroy();
 
         // ── S4 热重载（保留 _PERSIST 表）──
@@ -79,20 +78,27 @@ namespace Engine { namespace Scripting {
         // ── Console 能力：运行期执行任意语句（错误经 GetLastError 取回）──
         bool Execute(const std::string& luaCode);
 
-        bool IsValid() const;
-        bool HasOnUpdate() const { return m_HasOnUpdate; }
+         bool IsValid() const;
+         bool HasOnUpdate() const { return m_HasOnUpdate; }
+         uint32_t GetOnCreateCount() const { return m_OnCreateCount.load(); }
+         uint32_t GetOnDestroyCount() const { return m_OnDestroyCount.load(); }
 
-        const std::string& GetPath() const { return m_Path; }
-        LuaEngine* GetEngine() { return m_Lua.get(); }   ///< 供扩展 API 注册
+         const std::string& GetPath() const { return m_Path; }
+         const std::string& GetLastError() const { return m_LastError; }
+         LuaEngine* GetEngine() const { return m_Lua.get(); }   ///< 供扩展 API 注册
 
     private:
         std::unique_ptr<LuaEngine> m_Lua;
         std::string m_Path;
+        std::string m_LastError;
         bool m_Loaded      = false;
         bool m_HasOnCreate = false;
         bool m_HasOnUpdate = false;
-        bool m_HasOnFixed  = false;
-        bool m_HasOnDestroy= false;
+         bool m_HasOnFixed  = false;
+         bool m_HasOnDestroy= false;
+         std::atomic<uint32_t> m_OnCreateCount{0};
+         std::atomic<uint32_t> m_OnDestroyCount{0};
+         std::atomic<bool> m_OnDestroyCalled{false};
     };
 
 }} // namespace Engine::Scripting

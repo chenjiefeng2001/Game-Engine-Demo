@@ -52,6 +52,16 @@ void Time::Init() {
     s_Initialized    = true;
 }
 
+void Time::Shutdown() {
+    s_InitTimeD = 0.0;
+    s_LastFrameTimeD = 0.0;
+    s_DeltaTime = 0.0f;
+    s_DeltaTimeD = 0.0;
+    s_TimeScale = 1.0f;
+    s_GameTime = 0.0;
+    s_Initialized = false;
+}
+
 // ============================================================
 // 时间获取
 // ============================================================
