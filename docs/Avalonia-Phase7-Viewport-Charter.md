@@ -170,7 +170,24 @@ int32_t EditorSession_GetViewportGridVisible(EditorSessionHandle h);
 
 ### Gate 7-A: 纹理显示
 - [x] Avalonia 窗口显示引擎渲染的 3D 场景纹理（CPU Readback via WriteableBitmap）
-- [ ] 窗口 resize 时 FBO 自动重建（待验证）
+- [x] 视口控件尺寸上报引擎（`ViewportBorder.SizeChanged` → `EditorSession_SetViewportSize`）
+- [x] 相机宽高比跟随视口控件（此前无人调用 `SetViewportSize`，比例停在打开工程那一刻）
+- [ ] **渲染目标（FBO）随尺寸重建 —— 受阻**：见下方说明
+
+**7-A 未完成部分的边界（2026-10-18 实测）**：`EditorSession::SetViewportSize` 只调用
+`ViewportPanel::GetCamera().SetViewportSize(...)` 与 `MarkDirty()`，**不重建 FBO**。
+真正驱动 FBO 尺寸的两处都在 ImGui 路径里：
+- `ViewportPanel::OnImGui()` 从 `m_ViewportBounds` 读尺寸并置 `m_NeedsFBOUpdate`；
+- `ViewportPanel::Render3DScene()` 据此调 `InitMRTFramebuffer()`。
+
+而 `OnUpdate` / `OnImGui` 在 headless 生产路径下**从不被调用**（见 §2.3 补充的
+同一阻塞：生产路径不驱动 legacy ViewportPanel）。因此呈现帧仍是固定
+`ENGINE_HOST_PRESENTATION_WIDTH/HEIGHT = 800x600`（capi.h:384-385），UI 侧用
+`Stretch="Uniform"` 等比缩放以避免裁切/变形。
+
+结论：Gate 7-A 的「UI 上报 + 相机比例」部分已完成；「渲染目标重建」与 7-C 的
+gizmo 渲染一样，卡在「生产路径不驱动 ViewportPanel」这一个架构问题上，
+不是 UI 接线能解决的。
 
 ### Gate 7-B: 输入转发
 - [ ] 右键拖拽旋转相机（待 Avalonia 事件 → ViewportMouseButton 验证）
@@ -181,12 +198,23 @@ int32_t EditorSession_GetViewportGridVisible(EditorSessionHandle h);
 ### Gate 7-C: Gizmo
 - [x] Q/W/E/R 工具切换（经 ABI 转发到 ViewportPanel）
 - [x] Gizmo 模式状态同步到引擎
+- [x] 坐标空间 World/Local 控件（`SetGizmoSpace` 的 ABI 与 ViewModel 属性本就存在，
+      此前工具栏无任何控件能触达它）
+- [x] 吸附开关 + 步长控件（`SetGizmoSnap` 同上）
 - [ ] Gizmo 在 legacy 视口中实际可见（需 legacy 编辑器运行取证）
 - [ ] Gizmo 在生产路径可见（受阻，见 §2.3 补充）
 
 ### Gate 7-D: 相机控制
-- [ ] 相机位置/缩放可编辑
-- [ ] Perspective/Orthographic 切换
+- [x] 相机位置可编辑（`ViewportCamX/Y/Z` → `SetViewportCameraPosition`；
+      `_viewportCamX/Y/Z` 三个字段此前**声明后从未被引用**，没有任何可绑定面）
+- [x] 相机缩放可编辑（`ViewportZoom` → `SetViewportCameraZoom`）
+- [x] Perspective/Orthographic 切换（`ViewportProjection` → `SetViewportCameraProjection`）
+
+### Gate 7-UI: 视口叠加信息
+- [x] 左下角叠加层显示真实呈现帧凭据（帧号/尺寸/非清屏像素）。
+      此前是硬编码静态 "Viewport" 文本，不随任何东西变化。
+      刻意不显示 FPS：呈现节奏由 33ms DispatcherTimer 决定，回显它报告的是定时器
+      频率而非引擎产帧速度；没有真实帧计时来源前，显示假 FPS 比不显示更糟。
 
 ---
 
