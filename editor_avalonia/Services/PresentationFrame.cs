@@ -62,20 +62,25 @@ public sealed class PresentationFrame
 
         if (buffer is null) { error = "packet buffer is null"; return false; }
         if (length < HeaderBytes) { error = $"packet is shorter than the {HeaderBytes}B header (got {length})"; return false; }
-        if (length != ExpectedBytes)
-        {
-            error = $"packet byte count mismatch: expected {ExpectedBytes}, got {length}";
-            return false;
-        }
+        // P1.3：presentation target 现在可 resize，尺寸由 packet header 自身携带。
+        // 不再要求 length 等于编译期的 ExpectedBytes（那是 bootstrap 尺寸的产物）；
+        // 只要求 buffer 至少装得下 header，payload 长度由下方的 available 校验。
 
         // ── 显式 offset 解码（不使用 reinterpret cast）──
         int width = BinaryPrimitives.ReadInt32LittleEndian(buffer.AsSpan(0, 4));
         int height = BinaryPrimitives.ReadInt32LittleEndian(buffer.AsSpan(4, 4));
         ulong frameId = BinaryPrimitives.ReadUInt64LittleEndian(buffer.AsSpan(8, 8));
 
-        if (width != ExpectedWidth || height != ExpectedHeight)
+        // P1.3：尺寸由运行时 FBO 决定，不再与编译期 ExpectedWidth/Height 比对。
+        // 只做正性与上界校验，避免一个失控的 packet 把 managed 侧分配几 GB。
+        if (width <= 0 || height <= 0)
         {
-            error = $"unexpected frame size {width}x{height} (expected {ExpectedWidth}x{ExpectedHeight})";
+            error = $"invalid frame size {width}x{height}";
+            return false;
+        }
+        if (width > 16384 || height > 16384)
+        {
+            error = $"frame size {width}x{height} exceeds the supported maximum";
             return false;
         }
         if (frameId == 0)
