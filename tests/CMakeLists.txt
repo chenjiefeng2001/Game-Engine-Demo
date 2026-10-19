@@ -326,6 +326,15 @@ target_link_libraries(test_avalonia_layout PRIVATE EngineCore GTest::gtest_main)
 add_test(NAME test_avalonia_layout COMMAND test_avalonia_layout)
 set_tests_properties(test_avalonia_layout PROPERTIES WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}")
 
+# HRC-3 P1.5：presentation target 尺寸策略。纯逻辑（不碰 GL），因此可以在任何
+# 机器上穷举 —— 而 FBO 重建需要 current context，实测本地不可靠。
+add_executable(test_presentation_policy
+    test_presentation_policy/test_presentation_policy.cpp
+)
+target_include_directories(test_presentation_policy PRIVATE ${CMAKE_SOURCE_DIR}/bridge/include)
+target_link_libraries(test_presentation_policy PRIVATE GTest::gtest_main)
+add_test(NAME test_presentation_policy COMMAND test_presentation_policy)
+
 # NOTE: this block must stay at the END of the file.
 # get_property(... DIRECTORY PROPERTY TESTS) only returns the tests
 # registered so far. Placed mid-file, later targets (test_animation /
