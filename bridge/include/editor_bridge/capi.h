@@ -377,7 +377,7 @@ typedef int32_t EngineHostStage;
 /// 新增的 `ENGINE_HOST_STATUS_NO_NEW_FRAME = 11` 是**追加**取值，不占用既有值。
 #define ENGINE_HOST_ABI_VERSION ((1 << 16) | 3)
 
-/// HRC-3 P1（D4 已后置 ⇒ v1 目标尺寸固定）：production presentation target 的尺寸。
+/// HRC-3 P1（D4 已后置 ⇒ v1 目标尺寸固定）：production presentation target 的**初始**尺寸。
 /// 单一来源，供 P1 的 presentation FBO、P2 的 Fetch 静态容量、P3 的 gate 断言共用。
 /// 这是**编译期常量**，不改变任何导出、结构体布局或既有 op 语义，因此
 /// **不构成 ABI increment**（P2 新增 op 时才做 v1.1 → v1.2 的版本递增）。
@@ -482,8 +482,9 @@ ENGINE_HOST_OP_PICK = 29,
 ENGINE_HOST_OP_COUNT = 30
 };
 
-/// HRC-3 P2：presentation frame packet 的静态容量常量（编译期，非 ABI 结构）。
+/// HRC-3 P2：presentation frame packet 的容量常量（编译期，非 ABI 结构）。
 /// header = width(4) + height(4) + frame_id(8) = 16 字节；像素 = w * h * 4。
+/// 这是**最小/初始**容量（bootstrap 尺寸 800x600）；运行时容量按实际 FBO 尺寸算（P1.3）。
 #define ENGINE_HOST_FRAME_PACKET_HEADER_BYTES 16
 #define ENGINE_HOST_FRAME_PACKET_BYTES \
     (ENGINE_HOST_FRAME_PACKET_HEADER_BYTES + \
