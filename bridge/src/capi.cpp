@@ -190,10 +190,30 @@ EDITOR_BRIDGE_API EditorSessionHandle EditorSession_Create(void) {
     try {
         auto* session = new (std::nothrow) EditorSession();
         if (!session) return nullptr;
-        if (!session->IsGraphicsReady()) {
-            delete session;
-            return nullptr;
-        }
+        // 这里**不再**要求 GL 就绪。
+        //
+        // 旧代码在构造后立刻用 IsGraphicsReady() 判否，等于把"本机能建出 GL 4.6
+        // 上下文"当成会话存在的前提。CI 上这让 EditorSession_Create() 直接返回
+        // nullptr，test_editor_capi.cpp:57 的 fixture 断言随后失败，41 个用例在
+        // SetUp 里全军覆没 —— 跑的不是契约，是这台机器有没有 GL。
+        //
+        // 而这层依赖本就多余：OpenGLGraphicsFactory 在建不出 4.6 上下文时是**优雅
+        // 降级**的（记 m_LastError 后返回，不崩），TextureManager 的构造只存工厂
+        // 引用，场景/实体的贴图绑定是延迟的 —— 也就是说会话、场景与 C ABI 契约
+        // 本来就不需要 GL 上下文。
+        //
+        // 现在 GL 只在真正出图时才成为前提，这也正是 P1/P2 要求的 headless 宿主
+        // 形态：Avalonia 侧不持有窗口系统的 GL 上下文。
+        // 独占契约：EngineHost 持有 persistent GLFW lifetime 时，不允许再建一个
+        // 独立的 legacy session（见 GlfwLifetime.cpp:42
+        // "if (!persistent && s_GlfwPersistentUsers > 0) return false;"）。
+        //
+        // 这条以前是**顺带**由 IsGraphicsReady() 兜住的 —— factory 建不起来，
+        // 于是 Create() 返回 nullptr。删掉那道闸时若不显式补回来，宿主持有平台的
+        // 情况下外部仍能建出第二个 session，唯一所有者契约就漏了。
+        // EngineHost 自己不走这个 C ABI（它直接用 EditorSession(factory, app)），
+        // 所以这里不会误伤宿主路径。
+        if (Engine::GlfwPersistentUsers() > 0) return nullptr;
         return session;
     } catch (...) {
         return nullptr;
