@@ -605,6 +605,17 @@ public partial class MainWindow : Window
         Vm.SetViewportSize(w, h);
     }
 
+    /// ABI 的按钮编号：0=Left, 1=Right, 2=Middle（见 EditorSession 的
+    /// ViewportMouseButton 消费端）。与 Avalonia 的 MouseButton 枚举值不同，
+    /// 必须显式映射，不能强转。
+    private static int ToAbiButton(MouseButton b) => b switch
+    {
+        MouseButton.Left => 0,
+        MouseButton.Right => 1,
+        MouseButton.Middle => 2,
+        _ => -1,
+    };
+
     private void OnViewportPointerPressed(object? sender, Avalonia.Input.PointerPressedEventArgs e)
     {
         if (!AcceptViewportInput()) return;
@@ -617,6 +628,7 @@ public partial class MainWindow : Window
             Vm.ViewportMouseButton(button, pressed: true);
             e.Handled = true;
         }
+        if (props.IsRightButtonPressed) _rightMouseDown = true;
 
         // 左键点击 → 拾取实体
         if (props.IsLeftButtonPressed)
@@ -633,15 +645,18 @@ public partial class MainWindow : Window
     private void OnViewportPointerReleased(object? sender, Avalonia.Input.PointerReleasedEventArgs e)
     {
         if (!AcceptViewportInput()) return;
-        var props = e.GetCurrentPoint(ViewportBorder).Properties;
-        int button = props.IsLeftButtonPressed ? 0 :
-                     props.IsRightButtonPressed ? 1 :
-                     props.IsMiddleButtonPressed ? 2 : -1;
+        // 必须用 InitialPressMouseButton —— 释放事件到达时按钮**已经抬起**，
+        // GetCurrentPoint().Properties 里的 Is*Pressed 全为 false，据此判断会
+        // 得到 -1，引擎永远收不到「按钮已释放」。后果是右键拖一次之后
+        // rightDown 永久为真：相机卡在飞行态，且工具快捷键的 !isFlying
+        // 守卫会把 Q/W/E/R 永久禁用。
+        int button = ToAbiButton(e.InitialPressMouseButton);
         if (button >= 0)
         {
             Vm.ViewportMouseButton(button, pressed: false);
             e.Handled = true;
         }
+        if (e.InitialPressMouseButton == MouseButton.Right) _rightMouseDown = false;
     }
 
     private void OnViewportPointerMoved(object? sender, Avalonia.Input.PointerEventArgs e)
@@ -660,9 +675,71 @@ public partial class MainWindow : Window
         e.Handled = true;
     }
 
+    // ── Gizmo 工具快捷键（Q/W/E/R）──
+    //
+    // 语义对齐 ImGui 宿主（ViewportPanel.cpp:392-401）：
+    //   Q → Select, W → Translate, E → Rotate, R → Scale
+    // 且**整个块被 !isFlying 包住** —— 右键飞行中按 W 会同时移动相机并切工具，
+    // 这正是 GP1-DX 审计 OBS-T1 记录的冲突，两端必须一致。
+    //
+    // 刻意比 ImGui 多一层：按住 Ctrl/Alt/Meta/Shift 时不触发。ImGui 侧没有这层
+    // 判断，而 Ctrl+W / Alt+E 是常见组合。这是有意偏离，不影响工具语义。
+    //
+    // 两端汇入同一命令入口：最终都经 EditorSession_SetGizmoMode 到引擎，
+    // 所以工具状态本身不存在两份。
+    private const int GizmoModeSelect = 0;
+    private const int GizmoModeTranslate = 1;
+    private const int GizmoModeRotate = 2;
+    private const int GizmoModeScale = 3;
+
+    /// 右键是否按下（飞行态）。Q/W/E/R 在飞行中被禁用。
+    private bool _rightMouseDown;
+
+    private bool IsTextInputFocused()
+    {
+        var focused = TopLevel.GetTopLevel(this)?.FocusManager?.GetFocusedElement();
+        return focused is TextBox || focused is PasswordBox;
+    }
+
+    private bool TryApplyToolShortcut(Key key, KeyModifiers modifiers)
+    {
+        // 与 ImGui 的 !isFlying 同义：飞行中不响应工具切换。
+        if (_rightMouseDown) return false;
+        // 修饰键组合不当作工具切换（见上方说明）。
+        if (modifiers != KeyModifiers.None) return false;
+
+        int mode;
+        switch (key)
+        {
+            case Key.Q: mode = GizmoModeSelect; break;
+            case Key.W: mode = GizmoModeTranslate; break;
+            case Key.E: mode = GizmoModeRotate; break;
+            case Key.R: mode = GizmoModeScale; break;
+            default: return false;
+        }
+        Vm.GizmoMode = mode;
+        return true;
+    }
+
     private void OnViewportKeyDown(object? sender, Avalonia.Input.KeyEventArgs e)
     {
         if (!AcceptViewportInput()) return;
+
+        // 焦点在文本框时，字母属于输入而不是工具切换。必须在转发给引擎**之前**
+        // 判定，否则 Script Editor / Inspector 的输入框会一边打字一边切工具。
+        if (IsTextInputFocused())
+        {
+            Vm.ViewportKeyDown((int)e.Key);
+            e.Handled = true;
+            return;
+        }
+
+        if (TryApplyToolShortcut(e.Key, e.KeyModifiers))
+        {
+            e.Handled = true;
+            return;
+        }
+
         Vm.ViewportKeyDown((int)e.Key);
         e.Handled = true;
     }
