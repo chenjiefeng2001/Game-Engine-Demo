@@ -695,10 +695,27 @@ public partial class MainWindow : Window
     /// 右键是否按下（飞行态）。Q/W/E/R 在飞行中被禁用。
     private bool _rightMouseDown;
 
+    /// 焦点是否落在文本输入控件上。
+    ///
+    /// 不直接写 `is PasswordBox`：CI 上以 CS0246 证伪过 —— 在
+    /// Avalonia 11.2.7 的 Avalonia.Controls 下没有这个类型名（密码框由
+    /// TextBox.PasswordChar 实现）。而 TextBox 与 PasswordBox 的共同基类是
+    /// TextBoxBase，所以沿基类链匹配既覆盖两者，又不会因为类型搬家或改名而
+    /// 编译不过。本地无法 restore NuGet，这种写法是唯一不必等 CI 就能确定的。
+    private static bool IsTextEntryElement(IInputElement? focused)
+    {
+        for (var? t = focused?.GetType(); t is not null && t != typeof(object); t = t.BaseType)
+        {
+            var n = t.Name;
+            if (n is "TextBoxBase" or "PasswordBox") return true;
+        }
+        return focused is TextBox;
+    }
+
     private bool IsTextInputFocused()
     {
         var focused = TopLevel.GetTopLevel(this)?.FocusManager?.GetFocusedElement();
-        return focused is TextBox || focused is PasswordBox;
+        return IsTextEntryElement(focused);
     }
 
     private bool TryApplyToolShortcut(Key key, KeyModifiers modifiers)

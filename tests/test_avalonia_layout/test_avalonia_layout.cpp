@@ -586,6 +586,15 @@ TEST(AvaloniaMainWindowLayout, ToolShortcutsMirrorTheImGuiHost) {
     ASSERT_NE(shortcut, std::string::npos);
     EXPECT_LT(textGuard, shortcut)
         << "文本焦点判断必须排在快捷键之前，否则护栏形同虚设";
+
+    // 不得按类型名直接引用 PasswordBox。CI 以 CS0246 证伪过：Avalonia 11.2.7 的
+    // Avalonia.Controls 下没有 PasswordBox（密码框是 TextBox.PasswordChar），
+    // 直接引用会编译失败。必须沿基类链匹配才能同时覆盖两者。
+    EXPECT_EQ(code.find("focused is PasswordBox"), std::string::npos)
+        << "直接引用 PasswordBox —— 该类型在 Avalonia 11.2.7 下不存在（CS0246）";
+    EXPECT_NE(code.find("TextBoxBase"), std::string::npos)
+        << "文本焦点判断没有覆盖 TextBox/PasswordBox 的共同基类 —— "
+        << "密码框聚焦时会切工具";
 }
 
 TEST(AvaloniaMainWindowLayout, MouseReleaseUsesInitialPressButton) {
