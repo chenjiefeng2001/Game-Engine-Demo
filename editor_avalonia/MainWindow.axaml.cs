@@ -704,7 +704,7 @@ public partial class MainWindow : Window
     /// 编译不过。本地无法 restore NuGet，这种写法是唯一不必等 CI 就能确定的。
     private static bool IsTextEntryElement(IInputElement? focused)
     {
-        for (var? t = focused?.GetType(); t is not null && t != typeof(object); t = t.BaseType)
+        for (Type? t = focused?.GetType(); t is not null && t != typeof(object); t = t.BaseType)
         {
             var n = t.Name;
             if (n is "TextBoxBase" or "PasswordBox") return true;
