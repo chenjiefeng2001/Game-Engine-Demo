@@ -541,8 +541,12 @@ int32_t EngineHost::InitializeRuntimeResources(RuntimeResult* result) {
         failureStatus = ENGINE_HOST_STATUS_GL_FAILED;
         m_PresentationFbo = std::make_unique<Engine::OpenGLFramebuffer>(
             m_GraphicsFactory->GetGLContext());
-        m_PresentationFbo->Resize(ENGINE_HOST_PRESENTATION_WIDTH,
-                                   ENGINE_HOST_PRESENTATION_HEIGHT);
+        // 编译期常量现在只作为**初始值**：策略接管之后，尺寸由宿主上报的视口尺寸
+        // 驱动（见 ApplyPresentationTargetSize）。常量不再是每帧都要满足的不变量。
+        m_PresentationSizePolicy.Request(ENGINE_HOST_PRESENTATION_WIDTH,
+                                         ENGINE_HOST_PRESENTATION_HEIGHT);
+        m_PresentationFbo->Resize(m_PresentationSizePolicy.Width(),
+                                   m_PresentationSizePolicy.Height());
         if (!m_PresentationFbo->IsValid()) {
             throw std::runtime_error("presentation FBO is incomplete");
         }
@@ -1114,8 +1118,43 @@ int32_t EngineHost::Stop(RuntimeResult* result) {
     }, result, ENGINE_HOST_STAGE_SHUTDOWN);
 }
 
-int32_t EngineHost::PumpOneFrame(float requestedDtSeconds, RuntimeResult* result) {
-    if (!result) return -1;
+// HRC-3 P1.5：按宿主上报的视口尺寸驱动 presentation target。
+//
+// 尺寸的来源是 EditorSession —— Avalonia 侧调 EditorSession_SetViewportSize 时就
+// 已经在那里落了一份，且同一次调用里已经把编辑器相机的 viewport 尺寸更新了
+// （EditorSession.cpp 的 SetViewportSize）。因此这里读到的尺寸，其相机比例**已经**
+// 与之对齐，不需要在这里再动一次相机：需求要的"同一次事务"由 host→session 那一跳
+// 保证，本函数只负责让渲染目标追上那个尺寸。
+//
+// 不新增 ABI op：host→engine 的尺寸通道本来就存在，之前只是没人兑现它。
+bool EngineHost::ApplyPresentationTargetSize() {
+    if (!m_PresentationFbo || !m_Session) return false;
+
+    int32_t hostWidth = 0;
+    int32_t hostHeight = 0;
+    m_Session->GetViewportSize(&hostWidth, &hostHeight);
+
+    const auto decision = m_PresentationSizePolicy.Request(hostWidth, hostHeight);
+    if (decision.decision != editor_bridge::PresentationTargetPolicy::Decision::Resize) {
+        // Rejected（零尺寸/越界）或 Unchanged（重复尺寸）：策略已经保留了上一个
+        // 有效尺寸，这里什么都不做，GL 资源保持不动。
+        return false;
+    }
+
+    const int32_t previousWidth = static_cast<int32_t>(m_PresentationFbo->GetWidth());
+    const int32_t previousHeight = static_cast<int32_t>(m_PresentationFbo->GetHeight());
+    m_PresentationFbo->Resize(decision.width, decision.height);
+    if (!m_PresentationFbo->IsValid()) {
+        // 回滚：策略已经把新尺寸提交了，若不退回，下一帧会得到 Unchanged 而
+        // **永远不会重试**这次失败的分配。退回旧尺寸让下一帧重新尝试。
+        m_PresentationFbo->Resize(previousWidth, previousHeight);
+        m_PresentationSizePolicy.Request(previousWidth, previousHeight);
+        return false;
+    }
+    return true;
+}
+
+int32_t EngineHost::PumpOneFrame(float requestedDtSeconds, RuntimeResult* result) {    if (!result) return -1;
     return Submit([this, requestedDtSeconds, result]() {
         if (TestFailure("EDITOR_BRIDGE_FAIL_RUNTIME_COMMAND") ||
             TestFailure("EDITOR_BRIDGE_FAIL_FRAME")) {
@@ -1228,6 +1267,12 @@ int32_t EngineHost::PumpOneFrame(float requestedDtSeconds, RuntimeResult* result
             }
         }
         if (kEnableProductionSceneRender && m_Session && m_Session->GetEditScene()) {
+            // ── HRC-3 P1.5：先让呈现目标追上宿主视口尺寸，再画 ──
+            //
+            // 必须在这一步**之前**重建 FBO：下面紧接着 Clear → Bind → glViewport，
+            // 三者都按当前 FBO 尺寸工作，尺寸变了却没重建的话，会画进上一尺寸的
+            // attachment，表现为"渲染成功但画面被裁掉"。
+            ApplyPresentationTargetSize();
             // 场景反序列化只保留 sprite GUID，不绑纹理 ⇒ RenderCommand::texture 全是 null
             // ⇒ SceneRenderer 会跳过全部 sprite。先做一次幂等绑定（纯读 GUID，不改语义）。
             m_Session->BindEditSceneSpriteTextures();
@@ -1748,6 +1793,8 @@ int32_t EngineHost::GetRuntimeProofState(
 //
 // 线程纪律与 P2-H4 同源：GL 访问只在 runtime 线程、context current 时发生。
 // ================================================================
+EditorSession* EngineHost::SessionForTesting() const { return m_Session.get(); }
+
 int32_t EngineHost::PresentationTargetWidth() const {
     return m_PresentationFbo ? static_cast<int32_t>(m_PresentationFbo->GetWidth()) : 0;
 }
