@@ -140,7 +140,7 @@ public static class EditorBridgeApi
     /// <summary>host faulted 或 teardown 中。</summary>
     public const int EngineHostPickFault = 5;
 
-    // ── HRC-3 P2：presentation target 尺寸与 packet 静态容量（编译期常量）──
+    // ── HRC-3 P2：presentation target 初始尺寸与 packet 容量（编译期常量，bootstrap 默认）──
     public const int EngineHostPresentationWidth = 800;
     public const int EngineHostPresentationHeight = 600;
     public const int EngineHostFramePacketHeaderBytes = 16;
