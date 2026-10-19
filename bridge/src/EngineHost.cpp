@@ -1903,7 +1903,9 @@ int32_t EngineHost::FetchCapacityForOp(int32_t op) noexcept {
         // HRC-3 D3：定长 32B —— 只搬一个像素的 readback，ID 表面不跨 ABI。
         return ENGINE_HOST_PICK_RESULT_PACKET_BYTES;
     case ENGINE_HOST_OP_GET_PRESENTATION_FRAME:
-        // HRC-3 P2：静态容量，无协商、无分配。尺寸在编译期固定。
+        // HRC-3 P2：最小容量（bootstrap 尺寸）。实际 required 由
+        // FetchPresentationFrame 按运行时 FBO 尺寸计算（P1.3）；此处只做
+        // 外层快速过滤，避免为每次 fetch 都先 pump 一次。
         return ENGINE_HOST_FRAME_PACKET_BYTES;
     case ENGINE_HOST_OP_GET_ENTITY_NAME:
     case ENGINE_HOST_OP_GET_ASSET_PATH:
@@ -2292,12 +2294,15 @@ int32_t EngineHost::FetchPresentationFrame(uint8_t* outBuffer, int32_t capacity,
     }
     const int32_t width = static_cast<int32_t>(m_PresentationFbo->GetWidth());
     const int32_t height = static_cast<int32_t>(m_PresentationFbo->GetHeight());
-    // 静态容量契约：实际尺寸必须等于编译期常量，否则 packet 装不下。
-    if (width != ENGINE_HOST_PRESENTATION_WIDTH ||
-        height != ENGINE_HOST_PRESENTATION_HEIGHT) {
-        return reject("presentation target size does not match the compiled packet capacity");
+    // P1.3：容量按运行时尺寸算。presentation target 现在可 resize（P1.2），
+    // 固定 800x600 不再是每帧必须满足的不变量 -- 旧的"尺寸必须等于编译期常量"
+    // 判定会把所有非默认尺寸的帧都误判成"装不下"，让 resize 形同虚设。
+    const int64_t required64 = editor_bridge::PresentationTargetPolicy::RequiredPacketBytes(
+        width, height, ENGINE_HOST_FRAME_PACKET_HEADER_BYTES);
+    if (required64 <= 0) {
+        return reject("presentation target has invalid dimensions");
     }
-    const int32_t required = ENGINE_HOST_FRAME_PACKET_BYTES;
+    const int32_t required = static_cast<int32_t>(required64);
     if (capacity < required) {
         return reject("output buffer is smaller than the frame packet requires");
     }

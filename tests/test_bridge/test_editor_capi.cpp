@@ -1758,7 +1758,7 @@ TEST_F(EditorBridgeTest, F2ColliderNegativePaths) {
             return std::string(diagnostic);
         };
 
-        // presentation target 的尺寸来自 capi.h 单一来源（D4 已后置 ⇒ 固定尺寸）。
+        // presentation target 的尺寸来自 bootstrap 常量（D4 已后置 ⇒ 初始值），运行时可 resize（P1.2/P1.3）。
         EXPECT_EQ(host->PresentationTargetWidth(), ENGINE_HOST_PRESENTATION_WIDTH);
         EXPECT_EQ(host->PresentationTargetHeight(), ENGINE_HOST_PRESENTATION_HEIGHT);
 
@@ -1868,7 +1868,7 @@ TEST_F(EditorBridgeTest, F2ColliderNegativePaths) {
         EXPECT_EQ(ENGINE_HOST_STATUS_PICK_BUSY, 12);
         // RuntimeResult 仍是 76B（ABI increment 不得改结构体）
         EXPECT_EQ(sizeof(RuntimeResult), 76u);
-        // 静态容量：16B header + 800*600*4
+        // bootstrap 容量：16B header + 800*600*4（运行时按实际 FBO 尺寸算，P1.3）
         EXPECT_EQ(ENGINE_HOST_FRAME_PACKET_HEADER_BYTES, 16);
         EXPECT_EQ(ENGINE_HOST_FRAME_PACKET_BYTES,
                   16 + ENGINE_HOST_PRESENTATION_WIDTH * ENGINE_HOST_PRESENTATION_HEIGHT * 4);
@@ -1960,7 +1960,7 @@ TEST_F(EditorBridgeTest, F2ColliderNegativePaths) {
             EXPECT_EQ(frameId, frameResult.frame_id);
             firstFrameId = frameId;
 
-            // 像素必须是真的 scene 内容（P1 已证明的 800x600 presentation FBO）
+            // 像素必须是真的 scene 内容（bootstrap 800x600 presentation FBO）
             int32_t nonClear = 0;
             for (size_t i = ENGINE_HOST_FRAME_PACKET_HEADER_BYTES; i + 3 < packet.size(); i += 4) {
                 const int rr = packet[i], gg = packet[i + 1], bb = packet[i + 2];
