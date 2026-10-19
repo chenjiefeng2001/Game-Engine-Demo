@@ -1,6 +1,7 @@
 #pragma once
 
 #include "editor_bridge/capi.h"
+#include "editor_bridge/PresentationTargetPolicy.h"
 
 #include <atomic>
 #include <chrono>
@@ -118,6 +119,13 @@ public:
     // 白色盒、仅测试使用，managed 侧通道留给 P2。
     ENGINE_HOST_P1_TEST_SEAM int32_t PresentationTargetWidth() const;
     ENGINE_HOST_P1_TEST_SEAM int32_t PresentationTargetHeight() const;
+    /// 取宿主内部的 runtime session。
+    ///
+    /// 宿主用 EditorSession(factory, app) 构造自己的 session，不经过
+    /// EditorSession_Create 这个 C ABI，所以外部拿不到。没有这个口子就无法验证
+    /// "宿主上报的视口尺寸驱动了 presentation target"——而那是 P1.5 的全部内容。
+    /// 沿用既有的 P1 test seam 约定，不做成 C 导出（那会要求 ABI 版本递增）。
+    ENGINE_HOST_P1_TEST_SEAM EditorSession* SessionForTesting() const;
     /// 上一次 production render 绘制的 renderable 数量（0 = 没有真实内容 / 未渲染）。
     uint32_t LastProductionRenderableCount() const { return m_LastProductionRenderableCount.load(); }
     /// 读回 presentation target 的像素（RGBA8，行优先，左下角起 —— GL 布局）。
@@ -276,6 +284,14 @@ private:
     std::unique_ptr<Engine::OpenGLFramebuffer> m_OffscreenFbo;
     /// HRC-3 P1：production presentation target（与上面的 64×64 探针 FBO 相互独立）。
     std::unique_ptr<Engine::OpenGLFramebuffer> m_PresentationFbo;
+    /// 呈现目标的尺寸策略。bootstrap 时以编译期常量初始化，之后由宿主上报的
+    /// 视口尺寸驱动。放在这里而不是每次重算，是因为"要不要重建"的判断必须跨帧
+    /// 保持状态（去重、零尺寸期间保留上一有效值），否则每次 PumpOneFrame 都会
+    /// 重建一次 FBO。
+    editor_bridge::PresentationTargetPolicy m_PresentationSizePolicy;
+    /// 在 current-context 窗口内把策略的决策落到 FBO 上。返回 true 表示本帧
+    /// 发生了重建（调用方据此知道后续的 viewport/scissor 需要重新设置）。
+    bool ApplyPresentationTargetSize();
     std::atomic<uint32_t> m_LastProductionRenderableCount{0};
     std::unique_ptr<EditorSession> m_Session;
 

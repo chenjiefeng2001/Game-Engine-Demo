@@ -2007,4 +2007,74 @@ TEST_F(EditorBridgeTest, F2ColliderNegativePaths) {
         EngineHost_Destroy(handle);
     }
 
+    // HRC-3 P1.5：宿主上报的视口尺寸必须驱动 presentation target。
+    //
+    // 单独成用例而不是并进上面那个：那个用例的"未打开 project 时不渲染"断言要求
+    // host 尚未打开场景，任何提前 OpenProject 的插入都会让它误报失败，而它的像素
+    // 证据是被当作冻结证据对待的，不该为一个新特性挪动。
+    TEST(EngineHostAbiTest, PresentationTargetFollowsTheHostViewport) {
+        ASSERT_EQ(EditorBridge_RegisterMainThread(), 1);
+        auto result = RuntimeResult{};
+        EngineHostHandle handle = EngineHost_Create(&result);
+        ASSERT_NE(handle, nullptr);
+        auto* host = static_cast<editor_bridge::EngineHost*>(handle);
+        char diagnostic[256] = {};
+        const auto lastDiagnostic = [&]() {
+            EngineHost_GetLastDiagnostic(handle, diagnostic, sizeof(diagnostic));
+            return std::string(diagnostic);
+        };
+
+        // bootstrap 用编译期常量作为**初始值**。
+        EXPECT_EQ(host->PresentationTargetWidth(), ENGINE_HOST_PRESENTATION_WIDTH);
+        EXPECT_EQ(host->PresentationTargetHeight(), ENGINE_HOST_PRESENTATION_HEIGHT);
+
+        ASSERT_EQ(EngineHost_OpenProject(handle,
+                                         "assets/gp01/manifest.json",
+                                         "assets/gp01/Main.scene",
+                                         &result), 0)
+            << "gp01 open failed: " << lastDiagnostic();
+        ASSERT_EQ(EngineHost_PumpOneFrame(handle, 0.016f, &result), 0)
+            << "baseline frame failed: " << lastDiagnostic();
+
+        auto* hostSession = host->SessionForTesting();
+        ASSERT_NE(hostSession, nullptr) << "取不到宿主内部的 runtime session";
+
+        // 换尺寸：呈现目标必须追上去，否则画面会画进上一尺寸的 attachment。
+        constexpr int32_t kNewWidth = 1024;
+        constexpr int32_t kNewHeight = 768;
+        EditorSession_SetViewportSize(hostSession, kNewWidth, kNewHeight);
+        ASSERT_EQ(EngineHost_PumpOneFrame(handle, 0.016f, &result), 0)
+            << "frame after viewport resize failed: " << lastDiagnostic();
+        EXPECT_EQ(host->PresentationTargetWidth(), kNewWidth)
+            << "呈现目标没有追上宿主上报的视口宽度";
+        EXPECT_EQ(host->PresentationTargetHeight(), kNewHeight)
+            << "呈现目标没有追上宿主上报的视口高度";
+
+        // 重复上报同一尺寸：去重不得把真变化也吃掉。
+        ASSERT_EQ(EngineHost_PumpOneFrame(handle, 0.016f, &result), 0);
+        EXPECT_EQ(host->PresentationTargetWidth(), kNewWidth);
+
+        // 零尺寸（最小化）：不得把目标清成 0，否则还原后无法重建。
+        EditorSession_SetViewportSize(hostSession, 0, 0);
+        ASSERT_EQ(EngineHost_PumpOneFrame(handle, 0.016f, &result), 0);
+        EXPECT_EQ(host->PresentationTargetWidth(), kNewWidth)
+            << "最小化把呈现目标清成了 0 —— 还原后无法重建";
+        EXPECT_EQ(host->PresentationTargetHeight(), kNewHeight);
+
+        // 还原：换一个尺寸必须能重建回来。
+        EditorSession_SetViewportSize(hostSession, 1280, 720);
+        ASSERT_EQ(EngineHost_PumpOneFrame(handle, 0.016f, &result), 0);
+        EXPECT_EQ(host->PresentationTargetWidth(), 1280)
+            << "最小化之后无法恢复 —— 策略卡在拒绝态";
+        EXPECT_EQ(host->PresentationTargetHeight(), 720);
+
+        // 极端比例不得除零或产出非法尺寸。
+        EditorSession_SetViewportSize(hostSession, 4096, 1);
+        ASSERT_EQ(EngineHost_PumpOneFrame(handle, 0.016f, &result), 0);
+        EXPECT_EQ(host->PresentationTargetWidth(), 4096);
+        EXPECT_EQ(host->PresentationTargetHeight(), 1);
+
+        EngineHost_Destroy(handle);
+    }
+
 } // namespace
