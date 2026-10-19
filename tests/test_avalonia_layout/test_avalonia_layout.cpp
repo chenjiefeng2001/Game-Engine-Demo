@@ -542,4 +542,70 @@ TEST(AvaloniaMainWindowLayout, StatusOverlayIsBoundRatherThanHardcoded) {
         << "ViewportStatusText 出现在非 Text 属性里，绑定可能写错了位置";
 }
 
+// ────────────────────────────────────────────────────────────────────
+// Q/W/E/R 工具快捷键
+//
+// ImGui 宿主已有（ViewportPanel.cpp:392-401），Avalonia 宿主此前没有 ——
+// OnViewportKeyDown 只把 (int)e.Key 转发给引擎，而引擎的快捷键处理在
+// OnImGui 内，生产路径根本不执行。语义必须与 ImGui 端一致，且整块被
+// !isFlying 包住（飞行中按 W 会同时移动相机并切工具，OBS-T1 冲突）。
+// ────────────────────────────────────────────────────────────────────
+
+TEST(AvaloniaMainWindowLayout, ToolShortcutsMirrorTheImGuiHost) {
+    const std::string code = LoadCodeBehind();
+    ASSERT_FALSE(code.empty()) << "读不到 MainWindow.axaml.cs";
+
+    // 四个键 → 四个模式，且与 ABI 的编号一致（0/1/2/3，见 capi.h:308）
+    EXPECT_NE(code.find("GizmoModeSelect = 0"), std::string::npos);
+    EXPECT_NE(code.find("GizmoModeTranslate = 1"), std::string::npos);
+    EXPECT_NE(code.find("GizmoModeRotate = 2"), std::string::npos);
+    EXPECT_NE(code.find("GizmoModeScale = 3"), std::string::npos);
+
+    for (const char* k : {"Key.Q", "Key.W", "Key.E", "Key.R"}) {
+        EXPECT_NE(code.find(std::string("case ") + k), std::string::npos)
+            << "工具快捷键缺少 " << k << "（ImGui 宿主有，Avalonia 侧不应缺失）";
+    }
+
+    // 飞行态守卫：右键按下时不切工具（与 ImGui 的 !isFlying 同义）
+    EXPECT_NE(code.find("if (_rightMouseDown) return false;"), std::string::npos)
+        << "工具快捷键缺少飞行态守卫 —— 飞行中按 W 会同时移动相机并切工具"
+        << "（GP1-DX 审计 OBS-T1），两端必须一致";
+
+    // 修饰键不触发（比 ImGui 更严，是有意偏离）
+    EXPECT_NE(code.find("modifiers != KeyModifiers.None"), std::string::npos)
+        << "工具快捷键没有屏蔽 Ctrl/Alt/Meta/Shift —— Ctrl+W、Alt+E 这类组合"
+        << "会误切工具";
+
+    // 文本输入优先：焦点在输入框时不得切工具
+    EXPECT_NE(code.find("IsTextInputFocused"), std::string::npos)
+        << "缺少文本焦点判断 —— 在 Script Editor / Inspector 输入框里打字会"
+        << "同时切换工具";
+    const size_t textGuard = code.find("if (IsTextInputFocused())");
+    const size_t shortcut = code.find("TryApplyToolShortcut(e.Key");
+    ASSERT_NE(textGuard, std::string::npos);
+    ASSERT_NE(shortcut, std::string::npos);
+    EXPECT_LT(textGuard, shortcut)
+        << "文本焦点判断必须排在快捷键之前，否则护栏形同虚设";
+}
+
+TEST(AvaloniaMainWindowLayout, MouseReleaseUsesInitialPressButton) {
+    const std::string code = LoadCodeBehind();
+    ASSERT_FALSE(code.empty());
+
+    // 释放事件到达时按钮已经抬起，用 GetCurrentPoint().Properties 判断会得到
+    // -1，引擎永远收不到「按钮已释放」→ rightDown 永久为真 → 相机卡在飞行态，
+    // 且 !isFlying 守卫会永久禁用 Q/W/E/R。必须用 InitialPressMouseButton。
+    EXPECT_NE(code.find("ToAbiButton(e.InitialPressMouseButton)"), std::string::npos)
+        << "鼠标释放未使用 InitialPressMouseButton —— 按钮释放事件丢失，"
+        << "飞行态无法退出";
+
+    // 释放处理器内不得再用 Properties 的 Is*Pressed 判断按钮
+    const size_t release = code.find("OnViewportPointerReleased");
+    ASSERT_NE(release, std::string::npos);
+    const size_t next = code.find("private void OnViewportPointerMoved", release);
+    const std::string body = code.substr(release, next - release);
+    EXPECT_EQ(body.find("IsRightButtonPressed ? 1"), std::string::npos)
+        << "释放处理器仍在用 Properties.Is*Pressed 判断按钮 —— 该值在释放时恒为 false";
+}
+
 }  // namespace

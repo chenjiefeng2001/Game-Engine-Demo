@@ -694,11 +694,17 @@ namespace Engine {
                                       [](SceneManagerPanel* p) { p->OnImGui(); });
         }
 
-        // ── View Mode Debug 面板 ──
-        // 由 ViewModePanel 管理其可见性
-
-        // ── 编辑器设置面板（变换/吸附/书签等） ──
-        // 由 DrawEditorSettingsWindow 管理可见性
+        // ── 尚未接入本帧循环的面板（2026-10-19 更正） ──
+        // 此前这里有两段注释，声称「View Mode Debug 面板由 ViewModePanel 管理
+        // 可见性」「编辑器设置面板由 DrawEditorSettingsWindow 管理可见性」。
+        // 两句都不成立：
+        //   · m_ViewModePanel 是成员（EngineEditor.h），但全仓**没有任何**
+        //     m_ViewModePanel.OnImGui() 调用 —— 它从未被渲染；
+        //   · DrawEditorSettingsWindow 已随整族死代码 Draw*Window 一并删除
+        //     （该族 12 个成员零调用者，其中 4 个只有声明没有定义）。
+        // 注释描述未发生的事，是这轮审计里「过时文档误导后续工作」的又一例
+        // （GP1-DX-UI-Audit 的「窗口数 14→1」结论同样不成立）。
+        // 若将来要接入，此处需要显式的绘制调用 + 可见性归属，不能靠注释暗示。
 
         // ── 底部状态栏（实时渲染统计） ──
         {
