@@ -208,15 +208,40 @@ jobs:
       run: |
         $ErrorActionPreference = 'Continue'
         $PSNativeCommandUseErrorActionPreference = $false
-        $sdkVersion = '1.4.363'
-
         # ── 1. Vulkan SDK：只为了头文件与导入库（编译期需要） ──
+        #
+        # 版本策略（2026-10-19 修正）：之前钉死 '1.4.363'。包被 choco 源下架或
+        # 改名后会静默失败 —— 正是这次 CI 红的直接原因。改为"搜出所有可用版本、
+        # 取最新"，并在失败时把 choco 的退出码与完整输出都落进日志，避免再出现
+        # "unknown why it failed"。
+        $sdkVersions = @()
         try {
-            choco install vulkan-sdk --version=$sdkVersion -y --no-progress --limit-output |
-                Out-String | Write-Host
+            $searchOut = choco search vulkan-sdk --exact --limit-output --pre 2>&1
+            $searchRc = $LASTEXITCODE
+            Write-Host "choco search vulkan-sdk (rc=$searchRc):"
+            $searchOut | ForEach-Object { Write-Host "  $_" }
+            $sdkVersions = @($searchOut | ForEach-Object {
+                $line = $_.ToString().Trim()
+                if ($line -match '^vulkan-sdk\|(.+)$') { $Matches[1] }
+            }) | Where-Object { $_ } | Sort-Object { [version]($_ -replace '-.*','') } -Descending
         } catch {
-            Write-Host "WINDOWS-VULKAN-CAPABILITY: NONE (vulkan-sdk $sdkVersion install failed: $($_.Exception.Message))"
+            Write-Host "choco search vulkan-sdk threw: $($_.Exception.Message)"
         }
+        $sdkVersion = if ($sdkVersions.Count -gt 0) { $sdkVersions[0] } else { '1.4.363' }
+        Write-Host "selected vulkan-sdk version: $sdkVersion (candidates: $($sdkVersions -join ', '))"
+
+        $installOut = @()
+        $installRc = 0
+        try {
+            $installOut = choco install vulkan-sdk --version=$sdkVersion -y --no-progress --limit-output 2>&1
+            $installRc = $LASTEXITCODE
+        } catch {
+            $installOut += "EXCEPTION: $($_.Exception.Message)"
+            $installRc = -1
+        }
+        Write-Host "choco install vulkan-sdk --version=$sdkVersion (rc=$installRc):"
+        $installOut | ForEach-Object { Write-Host "  $_" }
+
         $sdkRoot = @(Get-ChildItem 'C:\VulkanSDK' -Directory -ErrorAction SilentlyContinue |
                      Sort-Object Name -Descending | Select-Object -First 1)
         if ($sdkRoot.Count -gt 0) {
@@ -231,7 +256,7 @@ jobs:
             $env:PATH = "$($sdkRoot[0].FullName)\Bin;$env:PATH"
             Write-Host "Vulkan SDK root: $($sdkRoot[0].FullName)"
         } else {
-            Write-Host "WINDOWS-VULKAN-CAPABILITY: NONE (no C:\VulkanSDK after install; the Vulkan backend will stay off in this build)"
+            Write-Host "WINDOWS-VULKAN-CAPABILITY: NONE (no C:\VulkanSDK after install; choco rc=$installRc; the Vulkan backend will stay off in this build)"
         }
 
         # ── 2. lavapipe：CPU 版 Vulkan 驱动（运行期需要） ──
