@@ -9,7 +9,13 @@ namespace Engine {
     void ContentBrowserPanel::OnImGui() {
         if (!m_Visible) return;
 
-        ImGui::Begin("Content Browser", &m_Visible);
+        // 窗口名必须是 "Engine Resources" 而不是 "Content Browser"：
+        // 本面板浏览的是**引擎级**纹理/着色器资源（ScanAssets 扫文件系统，
+        // Textures/Shaders 两个页签），而 AssetBrowserPanel 浏览的是**工程**
+        // 资产，两者都曾叫 "Content Browser"。ImGui 以标题标识窗口，同名
+        // 窗口在同一帧被两次 Begin 会让 BeginCount=2、内容互相覆盖 ——
+        // 而两者都能从 View 菜单打开，所以这不是理论风险。
+        ImGui::Begin("Engine Resources", &m_Visible);
 
         // ── 筛选栏 ──
         ImGui::Checkbox("Textures", &m_ShowTextures); ImGui::SameLine();

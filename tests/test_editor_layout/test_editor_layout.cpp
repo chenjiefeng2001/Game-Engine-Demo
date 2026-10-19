@@ -436,19 +436,19 @@ TEST(EditorLayoutSpec, EveryDockedPanelGoesThroughTwoWayVisibilitySync) {
     const std::string editorCpp = ReadRepoFile("engine/src/Editor/EngineEditor.cpp");
     ASSERT_FALSE(editorCpp.empty()) << "读不到 EngineEditor.cpp";
 
-    // 停靠登记表里、由 EngineEditor 拥有并逐帧绘制的面板。
+    // EngineEditor 拥有、逐帧绘制的全部面板（停靠区 + 可选面板）。
     // 字段名取自 PanelVisibility，与 View 菜单写的是同一批 bool。
     const char* kFields[] = {
-        "sceneHierarchy", "inspector", "console", "performance",
-        "sceneViewerPanel", "sceneManager",
+        "inspector", "console", "performance",
+        "sceneHierarchy", "sceneViewerPanel", "sceneManager",
+        "contentBrowser", "assetBrowser", "depGraph",
     };
     for (const char* f : kFields) {
-        const std::string call = std::string("SyncDockedPanelVisibility(m_Visibility.") + f;
+        const std::string call = std::string("SyncPanelVisibility(m_Visibility.") + f;
         EXPECT_NE(editorCpp.find(call), std::string::npos)
             << "m_Visibility." << f
-            << " 对应的面板没有走 SyncDockedPanelVisibility —— "
-            << "菜单与面板关闭按钮各写一个 bool，失步时要么菜单无效、"
-            << "要么关闭按钮按了又弹回";
+            << " 对应的面板没有走 SyncPanelVisibility —— 菜单与面板关闭按钮各写"
+            << "一个 bool，失步时要么菜单无效、要么关闭按钮按了又弹回";
     }
 
     // 同步必须是真的双向：绘制后回读面板状态覆盖菜单值。
@@ -459,6 +459,85 @@ TEST(EditorLayoutSpec, EveryDockedPanelGoesThroughTwoWayVisibilitySync) {
     EXPECT_NE(editorCpp.find("panel->IsVisible() != menuFlag"), std::string::npos)
         << "同步助手无条件调用 SetVisible —— ConsolePanel::SetVisible 带 "
         << "FocusInput() 副作用，会让控制台输入框永久抢走键盘焦点";
+}
+
+// ────────────────────────────────────────────────────────────────────
+// ImGui 窗口名唯一性
+//
+// ImGui 以标题标识窗口。两个不同面板用同一个标题，且都能在同一进程里出现时，
+// 同帧两次 Begin 会让 BeginCount=2、内容互相覆盖。真实发生过：
+// ContentBrowserPanel（引擎级资源）与 AssetBrowserPanel（工程资产）
+// 都叫 "Content Browser"，且都能从 View 菜单打开。
+// ────────────────────────────────────────────────────────────────────
+
+TEST(EditorLayoutSpec, NoTwoPanelSourcesShareAnImGuiWindowTitle) {
+    // 只统计真实调用：注释里出现的 ImGui::Begin("X") 说明文字不算。
+    // 自定义分隔符 RE：内容含 `)"`（转义右括号 + 结束引号），
+    // 用默认分隔符会提前终止 raw string。
+    // 前缀 ^\s*[^/]* 用来排除注释行 —— 注释里写的 ImGui::Begin("X")
+    // 只是说明文字，不是真实调用。
+    static const std::regex engineRe(
+        R"RE(^\s*[^/]*ImGui::Begin\(\s*"([^"]+)"\s*(,|\)))RE");
+
+    std::map<std::string, std::vector<std::string>> byTitle;
+    std::vector<std::string> files;
+
+    const fs::path repoRoot = FindRepoRoot();
+    ASSERT_FALSE(repoRoot.empty());
+    for (const char* sub : {"engine/src", "sandbox/src"}) {
+        const fs::path root = repoRoot / sub;
+        if (!fs::exists(root)) continue;
+        for (const auto& e : fs::recursive_directory_iterator(root)) {
+            if (!e.is_regular_file() || e.path().extension() != ".cpp") continue;
+            files.push_back(e.path().string());
+        }
+    }
+    for (const char* sub : {"engine/src", "sandbox/src"}) {
+        const fs::path root = repoRoot / sub;
+        if (!fs::exists(root)) continue;
+        for (const auto& e : fs::recursive_directory_iterator(root)) {
+            if (!e.is_regular_file() || e.path().extension() != ".h") continue;
+            files.push_back(e.path().string());
+        }
+    }
+    ASSERT_FALSE(files.empty()) << "扫不到源码文件";
+
+    for (const std::string& file : files) {
+        std::ifstream in(file);
+        std::string line;
+        while (std::getline(in, line)) {
+            std::smatch m;
+            if (!std::regex_search(line, m, engineRe)) continue;
+            byTitle[m[1].str()].push_back(file);
+        }
+    }
+
+    // sandbox 的独立可执行文件（ScriptSandbox 等）不与编辑器同进程，
+    // 它们的同名窗口不构成冲突。只比较 editor 内的 engine/ 与 sandbox/
+    // 且要求同一目录树内出现两次才算。
+    std::vector<std::string> clashes;
+    for (const auto& [title, sites] : byTitle) {
+        if (sites.size() < 2) continue;
+        std::vector<std::string> editors;
+        for (const std::string& s : sites) {
+            if (s.find("ScriptSandbox") != std::string::npos) continue;
+            editors.push_back(s);
+        }
+        if (editors.size() < 2) continue;
+        std::ostringstream os;
+        os << "\"" << title << "\" 出现在 " << editors.size() << " 个编辑��源文件:";
+        for (const std::string& e : editors) os << "\n      " << e;
+        clashes.push_back(os.str());
+    }
+
+    if (!clashes.empty()) {
+        std::ostringstream msg;
+        msg << "以下 ImGui 窗口标题被多个面板源码共用：\n";
+        for (const std::string& c : clashes) msg << "  - " << c << "\n";
+        msg << "\nImGui 以标题标识窗口，同名窗口同帧两次 Begin 会让 BeginCount=2、"
+               "内容互相覆盖，且不产生任何错误。请给每个面板一个唯一标题。";
+        FAIL() << msg.str();
+    }
 }
 
 // ────────────────────────────────────────────────────────────────────

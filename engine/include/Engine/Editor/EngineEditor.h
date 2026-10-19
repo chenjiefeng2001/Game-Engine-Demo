@@ -142,8 +142,11 @@ namespace Engine {
         PerformanceWindow*   m_Performance    = nullptr;
 
         // ── 布局状态 ──
-        bool m_DockingInitialized = false;
-        bool m_ResetLayoutRequested = false;
+        // m_DockingInitialized / m_ResetLayoutRequested 此前在此声明却从未被读取或
+        // 写入：布局初始化状态实际由 ApplyDefaultLayout 的引导条件
+        // （Viewport 未停靠即重建）与 MainMenuBar 自己的 m_ResetLayoutRequested
+        // 承担。与已删除的 Draw*Window 同型 —— 零消费者的成员只会误导读者以为
+        // 这里有第二套布局状态机。
         bool m_ShowDockingDemo      = false;
         Application* m_App = nullptr;
 

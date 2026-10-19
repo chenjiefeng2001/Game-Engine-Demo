@@ -90,8 +90,12 @@ namespace Engine {
         void SetDemoVisible(bool v) { m_ShowDemo = v; }
 
         // ── 布局重置信号（由外部 EngineEditor 消费，在 View 菜单触发） ──
+        // 刻意不提供 RequestResetLayout()：全仓零调用者。信号的唯一产生点是
+        // View > Reset Layout 菜单项自身（MainMenuBar.cpp 里直接置位
+        // m_ResetLayoutRequested）。留一个无人调用的公开置位接口，等于对外
+        // 承诺「外部也能请求重置布局」，实际只有菜单能 —— 与已删除的
+        // Draw*Window 同型。
         bool ConsumeResetLayoutSignal() { bool v = m_ResetLayoutRequested; m_ResetLayoutRequested = false; return v; }
-        void RequestResetLayout() { m_ResetLayoutRequested = true; }
 
     private:
         void DrawFileMenu();
