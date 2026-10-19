@@ -211,7 +211,7 @@ private:
     static bool RequiresGraphicsContext(int32_t op) noexcept;
     /// HRC-3 P2：只能经 `EngineHost_Fetch` 使用、不得经 `EngineHost_Dispatch` 的 op。
     static bool IsFetchOnlyOp(int32_t op) noexcept;
-    static int32_t FetchCapacityForOp(int32_t op) noexcept;
+    static int32_t MinFetchCapacityForOp(int32_t op) noexcept;
 
     /// HRC-3 P2：取整个 presentation 帧（Fetch-only）。必须在 runtime 线程执行
     /// （由 Fetch 的 Submit 保证），GL 读回在该线程内 make-current 后完成。

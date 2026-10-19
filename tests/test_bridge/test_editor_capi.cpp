@@ -2074,6 +2074,76 @@ TEST_F(EditorBridgeTest, F2ColliderNegativePaths) {
         EXPECT_EQ(host->PresentationTargetWidth(), 4096);
         EXPECT_EQ(host->PresentationTargetHeight(), 1);
 
+        // P1.3：fetch 必须能取回非默认尺寸的帧，且 header 携带运行时尺寸。
+        // 这是旧代码完全做不到的事 —— 它会以"尺寸不匹配编译期常量"拒绝。
+        EditorSession_SetViewportSize(hostSession, 640, 480);
+        ASSERT_EQ(EngineHost_PumpOneFrame(handle, 0.016f, &result), 0);
+        EXPECT_EQ(host->PresentationTargetWidth(), 640);
+        EXPECT_EQ(host->PresentationTargetHeight(), 480);
+
+        std::vector<uint8_t> smallPacket(640 * 480 * 4 + 16, 0xCD);
+        auto fetchResult = RuntimeResult{};
+        const int32_t fetchRc = EngineHost_Fetch(handle,
+                                                 ENGINE_HOST_OP_GET_PRESENTATION_FRAME,
+                                                 0, nullptr, nullptr, nullptr,
+                                                 smallPacket.data(),
+                                                 static_cast<int32_t>(smallPacket.size()),
+                                                 &fetchResult);
+        ASSERT_EQ(fetchRc, 640 * 480 * 4 + 16)
+            << "fetch 应返回运行时尺寸的容量，而非编译期常量";
+        ASSERT_EQ(fetchResult.status, ENGINE_HOST_STATUS_SUCCESS);
+
+        int32_t fw = 0, fh = 0;
+        std::memcpy(&fw, smallPacket.data() + 0, sizeof(int32_t));
+        std::memcpy(&fh, smallPacket.data() + 4, sizeof(int32_t));
+        EXPECT_EQ(fw, 640) << "packet header 必须携带运行时宽度";
+        EXPECT_EQ(fh, 480) << "packet header 必须携带运行时高度";
+
+        // 容量不足时必须拒绝，而不是静默截断。
+        std::vector<uint8_t> tiny(100);
+        auto tinyResult = RuntimeResult{};
+        const int32_t tinyRc = EngineHost_Fetch(handle,
+                                                 ENGINE_HOST_OP_GET_PRESENTATION_FRAME,
+                                                 0, nullptr, nullptr, nullptr,
+                                                 tiny.data(),
+                                                 static_cast<int32_t>(tiny.size()),
+                                                 &tinyResult);
+        EXPECT_LT(tinyRc, 0) << "容量不足时 fetch 必须拒绝";
+
+        // P1.3 边界验证 1：capacity < 16（header）必须在提交前被拒绝。
+        {
+            std::vector<uint8_t> tooSmall(15);
+            auto r = RuntimeResult{};
+            const int32_t rc = EngineHost_Fetch(handle,
+                                                 ENGINE_HOST_OP_GET_PRESENTATION_FRAME,
+                                                 0, nullptr, nullptr, nullptr,
+                                                 tooSmall.data(),
+                                                 static_cast<int32_t>(tooSmall.size()),
+                                                 &r);
+            EXPECT_LT(rc, 0) << "capacity < header 必须被拒绝";
+            EXPECT_EQ(r.status, ENGINE_HOST_STATUS_INVALID_STATE);
+        }
+
+        // P1.3 边界验证 4：零尺寸帧不能仅因 header 装得下就成功。
+        // 宿主 FBO 尺寸不会变成 0（策略层拒绝），但即使 capacity 只有 header，
+        // inner 校验仍要求 width*height*4 字节，因此不会成功。
+        {
+            std::vector<uint8_t> headerOnly(16);
+            auto r = RuntimeResult{};
+            const int32_t rc = EngineHost_Fetch(handle,
+                                                 ENGINE_HOST_OP_GET_PRESENTATION_FRAME,
+                                                 0, nullptr, nullptr, nullptr,
+                                                 headerOnly.data(),
+                                                 static_cast<int32_t>(headerOnly.size()),
+                                                 &r);
+            EXPECT_LT(rc, 0) << "仅 header 大小的 buffer 必须被拒绝";
+        }
+
+        // 回到基线尺寸。
+        EditorSession_SetViewportSize(hostSession, ENGINE_HOST_PRESENTATION_WIDTH,
+                                      ENGINE_HOST_PRESENTATION_HEIGHT);
+        ASSERT_EQ(EngineHost_PumpOneFrame(handle, 0.016f, &result), 0);
+
         EngineHost_Destroy(handle);
     }
 

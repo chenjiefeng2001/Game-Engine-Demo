@@ -1897,16 +1897,16 @@ bool EngineHost::IsFetchOnlyOp(int32_t op) noexcept {
     return op == ENGINE_HOST_OP_GET_PRESENTATION_FRAME;
 }
 
-int32_t EngineHost::FetchCapacityForOp(int32_t op) noexcept {
+int32_t EngineHost::MinFetchCapacityForOp(int32_t op) noexcept {
     switch (op) {
     case ENGINE_HOST_OP_PICK:
         // HRC-3 D3：定长 32B —— 只搬一个像素的 readback，ID 表面不跨 ABI。
         return ENGINE_HOST_PICK_RESULT_PACKET_BYTES;
     case ENGINE_HOST_OP_GET_PRESENTATION_FRAME:
-        // HRC-3 P2：最小容量（bootstrap 尺寸）。实际 required 由
-        // FetchPresentationFrame 按运行时 FBO 尺寸计算（P1.3）；此处只做
-        // 外层快速过滤，避免为每次 fetch 都先 pump 一次。
-        return ENGINE_HOST_FRAME_PACKET_BYTES;
+        // P1.3：外层只校验最小容量（header），实际 required 由
+        // FetchPresentationFrame 按运行时 FBO 尺寸计算。这样非默认尺寸的
+        // 帧不会在进入 runtime 线程之前就被拒绝。
+        return ENGINE_HOST_FRAME_PACKET_HEADER_BYTES;
     case ENGINE_HOST_OP_GET_ENTITY_NAME:
     case ENGINE_HOST_OP_GET_ASSET_PATH:
     case ENGINE_HOST_OP_GET_ASSET_GUID:
@@ -2349,15 +2349,15 @@ int32_t EngineHost::Fetch(int32_t op,
                           int32_t capacity,
                           RuntimeResult* result) {
     if (!result) return -1;
-    if (!IsKnownOp(op) || FetchCapacityForOp(op) == 0) {
+    if (!IsKnownOp(op) || MinFetchCapacityForOp(op) == 0) {
         FillRejectedResult(result,
                            ENGINE_HOST_STATUS_INVALID_STATE,
                            ENGINE_HOST_STAGE_EDIT,
                            "unknown or non-fetch editor op");
         return -1;
     }
-    const int32_t required = FetchCapacityForOp(op);
-    if (capacity < required) {
+    const int32_t minCapacity = MinFetchCapacityForOp(op);
+    if (capacity < minCapacity) {
         FillRejectedResult(result,
                            ENGINE_HOST_STATUS_INVALID_STATE,
                            ENGINE_HOST_STAGE_EDIT,
