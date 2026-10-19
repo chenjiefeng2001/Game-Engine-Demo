@@ -628,7 +628,7 @@ namespace Engine {
         // SetVisible 只在**真正变化**时调用：ConsolePanel::SetVisible 在
         // visible 时会 FocusInput()，每帧无条件调用会让控制台输入框永久
         // 抢走键盘焦点。
-        auto SyncDockedPanelVisibility = [](bool& menuFlag, auto* panel, auto draw) {
+        auto SyncPanelVisibility = [](bool& menuFlag, auto* panel, auto draw) {
             if (!panel) return;
             if (panel->IsVisible() != menuFlag)
                 panel->SetVisible(menuFlag);
@@ -643,23 +643,30 @@ namespace Engine {
         }
         if (m_Inspector) {
             // InspectorPanel::OnImGui 内部调用 ImGui::Begin("Inspector")
-            SyncDockedPanelVisibility(m_Visibility.inspector, m_Inspector,
+            SyncPanelVisibility(m_Visibility.inspector, m_Inspector,
                                       [](InspectorPanel* p) { p->OnImGui(); });
         }
         if (m_Console) {
             // ConsolePanel::OnImGui 内部调用 ImGui::Begin("Console")
-            SyncDockedPanelVisibility(m_Visibility.console, m_Console,
+            SyncPanelVisibility(m_Visibility.console, m_Console,
                                       [](ConsolePanel* p) { p->OnImGui(); });
         }
         if (m_Performance) {
-            SyncDockedPanelVisibility(m_Visibility.performance, m_Performance,
+            SyncPanelVisibility(m_Visibility.performance, m_Performance,
                                       [](PerformanceWindow* p) { p->OnImGui(); });
         }
 
         // ── 可选面板 ──
-        if (m_Visibility.contentBrowser) m_ContentBrowser.OnImGui();
-        if (m_Visibility.assetBrowser)   m_AssetBrowser.OnImGui();
-        if (m_Visibility.depGraph)       m_DepGraph.OnImGui();
+        // 同样走双向同步：此前三个都是裸调用 `if (m_Visibility.X) panel.OnImGui()`，
+        // 而 ContentBrowserPanel 与 DependencyGraphPanel 的自身 m_Visible 默认
+        // false，OnImGui 开头即早退 —— 于是 View > Content Browser 与
+        // View > Dependency Graph 两个菜单项都是死的。
+        SyncPanelVisibility(m_Visibility.contentBrowser, &m_ContentBrowser,
+                            [](ContentBrowserPanel* p) { p->OnImGui(); });
+        SyncPanelVisibility(m_Visibility.assetBrowser, &m_AssetBrowser,
+                            [](AssetBrowserPanel* p) { p->OnImGui(); });
+        SyncPanelVisibility(m_Visibility.depGraph, &m_DepGraph,
+                            [](DependencyGraphPanel* p) { p->OnImGui(); });
 
         // ── 场景面板 — 三种视图 ──
         // 根据 PanelVisibility 决定渲染哪个/哪些窗口
@@ -678,12 +685,12 @@ namespace Engine {
             // 独立模式：三个面板各自独立渲染
             if (m_SceneHierarchy) {
                 // SceneHierarchyPanel::OnImGui 内部调用 ImGui::Begin("Hierarchy")
-                SyncDockedPanelVisibility(m_Visibility.sceneHierarchy, m_SceneHierarchy,
+                SyncPanelVisibility(m_Visibility.sceneHierarchy, m_SceneHierarchy,
                                           [](SceneHierarchyPanel* p) { p->OnImGui(); });
             }
-            SyncDockedPanelVisibility(m_Visibility.sceneViewerPanel, &m_SceneViewerPanel,
+            SyncPanelVisibility(m_Visibility.sceneViewerPanel, &m_SceneViewerPanel,
                                       [](SceneViewerPanel* p) { p->OnImGui(); });
-            SyncDockedPanelVisibility(m_Visibility.sceneManager, &m_SceneManagerPanel,
+            SyncPanelVisibility(m_Visibility.sceneManager, &m_SceneManagerPanel,
                                       [](SceneManagerPanel* p) { p->OnImGui(); });
         }
 
