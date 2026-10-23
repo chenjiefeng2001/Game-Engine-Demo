@@ -1,0 +1,14 @@
+<Project>
+  <!-- Shared defaults for the managed Nova UI / Editor projects.
+       The native engine still builds through CMake; this file only affects SDK-style projects. -->
+  <PropertyGroup Condition="$(MSBuildProjectName.StartsWith('Nova.'))">
+    <TargetFramework>net9.0</TargetFramework>
+    <LangVersion>latest</LangVersion>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Deterministic>true</Deterministic>
+    <InvariantGlobalization>false</InvariantGlobalization>
+    <AvaloniaUseCompiledBindingsByDefault>false</AvaloniaUseCompiledBindingsByDefault>
+    <GenerateDocumentationFile>false</GenerateDocumentationFile>
+  </PropertyGroup>
+</Project>

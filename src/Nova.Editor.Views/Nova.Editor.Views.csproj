@@ -1,0 +1,17 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <RootNamespace>Nova.Editor.Views</RootNamespace>
+    <AssemblyName>Nova.Editor.Views</AssemblyName>
+  </PropertyGroup>
+  <ItemGroup>
+    <PackageReference Include="Avalonia" Version="11.2.7" />
+  </ItemGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\Nova.UI.Abstractions\Nova.UI.Abstractions.csproj" />
+    <ProjectReference Include="..\Nova.UI.Core\Nova.UI.Core.csproj" />
+    <ProjectReference Include="..\Nova.UI.Theme\Nova.UI.Theme.csproj" />
+    <ProjectReference Include="..\Nova.UI.Avalonia\Nova.UI.Avalonia.csproj" />
+    <ProjectReference Include="..\Nova.UI.Controls\Nova.UI.Controls.csproj" />
+    <ProjectReference Include="..\Nova.Editor.Services\Nova.Editor.Services.csproj" />
+  </ItemGroup>
+</Project>

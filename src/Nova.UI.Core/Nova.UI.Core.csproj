@@ -1,0 +1,9 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <RootNamespace>Nova.UI.Core</RootNamespace>
+    <AssemblyName>Nova.UI.Core</AssemblyName>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\Nova.UI.Abstractions\Nova.UI.Abstractions.csproj" />
+  </ItemGroup>
+</Project>

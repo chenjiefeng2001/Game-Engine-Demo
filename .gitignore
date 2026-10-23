@@ -107,3 +107,21 @@ editor_avalonia/selftest.log
 
 # 测试运行时 scratch（test_bridge gate_p2 副本 / GP01EditorWorkflowTest kEd 产物）
 gp01_editor_scratch/
+
+# Nova UI / Editor managed projects
+src/**/bin/
+src/**/obj/
+tests/**/bin/
+tests/**/obj/
+samples/**/bin/
+samples/**/obj/
+TestResults/
+*.trx
+artifacts/
+
+# The legacy `*.app` executable rule must not swallow the managed project directory.
+!src/Nova.Editor.App/
+!src/Nova.Editor.App/**
+
+src/Nova.Editor.App/bin/
+src/Nova.Editor.App/obj/

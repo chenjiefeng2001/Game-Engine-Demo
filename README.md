@@ -544,6 +544,27 @@ game-engine-demo/
 
 ---
 
+## 🧪 Nova UI v0.2（Editor Foundation）
+
+独立的托管编辑器基础层，与 C++ 引擎/ImGui 编辑器并行存在，不替代现有 native bridge：
+
+```powershell
+dotnet build Nova.sln
+dotnet test Nova.sln
+dotnet run --project src/Nova.Editor.App/Nova.Editor.App.csproj
+dotnet run --project samples/Nova.UI.Playground/Nova.UI.Playground.csproj
+```
+
+- 设计说明：[docs/Nova-UI-v0.2-Editor-Foundation.md](docs/Nova-UI-v0.2-Editor-Foundation.md)
+- UI 规范：[docs/ui-spec/README.md](docs/ui-spec/README.md)
+- 架构决策：[docs/decisions/ADR-001-ui-foundation-scope.md](docs/decisions/ADR-001-ui-foundation-scope.md)
+- 迁移指南：[docs/migration/legacy-avalonia-to-nova.md](docs/migration/legacy-avalonia-to-nova.md)
+- 提交前审计：[docs/Nova-UI-v0.2-Precommit-Audit.md](docs/Nova-UI-v0.2-Precommit-Audit.md)
+
+v0.2 明确不包含完整 Docking、Timeline、复杂 DSL 或 3D 渲染后端；这些按版本门槛在后续版本推进。
+
+---
+
 ## 📝 许可证
 
 本项目采用 **MIT License** 开源。详见 [LICENSE.txt](./LICENSE.txt)。

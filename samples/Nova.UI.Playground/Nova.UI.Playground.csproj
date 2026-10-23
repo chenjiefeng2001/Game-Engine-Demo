@@ -1,0 +1,18 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <RootNamespace>Nova.UI.Playground</RootNamespace>
+    <AssemblyName>Nova.UI.Playground</AssemblyName>
+  </PropertyGroup>
+  <ItemGroup>
+    <PackageReference Include="Avalonia" Version="11.2.7" />
+    <PackageReference Include="Avalonia.Desktop" Version="11.2.7" />
+    <PackageReference Include="Avalonia.Themes.Fluent" Version="11.2.7" />
+  </ItemGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\..\src\Nova.UI.Avalonia\Nova.UI.Avalonia.csproj" />
+    <ProjectReference Include="..\..\src\Nova.UI.Controls\Nova.UI.Controls.csproj" />
+    <ProjectReference Include="..\..\src\Nova.UI.Core\Nova.UI.Core.csproj" />
+    <ProjectReference Include="..\..\src\Nova.UI.Theme\Nova.UI.Theme.csproj" />
+  </ItemGroup>
+</Project>

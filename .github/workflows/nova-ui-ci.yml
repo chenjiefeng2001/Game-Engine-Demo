@@ -1,0 +1,64 @@
+name: Nova UI CI
+
+on:
+  push:
+    branches: [ "master" ]
+    paths:
+      - 'src/**'
+      - 'tests/**'
+      - 'samples/**'
+      - 'Nova.sln'
+      - 'Directory.Build.props'
+      - 'tools/ui/**'
+      - '.github/workflows/nova-ui-ci.yml'
+  pull_request:
+    branches: [ "master" ]
+    paths:
+      - 'src/**'
+      - 'tests/**'
+      - 'samples/**'
+      - 'Nova.sln'
+      - 'Directory.Build.props'
+      - 'tools/ui/**'
+      - '.github/workflows/nova-ui-ci.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build-and-test:
+    runs-on: windows-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          submodules: false
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '9.0.x'
+
+      - name: Restore
+        run: dotnet restore Nova.sln
+
+      - name: Build
+        run: dotnet build Nova.sln -c Release --no-restore
+
+      - name: Test
+        run: >
+          dotnet test Nova.sln -c Release --no-build
+          --logger "trx;LogFileName=nova-ui.trx"
+          --results-directory TestResults
+
+      - name: Format gate
+        run: dotnet format Nova.sln --verify-no-changes --no-restore
+
+      - name: Upload test results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: nova-ui-test-results
+          path: TestResults
+          if-no-files-found: ignore

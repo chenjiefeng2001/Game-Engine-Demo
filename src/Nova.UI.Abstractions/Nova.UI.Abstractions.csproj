@@ -1,0 +1,6 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <RootNamespace>Nova.UI</RootNamespace>
+    <AssemblyName>Nova.UI.Abstractions</AssemblyName>
+  </PropertyGroup>
+</Project>

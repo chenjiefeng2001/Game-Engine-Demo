@@ -1,0 +1,151 @@
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:nova="using:Nova.UI.Controls"
+        x:Class="Nova.UI.Playground.MainWindow"
+        Title="Nova UI Playground — v0.2"
+        Width="1100" Height="760"
+        x:CompileBindings="False">
+
+  <DockPanel>
+    <Border DockPanel.Dock="Top" Classes="nova-toolbar">
+      <Grid ColumnDefinitions="*,Auto">
+        <StackPanel Orientation="Horizontal" Spacing="10">
+          <TextBlock Text="Nova UI Playground" Classes="nova-title" />
+          <TextBlock Text="P0 primitives · token-driven states" Classes="nova-muted" VerticalAlignment="Center" />
+        </StackPanel>
+        <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="6">
+          <TextBlock x:Name="ThemeLabel" Text="Nova Dark" Classes="nova-muted" VerticalAlignment="Center" />
+          <nova:NovaButton Content="Toggle Theme" Click="OnToggleTheme" />
+        </StackPanel>
+      </Grid>
+    </Border>
+
+    <Border DockPanel.Dock="Bottom" Classes="nova-toolbar">
+      <TextBlock Text="Tab/arrow navigation, disabled states, intermediate number editing (try 1. then Enter), event commit on blur." Classes="nova-muted" />
+    </Border>
+
+    <Grid ColumnDefinitions="360,8,*" Margin="8">
+      <nova:NovaScrollArea Grid.Column="0">
+        <StackPanel Spacing="10">
+          <Border Classes="nova-panel" Padding="10">
+            <StackPanel Spacing="8">
+              <TextBlock Text="Buttons" Classes="nova-section-title" />
+              <StackPanel Orientation="Horizontal" Spacing="6">
+                <nova:NovaButton Content="Default" />
+                <nova:NovaButton Content="Primary" Classes="nova-primary" />
+                <nova:NovaButton Content="Subtle" Classes="nova-subtle" />
+                <nova:NovaButton Content="Danger" Classes="nova-danger" />
+              </StackPanel>
+              <StackPanel Orientation="Horizontal" Spacing="6">
+                <nova:NovaButton Content="Disabled" IsEnabled="False" />
+                <nova:NovaIconButton Glyph="+" />
+                <nova:NovaIconButton Glyph="?" />
+              </StackPanel>
+            </StackPanel>
+          </Border>
+
+          <Border Classes="nova-panel" Padding="10">
+            <StackPanel Spacing="8">
+              <TextBlock Text="Inputs" Classes="nova-section-title" />
+              <nova:NovaTextField Watermark="Search assets..." />
+              <nova:NovaTextField Text="invalid-looking value" IsInvalid="True" />
+              <nova:NovaNumberField Value="42" Minimum="0" Maximum="100" Step="0.5" />
+              <nova:NovaNumberField Watermark="intermediate text allowed" />
+              <StackPanel Orientation="Horizontal" Spacing="8">
+                <nova:NovaToggle Label="Grid" IsChecked="True" />
+                <nova:NovaToggle Label="Snap" />
+              </StackPanel>
+              <nova:NovaSelect SelectedIndex="1">
+                <ComboBoxItem>Background</ComboBoxItem>
+                <ComboBoxItem>Default</ComboBoxItem>
+                <ComboBoxItem>Foreground</ComboBoxItem>
+              </nova:NovaSelect>
+            </StackPanel>
+          </Border>
+
+          <Border Classes="nova-panel" Padding="10">
+            <StackPanel Spacing="6">
+              <TextBlock Text="Layout &amp; finish" Classes="nova-section-title" />
+              <nova:NovaRow Spacing="6">
+                <nova:NovaBox Classes="nova-elevated"><TextBlock Text="Box" /></nova:NovaBox>
+                <nova:NovaBox Classes="nova-elevated"><TextBlock Text="Box" /></nova:NovaBox>
+              </nova:NovaRow>
+              <nova:NovaSurface Padding="8">
+                <nova:NovaGrid ColumnDefinitions="Auto,*">
+                  <nova:NovaIcon Glyph="◆" />
+                  <nova:NovaText Grid.Column="1" Text="Surface + Grid + Icon" VerticalAlignment="Center" />
+                </nova:NovaGrid>
+              </nova:NovaSurface>
+              <nova:NovaDivider />
+              <nova:NovaMutedText Text="Divider + muted text use the same token set." />
+            </StackPanel>
+          </Border>
+        </StackPanel>
+      </nova:NovaScrollArea>
+
+      <nova:NovaSplitter Grid.Column="1" ResizeDirection="Columns" ResizeBehavior="PreviousAndNext" />
+
+      <Grid Grid.Column="2" ColumnDefinitions="*,8,*">
+        <Border Grid.Column="0" Classes="nova-panel" Padding="10">
+          <StackPanel Spacing="8">
+            <TextBlock Text="Inspector primitives" Classes="nova-section-title" />
+            <nova:NovaPropertyRow Label="Position X">
+              <nova:NovaPropertyRow.Value>
+                <nova:NovaNumberField Value="2.5" Step="0.1" />
+              </nova:NovaPropertyRow.Value>
+            </nova:NovaPropertyRow>
+            <nova:NovaPropertyRow Label="Visible">
+              <nova:NovaPropertyRow.Value>
+                <CheckBox IsChecked="True" Content="Enabled" />
+              </nova:NovaPropertyRow.Value>
+            </nova:NovaPropertyRow>
+            <nova:NovaPropertyRow Label="Layer" Description="Background / Default / Foreground">
+              <nova:NovaPropertyRow.Value>
+                <nova:NovaSelect SelectedIndex="1">
+                  <ComboBoxItem>Background</ComboBoxItem>
+                  <ComboBoxItem>Default</ComboBoxItem>
+                  <ComboBoxItem>Foreground</ComboBoxItem>
+                </nova:NovaSelect>
+              </nova:NovaPropertyRow.Value>
+            </nova:NovaPropertyRow>
+
+            <nova:NovaInspectorSection Header="Transform">
+              <StackPanel Spacing="4">
+                <nova:NovaPropertyRow Label="Rotation Z">
+                  <nova:NovaPropertyRow.Value>
+                    <nova:NovaNumberField Value="0" Minimum="-360" Maximum="360" />
+                  </nova:NovaPropertyRow.Value>
+                </nova:NovaPropertyRow>
+              </StackPanel>
+            </nova:NovaInspectorSection>
+          </StackPanel>
+        </Border>
+
+        <nova:NovaSplitter Grid.Column="1" ResizeDirection="Columns" ResizeBehavior="PreviousAndNext" />
+
+        <Border Grid.Column="2" Classes="nova-panel" Padding="10">
+          <DockPanel>
+            <TextBlock DockPanel.Dock="Top" Text="Collections / virtualization" Classes="nova-section-title" Margin="0,0,0,6" />
+            <Grid RowDefinitions="*,8,*">
+              <TreeView Grid.Row="0">
+                <TreeViewItem Header="Sample Scene" IsExpanded="True">
+                  <TreeViewItem Header="Player" />
+                  <TreeViewItem Header="Enemy" />
+                  <TreeViewItem Header="Main Camera" />
+                </TreeViewItem>
+              </TreeView>
+              <nova:NovaSplitter Grid.Row="1" ResizeDirection="Rows" ResizeBehavior="PreviousAndNext" />
+              <ListBox Grid.Row="2" SelectionMode="Single">
+                <ListBoxItem Content="arena.png" />
+                <ListBoxItem Content="player.png" />
+                <ListBoxItem Content="enemy.png" />
+                <ListBoxItem Content="camera.prefab" />
+                <ListBoxItem Content="game.lua" />
+              </ListBox>
+            </Grid>
+          </DockPanel>
+        </Border>
+      </Grid>
+    </Grid>
+  </DockPanel>
+</Window>

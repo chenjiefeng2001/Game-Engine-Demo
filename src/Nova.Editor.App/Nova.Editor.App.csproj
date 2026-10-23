@@ -1,0 +1,19 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <RootNamespace>Nova.Editor.App</RootNamespace>
+    <AssemblyName>Nova.Editor.App</AssemblyName>
+    <ApplicationManifest>app.manifest</ApplicationManifest>
+  </PropertyGroup>
+  <ItemGroup>
+    <PackageReference Include="Avalonia" Version="11.2.7" />
+    <PackageReference Include="Avalonia.Desktop" Version="11.2.7" />
+    <PackageReference Include="Avalonia.Themes.Fluent" Version="11.2.7" />
+  </ItemGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\Nova.Editor.Services\Nova.Editor.Services.csproj" />
+    <ProjectReference Include="..\Nova.Editor.Views\Nova.Editor.Views.csproj" />
+    <ProjectReference Include="..\Nova.UI.Avalonia\Nova.UI.Avalonia.csproj" />
+    <ProjectReference Include="..\Nova.UI.Theme\Nova.UI.Theme.csproj" />
+  </ItemGroup>
+</Project>
