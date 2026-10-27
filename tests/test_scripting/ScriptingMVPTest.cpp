@@ -83,7 +83,8 @@ TEST(ScriptingMVPTest, S3_Lifecycle_CallbackOrderAndCounts) {
         "fixed    = 0\n"
         "function OnCreate()          created = created + 1; _PERSIST.created_total = (_PERSIST.created_total or 0) + 1 end\n"
         "function OnUpdate(dt)        updated = updated + dt end\n"
-        "function OnFixedUpdate(fdt)  fixed   = fixed + 1 end\n");
+        "function OnFixedUpdate(fdt)  fixed   = fixed + 1 end\n"
+        "function OnDestroy()         destroyed = (destroyed or 0) + 1 end\n");
 
     ScriptInstance inst;
     ScriptInstance::Config cfg;
@@ -101,7 +102,13 @@ TEST(ScriptingMVPTest, S3_Lifecycle_CallbackOrderAndCounts) {
     EXPECT_NEAR(eng->GetGlobalDouble("updated"), 3.0, 1e-5);
     EXPECT_EQ(eng->GetGlobalInt("fixed"), 1);
 
-    inst.Shutdown();   // 触发 OnDestroy（脚本未定义 → 安全空操作）
+    inst.OnDestroy();
+    EXPECT_EQ(inst.GetOnCreateCount(), 1u);
+    EXPECT_EQ(inst.GetOnDestroyCount(), 1u);
+    inst.Shutdown();
+    EXPECT_EQ(inst.GetOnDestroyCount(), 1u);
+    inst.Shutdown();
+    EXPECT_EQ(inst.GetOnDestroyCount(), 1u);
 }
 
 // ── S4: Reload 持久状态 ─────────────────────────────────────

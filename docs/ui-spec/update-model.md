@@ -63,7 +63,7 @@ Menu/Toolbar/Shortcut
 - `CommandHistory.Execute/Undo/Redo` 会拒绝来自其他上下文的命令。
 - `IUndoableCommand.CanUndo()` 与 `CanExecute()` 分离；节点被外部删除后，Undo 不会把旧值写回一个已脱离文档的节点。
 - `CommandHistory.CanUndo/CanRedo` 读取栈顶命令的实际可用性，菜单/工具栏状态随之为灰色。
-- 当前未实现“切换场景/工作区”UI；上述 token 是生命周期切片的基础，不应被描述为完整生命周期管理。
+- Lifecycle v0.1 已实现项目/场景切换、关闭与取消关闭的上下文转移；真实项目文件加载、多窗口与草稿确认对话框仍未实现。详见 [lifecycle.md](lifecycle.md)。
 
 ## 局部更新验收
 

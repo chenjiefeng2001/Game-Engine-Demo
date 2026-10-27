@@ -29,6 +29,8 @@ namespace Engine { namespace Scripting {
         void        SetHudText(const std::string& msg);
         const char* GetHudText();       ///< nullptr = 无新消息
         void        ClearHudText();
+        bool        HasHudText();
+        void        Reset();
 
         /// 引擎启动时刻（steady_clock 秒基点，供 Engine.time_now 计算）
         void ResetClockOrigin();

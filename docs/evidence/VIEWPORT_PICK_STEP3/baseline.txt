@@ -1,0 +1,9 @@
+branch: avalonia
+HEAD: 513cd0977c085aabc99483257fbb888beeedfee6
+worktree status lines: 202
+cmake: cmake version 3.30.3
+dotnet: 9.0.315
+debug dll: build\bridge\Debug\EditorBridge.dll 2026-10-22T17:33:05 length 10696704
+release dll: build\bridge\Release\EditorBridge.dll 2026-10-22T17:42:35 length 2177024
+managed debug exe: editor_avalonia\bin\Debug\net9.0\AvaloniaEditor.exe 2026-10-22T18:02:58
+managed release exe: editor_avalonia\bin\Release\net9.0\AvaloniaEditor.exe 2026-10-22T18:03:51

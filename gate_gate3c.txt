@@ -1,0 +1,69 @@
+[18:04:19.448] [info] [Engine] Log system initialized (async mode) -> logs/engine.log
+[18:04:19.449] [info] [Engine] [EditorBridge] project loaded: 10 objects, 33 assets
+[PASS] assert: open GP01
+[PASS] assert: assets 33 (got 33)
+[PASS] assert: no filter -> full list
+[PASS] assert: select Player
+[PASS] assert: type filter Script
+[PASS] assert: type filter Texture
+[PASS] assert: search 'player' all match
+[PASS] assert: empty result state
+[PASS] assert: clear filter -> full
+[PASS] assert: all assets expose GUID
+[18:04:19.488] [info] [Engine] [EditorBridge] asset imported: assets/gp01/tex/imported_pad.png (Texture)
+[PASS] assert: import texture
+[PASS] assert: assets 34 (got 34)
+[18:04:19.497] [info] [Engine] [EditorBridge] sprite assigned: Player -> assets/gp01/tex/imported_pad.png
+[18:04:19.497] [info] [OpenGLTexture] Successfully loaded texture: assets/gp01/tex/imported_pad.png (16x16)
+[PASS] assert: assign sprite to Player
+[PASS] assert: dirty after assign
+[18:04:19.500] [info] [Engine] [EditorBridge] asset imported: assets/gp01/scripts/imported_flow.lua (Script)
+[PASS] assert: import script
+[PASS] assert: assets 35 (got 35)
+[18:04:19.504] [info] [Engine] [EditorBridge] script assigned: Player -> assets/gp01/scripts/imported_flow.lua
+[PASS] assert: assign script to Player
+[PASS] assert: dirty after script assign
+[18:04:19.507] [info] [Engine] [EditorBridge] asset renamed: assets/gp01/tex/imported_pad.png -> assets/gp01/tex/imported_pad_v2.png
+[PASS] assert: rename texture asset
+[PASS] assert: dirty after rename
+[18:04:19.511] [info] [Engine] [EditorBridge] project saved: assets/gp01/Main.scene (10 entities)
+[PASS] assert: save project
+[PASS] assert: clean after save
+[18:04:20.448] [info] [OpenGLGraphicsFactory] OpenGL 4.6 loaded
+[18:04:20.452] [info] [Engine] [EditorBridge] project loaded: 10 objects, 35 assets
+[18:04:20.451] [info] [OpenGLTexture] Successfully loaded texture: assets/gp01/tex/imported_pad_v2.png (16x16)
+[18:04:20.452] [info] [OpenGLTexture] Successfully loaded texture: assets/gp01/tex/pad.png (16x16)
+[18:04:20.452] [info] [OpenGLTexture] Successfully loaded texture: assets/gp01/tex/wall.png (16x16)
+[PASS] assert: reopen
+[PASS] assert: reopen assets 35 (got 35)
+[PASS] assert: re-select Player
+[PASS] assert: sprite binding survives rename + reload
+[PASS] assert: script binding survives reload
+[PASS] assert: renamed asset keeps same GUID
+[PASS] assert: imported script GUID stable
+[18:04:20.530] [info] [OpenGLGraphicsFactory] OpenGL 4.6 loaded
+[18:04:20.534] [info] [OpenGLTexture] Successfully loaded texture: assets/gp01/tex/imported_pad_v2.png (16x16)
+[18:04:20.535] [info] [OpenGLTexture] Successfully loaded texture: assets/gp01/tex/pad.png (16x16)
+[18:04:20.535] [info] [OpenGLTexture] Successfully loaded texture: assets/gp01/tex/wall.png (16x16)
+[18:04:20.535] [info] [Engine] [EditorBridge] project loaded: 10 objects, 35 assets
+[PASS] assert: reopen for DL-02
+[18:04:20.539] [info] [Engine] [EditorBridge] entity created: DL02Prop
+[PASS] assert: create entity
+[PASS] assert: select new entity
+[18:04:20.541] [info] [Engine] [EditorBridge] sprite assigned: DL02Prop -> assets/gp01/tex/imported_pad_v2.png
+[PASS] assert: assign sprite DL-02
+[18:04:20.541] [info] [Engine] [EditorBridge] script assigned: DL02Prop -> assets/gp01/scripts/imported_flow.lua
+[PASS] assert: assign script DL-02
+[18:04:20.546] [info] [Engine] [EditorBridge] project saved: assets/gp01/Main.scene (11 entities)
+[PASS] assert: save DL-02
+[18:04:20.605] [info] [OpenGLGraphicsFactory] OpenGL 4.6 loaded
+[18:04:20.609] [info] [OpenGLTexture] Successfully loaded texture: assets/gp01/tex/imported_pad_v2.png (16x16)
+[18:04:20.610] [info] [OpenGLTexture] Successfully loaded texture: assets/gp01/tex/pad.png (16x16)
+[18:04:20.610] [info] [Engine] [EditorBridge] project loaded: 11 objects, 35 assets
+[18:04:20.610] [info] [OpenGLTexture] Successfully loaded texture: assets/gp01/tex/wall.png (16x16)
+[PASS] assert: DL-02 reopen
+[PASS] assert: DL-02 re-select
+[PASS] assert: DL-02 sprite binding intact
+[PASS] assert: DL-02 script binding intact
+[P3-C GATE] ALL GREEN in 1530 ms
+gate3c exit=0

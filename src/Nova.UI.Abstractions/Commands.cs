@@ -45,6 +45,9 @@ public interface ICommandHistory
     void Undo();
     void Redo();
     void Clear();
+
+    /// <summary>Clears the stacks and binds the history to a new session context.</summary>
+    void Reset(Guid contextId);
 }
 
 public sealed class UndoableCommandEventArgs : EventArgs
@@ -106,6 +109,8 @@ public static class NovaCommandIds
     public static readonly UiId DeleteNode = new("scene.delete-node");
     public static readonly UiId SaveLayout = new("layout.save");
     public static readonly UiId ResetLayout = new("layout.reset");
+    public static readonly UiId UndoLayout = new("layout.undo");
+    public static readonly UiId RedoLayout = new("layout.redo");
     public static readonly UiId ToggleTheme = new("theme.toggle");
     public static readonly UiId ToggleHierarchy = new("view.toggle-hierarchy");
     public static readonly UiId ToggleInspector = new("view.toggle-inspector");

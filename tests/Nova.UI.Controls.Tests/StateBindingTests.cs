@@ -25,5 +25,8 @@ public sealed class StateBindingTests
 
         store.Set(id, "text", "Camera");
         Assert.AreEqual("Camera", text.Text);
+
+        store.Clear();
+        Assert.IsNull(text.Text);
     }
 }

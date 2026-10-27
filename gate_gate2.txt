@@ -1,0 +1,50 @@
+[18:04:10.664] [info] [Engine] Log system initialized (async mode) -> logs/engine.log
+[18:04:10.677] [info] [Engine] [EditorBridge] project loaded: 10 objects, 33 assets
+[PASS] assert: open GP01
+[PASS] assert: hierarchy 10 entities (got 10)
+[PASS] assert: assets >=33 (got 33)
+[PASS] assert: clean after open
+[PASS] assert: select Player
+[PASS] assert: transform edit applied
+[PASS] assert: dirty after edit
+[18:04:10.714] [info] [Engine] [EditorBridge] entity renamed: Player -> Hero
+[PASS] assert: rename Player -> Hero
+[PASS] assert: selection kept + shows new name after rename
+[PASS] assert: texture asset present
+[18:04:10.719] [info] [Engine] [EditorBridge] sprite assigned: Hero -> assets/gp01/tex/player.png
+[PASS] assert: assign sprite to Hero
+[PASS] assert: inspector shows assigned sprite ('assets/gp01/tex/player.png')
+[PASS] assert: dirty after assign
+[18:04:10.722] [info] [Engine] [EditorBridge] entity created: NewProp
+[PASS] assert: create entity via VM
+[PASS] assert: hierarchy +1 after create
+[PASS] assert: new entity visible
+[PASS] assert: new entity transform edit applied
+[PASS] assert: script asset present
+[PASS] assert: open game.lua in script editor
+[PASS] assert: script loaded non-empty (11817 chars)
+[PASS] assert: script editor dirty after edit
+[18:04:10.736] [info] [Engine] [EditorBridge] script saved: D:\repos\Game-Engine-Demo\editor_avalonia\spike_gp02\assets\gp01\game.lua
+[PASS] assert: script save
+[PASS] assert: script editor clean after save
+[18:04:10.739] [info] [Engine] [EditorBridge] project saved: assets/gp01/Main.scene (11 entities)
+[PASS] assert: save project
+[PASS] assert: clean after save
+[18:04:11.529] [info] [OpenGLGraphicsFactory] OpenGL 4.6 loaded
+[18:04:11.532] [info] [OpenGLTexture] Successfully loaded texture: assets/gp01/tex/player.png (16x16)
+[18:04:11.532] [info] [OpenGLTexture] Successfully loaded texture: assets/gp01/tex/pad.png (16x16)
+[18:04:11.532] [info] [OpenGLTexture] Successfully loaded texture: assets/gp01/tex/wall.png (16x16)
+[18:04:11.532] [info] [Engine] [EditorBridge] project loaded: 11 objects, 33 assets
+[PASS] assert: reopen project
+[PASS] assert: reopen hierarchy 11 entities (got 11)
+[PASS] assert: re-select renamed Hero
+[PASS] assert: persisted Hero.z == 9.0 (edit survived)
+[PASS] assert: persisted sprite binding
+[PASS] assert: re-select created NewProp
+[PASS] assert: persisted NewProp transform
+[PASS] assert: reopen clean
+[PASS] assert: script asset index after reopen
+[PASS] assert: persisted script edit
+[PASS] persisted script audit line found
+[PHASE2 GATE] ALL GREEN in 1180 ms
+gate2 exit=0

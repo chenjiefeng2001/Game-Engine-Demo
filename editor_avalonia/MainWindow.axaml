@@ -8,17 +8,17 @@
     <!-- Menu -->
     <Menu DockPanel.Dock="Top">
       <MenuItem Header="_File">
-        <MenuItem Header="_Open Project" Click="OnOpenProject"/>
-        <MenuItem Header="_Save Project" Click="OnSaveProject"/>
-        <MenuItem Header="_Close" Click="OnCloseProject"/>
+        <MenuItem x:Name="FileOpenItem" Header="_Open Project" Click="OnOpenProject"/>
+        <MenuItem x:Name="FileSaveItem" Header="_Save Project" Click="OnSaveProject"/>
+        <MenuItem x:Name="FileCloseItem" Header="_Close" Click="OnCloseProject"/>
       </MenuItem>
     </Menu>
 
     <!-- Toolbar (transport + P3-D Play/Reload/Stop Runtime) -->
     <StackPanel DockPanel.Dock="Top" Orientation="Horizontal" Spacing="6" Margin="6,4">
-      <Button Content="Open" Click="OnOpenProject"/>
-      <Button Content="Save" Click="OnSaveProject"/>
-      <Button Content="+ Entity" Click="OnCreateEntity"/>
+      <Button x:Name="OpenProjectBtn" Content="Open" Click="OnOpenProject"/>
+      <Button x:Name="SaveProjectBtn" Content="Save" Click="OnSaveProject"/>
+      <Button x:Name="ToolbarCreateEntityBtn" Content="+ Entity" Click="OnCreateEntity"/>
       <Button x:Name="PlayBtn" Content="Play" Click="OnPlay"/>
       <Button x:Name="ReloadBtn" Content="Reload Script" Click="OnReloadScript"
               IsEnabled="{Binding IsRunning}"/>
@@ -50,11 +50,11 @@
             <Grid ColumnDefinitions="*,Auto">
               <TextBox x:Name="RenameBox" Text="{Binding RenameInput, Mode=TwoWay}"
                        Watermark="new name..."/>
-              <Button Grid.Column="1" Content="Rename" Click="OnRenameEntity"/>
+              <Button Grid.Column="1" x:Name="RenameEntityBtn" Content="Rename" Click="OnRenameEntity"/>
             </Grid>
             <StackPanel Orientation="Horizontal" Spacing="4">
-              <Button Content="Delete" Click="OnDeleteEntity"/>
-              <Button Content="+ Entity" Click="OnCreateEntity"/>
+              <Button x:Name="DeleteEntityBtn" Content="Delete" Click="OnDeleteEntity"/>
+              <Button x:Name="HierarchyCreateEntityBtn" Content="+ Entity" Click="OnCreateEntity"/>
             </StackPanel>
           </StackPanel>
           <ListBox x:Name="HierarchyList"
@@ -68,11 +68,59 @@
         </DockPanel>
       </Border>
 
-      <!-- 中：Viewport 占位 + Inspector 编辑条（GG1 生产链路的最小 UI）-->
+      <!-- 中：Viewport + Gizmo 工具栏 -->
       <Grid Grid.Column="2" Grid.RowSpan="3">
         <Border BorderBrush="#33FFFFFF" BorderThickness="1" Background="#11000000">
-          <TextBlock Text="VIEWPORT PLACEHOLDER" HorizontalAlignment="Center"
-                     VerticalAlignment="Center" Opacity="0.4" FontSize="20"/>
+          <!-- Viewport 占位：实际纹理互操作需要 NativeControlHost 或自定义渲染 -->
+          <!-- Phase 7-A：纹理显示（FBO → Avalonia Image） -->
+          <!-- Phase 7-B：输入转发（Pointer/Keyboard → Bridge ABI） -->
+          <!-- Phase 7-C：Gizmo 工具栏 -->
+          <Grid>
+            <!-- 视口内容区 -->
+            <Border Background="#1E1E1E" x:Name="ViewportBorder"
+                    PointerPressed="OnViewportPointerPressed"
+                    PointerReleased="OnViewportPointerReleased"
+                    PointerMoved="OnViewportPointerMoved"
+                    PointerWheelChanged="OnViewportPointerWheelChanged"
+                    KeyDown="OnViewportKeyDown"
+                    KeyUp="OnViewportKeyUp"
+                    Focusable="True">
+              <Panel>
+                <!-- Phase 7-A: Viewport 显示引擎 FBO 纹理 -->
+                <!-- Slice D D-C1/D-C2：帧必须 **1:1 绘制在控件原点**。
+                     Stretch=None + Left/Top 对齐使 `ViewportImage.Bounds` 等于帧尺寸，
+                     因此 `e.GetPosition(ViewportImage)` 直接就是 canonical 像素坐标。
+                     改回默认 Stretch 对齐会让该前提失效（ViewModel 的 mapper 会 fail-closed）。 -->
+                <Image x:Name="ViewportImage" Stretch="None"
+                       HorizontalAlignment="Left" VerticalAlignment="Top"/>
+                <!-- 占位文本（无纹理时显示） -->
+                <TextBlock Text="VIEWPORT (Phase 7)" HorizontalAlignment="Center"
+                           VerticalAlignment="Center" Opacity="0.4" FontSize="20"
+                           Name="ViewportPlaceholder"/>
+              </Panel>
+            </Border>
+
+            <!-- Gizmo 工具栏（右上角叠加） -->
+            <StackPanel Orientation="Horizontal" Spacing="4" Margin="8"
+                        HorizontalAlignment="Right" VerticalAlignment="Top">
+              <Button Content="Q" Width="28" Height="28" ToolTip.Tip="Select (Q)"
+                      Click="OnGizmoSelect"/>
+              <Button Content="W" Width="28" Height="28" ToolTip.Tip="Translate (W)"
+                      Click="OnGizmoTranslate"/>
+              <Button Content="E" Width="28" Height="28" ToolTip.Tip="Rotate (E)"
+                      Click="OnGizmoRotate"/>
+              <Button Content="R" Width="28" Height="28" ToolTip.Tip="Scale (R)"
+                      Click="OnGizmoScale"/>
+              <Separator Width="1" Background="#44FFFFFF" Margin="4,0"/>
+              <Button Content="G" Width="28" Height="28" ToolTip.Tip="Toggle Grid (G)"
+                      Click="OnToggleGrid"/>
+            </StackPanel>
+
+            <!-- 视口统计信息（左下角叠加） -->
+            <TextBlock Text="Viewport" HorizontalAlignment="Left"
+                       VerticalAlignment="Bottom" Margin="8,0,0,4"
+                       Opacity="0.5" FontSize="11"/>
+          </Grid>
         </Border>
       </Grid>
 
@@ -95,14 +143,14 @@
               <TextBlock Grid.Row="2" Grid.Column="0" Text="Z" VerticalAlignment="Center"/>
               <TextBox Grid.Row="2" Grid.Column="1" Text="{Binding PosZ}" Margin="2"/>
             </Grid>
-            <Button Content="Apply Transform" Click="OnApplyTransform" HorizontalAlignment="Left"/>
+            <Button x:Name="ApplyTransformBtn" Content="Apply Transform" Click="OnApplyTransform" HorizontalAlignment="Left"/>
 
             <!-- F1 (Component Contract)：Camera Inspector（反射元数据驱动）-->
             <TextBlock Text="Camera" FontWeight="Bold" Margin="2,10,0,2"/>
             <StackPanel Orientation="Horizontal" Spacing="6">
-              <Button Content="+ Camera" Click="OnAddCamera"
+              <Button x:Name="AddCameraBtn" Content="+ Camera" Click="OnAddCamera"
                       IsEnabled="{Binding !HasCamera}"/>
-              <Button Content="Remove Camera" Click="OnRemoveCamera"
+              <Button x:Name="RemoveCameraBtn" Content="Remove Camera" Click="OnRemoveCamera"
                       IsEnabled="{Binding HasCamera}"/>
             </StackPanel>
             <StackPanel IsVisible="{Binding HasCamera}" Margin="2,6,0,0" Spacing="4">
@@ -122,7 +170,7 @@
                 <TextBlock Text="Bounds" VerticalAlignment="Center" Margin="0,0,8,0"/>
                 <TextBox Grid.Column="1" Text="{Binding CameraBounds}"/>
               </Grid>
-              <Button Content="Apply Camera" Click="OnApplyCamera" HorizontalAlignment="Left"/>
+              <Button x:Name="ApplyCameraBtn" Content="Apply Camera" Click="OnApplyCamera" HorizontalAlignment="Left"/>
             </StackPanel>
           </StackPanel>
           <TextBlock IsVisible="{Binding !HasSelection}" Text="(select an entity)"
@@ -143,15 +191,16 @@
                         Width="100"/>
               <TextBox Text="{Binding AssetSearchText, Mode=TwoWay}" Watermark="search assets"
                        Width="160"/>
-              <Button Content="Import..." Click="OnImportAsset"/>
-              <Button Content="Rename Selected" Click="OnRenameAsset"/>
+              <Button x:Name="ImportAssetBtn" Content="Import..." Click="OnImportAsset"/>
+              <Button x:Name="RenameAssetBtn" Content="Rename Selected" Click="OnRenameAsset"/>
               <TextBlock Text="{Binding FilteredAssetCount}" VerticalAlignment="Center" Opacity="0.7"/>
             </StackPanel>
             <StackPanel DockPanel.Dock="Bottom" Orientation="Horizontal" Spacing="6" Margin="4">
-              <Button Content="Assign Sprite to Selected" Click="OnAssignSprite"/>
-              <Button Content="Assign Script to Selected" Click="OnAssignScript"/>
+              <Button x:Name="AssignSpriteBtn" Content="Assign Sprite to Selected" Click="OnAssignSprite"/>
+              <Button x:Name="AssignScriptBtn" Content="Assign Script to Selected" Click="OnAssignScript"/>
             </StackPanel>
-            <ListBox ItemsSource="{Binding FilteredAssets}"
+            <ListBox x:Name="AssetList"
+                     ItemsSource="{Binding FilteredAssets}"
                      SelectedItem="{Binding SelectedAsset, Mode=TwoWay}"
                      DoubleTapped="OnAssetDoubleTapped">
               <ListBox.ItemTemplate>
@@ -182,7 +231,7 @@
                 <TextBlock Text="{Binding ScriptTitle}" VerticalAlignment="Center" FontWeight="SemiBold"/>
                 <TextBlock Text="(edited)" Foreground="#FFD060" IsVisible="{Binding ScriptDirty}"
                            VerticalAlignment="Center"/>
-                <Button Content="Save Script" Click="OnSaveScript" HorizontalAlignment="Left"/>
+                <Button x:Name="SaveScriptBtn" Content="Save Script" Click="OnSaveScript" HorizontalAlignment="Left"/>
                 <TextBlock Text="{Binding ScriptError}" Foreground="#FF8070" VerticalAlignment="Center"
                            TextWrapping="Wrap" MaxWidth="380"/>
               </StackPanel>

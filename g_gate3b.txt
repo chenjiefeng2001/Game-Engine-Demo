@@ -1,0 +1,35 @@
+[20:33:21.375] [info] [Engine] Log system initialized (async mode) -> logs/engine.log
+[20:33:21.387] [info] [Engine] [EditorBridge] project loaded: 10 objects, 33 assets
+[PASS] assert: open GP01
+[PASS] assert: select Player
+[PASS] assert: inspector shows name
+[PASS] assert: transform edit applied
+[PASS] assert: dirty after edit
+[20:33:21.424] [info] [Engine] [EditorBridge] entity renamed: Player -> Hero
+[PASS] assert: rename Player -> Hero
+[PASS] assert: selection kept after rename
+[PASS] assert: texture asset present
+[20:33:21.430] [info] [Engine] [EditorBridge] sprite assigned: Hero -> assets/gp01/tex/player.png
+[PASS] assert: assign sprite to Hero
+[PASS] assert: inspector shows sprite
+[PASS] assert: script asset present
+[20:33:21.433] [info] [Engine] [EditorBridge] script assigned: Hero -> assets/gp01/game.lua
+[PASS] assert: assign script to Hero
+[PASS] assert: inspector shows script
+[PASS] assert: dirty after assigns
+[20:33:21.436] [info] [Engine] [EditorBridge] project saved: assets/gp01/Main.scene (10 entities)
+[PASS] assert: save project
+[PASS] assert: clean after save
+[20:33:22.215] [info] [OpenGLGraphicsFactory] OpenGL 4.6 loaded
+[20:33:22.218] [info] [Engine] [EditorBridge] project loaded: 10 objects, 33 assets
+[20:33:22.218] [info] [OpenGLTexture] Successfully loaded texture: assets/gp01/tex/player.png (16x16)
+[20:33:22.218] [info] [OpenGLTexture] Successfully loaded texture: assets/gp01/tex/pad.png (16x16)
+[20:33:22.218] [info] [OpenGLTexture] Successfully loaded texture: assets/gp01/tex/wall.png (16x16)
+[PASS] assert: reopen
+[PASS] assert: re-select Hero
+[PASS] assert: name consistent
+[PASS] assert: transform consistent
+[PASS] assert: sprite consistent
+[PASS] assert: script consistent
+[P3-B GATE] ALL GREEN in 1178 ms
+gate3b exit=0

@@ -1,0 +1,31 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:nova="using:Nova.UI.Controls"
+             x:Class="Nova.Editor.Views.Docking.HierarchyPanelView"
+             x:CompileBindings="False">
+  <Border Classes="nova-panel" Padding="6">
+    <DockPanel>
+      <Grid DockPanel.Dock="Top" ColumnDefinitions="*,Auto" Margin="2,0,2,6">
+        <TextBlock Text="Hierarchy" Classes="nova-section-title" />
+        <TextBlock Grid.Column="1" x:Name="HierarchyCountInline" Classes="nova-muted" FontSize="11" />
+      </Grid>
+      <nova:NovaTreeView x:Name="HierarchyTree"
+                         ItemsSource="{Binding Roots}"
+                         SelectedItem="{Binding SelectedNode, Mode=TwoWay}">
+        <nova:NovaTreeView.ItemTemplate>
+          <TreeDataTemplate ItemsSource="{Binding Children}">
+            <StackPanel Orientation="Horizontal" Spacing="6">
+              <Border Background="{DynamicResource Nova.Brush.color.bg.elevated}"
+                      CornerRadius="3" Width="18" Height="18">
+                <TextBlock Text="{Binding TypeGlyph}" FontSize="10"
+                           HorizontalAlignment="Center" VerticalAlignment="Center" />
+              </Border>
+              <TextBlock Text="{Binding Name}" VerticalAlignment="Center" />
+              <TextBlock Text="{Binding Type}" Classes="nova-muted" VerticalAlignment="Center" />
+            </StackPanel>
+          </TreeDataTemplate>
+        </nova:NovaTreeView.ItemTemplate>
+      </nova:NovaTreeView>
+    </DockPanel>
+  </Border>
+</UserControl>

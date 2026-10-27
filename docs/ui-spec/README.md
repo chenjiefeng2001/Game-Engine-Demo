@@ -37,4 +37,5 @@ Nova.Editor.App          (composition root / window)
 - [interaction-states.md](interaction-states.md) — 焦点、键盘、禁用、错误、主题切换。
 - [layout-and-rendering.md](layout-and-rendering.md) — Shell 布局、Splitter、虚拟化、持久化、渲染边界。
 - [update-model.md](update-model.md) — 稳定 ID、局部更新、命令与撤销。
+- [lifecycle.md](lifecycle.md) — 项目/场景/会话生命周期与失败语义。
 - [screenshot-and-baselines.md](screenshot-and-baselines.md) — 当前基线策略与缺口。

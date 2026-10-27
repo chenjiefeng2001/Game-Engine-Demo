@@ -42,6 +42,8 @@ class Time {
 public:
     // ── 生命周期 ──
     static void Init();
+    static void Shutdown();
+    static bool IsInitialized() { return s_Initialized; }
 
     // ── 时间获取（自 Init 起的经过时间） ──
     static float  GetTime();       // 秒（float，向后兼容）

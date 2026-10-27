@@ -294,6 +294,11 @@ void OpenGLContext::DrawIndexed(const std::shared_ptr<VertexArray>& va)
 	}
 
 	void OpenGLContext::CleanupGPUQueries() {
+		if (!glfwGetCurrentContext()) {
+			m_GPUQueryCount = 0;
+			m_GPUQueriesReady = false;
+			return;
+		}
 		if (m_GPUQueryCount > 0 && m_GPUQueryObjects[0] != 0) {
 			m_GL.DeleteQueries(m_GPUQueryCount, m_GPUQueryObjects);
 			m_GPUQueryCount = 0;

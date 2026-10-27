@@ -22,6 +22,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstring>
 
 namespace {
 inline glm::vec3 ToGlm(const Engine::Vec3 &v) {
@@ -217,10 +218,36 @@ void ViewportPanel::Render3DScene() {
   // ── 解绑 FBO ──
   m_GL->BindFramebuffer(GL_FRAMEBUFFER, 0);
 
+  // ── Phase 7: FBO readback for Avalonia ──
+  if (m_ReadbackEnabled && m_FBO_ID && fbW > 0 && fbH > 0) {
+    m_GL->BindFramebuffer(GL_FRAMEBUFFER, m_FBO_ID);
+    m_GL->ReadBuffer(GL_COLOR_ATTACHMENT0);
+    std::vector<uint8> pixels(fbW * fbH * 4);
+    m_GL->ReadPixels(0, 0, fbW, fbH, GL_RGBA, GL_UNSIGNED_BYTE, pixels.data());
+    m_GL->ReadBuffer(GL_COLOR_ATTACHMENT0);
+    m_GL->BindFramebuffer(GL_FRAMEBUFFER, 0);
+    {
+      std::lock_guard<std::mutex> lock(m_ReadbackMutex);
+      m_ReadbackPixels = std::move(pixels);
+      m_ReadbackWidth = fbW;
+      m_ReadbackHeight = fbH;
+    }
+  }
+
   // 【RenderDoc 兼容】：恢复主屏幕视口，否则 RenderDoc 和 ImGui 渲染会异常
   ImGuiIO& io = ImGui::GetIO();
   if (io.DisplaySize.x > 0 && io.DisplaySize.y > 0)
     m_GL->Viewport(0, 0, (GLsizei)io.DisplaySize.x, (GLsizei)io.DisplaySize.y);
+}
+
+int32 ViewportPanel::CopyReadbackPixels(uint8* dst, int32 dstSize) const {
+  std::lock_guard<std::mutex> lock(m_ReadbackMutex);
+  int32 needed = m_ReadbackWidth * m_ReadbackHeight * 4;
+  if (!dst || dstSize < needed) return needed;
+  if (!m_ReadbackPixels.empty()) {
+    std::memcpy(dst, m_ReadbackPixels.data(), needed);
+  }
+  return needed;
 }
 
 // ═══════════════════════════════════════════════════════════════

@@ -1,0 +1,108 @@
+[18:04:22.628] [info] [Engine] Log system initialized (async mode) -> logs/engine.log
+[18:04:22.628] [info] [Engine] [EditorBridge] project loaded: 10 objects, 33 assets
+[PASS] assert: open GP01
+[PASS] assert: hierarchy 10
+[PASS] assert: game.lua script asset present
+[PASS] assert: D1 empty state before open
+[PASS] assert: D1 double-click -> open script
+[PASS] assert: D1 has script open now
+[PASS] assert: D1 current script name shown
+[PASS] assert: D1 content == disk bytes (12939 bytes, utf8)
+[18:04:22.660] [info] [Engine] [EditorBridge] script saved: D:\repos\Game-Engine-Demo\editor_avalonia\spike_gp06\assets\gp01\game.lua
+[PASS] assert: D1 save utf8
+[PASS] assert: D1 utf8 persisted
+[PASS] assert: re-open after utf8 save
+[PASS] assert: D1 utf8 read back
+[18:04:22.678] [info] [Engine] [EditorBridge] script saved: D:\repos\Game-Engine-Demo\editor_avalonia\spike_gp06\assets\gp01\game.lua
+[PASS] assert: D1 save large
+[PASS] assert: D1 large file written (204974B)
+[PASS] assert: re-open large
+[PASS] assert: D1 no silent truncation (round-trip 204974 bytes == re-read)
+[PASS] assert: D2 dirty after edit
+[PASS] assert: select entity while editing
+[PASS] assert: D2 buffer intact after switching selection
+[18:04:22.713] [info] [Engine] [EditorBridge] script saved: D:\repos\Game-Engine-Demo\editor_avalonia\spike_gp06\assets\gp01\game.lua
+[PASS] assert: D2 save
+[PASS] assert: D2 clean after save
+[18:04:22.722] [info] [Engine] [EditorBridge] script saved: D:\repos\Game-Engine-Demo\editor_avalonia\spike_gp06\assets\gp01\game.lua
+[PASS] assert: D3 write base script
+[18:04:22.725] [info] [LuaEngine] Lua engine initialized (sandbox=on, budget=unlimited)
+[18:04:22.725] [info] [GameplayAPI] Gameplay domains registered: input/entity/transform/component
+[18:04:22.732] [info] [Engine] [EditorBridge] PLAY (script=D:\repos\Game-Engine-Demo\editor_avalonia\spike_gp06\assets\gp01\game.lua)
+[18:04:22.732] [info] [ScriptInstance] Script loaded: D:\repos\Game-Engine-Demo\editor_avalonia\spike_gp06\assets\gp01\game.lua
+[PASS] assert: D3 play
+[PASS] assert: D3 running after play
+[18:04:22.734] [info] [Engine] [EditorBridge] script saved: D:\repos\Game-Engine-Demo\editor_avalonia\spike_gp06\assets\gp01\game.lua
+[PASS] assert: D3 save gameplay change
+[18:04:22.735] [info] [GameplayAPI] Gameplay domains registered: input/entity/transform/component
+[18:04:22.745] [info] [Engine] [EditorBridge] RELOAD ok (persist preserved): D:\repos\Game-Engine-Demo\editor_avalonia\spike_gp06\assets\gp01\game.lua
+[18:04:22.745] [info] [ScriptInstance] Script reloaded (persist preserved): D:\repos\Game-Engine-Demo\editor_avalonia\spike_gp06\assets\gp01\game.lua
+[PASS] assert: D3 reload after gameplay change
+[PASS] assert: D3 still running after reload
+[18:04:22.747] [debug] [ScriptInstance] OnDestroy: 
+[18:04:22.747] [info] [Engine] [EditorBridge] STOP -> edit state restored
+[PASS] assert: D3 stop
+[18:04:22.750] [info] [Engine] [EditorBridge] asset imported: assets/gp01/scripts/persist_probe.lua (Script)
+[PASS] assert: D3b import persist probe
+[18:04:22.754] [info] [LuaEngine] Lua engine initialized (sandbox=on, budget=unlimited)
+[18:04:22.754] [info] [Engine] [EditorBridge] PLAY (script=D:\repos\Game-Engine-Demo\editor_avalonia\spike_gp06\assets\gp01\scripts\persist_probe.lua)
+[18:04:22.754] [info] [GameplayAPI] Gameplay domains registered: input/entity/transform/component
+[18:04:22.754] [info] [ScriptInstance] Script loaded: D:\repos\Game-Engine-Demo\editor_avalonia\spike_gp06\assets\gp01\scripts\persist_probe.lua
+[PASS] assert: D3b play persist probe
+[PASS] assert: D3b persist init = 1 (fresh play)
+[18:04:22.757] [info] [GameplayAPI] Gameplay domains registered: input/entity/transform/component
+[18:04:22.757] [info] [ScriptInstance] Script reloaded (persist preserved): D:\repos\Game-Engine-Demo\editor_avalonia\spike_gp06\assets\gp01\scripts\persist_probe.lua
+[18:04:22.757] [info] [Engine] [EditorBridge] RELOAD ok (persist preserved): D:\repos\Game-Engine-Demo\editor_avalonia\spike_gp06\assets\gp01\scripts\persist_probe.lua
+[PASS] assert: D3b reload persist probe
+[PASS] assert: D3b _PERSIST preserved across reload (1 -> 2)
+[18:04:22.759] [debug] [ScriptInstance] OnDestroy: 
+[18:04:22.759] [info] [Engine] [EditorBridge] STOP -> edit state restored
+[18:04:22.760] [info] [Engine] [EditorBridge] script saved: D:\repos\Game-Engine-Demo\editor_avalonia\spike_gp06\assets\gp01\game.lua
+[PASS] assert: D4 save broken syntax
+[18:04:22.761] [info] [LuaEngine] Lua engine initialized (sandbox=on, budget=unlimited)
+[18:04:22.761] [info] [GameplayAPI] Gameplay domains registered: input/entity/transform/component
+[18:04:22.763] [error] [ScriptInstance] Load failed: D:\repos\Game-Engine-Demo\editor_avalonia\spike_gp06\assets\gp01\game.lua (...ine-Demo\editor_avalonia\spike_gp06\assets\gp01\game.lua:1: <name> or '...' expected near 'end')
+[18:04:22.763] [error] [Engine] [EditorBridge] play: director init failed: ...ine-Demo\editor_avalonia\spike_gp06\assets\gp01\game.lua:1: <name> or '...' expected near 'end'
+[PASS] assert: D4 play broken fails
+[PASS] assert: D4 not running after failed play
+[PASS] assert: D4 script error surfaced
+[18:04:22.766] [info] [Engine] [EditorBridge] script saved: D:\repos\Game-Engine-Demo\editor_avalonia\spike_gp06\assets\gp01\game.lua
+[PASS] assert: D4 save fixed syntax
+[18:04:22.768] [info] [LuaEngine] Lua engine initialized (sandbox=on, budget=unlimited)
+[18:04:22.768] [info] [GameplayAPI] Gameplay domains registered: input/entity/transform/component
+[18:04:22.778] [info] [Engine] [EditorBridge] PLAY (script=D:\repos\Game-Engine-Demo\editor_avalonia\spike_gp06\assets\gp01\game.lua)
+[18:04:22.778] [info] [ScriptInstance] Script loaded: D:\repos\Game-Engine-Demo\editor_avalonia\spike_gp06\assets\gp01\game.lua
+[PASS] assert: D4 play recovered
+[PASS] assert: D4 running after fix
+[18:04:22.780] [info] [Engine] [EditorBridge] script saved: D:\repos\Game-Engine-Demo\editor_avalonia\spike_gp06\assets\gp01\game.lua
+[PASS] assert: D4b save broken syntax
+[18:04:22.781] [info] [GameplayAPI] Gameplay domains registered: input/entity/transform/component
+[18:04:22.791] [error] [Engine] [EditorBridge] reload failed: ...ine-Demo\editor_avalonia\spike_gp06\assets\gp01\game.lua:1: <name> or '...' expected near 'end'
+[18:04:22.791] [error] [ScriptInstance] Reload failed: D:\repos\Game-Engine-Demo\editor_avalonia\spike_gp06\assets\gp01\game.lua (...ine-Demo\editor_avalonia\spike_gp06\assets\gp01\game.lua:1: <name> or '...' expected near 'end')
+[PASS] assert: D4b reload with error fails (pcall, no crash)
+[PASS] assert: D4b session still alive after failed reload
+[PASS] assert: D4b error text shown
+[18:04:22.793] [info] [Engine] [EditorBridge] script saved: D:\repos\Game-Engine-Demo\editor_avalonia\spike_gp06\assets\gp01\game.lua
+[PASS] assert: D4b save fixed
+[18:04:22.794] [info] [GameplayAPI] Gameplay domains registered: input/entity/transform/component
+[18:04:22.794] [info] [Engine] [EditorBridge] RELOAD ok (persist preserved): D:\repos\Game-Engine-Demo\editor_avalonia\spike_gp06\assets\gp01\game.lua
+[18:04:22.794] [info] [ScriptInstance] Script reloaded (persist preserved): D:\repos\Game-Engine-Demo\editor_avalonia\spike_gp06\assets\gp01\game.lua
+[PASS] assert: D4b reload recovered
+[PASS] assert: D4b session healthy after fix
+[18:04:22.795] [debug] [ScriptInstance] OnDestroy: ...ine-Demo\editor_avalonia\spike_gp06\assets\gp01\game.lua:1: <name> or '...' expected near 'end'
+[18:04:22.795] [info] [Engine] [EditorBridge] STOP -> edit state restored
+[18:04:22.796] [info] [Engine] [EditorBridge] script saved: D:\repos\Game-Engine-Demo\editor_avalonia\spike_gp06\assets\gp01\game.lua
+[PASS] assert: D5 write canonical script
+[PASS] assert: D5 cleared after close
+[PASS] assert: D5 disk content == edited content (not UI compare)
+[18:04:23.832] [info] [OpenGLGraphicsFactory] OpenGL 4.6 loaded
+[18:04:23.836] [info] [OpenGLTexture] Successfully loaded texture: assets/gp01/tex/player.png (16x16)
+[18:04:23.837] [info] [OpenGLTexture] Successfully loaded texture: assets/gp01/tex/pad.png (16x16)
+[18:04:23.837] [info] [OpenGLTexture] Successfully loaded texture: assets/gp01/tex/wall.png (16x16)
+[18:04:23.837] [info] [Engine] [EditorBridge] project loaded: 10 objects, 33 assets
+[PASS] assert: D5 reopen
+[PASS] assert: D5 reopen script
+[PASS] assert: D5 reopen content identical
+[PASS] assert: D5 reopen == disk
+[P3-D GATE] ALL GREEN in 1648 ms
+gate3d exit=0

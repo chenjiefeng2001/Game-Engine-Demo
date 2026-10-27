@@ -1,13 +1,48 @@
 using System.Text;
+using Nova.UI.Core.Docking;
 using Nova.UI.Core.Layout;
 
 namespace Nova.Editor.Services.Layout;
 
-public sealed record LayoutLoadResult(WorkspaceLayout Layout, bool UsedFallback, string? Reason);
-
-public sealed record LayoutSaveResult(bool Success, string? Error)
+public sealed record LayoutLoadResult(
+    WorkspaceLayout Layout,
+    bool UsedFallback,
+    string? Reason,
+    DockWorkspace? DockWorkspace = null,
+    LayoutFallbackKind FallbackKind = LayoutFallbackKind.None,
+    IReadOnlyList<PanelInstanceId>? UnresolvedPanels = null)
 {
-    public static LayoutSaveResult Ok => new(true, null);
+    /// <summary>
+    /// Unknown panels are restored in place, but automatic writes must not
+    /// replace a file that contains identities this build cannot resolve. A
+    /// file that could not be read was never interpreted, so an automatic
+    /// write could destroy data the editor never saw.
+    /// </summary>
+    public bool PersistenceSuppressed
+        => FallbackKind is LayoutFallbackKind.ReadFailed
+            || (UnresolvedPanels?.Count ?? 0) > 0;
+}
+
+public enum LayoutSaveStatus
+{
+    Saved,
+    Skipped,
+    Failed,
+}
+
+public sealed record LayoutSaveResult(LayoutSaveStatus Status, string? Error)
+{
+    public bool Success => Status == LayoutSaveStatus.Saved;
+
+    public bool Skipped => Status == LayoutSaveStatus.Skipped;
+
+    public static LayoutSaveResult Ok => new(LayoutSaveStatus.Saved, null);
+
+    public static LayoutSaveResult Skip(string reason)
+        => new(LayoutSaveStatus.Skipped, reason);
+
+    public static LayoutSaveResult Fail(string error)
+        => new(LayoutSaveStatus.Failed, error);
 }
 
 /// <summary>
@@ -16,6 +51,8 @@ public sealed record LayoutSaveResult(bool Success, string? Error)
 /// </summary>
 public sealed class LayoutPersistenceService
 {
+    public const long MaxFileBytes = 1024 * 1024;
+
     private readonly SemaphoreSlim _writeGate = new(1, 1);
 
     public LayoutPersistenceService(string? filePath = null)
@@ -37,16 +74,41 @@ public sealed class LayoutPersistenceService
     {
         try
         {
-            if (!File.Exists(FilePath))
-                return new LayoutLoadResult(WorkspaceLayout.Default, true, "layout file does not exist");
+            var file = new FileInfo(FilePath);
+            if (!file.Exists)
+            {
+                return new LayoutLoadResult(
+                    WorkspaceLayout.Default,
+                    true,
+                    "layout file does not exist",
+                    DockWorkspace.CreateDefault(),
+                    LayoutFallbackKind.Missing);
+            }
+
+            if (file.Length > MaxFileBytes)
+            {
+                await QuarantineAsync(cancellationToken).ConfigureAwait(false);
+                return new LayoutLoadResult(
+                    WorkspaceLayout.Default,
+                    true,
+                    $"layout file is {file.Length} bytes and exceeds the 1 MiB limit",
+                    DockWorkspace.CreateDefault(),
+                    LayoutFallbackKind.Corrupt);
+            }
 
             var json = await File.ReadAllTextAsync(FilePath, Encoding.UTF8, cancellationToken)
                 .ConfigureAwait(false);
             var parsed = WorkspaceLayoutSerializer.Deserialize(json);
-            if (parsed.UsedFallback)
+            if (parsed.ShouldQuarantine)
                 await QuarantineAsync(cancellationToken).ConfigureAwait(false);
 
-            return new LayoutLoadResult(parsed.Layout, parsed.UsedFallback, parsed.Reason);
+            return new LayoutLoadResult(
+                parsed.Layout,
+                parsed.UsedFallback,
+                parsed.Reason,
+                parsed.DockWorkspace,
+                parsed.FallbackKind,
+                parsed.UnresolvedPanels);
         }
         catch (OperationCanceledException)
         {
@@ -54,11 +116,13 @@ public sealed class LayoutPersistenceService
         }
         catch (Exception ex)
         {
-            // Missing/unreadable storage must never prevent the editor from starting.
+            await QuarantineAsync(cancellationToken).ConfigureAwait(false);
             return new LayoutLoadResult(
                 WorkspaceLayout.Default,
                 true,
-                $"layout could not be read: {ex.Message}");
+                $"layout could not be read: {ex.Message}",
+                DockWorkspace.CreateDefault(),
+                LayoutFallbackKind.ReadFailed);
         }
     }
 
@@ -66,13 +130,16 @@ public sealed class LayoutPersistenceService
         WorkspaceLayout layout,
         CancellationToken cancellationToken = default)
     {
-        var normalized = LayoutValidator.Normalize(layout);
-        var json = WorkspaceLayoutSerializer.Serialize(normalized);
-
         await _writeGate.WaitAsync(cancellationToken).ConfigureAwait(false);
         string? temp = null;
         try
         {
+            // Serialization and snapshot validation run before any file is
+            // created or replaced; a bad snapshot cannot destroy the last
+            // valid layout.
+            var normalized = LayoutValidator.Normalize(layout);
+            var json = WorkspaceLayoutSerializer.Serialize(normalized);
+
             var directory = Path.GetDirectoryName(FilePath);
             if (!string.IsNullOrEmpty(directory))
                 Directory.CreateDirectory(directory);
@@ -92,7 +159,7 @@ public sealed class LayoutPersistenceService
         }
         catch (Exception ex)
         {
-            return new LayoutSaveResult(false, ex.Message);
+            return LayoutSaveResult.Fail(ex.Message);
         }
         finally
         {

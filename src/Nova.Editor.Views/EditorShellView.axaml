@@ -16,23 +16,31 @@
     <Menu DockPanel.Dock="Top">
       <MenuItem Header="_File">
         <MenuItem Header="_Save Layout" Command="{Binding SaveLayoutCommand}" />
-        <MenuItem Header="_Reset Layout" Command="{Binding ResetLayoutCommand}" />
+        <MenuItem Header="_Reset Layout" Click="OnResetLayout" />
         <Separator />
+        <MenuItem Header="_Close Project" Command="{Binding CloseProjectCommand}" />
         <MenuItem Header="E_xit" Click="OnExit" />
       </MenuItem>
       <MenuItem Header="_Edit">
         <MenuItem Header="_Undo" Command="{Binding UndoCommand}" />
         <MenuItem Header="_Redo" Command="{Binding RedoCommand}" />
         <Separator />
+        <MenuItem x:Name="UndoLayoutMenuItem" Header="_Undo Layout" Command="{Binding UndoLayoutCommand}"
+                  IsEnabled="{Binding CanUndoLayout}" />
+        <MenuItem x:Name="RedoLayoutMenuItem" Header="_Redo Layout" Command="{Binding RedoLayoutCommand}"
+                  IsEnabled="{Binding CanRedoLayout}" />
+        <Separator />
         <MenuItem Header="Add _Entity" Command="{Binding AddNodeCommand}" />
         <MenuItem Header="_Delete Entity" Command="{Binding DeleteNodeCommand}" />
       </MenuItem>
+      <MenuItem Header="_Scene">
+        <MenuItem Header="Main Scene" Command="{Binding OpenMainSceneCommand}" />
+        <MenuItem Header="Arena Only" Command="{Binding OpenArenaSceneCommand}" />
+      </MenuItem>
       <MenuItem Header="_View">
-        <MenuItem Header="Toggle _Hierarchy" Command="{Binding ToggleHierarchyCommand}" />
-        <MenuItem Header="Toggle _Inspector" Command="{Binding ToggleInspectorCommand}" />
-        <MenuItem Header="Toggle _Console" Command="{Binding ToggleConsoleCommand}" />
-        <Separator />
         <MenuItem Header="Toggle _Theme" Command="{Binding ToggleThemeCommand}" />
+        <Separator />
+        <MenuItem x:Name="HiddenPanelsMenu" Header="_Hidden Panels" />
       </MenuItem>
       <MenuItem Header="_Help">
         <MenuItem Header="Nova UI v0.2 · Editor Foundation" IsEnabled="False" />
@@ -47,145 +55,50 @@
         <nova:NovaButton Content="Undo" Command="{Binding UndoCommand}" />
         <nova:NovaButton Content="Redo" Command="{Binding RedoCommand}" />
         <Border Width="1" Height="18" Classes="nova-divider" Margin="4,0" />
-        <nova:NovaButton Content="Save Layout" Command="{Binding SaveLayoutCommand}" />
-        <nova:NovaButton Content="Reset Layout" Command="{Binding ResetLayoutCommand}" />
+        <nova:NovaButton x:Name="SaveLayoutButton" Content="Save Layout" Command="{Binding SaveLayoutCommand}" />
+        <nova:NovaButton x:Name="ResetLayoutButton" Content="Reset Layout" Click="OnResetLayout" />
         <Border Width="1" Height="18" Classes="nova-divider" Margin="4,0" />
         <nova:NovaButton Content="Theme" Command="{Binding ToggleThemeCommand}" />
         <TextBlock Text="{Binding ActiveTheme}" Classes="nova-muted" VerticalAlignment="Center" Margin="6,0,0,0" />
+        <Border Width="1" Height="18" Classes="nova-divider" Margin="4,0" />
+        <TextBlock Text="{Binding SceneLabel}" Classes="nova-muted" VerticalAlignment="Center" />
       </StackPanel>
     </Border>
 
     <Border DockPanel.Dock="Bottom" Classes="nova-toolbar">
       <Grid ColumnDefinitions="*,Auto">
         <StackPanel Orientation="Horizontal" Spacing="14">
+          <TextBlock x:Name="SaveStatusText" Text="{Binding StatusText}" />
           <TextBlock x:Name="StatusText" Text="Starting..." />
           <TextBlock x:Name="HierarchyCountText" Classes="nova-muted" />
+          <TextBlock x:Name="DockDiagnosticText"
+                     Classes="nova-muted"
+                     IsVisible="False" />
         </StackPanel>
         <TextBlock Grid.Column="1" Text="Nova UI v0.2" Classes="nova-muted" />
       </Grid>
     </Border>
 
-    <Grid x:Name="RootGrid" RowDefinitions="*,6,180">
-      <Grid x:Name="MainGrid" Grid.Row="0" ColumnDefinitions="240,6,*,6,300">
-        <!-- Hierarchy -->
-        <Border x:Name="HierarchyPanel" Grid.Column="0" Classes="nova-panel" Margin="4,0,0,4" Padding="6">
-          <DockPanel>
-            <Grid DockPanel.Dock="Top" ColumnDefinitions="*,Auto" Margin="2,0,2,6">
-              <TextBlock Text="Hierarchy" Classes="nova-section-title" />
-              <TextBlock Grid.Column="1" x:Name="HierarchyCountInline" Classes="nova-muted" FontSize="11" />
-            </Grid>
-            <nova:NovaTreeView x:Name="HierarchyTree"
-                               ItemsSource="{Binding Roots}"
-                               SelectedItem="{Binding SelectedNode, Mode=TwoWay}">
-              <nova:NovaTreeView.ItemTemplate>
-                <TreeDataTemplate ItemsSource="{Binding Children}">
-                  <StackPanel Orientation="Horizontal" Spacing="6">
-                    <Border Background="{DynamicResource Nova.Brush.color.bg.elevated}"
-                            CornerRadius="3" Width="18" Height="18">
-                      <TextBlock Text="{Binding TypeGlyph}" FontSize="10"
-                                 HorizontalAlignment="Center" VerticalAlignment="Center" />
-                    </Border>
-                    <TextBlock Text="{Binding Name}" VerticalAlignment="Center" />
-                    <TextBlock Text="{Binding Type}" Classes="nova-muted" VerticalAlignment="Center" />
-                  </StackPanel>
-                </TreeDataTemplate>
-              </nova:NovaTreeView.ItemTemplate>
-            </nova:NovaTreeView>
-          </DockPanel>
-        </Border>
-
-        <nova:NovaSplitter x:Name="HierarchySplitter" Grid.Column="1"
-                           ResizeDirection="Columns" ResizeBehavior="PreviousAndNext" />
-
-        <!-- Viewport placeholder -->
-        <Border Grid.Column="2" Classes="nova-panel" Margin="0,0,0,4">
-          <Grid>
-            <Border Background="{DynamicResource Nova.Brush.color.bg.canvas}" />
-            <StackPanel HorizontalAlignment="Center" VerticalAlignment="Center" Spacing="6">
-              <TextBlock Text="VIEWPORT" FontSize="20" FontWeight="SemiBold" Classes="nova-muted"
-                         HorizontalAlignment="Center" />
-              <TextBlock Text="Placeholder host · no graphics backend in v0.2"
-                         Classes="nova-muted" HorizontalAlignment="Center" />
-            </StackPanel>
-            <Border HorizontalAlignment="Left" VerticalAlignment="Top" Margin="10"
-                    Classes="nova-elevated" Padding="8,4">
-              <TextBlock x:Name="ViewportStatusText" Text="Viewport" Classes="nova-mono" FontSize="11" />
-            </Border>
-            <Border HorizontalAlignment="Right" VerticalAlignment="Bottom" Margin="10"
-                    Classes="nova-elevated" Padding="8,4">
-              <TextBlock Text="Offline" Classes="nova-muted" FontSize="11" />
-            </Border>
-          </Grid>
-        </Border>
-
-        <nova:NovaSplitter x:Name="InspectorSplitter" Grid.Column="3"
-                           ResizeDirection="Columns" ResizeBehavior="PreviousAndNext" />
-
-        <!-- Inspector -->
-        <Border x:Name="InspectorPanel" Grid.Column="4" Classes="nova-panel" Margin="0,0,4,4" Padding="8">
-          <DockPanel>
-            <StackPanel DockPanel.Dock="Top" Spacing="2" Margin="2,0,2,8">
-              <TextBlock x:Name="InspectorHeaderText" Text="Inspector" Classes="nova-title" />
-              <TextBlock x:Name="InspectorTypeText" Text="" Classes="nova-secondary" FontSize="11" />
-              <nova:NovaDivider Margin="0,6,0,0" />
-            </StackPanel>
-
-            <nova:NovaScrollArea>
-              <ItemsControl ItemsSource="{Binding Properties}">
-                <ItemsControl.ItemTemplate>
-                  <DataTemplate>
-                    <nova:NovaPropertyRow Label="{Binding Label}" Description="{Binding Description}">
-                      <nova:NovaPropertyRow.Value>
-                        <Grid>
-                          <nova:NovaNumberField IsVisible="{Binding IsNumber}"
-                                                Value="{Binding NumberValue, Mode=TwoWay}"
-                                                Minimum="{Binding Minimum}"
-                                                Maximum="{Binding Maximum}"
-                                                Step="{Binding Step}"
-                                                Format="{Binding Format}" />
-                          <nova:NovaTextField IsVisible="{Binding IsText}"
-                                              Text="{Binding TextValue, Mode=OneWay}"
-                                              TextCommitted="OnTextCommitted"
-                                              Watermark="value" />
-                          <CheckBox IsVisible="{Binding IsBool}"
-                                    IsChecked="{Binding BoolValue, Mode=TwoWay}"
-                                    Content="Enabled" />
-                          <nova:NovaSelect IsVisible="{Binding IsChoice}"
-                                           ItemsSource="{Binding Options}"
-                                           SelectedItem="{Binding ChoiceValue, Mode=TwoWay}" />
-                        </Grid>
-                      </nova:NovaPropertyRow.Value>
-                    </nova:NovaPropertyRow>
-                  </DataTemplate>
-                </ItemsControl.ItemTemplate>
-              </ItemsControl>
-            </nova:NovaScrollArea>
-          </DockPanel>
-        </Border>
-      </Grid>
-
-      <nova:NovaSplitter x:Name="ConsoleSplitter" Grid.Row="1"
-                         ResizeDirection="Rows" ResizeBehavior="PreviousAndNext" />
-
-      <!-- Console -->
-      <Border x:Name="ConsolePanel" Grid.Row="2" Classes="nova-panel" Margin="4,0,4,4" Padding="6">
-        <DockPanel>
-          <Grid DockPanel.Dock="Top" ColumnDefinitions="*,Auto" Margin="2,0,2,4">
-            <StackPanel Orientation="Horizontal" Spacing="8">
-              <TextBlock Text="Console" Classes="nova-section-title" />
-              <TextBlock Text="{Binding ConsoleCount}" Classes="nova-muted" FontSize="11" VerticalAlignment="Center" />
-            </StackPanel>
-            <nova:NovaButton Grid.Column="1" Content="Clear" Command="{Binding ClearConsoleCommand}"
-                             Classes="nova-subtle" />
-          </Grid>
-          <nova:NovaListView ItemsSource="{Binding Logs}" SelectionMode="Single">
-            <nova:NovaListView.ItemTemplate>
-              <DataTemplate>
-                <TextBlock Text="{Binding Text}" Classes="nova-mono" TextWrapping="NoWrap" />
-              </DataTemplate>
-            </nova:NovaListView.ItemTemplate>
-          </nova:NovaListView>
-        </DockPanel>
+    <Grid Margin="4">
+      <ContentControl x:Name="DockRoot" />
+      <Border x:Name="DockDegradedBanner"
+              Classes="nova-elevated"
+              IsVisible="False"
+              HorizontalAlignment="Center"
+              VerticalAlignment="Top"
+              Margin="24"
+              Padding="16"
+              MaxWidth="560">
+        <StackPanel Spacing="8">
+          <TextBlock Text="Workspace layout unavailable" Classes="nova-title" />
+          <TextBlock x:Name="DockDegradedText"
+                     Classes="nova-secondary"
+                     TextWrapping="Wrap" />
+          <nova:NovaButton x:Name="DockRetryButton"
+                           Content="Retry layout"
+                           Click="OnRetryDockProjection"
+                           HorizontalAlignment="Left" />
+        </StackPanel>
       </Border>
     </Grid>
   </DockPanel>

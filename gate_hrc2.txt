@@ -1,0 +1,45 @@
+[18:04:37.937] [info] [Engine] Log system initialized (async mode) -> logs/engine.log
+[18:04:37.949] [info] [Engine] CrashHandler initialized (report dir: crashes)
+[18:04:37.950] [info] [SubsystemManager] 
+[18:04:37.950] [info] [SubsystemManager] ==============================================
+[18:04:37.950] [info] [SubsystemManager]   Engine Subsystem Initialization — Begin
+[18:04:37.950] [info] [SubsystemManager] ==============================================
+[18:04:37.950] [info] [SubsystemManager]   [Window] initializing...
+[18:04:37.950] [info] [SubsystemManager]   [Window] OK
+[18:04:37.950] [info] [SubsystemManager] ─── Phase 2 ───
+[18:04:37.950] [info] [SubsystemManager]   [Camera] initializing...
+[18:04:37.950] [info] [SubsystemManager]   [Camera] OK
+[18:04:37.950] [info] [SubsystemManager]   [UI] initializing...
+[18:04:37.950] [info] [SubsystemManager]   [UI] OK
+[18:04:37.950] [info] [SubsystemManager] ─── Phase 4 ───
+[18:04:37.950] [info] [SubsystemManager]   [ResourceManager] initializing...
+[18:04:37.950] [info] [SubsystemManager]   [ResourceManager] OK
+[18:04:37.950] [info] [SubsystemManager]   [FileWatcher] initializing...
+[18:04:37.950] [info] [SubsystemManager]   [FileWatcher] OK
+[18:04:37.950] [info] [SubsystemManager]   [Shader] initializing...
+[18:04:37.950] [info] [SubsystemManager]   [Shader] OK
+[18:04:37.950] [info] [SubsystemManager] ─── Phase 5 ───
+[18:04:37.950] [info] [SubsystemManager]   [Texture] initializing...
+[18:04:37.950] [info] [SubsystemManager]   [Texture] OK
+[18:04:37.950] [info] [SubsystemManager]   [VertexData] initializing...
+[18:04:37.950] [info] [SubsystemManager]   [VertexData] OK
+[18:04:37.950] [info] [SubsystemManager] ==============================================
+[18:04:37.950] [info] [SubsystemManager]   Engine Subsystem Initialization — All 8 subsystems completed successfully
+[18:04:37.950] [info] [SubsystemManager] ==============================================
+[G2-01] single managed host owner; backend is EngineHost
+[G2-02] SESSION calls route through EngineHost dispatch/fetch/poll
+[G2-03] zero production path to the legacy EditorSession ABI
+[18:04:37.965] [error] [OpenGLTexture] Failed to load texture: assets/gp01/tex/player.png
+[18:04:37.965] [info] [Engine] [EditorBridge] project loaded: 10 objects, 33 assets
+[18:04:37.965] [error] [OpenGLTexture] Failed to load texture: assets/gp01/tex/pad.png
+[18:04:37.965] [error] [OpenGLTexture] Failed to load texture: assets/gp01/tex/wall.png
+[G2-04] three-state gate blocks unavailable calls with an explicit state
+[18:04:37.972] [error] [OpenGLTexture] Failed to load texture: assets/gp01/tex/player.png
+[18:04:37.972] [info] [Engine] [EditorBridge] project loaded: 10 objects, 33 assets
+[18:04:37.972] [error] [OpenGLTexture] Failed to load texture: assets/gp01/tex/pad.png
+[18:04:37.972] [error] [OpenGLTexture] Failed to load texture: assets/gp01/tex/wall.png
+[18:04:37.978] [info] [Engine] [EditorBridge] component added: Director -> Camera
+[18:04:37.979] [info] [Engine] [EditorBridge] component prop set: Director[Camera.zoom] = 2
+[18:04:37.984] [error] [Engine] [EditorBridge] script read failed (cannot open): D:\physics_engine\assets\gp01\game.lua
+[HRC-G2 GATE] FAIL: ScriptRead routes through Fetch
+hrc2 exit=1

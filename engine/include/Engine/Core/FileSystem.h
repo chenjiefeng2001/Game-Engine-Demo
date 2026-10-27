@@ -11,7 +11,6 @@
  *   - IFile 接口：统一的文件句柄抽象
  */
 
-#include <atomic>
 #include "Engine/Types.h"
 #include "Engine/Core/IFile.h"
 #include <string>

@@ -41,6 +41,13 @@ public sealed class NovaStateBinding<T> : IDisposable
 
     private void OnStoreChanged(object? sender, UiStateChangedEventArgs e)
     {
+        if (e.Changes.Count == 0)
+        {
+            // Clear() is an explicit "re-read everything" signal.
+            Apply(_store.Get(_id, _key));
+            return;
+        }
+
         foreach (var change in e.Changes)
         {
             if (change.Id != _id || !string.Equals(change.Key, _key, StringComparison.Ordinal))

@@ -1,3 +1,4 @@
+using Nova.UI.Core.Docking;
 using Nova.UI.Core.Layout;
 
 namespace Nova.UI.Core.Tests;
@@ -23,6 +24,9 @@ public sealed class LayoutSerializerTests
         var parsed = WorkspaceLayoutSerializer.Deserialize(json);
 
         Assert.IsFalse(parsed.UsedFallback);
+        Assert.IsNull(parsed.Layout.Dock);
+        Assert.IsNotNull(parsed.DockWorkspace);
+        Assert.AreEqual(DockWorkspace.CreateDefault().Digest, parsed.DockWorkspace!.Digest);
         Assert.AreEqual(280, parsed.Layout.HierarchyWidth, 0.001);
         Assert.AreEqual(360, parsed.Layout.InspectorWidth, 0.001);
         Assert.AreEqual(220, parsed.Layout.ConsoleHeight, 0.001);
@@ -36,6 +40,8 @@ public sealed class LayoutSerializerTests
         var parsed = WorkspaceLayoutSerializer.Deserialize("{ this is not json");
 
         Assert.IsTrue(parsed.UsedFallback);
+        Assert.AreEqual(LayoutFallbackKind.Corrupt, parsed.FallbackKind);
+        Assert.IsTrue(parsed.ShouldQuarantine);
         Assert.AreEqual(WorkspaceLayout.Default, parsed.Layout);
         Assert.IsNotNull(parsed.Reason);
     }
@@ -44,10 +50,12 @@ public sealed class LayoutSerializerTests
     public void Unknown_schema_falls_back_to_defaults()
     {
         var json = WorkspaceLayoutSerializer.Serialize(WorkspaceLayout.Default)
-            .Replace("\"schemaVersion\": 1", "\"schemaVersion\": 99");
+            .Replace("\"schemaVersion\": 3", "\"schemaVersion\": 99");
 
         var parsed = WorkspaceLayoutSerializer.Deserialize(json);
         Assert.IsTrue(parsed.UsedFallback);
+        Assert.AreEqual(LayoutFallbackKind.UnsupportedSchema, parsed.FallbackKind);
+        Assert.IsTrue(parsed.ShouldQuarantine);
         StringAssert.Contains(parsed.Reason, "schema");
         Assert.AreEqual(WorkspaceLayout.Default, parsed.Layout);
     }

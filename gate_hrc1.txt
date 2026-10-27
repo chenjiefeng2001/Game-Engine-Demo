@@ -1,0 +1,2 @@
+[HRC-G1 GATE] ALL GREEN
+hrc1 exit=0

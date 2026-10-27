@@ -1,0 +1,88 @@
+[PP-01] startup baseline + refused no-project edit (no accidental bootstrap)
+[20:34:57.746] [info] [Engine] Log system initialized (async mode) -> logs/engine.log
+[20:34:57.758] [info] [Engine] CrashHandler initialized (report dir: crashes)
+[20:34:57.759] [info] [SubsystemManager] 
+[20:34:57.759] [info] [SubsystemManager] ==============================================
+[20:34:57.759] [info] [SubsystemManager]   Engine Subsystem Initialization — Begin
+[20:34:57.759] [info] [SubsystemManager] ==============================================
+[20:34:57.759] [info] [SubsystemManager]   [Window] initializing...
+[20:34:57.759] [info] [SubsystemManager]   [Window] OK
+[20:34:57.759] [info] [SubsystemManager] ─── Phase 2 ───
+[20:34:57.759] [info] [SubsystemManager]   [Camera] initializing...
+[20:34:57.759] [info] [SubsystemManager]   [Camera] OK
+[20:34:57.759] [info] [SubsystemManager]   [UI] initializing...
+[20:34:57.759] [info] [SubsystemManager]   [UI] OK
+[20:34:57.759] [info] [SubsystemManager] ─── Phase 4 ───
+[20:34:57.759] [info] [SubsystemManager]   [ResourceManager] initializing...
+[20:34:57.759] [info] [SubsystemManager]   [ResourceManager] OK
+[20:34:57.759] [info] [SubsystemManager]   [FileWatcher] initializing...
+[20:34:57.759] [info] [SubsystemManager]   [FileWatcher] OK
+[20:34:57.759] [info] [SubsystemManager]   [Shader] initializing...
+[20:34:57.759] [info] [SubsystemManager]   [Shader] OK
+[20:34:57.759] [info] [SubsystemManager] ─── Phase 5 ───
+[20:34:57.759] [info] [SubsystemManager]   [Texture] initializing...
+[20:34:57.759] [info] [SubsystemManager]   [Texture] OK
+[20:34:57.759] [info] [SubsystemManager]   [VertexData] initializing...
+[20:34:57.759] [info] [SubsystemManager]   [VertexData] OK
+[20:34:57.759] [info] [SubsystemManager] ==============================================
+[20:34:57.759] [info] [SubsystemManager]   Engine Subsystem Initialization — All 8 subsystems completed successfully
+[20:34:57.759] [info] [SubsystemManager] ==============================================
+[20:34:57.763] [info] [OpenGLTexture] Successfully loaded texture: assets/gp01/tex/player.png (16x16)
+[20:34:57.763] [info] [OpenGLTexture] Successfully loaded texture: assets/gp01/tex/pad.png (16x16)
+[20:34:57.763] [info] [OpenGLTexture] Successfully loaded texture: assets/gp01/tex/wall.png (16x16)
+[20:34:57.764] [info] [Engine] [EditorBridge] project loaded: 10 objects, 33 assets
+[PP-02] Open Project handler drives host bootstrap, collections and status bar
+[PP-03] File>Close handler closes the project and stops the pump
+[20:34:58.105] [info] [OpenGLTexture] Successfully loaded texture: assets/gp01/tex/player.png (16x16)
+[20:34:58.106] [info] [OpenGLTexture] Successfully loaded texture: assets/gp01/tex/pad.png (16x16)
+[20:34:58.106] [info] [OpenGLTexture] Successfully loaded texture: assets/gp01/tex/wall.png (16x16)
+[20:34:58.106] [info] [Engine] [EditorBridge] project loaded: 10 objects, 33 assets
+[PP-04] hierarchy click path drives selection, inspector and camera back-fill
+[20:34:58.119] [info] [Engine] [EditorBridge] entity created: Entity
+[20:34:58.153] [info] [Engine] [HRC-3 D3] production pick pass resources ready
+[20:34:58.153] [info] [Engine] [HRC-3 P1] production sprite-batch render resources ready
+[PP-05] create+auto-select resolved through the selection intent (observed order: return-before-event)
+[PP-05] create handler reaches the session; event-driven refresh confirmed
+[20:34:58.203] [info] [Engine] [EditorBridge] entity renamed: Entity -> A1ProdPathProbe
+[PP-06] rename box binding + Rename handler round-trip through the host
+[PP-07] Apply Transform handler writes through the host seam
+[20:34:58.213] [info] [Engine] [EditorBridge] component added: A1ProdPathProbe -> Camera
+[20:34:58.214] [info] [Engine] [EditorBridge] component prop set: A1ProdPathProbe[Camera.enabled] = true
+[20:34:58.215] [info] [Engine] [EditorBridge] component prop set: A1ProdPathProbe[Camera.zoom] = 2.5
+[20:34:58.215] [info] [Engine] [EditorBridge] component prop set: A1ProdPathProbe[Camera.viewport] = 0 0 1280 720
+[20:34:58.215] [info] [Engine] [EditorBridge] component prop set: A1ProdPathProbe[Camera.bounds] = 
+[20:34:58.216] [info] [Engine] [EditorBridge] component removed: A1ProdPathProbe -> Camera
+[PP-08] camera component handlers work; deselect cannot clobber the VM selection
+[20:34:58.385] [info] [Engine] [EditorBridge] sprite assigned: A1ProdPathProbe -> assets/gp01/tex/player.png
+[PP-09] assign sprite keeps accepted != executed and refreshes the inspector by event
+[20:34:58.448] [info] [Engine] [EditorBridge] script assigned: A1ProdPathProbe -> assets/gp01/game.lua
+[PP-10] assign script handler + event-driven inspector refresh
+[20:34:58.450] [info] [LuaEngine] Lua engine initialized (sandbox=on, budget=unlimited)
+[20:34:58.450] [info] [GameplayAPI] Gameplay domains registered: input/entity/transform/component
+[20:34:58.451] [info] [ScriptInstance] Script loaded: D:\repos\Game-Engine-Demo\assets\gp01\game.lua
+[20:34:58.451] [info] [ScriptAPI] [script] [GP01] content-scale director: waves=5 pads=4
+[20:34:58.451] [info] [Engine] Game mode: PLAYING — activating MenuManager
+[20:34:58.451] [info] [Engine] [EditorBridge] PLAY (script=D:\repos\Game-Engine-Demo\assets\gp01\game.lua)
+[20:34:58.476] [info] [ScriptAPI] [ui] HP:14 SCORE:0 WAVE:1/5 ALIVE:0
+[20:34:58.524] [info] [ScriptAPI] [ui] HP:14 SCORE:0 WAVE:1/5 ALIVE:0
+[20:34:58.571] [info] [ScriptAPI] [ui] HP:14 SCORE:0 WAVE:1/5 ALIVE:0
+[20:34:58.575] [info] [GameplayAPI] Gameplay domains registered: input/entity/transform/component
+[20:34:58.576] [info] [ScriptInstance] Script reloaded (persist preserved): D:\repos\Game-Engine-Demo\assets\gp01\game.lua
+[20:34:58.576] [info] [ScriptAPI] [script] [GP01] content-scale director: waves=5 pads=4
+[20:34:58.576] [info] [Engine] [EditorBridge] RELOAD ok (persist preserved): D:\repos\Game-Engine-Demo\assets\gp01\game.lua
+[20:34:58.618] [info] [ScriptAPI] [ui] HP:14 SCORE:0 WAVE:1/5 ALIVE:0
+[20:34:58.634] [debug] [ScriptInstance] OnDestroy: 
+[20:34:58.634] [info] [Engine] Game mode: STOPPED — hiding MenuManager
+[20:34:58.634] [info] [Engine] [EditorBridge] STOP -> edit state restored
+[PP-11] Play/Reload/Stop transport: one pump, tick only while playing
+[HRC-PROD-PATH GATE] ALL GREEN
+[20:34:58.768] [info] [SubsystemManager] --- Engine Subsystem Shutdown ---
+[20:34:58.768] [info] [Engine] CrashHandler shut down
+[20:34:58.768] [info] [SubsystemManager]   [Texture] shutting down...
+[20:34:58.768] [info] [SubsystemManager]   [FileWatcher] shutting down...
+[20:34:58.768] [info] [SubsystemManager]   [ResourceManager] shutting down...
+[20:34:58.768] [info] [SubsystemManager]   [UI] shutting down...
+[20:34:58.768] [info] [SubsystemManager] --- Engine Subsystem Shutdown Complete ---
+[PP-12] production teardown: window close -> CloseProject -> terminal Dispose (ui-driven pump: 13 frames / 4 session ticks)
+[HRC-PROD-PATH GATE] ALL GREEN (incl. production teardown)
+prodpath exit=0

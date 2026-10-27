@@ -38,7 +38,7 @@ public sealed class ThemeManager
 
         var previous = _current;
         _current = next;
-        Changed?.Invoke(this, new ThemeChangedEventArgs(previous, next));
+        RaiseChanged(new ThemeChangedEventArgs(previous, next));
         return true;
     }
 
@@ -47,5 +47,24 @@ public sealed class ThemeManager
         var nextId = _current.IsDark ? "nova.light" : "nova.dark";
         TrySwitch(nextId);
         return _current;
+    }
+
+    private void RaiseChanged(ThemeChangedEventArgs args)
+    {
+        var handlers = Changed;
+        if (handlers is null) return;
+
+        foreach (var handler in handlers.GetInvocationList())
+        {
+            try
+            {
+                ((EventHandler<ThemeChangedEventArgs>)handler)(this, args);
+            }
+            catch
+            {
+                // Theme observers are projections; one broken view must not
+                // abort a completed theme switch.
+            }
+        }
     }
 }

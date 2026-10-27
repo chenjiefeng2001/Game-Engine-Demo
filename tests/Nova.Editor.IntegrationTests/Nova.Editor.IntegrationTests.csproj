@@ -3,7 +3,13 @@
     <IsPackable>false</IsPackable>
     <IsTestProject>true</IsTestProject>
     <RootNamespace>Nova.Editor.IntegrationTests</RootNamespace>
+    <!-- windows TFM: the real-process D8-E gates drive the shell through the
+         OS UI Automation client (System.Windows.Automation). -->
+    <TargetFramework>net9.0-windows</TargetFramework>
   </PropertyGroup>
+  <ItemGroup>
+    <FrameworkReference Include="Microsoft.WindowsDesktop.App" />
+  </ItemGroup>
   <ItemGroup>
     <PackageReference Include="Microsoft.NET.Test.Sdk" Version="17.10.0-preview-24080-01" />
     <PackageReference Include="MSTest.TestAdapter" Version="3.1.1" />
@@ -14,5 +20,9 @@
     <ProjectReference Include="..\..\src\Nova.UI.Core\Nova.UI.Core.csproj" />
     <ProjectReference Include="..\..\src\Nova.UI.Theme\Nova.UI.Theme.csproj" />
     <ProjectReference Include="..\..\src\Nova.Editor.Views\Nova.Editor.Views.csproj" />
+    <!-- Build dependency for the real-process restart gate; no assembly reference. -->
+    <ProjectReference Include="..\..\src\Nova.Editor.App\Nova.Editor.App.csproj"
+                      ReferenceOutputAssembly="false"
+                      Private="false" />
   </ItemGroup>
 </Project>

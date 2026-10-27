@@ -5,6 +5,7 @@ using Avalonia.Controls.Primitives;
 using Avalonia.Layout;
 using Avalonia.Media;
 using Avalonia.Styling;
+using Nova.UI.Avalonia.Docking;
 using Nova.UI.Core.Tokens;
 using Nova.UI.Theme;
 
@@ -451,6 +452,24 @@ public static class NovaThemeAdapter
             new Style(x => x.OfType<GridSplitter>().Class(":pointerover"))
             {
                 Setters = { new Setter(TemplatedControl.BackgroundProperty, accent) },
+            },
+            new Style(x => x.OfType<Thumb>().Class(NovaDockClasses.Splitter))
+            {
+                Setters = { new Setter(TemplatedControl.BackgroundProperty, border) },
+            },
+            new Style(
+                x => x.OfType<Thumb>()
+                    .Class(NovaDockClasses.Splitter)
+                    .Class(":pointerover"))
+            {
+                Setters = { new Setter(TemplatedControl.BackgroundProperty, accent) },
+            },
+            new Style(
+                x => x.OfType<Thumb>()
+                    .Class(NovaDockClasses.Splitter)
+                    .Class(":dragging"))
+            {
+                Setters = { new Setter(TemplatedControl.BackgroundProperty, accentHover) },
             },
 
             new Style(x => x.OfType<Menu>())

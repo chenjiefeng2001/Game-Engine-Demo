@@ -15,6 +15,7 @@ public sealed class MainWindow : Window
     private readonly EditorWorkspace _workspace;
     private readonly EditorShellView _shell;
     private bool _closeConfirmed;
+    private bool _closing;
 
     public MainWindow(EditorWorkspace workspace)
     {
@@ -49,13 +50,50 @@ public sealed class MainWindow : Window
 
     private async void OnClosing(object? sender, WindowClosingEventArgs e)
     {
-        if (_closeConfirmed) return;
+        if (_closeConfirmed)
+            return;
 
-        // Save asynchronously; cancel the first close and re-close when the write
-        // completes. The UI thread is never blocked by file I/O.
+        // The first close is always deferred; the actual close repeats after the
+        // shutdown sequence, including when the save or initialization fails.
         e.Cancel = true;
-        await _shell.ViewModel!.SaveCurrentLayoutAsync(_shell.CollectLayout());
-        _closeConfirmed = true;
-        Close();
+        if (_closing)
+            return;
+
+        _closing = true;
+        try
+        {
+            await _shell.InitializeAsync();
+
+            // The snapshot must be immutable and captured while hosts are still
+            // alive. BeginShutdown only runs after the capture succeeds.
+            var snapshot = _workspace.CaptureShutdownSnapshot(out var reason);
+            try
+            {
+                _shell.DockWorkspace?.BeginShutdown();
+            }
+            catch (Exception ex)
+            {
+                _workspace.Log.Warning($"Dock shutdown failed: {ex.Message}");
+            }
+
+            if (snapshot is null)
+            {
+                if (!string.IsNullOrWhiteSpace(reason))
+                    _workspace.Log.Warning($"Final layout not saved: {reason}");
+            }
+            else
+            {
+                await _workspace.SaveShutdownSnapshotAsync(snapshot);
+            }
+        }
+        catch (Exception ex)
+        {
+            _workspace.Log.Warning($"Editor shutdown failed before the final save: {ex.Message}");
+        }
+        finally
+        {
+            _closeConfirmed = true;
+            Close();
+        }
     }
 }

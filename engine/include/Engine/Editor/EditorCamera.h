@@ -2,6 +2,7 @@
 
 #include "Engine/Core/RHI/MathTypes.h"
 #include "Engine/Editor/EditorDefs.h"
+#include "Engine/Editor/EditorCameraInput.h"
 
 namespace Engine {
 
@@ -21,6 +22,11 @@ namespace Engine {
 
         void OnUpdate(float32 dt);
         void ProcessInput(float32 dt);
+
+        // ── Phase 7: External input mode (Avalonia → Bridge) ──
+        void SetExternalInputMode(bool enabled) { m_ExternalInput = enabled; }
+        bool IsExternalInputMode() const { return m_ExternalInput; }
+        void SetExternalInput(const EditorCameraInput& input) { m_ExternalInputState = input; }
 
         void SetActive(bool active) { m_Active = active; }
         bool IsActive() const { return m_Active; }
@@ -130,6 +136,10 @@ namespace Engine {
         float32 m_SmoothZoom        = 0.0f;
         float32 m_SmoothZoomVelocity = 0.0f;
         bool    m_Dirty             = true;
+
+        // ── Phase 7: External input ──
+        bool m_ExternalInput = false;
+        EditorCameraInput m_ExternalInputState;
 
         // ── 吸附 ──
         SnapMode m_SnapMode = SnapMode::None;

@@ -1,0 +1,48 @@
+[20:35:47.865] [info] [Engine] Log system initialized (async mode) -> logs/engine.log
+[20:35:47.877] [info] [Engine] CrashHandler initialized (report dir: crashes)
+[20:35:47.877] [info] [SubsystemManager] 
+[20:35:47.877] [info] [SubsystemManager] ==============================================
+[20:35:47.877] [info] [SubsystemManager]   Engine Subsystem Initialization — Begin
+[20:35:47.877] [info] [SubsystemManager] ==============================================
+[20:35:47.877] [info] [SubsystemManager]   [Window] initializing...
+[20:35:47.877] [info] [SubsystemManager]   [Window] OK
+[20:35:47.877] [info] [SubsystemManager] ─── Phase 2 ───
+[20:35:47.877] [info] [SubsystemManager]   [Camera] initializing...
+[20:35:47.877] [info] [SubsystemManager]   [Camera] OK
+[20:35:47.877] [info] [SubsystemManager]   [UI] initializing...
+[20:35:47.877] [info] [SubsystemManager]   [UI] OK
+[20:35:47.877] [info] [SubsystemManager] ─── Phase 4 ───
+[20:35:47.877] [info] [SubsystemManager]   [ResourceManager] initializing...
+[20:35:47.877] [info] [SubsystemManager]   [ResourceManager] OK
+[20:35:47.877] [info] [SubsystemManager]   [FileWatcher] initializing...
+[20:35:47.877] [info] [SubsystemManager]   [FileWatcher] OK
+[20:35:47.877] [info] [SubsystemManager]   [Shader] initializing...
+[20:35:47.877] [info] [SubsystemManager]   [Shader] OK
+[20:35:47.877] [info] [SubsystemManager] ─── Phase 5 ───
+[20:35:47.877] [info] [SubsystemManager]   [Texture] initializing...
+[20:35:47.877] [info] [SubsystemManager]   [Texture] OK
+[20:35:47.877] [info] [SubsystemManager]   [VertexData] initializing...
+[20:35:47.882] [info] [Engine] [EditorBridge] project loaded: 10 objects, 33 assets
+[20:35:47.877] [info] [SubsystemManager]   [VertexData] OK
+[20:35:47.877] [info] [SubsystemManager] ==============================================
+[20:35:47.877] [info] [SubsystemManager]   Engine Subsystem Initialization — All 8 subsystems completed successfully
+[20:35:47.877] [info] [SubsystemManager] ==============================================
+[20:35:47.881] [info] [OpenGLTexture] Successfully loaded texture: assets/gp01/tex/player.png (16x16)
+[20:35:47.881] [info] [OpenGLTexture] Successfully loaded texture: assets/gp01/tex/pad.png (16x16)
+[20:35:47.882] [info] [OpenGLTexture] Successfully loaded texture: assets/gp01/tex/wall.png (16x16)
+[20:35:47.944] [info] [Engine] [HRC-3 D3] production pick pass resources ready
+[20:35:47.944] [info] [Engine] [HRC-3 P1] production sprite-batch render resources ready
+[PROD-PICK GATE] P1: geometry premise holds (stretch=None, source 800x600, laid-out 554x600, displayed (0,0) 800x600); mapper semantics verified
+[PROD-PICK GATE] P9: keyboard ownership follows viewport focus
+[PROD-PICK GATE] sample: nonClear=24 candidates=10 clear=(8,8)
+[PROD-PICK GATE] P2: accepted -> Pending, selection unchanged (request #1)
+[PROD-PICK GATE] P3: single outstanding request preserved (#1)
+[PROD-PICK GATE] P4: result consumed on frame 3 (outcome 'hit')
+[PROD-PICK GATE] P5: hit id=9 -> index 8 'Wall_W' (production resolver, no injection)
+[PROD-PICK GATE] P6: no-hit is a normal result and clears the selection
+[20:35:48.280] [info] [Engine] [EditorBridge] entity deleted: Director (was idx 0)
+[PROD-PICK GATE] P8b: identity regression OK - same pixel, same entity 'Wall_W', index 8 -> 7 (id 9 unchanged)
+[PROD-PICK GATE] P9: v1.4 contract verified (index used verbatim, NONE refused, non-HIT+index rejected)
+[PROD-PICK GATE] P7: out-of-frame clicks are rejected (never clamped)
+[PROD-PICK GATE] ALL GREEN
+prodpick exit=0

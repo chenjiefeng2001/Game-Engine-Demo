@@ -111,6 +111,11 @@ namespace Engine {
 
         RenderCommand cmd;
 
+        // HRC-3 D3：把 owner 的 GameObject::ID 带入 render queue（生产 pick pass 用）
+        // owner 已在上面由 GetOwner() 取得；无需新增 back-pointer 或改接口。
+        // ID 恒 >= 1（GetNextID() 从 1 开始）；0 保留为 invalid/unset。
+        cmd.entityId = owner->GetID();
+
         // 世界矩阵
         const Mat4& world = owner->GetTransform().GetWorldMatrix();
         std::memcpy(cmd.worldMatrix, world.Data(), sizeof(cmd.worldMatrix));

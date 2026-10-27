@@ -1,0 +1,18 @@
+[18:04:07.615] [info] [Engine] Log system initialized (async mode) -> logs/engine.log
+[18:04:07.628] [info] [Engine] [EditorBridge] project loaded: 10 objects, 33 assets
+[PASS] assert: hierarchy shows 10 entities (got 10)
+[PASS] assert: asset browser shows >=33 assets (got 33)
+[PASS] assert: select Player by name
+[PASS] assert: inspector shows name (got 'Player')
+[PASS] assert: inspector reflects edit (z 4 -> 9.0)
+[18:04:07.658] [info] [Engine] [EditorBridge] project saved: D:\repos\Game-Engine-Demo\editor_avalonia\spike_gp01\Main.scene (10 entities)
+[18:04:08.519] [info] [OpenGLGraphicsFactory] OpenGL 4.6 loaded
+[18:04:08.521] [error] [OpenGLTexture] Failed to load texture: assets/gp01/tex/player.png
+[18:04:08.521] [info] [Engine] [EditorBridge] project loaded: 10 objects, 33 assets
+[18:04:08.521] [error] [OpenGLTexture] Failed to load texture: assets/gp01/tex/pad.png
+[18:04:08.521] [error] [OpenGLTexture] Failed to load texture: assets/gp01/tex/wall.png
+[PASS] assert: re-select Player after reopen
+[PASS] assert: persisted transform matches edit (z==9.0)
+[PASS] persisted Player.z == 9.0
+[PHASE1 GATE] ALL GREEN in 1253 ms
+gate1 exit=0

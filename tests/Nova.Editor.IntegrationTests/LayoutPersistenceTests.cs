@@ -1,4 +1,6 @@
 using Nova.Editor.Services;
+using Nova.Editor.Services.Layout;
+using Nova.UI;
 using Nova.UI.Core.Layout;
 
 namespace Nova.Editor.IntegrationTests;
@@ -65,6 +67,60 @@ public sealed class LayoutPersistenceTests
     }
 
     [TestMethod]
+    public async Task Missing_layout_is_created_by_the_first_save()
+    {
+        var workspace = EditorWorkspace.CreateSample(_layoutPath);
+        await workspace.InitializeLayoutAsync();
+        workspace.ApplyLayout(workspace.Layout with { HierarchyWidth = 275 });
+
+        var saved = await workspace.SaveLayoutAsync();
+
+        Assert.AreEqual(LayoutSaveStatus.Saved, saved.Status, saved.Error);
+        var parsed = WorkspaceLayoutSerializer.Deserialize(await File.ReadAllTextAsync(_layoutPath));
+        Assert.IsFalse(parsed.UsedFallback, parsed.Reason);
+        Assert.AreEqual(275, parsed.Layout.HierarchyWidth, 0.001);
+    }
+
+    [TestMethod]
+    public async Task Save_command_failure_is_logged_and_preserves_the_previous_layout()
+    {
+        if (!OperatingSystem.IsWindows())
+            Assert.Inconclusive("Cross-process share locks are only enforced on Windows.");
+
+        var workspace = EditorWorkspace.CreateSample(_layoutPath);
+        workspace.ApplyLayout(workspace.Layout with { HierarchyWidth = 280 });
+        Assert.IsTrue((await workspace.SaveLayoutAsync()).Success);
+        var before = await File.ReadAllTextAsync(_layoutPath);
+
+        using (var lockStream = new FileStream(
+                   _layoutPath, FileMode.Open, FileAccess.ReadWrite, FileShare.None))
+        {
+            workspace.ApplyLayout(workspace.Layout with { HierarchyWidth = 340 });
+            Assert.IsTrue(workspace.Execute(NovaCommandIds.SaveLayout).Success);
+
+            var deadline = DateTime.UtcNow + TimeSpan.FromSeconds(5);
+            while (DateTime.UtcNow < deadline
+                   && !workspace.Log.Snapshot().Any(
+                       entry => entry.Message.Contains(
+                           "Layout save failed",
+                           StringComparison.Ordinal)))
+            {
+                await Task.Delay(20);
+            }
+
+            Assert.IsTrue(
+                workspace.Log.Snapshot().Any(
+                    entry => entry.Message.Contains(
+                        "Layout save failed",
+                        StringComparison.Ordinal)),
+                "A failed save through the command path must be logged.");
+        }
+
+        Assert.AreEqual(before, await File.ReadAllTextAsync(_layoutPath));
+        Assert.AreEqual(0, Directory.GetFiles(_directory, "*.tmp").Length);
+    }
+
+    [TestMethod]
     public async Task Corrupt_layout_falls_back_and_is_quarantined()
     {
         await File.WriteAllTextAsync(_layoutPath, "{ broken json");
@@ -106,7 +162,7 @@ public sealed class LayoutPersistenceTests
     public async Task Unknown_schema_is_quarantined_instead_of_silently_migrated()
     {
         var future = WorkspaceLayoutSerializer.Serialize(WorkspaceLayout.Default)
-            .Replace("\"schemaVersion\": 1", "\"schemaVersion\": 99");
+            .Replace("\"schemaVersion\": 3", "\"schemaVersion\": 99");
         await File.WriteAllTextAsync(_layoutPath, future);
         var workspace = EditorWorkspace.CreateSample(_layoutPath);
 

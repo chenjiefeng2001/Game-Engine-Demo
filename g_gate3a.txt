@@ -1,0 +1,43 @@
+[20:33:05.973] [info] [Engine] Log system initialized (async mode) -> logs/engine.log
+[20:33:05.986] [info] [Engine] [EditorBridge] project loaded: 10 objects, 33 assets
+[PASS] assert: open GP01
+[PASS] assert: hierarchy 10 entities (got 10)
+[PASS] assert: no filter -> full list
+[PASS] assert: search 'Pad' -> 4 (got 4)
+[PASS] assert: filtered list all match
+[PASS] assert: HasFilter true
+[PASS] assert: select Pad_N (visible under filter)
+[PASS] assert: search 'zzz' -> empty
+[PASS] assert: clear filter -> full list
+[PASS] assert: selection restored after filter round-trip
+[PASS] assert: no match before create
+[20:33:06.016] [info] [Engine] [EditorBridge] entity created: HeroKnight
+[PASS] assert: create HeroKnight under filter
+[PASS] assert: master list 11 after create
+[PASS] assert: created entity visible under matching filter
+[PASS] assert: select created
+[20:33:06.020] [info] [Engine] [EditorBridge] entity renamed: HeroKnight -> HeroLord
+[PASS] assert: rename HeroKnight -> HeroLord
+[PASS] assert: selection kept after rename
+[PASS] assert: filter reflects renamed entity
+[PASS] assert: re-select before delete
+[20:33:06.024] [info] [Engine] [EditorBridge] entity deleted: HeroLord (was idx 10)
+[PASS] assert: delete HeroLord
+[PASS] assert: master list back to 10
+[PASS] assert: selection cleared after delete
+[20:33:06.026] [info] [Engine] [EditorBridge] project saved: assets/gp01/Main.scene (10 entities)
+[PASS] assert: save project
+[20:33:06.667] [info] [OpenGLGraphicsFactory] OpenGL 4.6 loaded
+[20:33:06.670] [info] [OpenGLTexture] Successfully loaded texture: assets/gp01/tex/player.png (16x16)
+[20:33:06.671] [info] [OpenGLTexture] Successfully loaded texture: assets/gp01/tex/pad.png (16x16)
+[20:33:06.671] [info] [OpenGLTexture] Successfully loaded texture: assets/gp01/tex/wall.png (16x16)
+[20:33:06.671] [info] [Engine] [EditorBridge] project loaded: 10 objects, 33 assets
+[PASS] assert: reopen project
+[PASS] assert: reopen 10 entities (got 10)
+[PASS] assert: reopen filtered list full
+[PASS] assert: re-select Pad_N
+[PASS] assert: reopen search filter works
+[PASS] assert: selection kept across reload + filter round-trip
+[PASS] assert: reopen clean
+[P3-A GATE] ALL GREEN in 1036 ms
+gate3a exit=0

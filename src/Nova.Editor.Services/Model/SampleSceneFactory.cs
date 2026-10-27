@@ -5,7 +5,7 @@ namespace Nova.Editor.Services.Model;
 /// <summary>Deterministic offline sample used by the shell, gates, and playground.</summary>
 public static class SampleSceneFactory
 {
-    public static SceneDocument Create()
+    public static SceneDocument Create(Guid? contextId = null)
     {
         var root = SceneNodeSchema.CreateNode(new UiId("scene.root"), "Sample Scene", "Scene");
 
@@ -37,7 +37,18 @@ public static class SampleSceneFactory
         root.AddChild(light);
         root.AddChild(camera);
 
-        return new SceneDocument(root);
+        return new SceneDocument(root, contextId);
+    }
+
+    public static SceneDocument CreateArena(Guid? contextId = null)
+    {
+        var root = SceneNodeSchema.CreateNode(new UiId("scene.arena.root"), "Arena Scene", "Scene");
+        var arena = SceneNodeSchema.CreateNode(new UiId("scene.arena.floor"), "Arena Floor", "Entity");
+        Apply(arena,
+            ("position.x", 0d), ("position.y", 0d), ("position.z", 0d),
+            ("sprite.asset", "sprites/arena.png"), ("sprite.layer", "Background"));
+        root.AddChild(arena);
+        return new SceneDocument(root, contextId);
     }
 
     private static void Apply(SceneNode node, params (string Key, object? Value)[] values)

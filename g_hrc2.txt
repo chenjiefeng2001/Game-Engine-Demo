@@ -1,0 +1,73 @@
+[20:35:28.996] [info] [Engine] Log system initialized (async mode) -> logs/engine.log
+[20:35:29.008] [info] [Engine] CrashHandler initialized (report dir: crashes)
+[20:35:29.008] [info] [SubsystemManager] 
+[20:35:29.008] [info] [SubsystemManager] ==============================================
+[20:35:29.008] [info] [SubsystemManager]   Engine Subsystem Initialization — Begin
+[20:35:29.008] [info] [SubsystemManager] ==============================================
+[20:35:29.008] [info] [SubsystemManager]   [Window] initializing...
+[20:35:29.008] [info] [SubsystemManager]   [Window] OK
+[20:35:29.008] [info] [SubsystemManager] ─── Phase 2 ───
+[20:35:29.008] [info] [SubsystemManager]   [Camera] initializing...
+[20:35:29.008] [info] [SubsystemManager]   [Camera] OK
+[20:35:29.008] [info] [SubsystemManager]   [UI] initializing...
+[20:35:29.008] [info] [SubsystemManager]   [UI] OK
+[20:35:29.008] [info] [SubsystemManager] ─── Phase 4 ───
+[20:35:29.008] [info] [SubsystemManager]   [ResourceManager] initializing...
+[20:35:29.008] [info] [SubsystemManager]   [ResourceManager] OK
+[20:35:29.008] [info] [SubsystemManager]   [FileWatcher] initializing...
+[20:35:29.008] [info] [SubsystemManager]   [FileWatcher] OK
+[20:35:29.008] [info] [SubsystemManager]   [Shader] initializing...
+[20:35:29.008] [info] [SubsystemManager]   [Shader] OK
+[20:35:29.008] [info] [SubsystemManager] ─── Phase 5 ───
+[20:35:29.008] [info] [SubsystemManager]   [Texture] initializing...
+[20:35:29.008] [info] [SubsystemManager]   [Texture] OK
+[20:35:29.008] [info] [SubsystemManager]   [VertexData] initializing...
+[20:35:29.008] [info] [SubsystemManager]   [VertexData] OK
+[20:35:29.008] [info] [SubsystemManager] ==============================================
+[20:35:29.008] [info] [SubsystemManager]   Engine Subsystem Initialization — All 8 subsystems completed successfully
+[20:35:29.008] [info] [SubsystemManager] ==============================================
+[G2-01] single managed host owner; backend is EngineHost
+[G2-02] SESSION calls route through EngineHost dispatch/fetch/poll
+[G2-03] zero production path to the legacy EditorSession ABI
+[20:35:29.029] [info] [OpenGLTexture] Successfully loaded texture: assets/gp01/tex/player.png (16x16)
+[20:35:29.029] [info] [OpenGLTexture] Successfully loaded texture: assets/gp01/tex/pad.png (16x16)
+[20:35:29.029] [info] [OpenGLTexture] Successfully loaded texture: assets/gp01/tex/wall.png (16x16)
+[20:35:29.029] [info] [Engine] [EditorBridge] project loaded: 10 objects, 33 assets
+[G2-04] three-state gate blocks unavailable calls with an explicit state
+[20:35:29.037] [info] [OpenGLTexture] Successfully loaded texture: assets/gp01/tex/player.png (16x16)
+[20:35:29.038] [info] [OpenGLTexture] Successfully loaded texture: assets/gp01/tex/pad.png (16x16)
+[20:35:29.038] [info] [OpenGLTexture] Successfully loaded texture: assets/gp01/tex/wall.png (16x16)
+[20:35:29.038] [info] [Engine] [EditorBridge] project loaded: 10 objects, 33 assets
+[20:35:29.042] [info] [Engine] [EditorBridge] component added: Director -> Camera
+[20:35:29.043] [info] [Engine] [EditorBridge] component prop set: Director[Camera.zoom] = 2
+[20:35:29.047] [error] [Engine] [EditorBridge] delete entity: bad index 9999
+[G2-05] runtime routing works end-to-end on the host seam
+[G2-08] diagnostic path unified on EngineHost_GetLastDiagnostic
+[20:35:29.109] [info] [Engine] [HRC-3 D3] production pick pass resources ready
+[20:35:29.109] [info] [Engine] [HRC-3 P1] production sprite-batch render resources ready
+[G2-05] native events are marshalled to the UI thread before consumption
+[20:35:29.207] [info] [Engine] [EditorBridge] project loaded: 10 objects, 33 assets
+[20:35:29.210] [info] [OpenGLTexture] Successfully loaded texture: assets/gp01/tex/player.png (16x16)
+[20:35:29.211] [info] [OpenGLTexture] Successfully loaded texture: assets/gp01/tex/pad.png (16x16)
+[20:35:29.211] [info] [Engine] [EditorBridge] project loaded: 10 objects, 33 assets
+[20:35:29.211] [info] [OpenGLTexture] Successfully loaded texture: assets/gp01/tex/wall.png (16x16)
+[G2-06] managed generation guard drops stale events
+[20:35:29.227] [info] [Engine] [EditorBridge] project loaded: 10 objects, 33 assets
+[20:35:29.228] [info] [Engine] [EditorBridge] entity created: A7GateSprite
+[20:35:29.229] [info] [Engine] [EditorBridge] sprite assigned: A7GateSprite -> assets/gp01/tex/player.png
+[20:35:29.231] [error] [Engine] [EditorBridge] assign sprite: bad entity index 9999
+[G2-07] pending edit accepted/executed/failed semantics preserved
+[20:35:29.235] [info] [OpenGLTexture] Successfully loaded texture: assets/gp01/tex/player.png (16x16)
+[20:35:29.235] [info] [OpenGLTexture] Successfully loaded texture: assets/gp01/tex/pad.png (16x16)
+[20:35:29.235] [info] [Engine] [EditorBridge] project loaded: 10 objects, 33 assets
+[20:35:29.235] [info] [OpenGLTexture] Successfully loaded texture: assets/gp01/tex/wall.png (16x16)
+[20:35:29.236] [info] [SubsystemManager] --- Engine Subsystem Shutdown ---
+[20:35:29.236] [info] [Engine] CrashHandler shut down
+[20:35:29.236] [info] [SubsystemManager]   [Texture] shutting down...
+[20:35:29.236] [info] [SubsystemManager]   [FileWatcher] shutting down...
+[20:35:29.236] [info] [SubsystemManager]   [ResourceManager] shutting down...
+[20:35:29.236] [info] [SubsystemManager]   [UI] shutting down...
+[20:35:29.236] [info] [SubsystemManager] --- Engine Subsystem Shutdown Complete ---
+[G2-09] CloseProject / Dispose / restart regression holds
+[HRC-G2 GATE] ALL GREEN
+hrc2 exit=0

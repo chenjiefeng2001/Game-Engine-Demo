@@ -8,7 +8,7 @@ public sealed class CommandHistory : ICommandHistory
     private readonly List<IUndoableCommand> _undo = new();
     private readonly List<IUndoableCommand> _redo = new();
     private readonly int _maxDepth;
-    private readonly Guid _contextId;
+    private Guid _contextId;
 
     /// <param name="maxDepth">Maximum retained undo entries.</param>
     /// <param name="contextId">
@@ -42,8 +42,8 @@ public sealed class CommandHistory : ICommandHistory
         command.Execute();
         Record(command);
 
-        Executed?.Invoke(this, new UndoableCommandEventArgs(command));
-        Changed?.Invoke(this, EventArgs.Empty);
+        Raise(Executed, new UndoableCommandEventArgs(command));
+        RaiseChanged();
     }
 
     public void Undo()
@@ -60,8 +60,8 @@ public sealed class CommandHistory : ICommandHistory
         _undo.RemoveAt(_undo.Count - 1);
         _redo.Add(command);
 
-        Undone?.Invoke(this, new UndoableCommandEventArgs(command));
-        Changed?.Invoke(this, EventArgs.Empty);
+        Raise(Undone, new UndoableCommandEventArgs(command));
+        RaiseChanged();
     }
 
     public void Redo()
@@ -77,8 +77,8 @@ public sealed class CommandHistory : ICommandHistory
         _redo.RemoveAt(_redo.Count - 1);
         _undo.Add(command);
 
-        Redone?.Invoke(this, new UndoableCommandEventArgs(command));
-        Changed?.Invoke(this, EventArgs.Empty);
+        Raise(Redone, new UndoableCommandEventArgs(command));
+        RaiseChanged();
     }
 
     public void Clear()
@@ -86,7 +86,15 @@ public sealed class CommandHistory : ICommandHistory
         if (_undo.Count == 0 && _redo.Count == 0) return;
         _undo.Clear();
         _redo.Clear();
-        Changed?.Invoke(this, EventArgs.Empty);
+        RaiseChanged();
+    }
+
+    public void Reset(Guid contextId)
+    {
+        _contextId = contextId;
+        _undo.Clear();
+        _redo.Clear();
+        RaiseChanged();
     }
 
     private void EnsureContext(IUndoableCommand command)
@@ -97,6 +105,44 @@ public sealed class CommandHistory : ICommandHistory
         {
             throw new InvalidOperationException(
                 $"Command '{command.Id}' belongs to another workspace context.");
+        }
+    }
+
+    private void Raise(
+        EventHandler<UndoableCommandEventArgs>? handlers,
+        UndoableCommandEventArgs args)
+    {
+        if (handlers is null) return;
+
+        foreach (var handler in handlers.GetInvocationList())
+        {
+            try
+            {
+                ((EventHandler<UndoableCommandEventArgs>)handler)(this, args);
+            }
+            catch
+            {
+                // History observers (UI command state) cannot undo a completed
+                // command or abort a lifecycle reset.
+            }
+        }
+    }
+
+    private void RaiseChanged()
+    {
+        var handlers = Changed;
+        if (handlers is null) return;
+
+        foreach (var handler in handlers.GetInvocationList())
+        {
+            try
+            {
+                ((EventHandler)handler)(this, EventArgs.Empty);
+            }
+            catch
+            {
+                // See Raise: projection errors are isolated from history state.
+            }
         }
     }
 

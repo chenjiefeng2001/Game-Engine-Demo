@@ -26,9 +26,28 @@ public sealed class SelectionService
         if (SelectedId == id) return false;
         var previous = SelectedId;
         SelectedId = id;
-        Changed?.Invoke(this, new SelectionChangedEventArgs(previous, id));
+        RaiseChanged(new SelectionChangedEventArgs(previous, id));
         return true;
     }
 
     public bool Clear() => Select(null);
+
+    private void RaiseChanged(SelectionChangedEventArgs args)
+    {
+        var handlers = Changed;
+        if (handlers is null) return;
+
+        foreach (var handler in handlers.GetInvocationList())
+        {
+            try
+            {
+                ((EventHandler<SelectionChangedEventArgs>)handler)(this, args);
+            }
+            catch
+            {
+                // Selection observers must not be able to abort a lifecycle
+                // transition after the model has already changed.
+            }
+        }
+    }
 }

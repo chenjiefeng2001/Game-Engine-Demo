@@ -55,6 +55,16 @@ namespace Engine {
         std::shared_ptr<ISpriteBatch> GetSpriteBatch() const noexcept { return m_SpriteBatch; }
         const RenderQueue& GetRenderQueue() const noexcept { return m_Queue; }
 
+        /**
+         * @brief HRC-3 D3：把 RenderCommand 转成 SpriteData（与 Render() 内部完全同一份实现）
+         *
+         * 存在的唯一理由是**防止几何漂移**：production pick pass 必须用与 color pass
+         * 逐字节相同的转换结果，否则 ID 会落到与颜色不同的像素上，且不会报错。
+         * 因此这里转发到内部同一个 ExtractSpriteData，而不是复制一份。
+         */
+        void ToSpriteData(const RenderCommand& cmd, SpriteData& out) const {
+            ExtractSpriteData(cmd, out);
+        }
     private:
         /** 内部工具：将 RenderCommand 转换为 SpriteData 供 ISpriteBatch 消费 */
         void ExtractSpriteData(const RenderCommand& cmd, SpriteData& outData) const;

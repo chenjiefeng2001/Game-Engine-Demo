@@ -1,0 +1,24 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             x:Class="Nova.Editor.Views.Docking.ScenePanelView"
+             x:CompileBindings="False">
+  <Border Classes="nova-panel">
+    <Grid>
+      <Border Background="{DynamicResource Nova.Brush.color.bg.canvas}" />
+      <StackPanel HorizontalAlignment="Center" VerticalAlignment="Center" Spacing="6">
+        <TextBlock Text="VIEWPORT" FontSize="20" FontWeight="SemiBold" Classes="nova-muted"
+                   HorizontalAlignment="Center" />
+        <TextBlock Text="Placeholder host · no graphics backend in v0.2"
+                   Classes="nova-muted" HorizontalAlignment="Center" />
+      </StackPanel>
+      <Border HorizontalAlignment="Left" VerticalAlignment="Top" Margin="10"
+              Classes="nova-elevated" Padding="8,4">
+        <TextBlock x:Name="ViewportStatusText" Text="Viewport" Classes="nova-mono" FontSize="11" />
+      </Border>
+      <Border HorizontalAlignment="Right" VerticalAlignment="Bottom" Margin="10"
+              Classes="nova-elevated" Padding="8,4">
+        <TextBlock Text="Offline" Classes="nova-muted" FontSize="11" />
+      </Border>
+    </Grid>
+  </Border>
+</UserControl>

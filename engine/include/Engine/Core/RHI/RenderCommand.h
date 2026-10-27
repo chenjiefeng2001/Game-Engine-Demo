@@ -52,6 +52,17 @@ namespace Engine {
 
         /** 可见性层级（位掩码对应 ViewportConfig::VisibilityMask） */
         uint32 layerMask = 0xFFFFFFFF;
+
+        /**
+         * HRC-3 D3：产生本 command 的 GameObject::ID（生产 pick pass 写入 ID 附件用）
+         *
+         * 纯增量字段，不参与颜色 pass 的任何计算。约定：
+         *   - 0 = 无 owner / 未填充（**不是** pick sentinel；pick sentinel 是 -1）
+         *   - >= 1 = GameObject::ID（GetNextID() 从 1 开始，天然避开 0）
+         *
+         * D3-C2：有效 entity ID >= 1，sentinel 恒为 -1，0 保留为 invalid/unset。
+         */
+        uint32 entityId = 0;
     };
 
 } // namespace Engine

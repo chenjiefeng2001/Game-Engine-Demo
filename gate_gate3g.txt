@@ -1,0 +1,140 @@
+[18:04:26.766] [info] [Engine] Log system initialized (async mode) -> logs/engine.log
+[18:04:26.767] [info] [Engine] [EditorBridge] project loaded: 10 objects, 33 assets
+[PASS] assert: open GP01
+[PASS] assert: fresh 10 entities / 33 assets
+[18:04:26.799] [info] [Engine] [EditorBridge] entity created: G3Hero
+[PASS] assert: create entity
+[PASS] assert: select new entity
+[18:04:26.824] [info] [Engine] [EditorBridge] entity renamed: G3Hero -> G3Protagonist
+[PASS] assert: rename entity
+[PASS] assert: rename reflected
+[PASS] assert: transform applied (rx/z readback)
+[18:04:26.845] [info] [Engine] [EditorBridge] asset imported: assets/gp01/tex/imported_g3.png (Texture)
+[PASS] assert: import texture
+[18:04:26.854] [info] [Engine] [EditorBridge] sprite assigned: G3Protagonist -> assets/gp01/tex/imported_g3.png
+[18:04:26.854] [info] [OpenGLTexture] Successfully loaded texture: assets/gp01/tex/imported_g3.png (16x16)
+[PASS] assert: assign sprite to protagonist
+[PASS] assert: inspector sprite bound
+[PASS] assert: dirty after assign
+[18:04:26.858] [info] [Engine] [EditorBridge] asset imported: assets/gp01/scripts/g3_flow.lua (Script)
+[PASS] assert: import script
+[18:04:26.864] [info] [Engine] [EditorBridge] script assigned: G3Protagonist -> assets/gp01/scripts/g3_flow.lua
+[PASS] assert: assign script to protagonist
+[PASS] assert: inspector script bound
+[18:04:26.867] [info] [Engine] [EditorBridge] project saved: assets/gp01/Main.scene (11 entities)
+[PASS] assert: save authoring
+[PASS] assert: clean after save
+[PASS] assert: game.lua director script
+[PASS] assert: open game.lua
+[18:04:26.883] [info] [Engine] [EditorBridge] script saved: D:\repos\Game-Engine-Demo\editor_avalonia\spike_gp07\assets\gp01\game.lua
+[PASS] assert: write gameplay director A (hp=14)
+[PASS] assert: script clean after save
+[18:04:26.886] [info] [LuaEngine] Lua engine initialized (sandbox=on, budget=unlimited)
+[18:04:26.886] [info] [GameplayAPI] Gameplay domains registered: input/entity/transform/component
+[18:04:26.896] [info] [Engine] [EditorBridge] PLAY (script=D:\repos\Game-Engine-Demo\editor_avalonia\spike_gp07\assets\gp01\game.lua)
+[18:04:26.896] [info] [ScriptInstance] Script loaded: D:\repos\Game-Engine-Demo\editor_avalonia\spike_gp07\assets\gp01\game.lua
+[PASS] assert: play
+[PASS] assert: running after play
+[PASS] assert: gameplay param hp=14 active (real behavior)
+[18:04:26.901] [info] [Engine] [EditorBridge] script saved: D:\repos\Game-Engine-Demo\editor_avalonia\spike_gp07\assets\gp01\game.lua
+[PASS] assert: save gameplay change (hp=50)
+[18:04:26.903] [info] [GameplayAPI] Gameplay domains registered: input/entity/transform/component
+[18:04:26.915] [info] [Engine] [EditorBridge] RELOAD ok (persist preserved): D:\repos\Game-Engine-Demo\editor_avalonia\spike_gp07\assets\gp01\game.lua
+[18:04:26.915] [info] [ScriptInstance] Script reloaded (persist preserved): D:\repos\Game-Engine-Demo\editor_avalonia\spike_gp07\assets\gp01\game.lua
+[PASS] assert: reload
+[PASS] assert: still running after reload
+[PASS] assert: _PERSIST preserved across reload (14 kept, 50 ignored)
+[18:04:26.919] [info] [Engine] [EditorBridge] STOP -> edit state restored
+[18:04:26.919] [debug] [ScriptInstance] OnDestroy: 
+[PASS] assert: stop
+[18:04:26.922] [info] [LuaEngine] Lua engine initialized (sandbox=on, budget=unlimited)
+[18:04:26.922] [info] [GameplayAPI] Gameplay domains registered: input/entity/transform/component
+[18:04:26.923] [info] [Engine] [EditorBridge] PLAY (script=D:\repos\Game-Engine-Demo\editor_avalonia\spike_gp07\assets\gp01\game.lua)
+[18:04:26.923] [info] [ScriptInstance] Script loaded: D:\repos\Game-Engine-Demo\editor_avalonia\spike_gp07\assets\gp01\game.lua
+[PASS] assert: re-play
+[PASS] assert: edited gameplay param active on re-play (14 -> 50)
+[18:04:26.925] [debug] [ScriptInstance] OnDestroy: 
+[18:04:26.925] [info] [Engine] [EditorBridge] STOP -> edit state restored
+[PASS] assert: stop after verify
+[18:04:26.934] [info] [Engine] [EditorBridge] project saved: assets/gp01/Main.scene (11 entities)
+[PASS] assert: save project
+[PASS] assert: clean after final save
+[PASS] assert: closed (session + runtime cleared)
+[18:04:29.861] [info] [OpenGLGraphicsFactory] OpenGL 4.6 loaded
+[18:04:29.891] [info] [OpenGLTexture] Successfully loaded texture: assets/gp01/tex/player.png (16x16)
+[18:04:29.891] [info] [OpenGLTexture] Successfully loaded texture: assets/gp01/tex/pad.png (16x16)
+[18:04:29.900] [info] [OpenGLTexture] Successfully loaded texture: assets/gp01/tex/wall.png (16x16)
+[18:04:29.906] [info] [Engine] [EditorBridge] project loaded: 11 objects, 35 assets
+[18:04:29.906] [info] [OpenGLTexture] Successfully loaded texture: assets/gp01/tex/imported_g3.png (16x16)
+[PASS] assert: reopen
+[PASS] assert: re-select protagonist
+[PASS] assert: name persists
+[PASS] assert: transform persists
+[PASS] assert: sprite binding persists
+[PASS] assert: script binding persists
+[PASS] assert: imported asset GUIDs stable across reopen
+[PASS] assert: game.lua content persists (disk == saved)
+[PASS] assert: game.lua resolved by identity in reopened session
+[PASS] assert: reopen script (by identity)
+[PASS] assert: edited param visible on reopen
+[18:04:29.921] [info] [Engine] [EditorBridge] PLAY (script=D:\repos\Game-Engine-Demo\editor_avalonia\spike_gp07\assets\gp01\game.lua)
+[18:04:29.921] [info] [LuaEngine] Lua engine initialized (sandbox=on, budget=unlimited)
+[18:04:29.921] [info] [GameplayAPI] Gameplay domains registered: input/entity/transform/component
+[18:04:29.921] [info] [ScriptInstance] Script loaded: D:\repos\Game-Engine-Demo\editor_avalonia\spike_gp07\assets\gp01\game.lua
+[PASS] assert: reopen play
+[PASS] assert: reopen -> play uses persisted gameplay param (hp=50)
+[18:04:29.927] [debug] [ScriptInstance] OnDestroy: 
+[18:04:29.927] [info] [Engine] [EditorBridge] STOP -> edit state restored
+[18:04:30.214] [info] [OpenGLGraphicsFactory] OpenGL 4.6 loaded
+[18:04:30.223] [info] [OpenGLTexture] Successfully loaded texture: assets/gp01/tex/player.png (16x16)
+[18:04:30.224] [info] [OpenGLTexture] Successfully loaded texture: assets/gp01/tex/pad.png (16x16)
+[18:04:30.225] [info] [OpenGLTexture] Successfully loaded texture: assets/gp01/tex/wall.png (16x16)
+[18:04:30.225] [info] [OpenGLTexture] Successfully loaded texture: assets/gp01/tex/imported_g3.png (16x16)
+[18:04:30.225] [info] [Engine] [EditorBridge] project loaded: 11 objects, 35 assets
+[PASS] assert: E1 reopen for edit
+[PASS] assert: E1 select
+[PASS] assert: E1 dirty after edit (cancel path representable)
+[18:04:30.904] [info] [OpenGLGraphicsFactory] OpenGL 4.6 loaded
+[18:04:30.909] [info] [OpenGLTexture] Successfully loaded texture: assets/gp01/tex/player.png (16x16)
+[18:04:30.909] [info] [OpenGLTexture] Successfully loaded texture: assets/gp01/tex/pad.png (16x16)
+[18:04:30.910] [info] [OpenGLTexture] Successfully loaded texture: assets/gp01/tex/wall.png (16x16)
+[18:04:30.910] [info] [OpenGLTexture] Successfully loaded texture: assets/gp01/tex/imported_g3.png (16x16)
+[18:04:30.910] [info] [Engine] [EditorBridge] project loaded: 11 objects, 35 assets
+[PASS] assert: E1 reopen after discard
+[PASS] assert: E1 re-select
+[PASS] assert: E1 discarded edit NOT persisted (Z back to -3.25)
+[18:04:31.052] [info] [OpenGLGraphicsFactory] OpenGL 4.6 loaded
+[18:04:31.058] [info] [OpenGLTexture] Successfully loaded texture: assets/gp01/tex/player.png (16x16)
+[18:04:31.059] [info] [OpenGLTexture] Successfully loaded texture: assets/gp01/tex/pad.png (16x16)
+[18:04:31.060] [info] [OpenGLTexture] Successfully loaded texture: assets/gp01/tex/wall.png (16x16)
+[18:04:31.060] [info] [OpenGLTexture] Successfully loaded texture: assets/gp01/tex/imported_g3.png (16x16)
+[18:04:31.060] [info] [Engine] [EditorBridge] project loaded: 11 objects, 35 assets
+[PASS] assert: E2 open
+[PASS] assert: E2 open script
+[18:04:31.063] [info] [Engine] [EditorBridge] script saved: D:\repos\Game-Engine-Demo\editor_avalonia\spike_gp07\assets\gp01\game.lua
+[18:04:31.064] [info] [LuaEngine] Lua engine initialized (sandbox=on, budget=unlimited)
+[18:04:31.064] [info] [GameplayAPI] Gameplay domains registered: input/entity/transform/component
+[18:04:31.084] [error] [Engine] [EditorBridge] play: director init failed: ...ine-Demo\editor_avalonia\spike_gp07\assets\gp01\game.lua:1: <name> or '...' expected near 'end'
+[18:04:31.084] [error] [ScriptInstance] Load failed: D:\repos\Game-Engine-Demo\editor_avalonia\spike_gp07\assets\gp01\game.lua (...ine-Demo\editor_avalonia\spike_gp07\assets\gp01\game.lua:1: <name> or '...' expected near 'end')
+[PASS] assert: E2 play broken fails
+[PASS] assert: E2 error surfaced, no crash
+[18:04:31.088] [info] [Engine] [EditorBridge] script saved: D:\repos\Game-Engine-Demo\editor_avalonia\spike_gp07\assets\gp01\game.lua
+[18:04:31.091] [info] [LuaEngine] Lua engine initialized (sandbox=on, budget=unlimited)
+[18:04:31.091] [info] [GameplayAPI] Gameplay domains registered: input/entity/transform/component
+[18:04:31.093] [info] [Engine] [EditorBridge] PLAY (script=D:\repos\Game-Engine-Demo\editor_avalonia\spike_gp07\assets\gp01\game.lua)
+[18:04:31.093] [info] [ScriptInstance] Script loaded: D:\repos\Game-Engine-Demo\editor_avalonia\spike_gp07\assets\gp01\game.lua
+[PASS] assert: E2 play recovered
+[PASS] assert: E2 runtime healthy after fix
+[18:04:31.097] [debug] [ScriptInstance] OnDestroy: 
+[18:04:31.097] [info] [Engine] [EditorBridge] STOP -> edit state restored
+[18:04:31.168] [info] [Engine] [EditorBridge] project loaded: 2 objects, 33 assets
+[PASS] assert: E3 open (fixture)
+[PASS] assert: E3 both entities remain (Player + GhostDangling)
+[PASS] assert: E3 dangling entity present
+[PASS] assert: E3 loaded WITHOUT missing script binding
+[PASS] assert: E3 warning surfaced to console
+[18:04:31.175] [info] [Engine] [EditorBridge] project saved: assets/gp01/E3.scene (2 entities)
+[PASS] assert: E3 editor still usable (can save)
+[PASS] assert: E3 asset browser intact
+[AV-G3 GATE] ALL GREEN in 5066 ms
+gate3g exit=0

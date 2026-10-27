@@ -1,0 +1,47 @@
+[17:59:08.577] [info] [Engine] Log system initialized (async mode) -> logs/engine.log
+[17:59:08.588] [info] [Engine] CrashHandler initialized (report dir: crashes)
+[17:59:08.589] [info] [SubsystemManager] 
+[17:59:08.589] [info] [SubsystemManager] ==============================================
+[17:59:08.589] [info] [SubsystemManager]   Engine Subsystem Initialization — Begin
+[17:59:08.589] [info] [SubsystemManager] ==============================================
+[17:59:08.589] [info] [SubsystemManager]   [Window] initializing...
+[17:59:08.589] [info] [SubsystemManager]   [Window] OK
+[17:59:08.589] [info] [SubsystemManager] ─── Phase 2 ───
+[17:59:08.589] [info] [SubsystemManager]   [Camera] initializing...
+[17:59:08.589] [info] [SubsystemManager]   [Camera] OK
+[17:59:08.589] [info] [SubsystemManager]   [UI] initializing...
+[17:59:08.589] [info] [SubsystemManager]   [UI] OK
+[17:59:08.589] [info] [SubsystemManager] ─── Phase 4 ───
+[17:59:08.589] [info] [SubsystemManager]   [ResourceManager] initializing...
+[17:59:08.589] [info] [SubsystemManager]   [ResourceManager] OK
+[17:59:08.589] [info] [SubsystemManager]   [FileWatcher] initializing...
+[17:59:08.589] [info] [SubsystemManager]   [FileWatcher] OK
+[17:59:08.589] [info] [SubsystemManager]   [Shader] initializing...
+[17:59:08.589] [info] [SubsystemManager]   [Shader] OK
+[17:59:08.589] [info] [SubsystemManager] ─── Phase 5 ───
+[17:59:08.589] [info] [SubsystemManager]   [Texture] initializing...
+[17:59:08.589] [info] [SubsystemManager]   [Texture] OK
+[17:59:08.589] [info] [SubsystemManager]   [VertexData] initializing...
+[17:59:08.589] [info] [SubsystemManager]   [VertexData] OK
+[17:59:08.589] [info] [SubsystemManager] ==============================================
+[17:59:08.589] [info] [SubsystemManager]   Engine Subsystem Initialization — All 8 subsystems completed successfully
+[17:59:08.589] [info] [SubsystemManager] ==============================================
+[17:59:08.593] [info] [OpenGLTexture] Successfully loaded texture: assets/gp01/tex/player.png (16x16)
+[17:59:08.593] [info] [OpenGLTexture] Successfully loaded texture: assets/gp01/tex/pad.png (16x16)
+[17:59:08.593] [info] [OpenGLTexture] Successfully loaded texture: assets/gp01/tex/wall.png (16x16)
+[17:59:08.593] [info] [Engine] [EditorBridge] project loaded: 10 objects, 33 assets
+[17:59:08.651] [info] [Engine] [HRC-3 D3] production pick pass resources ready
+[17:59:08.652] [info] [Engine] [HRC-3 P1] production sprite-batch render resources ready
+[VIEWPORT-SIZE GATE] V1: default 800x600 path is intact
+[VIEWPORT-SIZE GATE] V2: 800x600 -> 640x480 published
+[VIEWPORT-SIZE GATE] V3: 640x480 -> 1920x1080 published with buffer reuse
+[VIEWPORT-SIZE GATE] V4: last-wins resize verified
+[VIEWPORT-SIZE GATE] V5: zero and oversize requests are rejected
+[VIEWPORT-SIZE GATE] V6: rebuild failure is fail-closed
+[VIEWPORT-SIZE GATE] V6: recovery after rebuild failure verified
+[VIEWPORT-SIZE GATE] V7: resize invalidates the pending pick
+[VIEWPORT-SIZE GATE] V8: production pick coordinates verified
+[VIEWPORT-SIZE GATE] V9: ABI mix-and-match is rejected
+[VIEWPORT-SIZE GATE] V10: packet header, payload and capacity are consistent
+[VIEWPORT-SIZE GATE] ALL GREEN
+viewportsize exit=0

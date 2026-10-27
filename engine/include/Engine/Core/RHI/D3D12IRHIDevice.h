@@ -15,20 +15,8 @@
 #include "Engine/Core/RHI/IRHIDevice.h"
 #include "Engine/Core/RHI/IRHICommandList.h"
 #include "Engine/Core/RHI/ShaderReflection.h"
-#include <memory>
-
-// D3D12 是 Windows-only 后端：Windows SDK 头、以及依赖 ID3D12* 类型的类定义
-// 都只在 Windows 存在。engine/CMakeLists.txt 早已用 if(WIN32 AND EXISTS
-// .../src/D3D12) 把 D3D12 的源文件限制在 Windows 编译，此前只有这一层头文件
-// 没有同样的平台边界，导致无条件 include 本头的调用方（如 sandbox 的
-// BackendTest）在 Linux 上必然因缺少 d3d12.h 而编译失败。
-//
-// 这里不提供空实现来冒充支持：非 Windows 上 D3D12 确实不存在，因此整个后端
-// 类型集合在平台外不可见。Vulkan 侧无此问题，其类型来自跨平台的
-// Engine/Vulkan/VulkanCommon.h。
-#if defined(_WIN32)
-
 #include <d3d12.h>
+#include <memory>
 
 namespace Engine {
 namespace RHI {
@@ -174,5 +162,3 @@ namespace RHI {
 
 } // namespace RHI
 } // namespace Engine
-
-#endif // defined(_WIN32)

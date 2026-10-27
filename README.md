@@ -560,6 +560,7 @@ dotnet run --project samples/Nova.UI.Playground/Nova.UI.Playground.csproj
 - 架构决策：[docs/decisions/ADR-001-ui-foundation-scope.md](docs/decisions/ADR-001-ui-foundation-scope.md)
 - 迁移指南：[docs/migration/legacy-avalonia-to-nova.md](docs/migration/legacy-avalonia-to-nova.md)
 - 提交前审计：[docs/Nova-UI-v0.2-Precommit-Audit.md](docs/Nova-UI-v0.2-Precommit-Audit.md)
+- 生命周期切片：[docs/Nova-UI-Lifecycle-v0.1.md](docs/Nova-UI-Lifecycle-v0.1.md)
 
 v0.2 明确不包含完整 Docking、Timeline、复杂 DSL 或 3D 渲染后端；这些按版本门槛在后续版本推进。
 

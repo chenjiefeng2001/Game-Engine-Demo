@@ -9,17 +9,46 @@
  *   - 字符串一律 UTF-8，调用方分配缓冲区
  *   - 单线程约定：所有句柄操作必须在创建线程上执行（Phase 0 无锁）
  *   - 事件经回调投递（同步，调用栈内触发），Phase 0 不做跨线程队列
+ *   - 字符串输出函数（out+cap 模式）支持两调用法：
+ *       第一次调用 out=NULL/cap=0 获取完整长度，第二次分配缓冲区后拷贝。
+ *       返回 -1 表示错误，>=0 表示实际长度（含截断）。
  */
 
 #include <stdint.h>
 
+#if defined(__cplusplus)
 #if defined(_WIN32) && defined(EDITOR_BRIDGE_EXPORTS)
 #define EDITOR_BRIDGE_API extern "C" __declspec(dllexport)
 #else
 #define EDITOR_BRIDGE_API extern "C"
 #endif
+#elif defined(_WIN32) && defined(EDITOR_BRIDGE_EXPORTS)
+#define EDITOR_BRIDGE_API __declspec(dllexport)
+#elif defined(_WIN32)
+#define EDITOR_BRIDGE_API __declspec(dllimport)
+#else
+#define EDITOR_BRIDGE_API
+#endif
 
 typedef void* EditorSessionHandle;
+
+#pragma pack(push, 1)
+typedef struct EditorSessionRuntimeStats {
+    uint32_t struct_size;
+    uint32_t stop_count;
+    uint32_t on_create_count;
+    uint32_t on_destroy_count;
+    uint32_t gameplay_handle_count;
+    int32_t playing;
+    int32_t runtime_scene_present;
+    int32_t script_valid;
+    int32_t callback_attached;
+    int32_t gameplay_scene_present;
+    int32_t hud_dirty;
+    int32_t session_present;
+    int32_t allocator_present;
+} EditorSessionRuntimeStats;
+#pragma pack(pop)
 
 /// C++ → C# 事件回调（同步触发；payload 为 UTF-8 文本，仅当次调用有效）
 typedef void (*EditorEventCallback)(int32_t eventType,
@@ -48,11 +77,19 @@ enum {
     /// F1（Component Contract）：实体组件增删/属性变更。
     /// payload: "idx=<i>;type=<t>;action=<add|remove|set>"（Camera 等契约组件）
     EV_COMPONENT_CHANGED = 13,
+    EV_COUNT             = 14, ///< 事件类型总数（用于边界检查）
 };
 
 // ── 会话生命周期 ──────────────────────────────────────────────
 
+/// 返回 EditorBridge ABI 版本号（高位.低位）。版本不匹配时消费方应拒绝加载。
+/// 例：返回 (1 << 16) | 0 表示 v1.0。
+EDITOR_BRIDGE_API int32_t EditorBridge_GetVersion(void);
+EDITOR_BRIDGE_API int32_t EditorBridge_RegisterMainThread(void);
+
+/// 创建编辑会话。失败返回 NULL（内存不足）。
 EDITOR_BRIDGE_API EditorSessionHandle EditorSession_Create(void);
+/// 销毁编辑会话（若正在运行则先 Stop）。h 为 NULL 时为空操作。
 EDITOR_BRIDGE_API void EditorSession_Destroy(EditorSessionHandle h);
 
 // ── 工程 ─────────────────────────────────────────────────────
@@ -170,6 +207,9 @@ EDITOR_BRIDGE_API void     EditorSession_Stop(EditorSessionHandle h);
 /// 运行态单帧推进（GameplayAPI::OnUpdate）。非运行态空操作。
 EDITOR_BRIDGE_API void     EditorSession_RuntimeTick(EditorSessionHandle h,
                                                      float dt);
+EDITOR_BRIDGE_API int32_t  EditorSession_GetRuntimeStats(
+    EditorSessionHandle h,
+    EditorSessionRuntimeStats* stats);
 /// 是否处于运行态。
 EDITOR_BRIDGE_API int32_t EditorSession_IsPlaying(EditorSessionHandle h);
 /// 最近一次运行时动作（Play/Reload/Tick）的 Lua 诊断文本（成功时空串）。
@@ -217,6 +257,88 @@ EDITOR_BRIDGE_API int32_t EditorSession_SetComponentProperty(
     EditorSessionHandle h, int32_t entityIndex, const char* typeName,
     const char* propName, const char* valueStr);
 
+// ── Viewport（Phase 7）：纹理共享 / 相机 / 输入 / Gizmo ──────────
+
+/// 获取视口 FBO 颜色纹理的 OpenGL 句柄（GLuint）。用于 Avalonia 纹理互操作。
+/// 非编辑态/未初始化时返回 0。尺寸经 GetViewportSize 获取。
+EDITOR_BRIDGE_API uint32_t EditorSession_GetViewportTextureHandle(
+    EditorSessionHandle h);
+/// 获取视口当前渲染尺寸（像素）。outWidth/outHeight 不可为 NULL。
+EDITOR_BRIDGE_API int32_t EditorSession_GetViewportSize(
+    EditorSessionHandle h, int32_t* outWidth, int32_t* outHeight);
+/// 通知视口尺寸变化（Avalonia 控件 resize 时调用）。引擎按需重建 FBO。
+EDITOR_BRIDGE_API void EditorSession_SetViewportSize(
+    EditorSessionHandle h, int32_t width, int32_t height);
+/// 触发视口重绘（标记 dirty）。每帧由 Avalonia 调用一次。
+EDITOR_BRIDGE_API void EditorSession_ViewportTick(EditorSessionHandle h, float dt);
+
+/// 设置视口相机位置（编辑态）。x/y/z 世界坐标。
+EDITOR_BRIDGE_API void EditorSession_SetViewportCameraPosition(
+    EditorSessionHandle h, float x, float y, float z);
+/// 获取视口相机位置。out3 不可为 NULL。
+EDITOR_BRIDGE_API void EditorSession_GetViewportCameraPosition(
+    EditorSessionHandle h, float out3[3]);
+/// 设置视口相机投影类型：0=Perspective, 1=Orthographic。
+EDITOR_BRIDGE_API void EditorSession_SetViewportCameraProjection(
+    EditorSessionHandle h, int32_t type);
+/// 设置视口相机缩放（正交模式）。
+EDITOR_BRIDGE_API void EditorSession_SetViewportCameraZoom(
+    EditorSessionHandle h, float zoom);
+
+/// 转发鼠标移动事件到视口（Avalonia PointerMoved 调用）。x/y 为控件内局部坐标。
+EDITOR_BRIDGE_API void EditorSession_ViewportMouseMove(
+    EditorSessionHandle h, float x, float y);
+/// 转发鼠标按钮事件到视口（0=Left, 1=Right, 2=Middle; pressed=1/0）。
+EDITOR_BRIDGE_API void EditorSession_ViewportMouseButton(
+    EditorSessionHandle h, int32_t button, int32_t pressed);
+/// 转发鼠标滚轮事件到视口。delta>0 向上，delta<0 向下。
+EDITOR_BRIDGE_API void EditorSession_ViewportScroll(
+    EditorSessionHandle h, float delta);
+/// 转发键盘按键事件到视口（Avalonia KeyDown/KeyUp 调用）。key 为 Avalonia Key 枚举值。
+EDITOR_BRIDGE_API void EditorSession_ViewportKeyDown(
+    EditorSessionHandle h, int32_t key);
+EDITOR_BRIDGE_API void EditorSession_ViewportKeyUp(
+    EditorSessionHandle h, int32_t key);
+
+/// 视口鼠标拾取：ndcX/ndcY 为 [-1,1] 归一化设备坐标。返回实体索引（>=0），
+/// 无命中返回 -1。仅在编辑态有效。
+EDITOR_BRIDGE_API int32_t EditorSession_ViewportPick(
+    EditorSessionHandle h, float ndcX, float ndcY);
+
+/// Gizmo 操作模式：0=Select, 1=Translate, 2=Rotate, 3=Scale。
+EDITOR_BRIDGE_API void EditorSession_SetGizmoMode(
+    EditorSessionHandle h, int32_t mode);
+/// Gizmo 坐标空间：0=World, 1=Local。
+EDITOR_BRIDGE_API void EditorSession_SetGizmoSpace(
+    EditorSessionHandle h, int32_t space);
+/// Gizmo 吸附开关及步长。enabled=1/0, value=吸附步长（如 0.5, 45.0）。
+EDITOR_BRIDGE_API void EditorSession_SetGizmoSnap(
+    EditorSessionHandle h, int32_t enabled, float value);
+/// 获取当前 Gizmo 模式/空间/吸附状态。
+EDITOR_BRIDGE_API int32_t EditorSession_GetGizmoMode(EditorSessionHandle h);
+EDITOR_BRIDGE_API int32_t EditorSession_GetGizmoSpace(EditorSessionHandle h);
+EDITOR_BRIDGE_API int32_t EditorSession_GetGizmoSnapEnabled(EditorSessionHandle h);
+EDITOR_BRIDGE_API float   EditorSession_GetGizmoSnapValue(EditorSessionHandle h);
+
+/// 视口网格可见性：visible=1/0。
+EDITOR_BRIDGE_API void EditorSession_SetViewportGridVisible(
+    EditorSessionHandle h, int32_t visible);
+EDITOR_BRIDGE_API int32_t EditorSession_GetViewportGridVisible(
+    EditorSessionHandle h);
+
+/// Phase 7-B: 启用/禁用引擎 EditorCamera 的外部输入模式。
+/// 启用后 EditorCamera 不再读取 ImGui::GetIO()，而是使用 ViewportMouseMove/Button/Scroll/Key 系列调用。
+EDITOR_BRIDGE_API void EditorSession_SetCameraExternalInput(
+    EditorSessionHandle h, int32_t enabled);
+EDITOR_BRIDGE_API int32_t EditorSession_GetCameraExternalInput(
+    EditorSessionHandle h);
+
+/// Phase 7 纹理读取：将视口 FBO 的 RGBA8 像素拷贝到 outBuffer（调用者分配）。
+/// 返回值 = 实际拷贝的字节数；outBuffer 为 NULL 或 bufferSize 不足时返回所需字节数（含 4 字节宽高头）。
+/// 数据布局：[int32 width][int32 height][uint8 RGBA × width×height]。
+EDITOR_BRIDGE_API int32_t EditorSession_GetViewportPixels(
+    EditorSessionHandle h, uint8_t* outBuffer, int32_t bufferSize);
+
 // ── 脏状态（P2-E：Clean->Edit->Dirty->Save->Clean）─────────────
 
 /// 会话是否发生过未保存的编辑（Create/Delete/Rename/SetPosition/Assign 置位；Save 清位）。
@@ -235,5 +357,396 @@ EDITOR_BRIDGE_API int32_t EditorSession_GetLastError(EditorSessionHandle h,
                                                      int32_t cap);
 /// 取最近一次 OpenProject 的非致命告警（如缺失 GUID 资产；实体保留）。空串=无。
 EDITOR_BRIDGE_API int32_t EditorSession_GetWarnings(EditorSessionHandle h,
-                                                    char* out,
-                                                    int32_t cap);
+                                                     char* out,
+                                                     int32_t cap);
+
+typedef void* EngineHostHandle;
+typedef int32_t EngineHostStatus;
+typedef int32_t EngineHostStage;
+
+/// A7-1 起冻结的 EngineHost ABI 版本。单一来源；native 与 managed 都必须引用此值。
+///
+/// **HRC-3 P2：v1.1 → v1.2（明确的 ABI increment）**
+/// 增量内容**只有一个**：在既有 `EngineHost_Fetch` 的 op 空间内新增
+/// `ENGINE_HOST_OP_GET_PRESENTATION_FRAME`（additive op）。
+/// 明确**没有**做的事：
+///   - 不新增任何 export function（`EngineHost_Fetch` 复用既有导出）；
+///   - 不改 `RuntimeResult`（仍为 76B，字段/顺序/packing 全部不变）；
+///   - 不改任何既有 op 的编号、容量或语义（新增 op 取 28，既有 0..27 不动）；
+///   - 不改 `ENGINE_HOST_STAGE_*` 与既有 `ENGINE_HOST_STATUS_*` 的取值。
+/// 新增的 `ENGINE_HOST_STATUS_NO_NEW_FRAME = 11` 是**追加**取值，不占用既有值。
+/// v1.3 -> v1.4（Slice D / P-1）：**不新增任何导出、op、status**，
+/// 只把 `PickResultPacket` 的 `reserved` 正式定义为 `entity_index`。
+///
+/// 为什么必须升版本：`reserved` 在 v1.3 的契约是"必须为 0"（managed 解码器
+/// 曾显式断言 `reserved == 0`），因此"改用该字段"是一次**真实的契约变更**，
+/// 不是新增字段。升版本让 lockstep 校验（M1 / M8-B / test_bridge）能抓住
+/// native/managed 混搭，而不是让 v1.4 被静默当作 v1.3。
+/// v1.4 -> v1.5（Slice E）：新增 append-only op `SET_VIEWPORT_SIZE = 30`
+/// （`OP_COUNT` 30 -> 31），并把 presentation 容量常量拆分为
+/// 「默认尺寸 / 最大尺寸 / 分配容量」。**不新增导出、不新增 status、
+/// 不改任何 packet 结构**（frame packet 的 header 本来就带 w/h）。
+///
+/// 为什么必须升版本：`ENGINE_HOST_FRAME_PACKET_BYTES` 的**语义与数值**都变了
+/// （从"帧大小"变成"最大容量"）。不升版本时，v1.4 managed（按 1.92 MB 分配）
+/// 与 v1.5 native（可能产出更大帧）会在**运行时**才失败，而不是在 `Create()`
+/// 处被 lockstep 抓住。
+#define ENGINE_HOST_ABI_VERSION ((1 << 16) | 5)
+
+/// HRC-3 P1（D4 已后置 ⇒ v1 目标尺寸固定）：production presentation target 的尺寸。
+/// 单一来源，供 P1 的 presentation FBO、P2 的 Fetch 静态容量、P3 的 gate 断言共用。
+/// 这是**编译期常量**，不改变任何导出、结构体布局或既有 op 语义，因此
+/// **不构成 ABI increment**（P2 新增 op 时才做 v1.1 → v1.2 的版本递增）。
+///
+/// Slice E：上面这句"尺寸固定"已不再成立。常量拆成三层：
+///   - **默认尺寸**：project 打开后、尚未收到 SET_VIEWPORT_SIZE 时的尺寸。
+///     保持不变（800×600），使 P1/P2 的既有证据面与非 resize gate 继续成立。
+///   - **最大尺寸**：协议允许的上界，决定分配容量。超出即拒绝，不截断。
+///   - **分配容量**：见 `ENGINE_HOST_FRAME_PACKET_MAX_BYTES`。
+/// 帧的**实际**尺寸一律取 frame packet header 的 width/height，不是这三个常量。
+#define ENGINE_HOST_PRESENTATION_DEFAULT_WIDTH 800
+#define ENGINE_HOST_PRESENTATION_DEFAULT_HEIGHT 600
+
+/// 协议允许的最大呈现尺寸（Slice E 冻结）。超出该范围的重置请求被拒绝。
+#define ENGINE_HOST_PRESENTATION_MAX_WIDTH 1920
+#define ENGINE_HOST_PRESENTATION_MAX_HEIGHT 1080
+
+/// 兼容别名：既有断言/证据把"presentation 尺寸"读作**默认尺寸**。
+/// 新代码请直接使用 `_DEFAULT_` / `_MAX_` 两者，不要依赖别名的歧义。
+#define ENGINE_HOST_PRESENTATION_WIDTH ENGINE_HOST_PRESENTATION_DEFAULT_WIDTH
+#define ENGINE_HOST_PRESENTATION_HEIGHT ENGINE_HOST_PRESENTATION_DEFAULT_HEIGHT
+
+enum {
+    ENGINE_HOST_STATUS_SUCCESS = 0,
+    ENGINE_HOST_STATUS_SKIPPED_NOT_PLAYING = 1,
+    ENGINE_HOST_STATUS_INVALID_STATE = 2,
+    ENGINE_HOST_STATUS_WRONG_THREAD = 3,
+    ENGINE_HOST_STATUS_INIT_FAILED = 4,
+    ENGINE_HOST_STATUS_GL_FAILED = 5,
+    ENGINE_HOST_STATUS_SESSION_FAILED = 6,
+    ENGINE_HOST_STATUS_TICK_FAULT = 7,
+    ENGINE_HOST_STATUS_SHUTDOWN_COMPLETE = 8,
+    ENGINE_HOST_STATUS_SHUTDOWN_FAILED = 9,
+    ENGINE_HOST_STATUS_EDIT_ACCEPTED = 10,
+    /// HRC-3 P2 新增（追加取值，v1.2）：请求的 presentation frame 自上次成功 fetch 之后
+    /// **没有新的帧**。此时 `EngineHost_Fetch` 返回 0，**不写出任何 packet 字节**，
+    /// 调用方必须复用自己已持有的上一帧 packet —— 但**由调用方决定**，本层绝不
+    /// 静默重发旧像素来伪装成"新帧"。
+ENGINE_HOST_STATUS_NO_NEW_FRAME = 11,
+/// HRC-3 D3：已有 pending pick 结果尚未被取走时再次提交请求。
+/// append-only，接在 `NO_NEW_FRAME = 11` 之后；**不重新编号任何既有 status**。
+/// 配对 stage = `ENGINE_HOST_STAGE_EDIT`（既有值：busy 的成因就是 pending/edit 队列已占用）。
+/// 注意：本 status **不**消费、也不替换 outstanding request。
+ENGINE_HOST_STATUS_PICK_BUSY = 12
+};
+
+enum {
+    ENGINE_HOST_STAGE_BOOTSTRAP = 0,
+    ENGINE_HOST_STAGE_PLATFORM = 1,
+    ENGINE_HOST_STAGE_GL_CONTEXT = 2,
+    ENGINE_HOST_STAGE_GLAD = 3,
+    ENGINE_HOST_STAGE_ENGINE_SUBSYSTEM = 4,
+    ENGINE_HOST_STAGE_FBO = 5,
+    ENGINE_HOST_STAGE_SESSION = 6,
+    ENGINE_HOST_STAGE_OPEN_PROJECT = 7,
+    ENGINE_HOST_STAGE_PLAY = 8,
+    ENGINE_HOST_STAGE_TICK = 9,
+    ENGINE_HOST_STAGE_SHUTDOWN = 10,
+    ENGINE_HOST_STAGE_EDIT = 11
+};
+
+/// A7 op-dispatch seam：不带输出缓冲的 editor session 操作。
+/// 全部经 EngineHost 的单一 Submit executor 进入 native runtime thread。
+/// 参数按固定槽位解释（无序列化协议）：
+///   arg0/arg1 = int32 索引或类型码；strArg = UTF-8 字符串；floatArg = 3 float。
+enum {
+    ENGINE_HOST_OP_NONE = 0,
+    ENGINE_HOST_OP_CREATE_ENTITY = 1,
+    ENGINE_HOST_OP_DELETE_ENTITY = 2,
+    ENGINE_HOST_OP_RENAME_ENTITY = 3,
+    ENGINE_HOST_OP_SET_ENTITY_POSITION = 4,
+    ENGINE_HOST_OP_GET_ENTITY_COUNT = 5,
+    ENGINE_HOST_OP_GET_ENTITY_NAME = 6,
+    ENGINE_HOST_OP_GET_ASSET_COUNT = 7,
+    ENGINE_HOST_OP_GET_ASSET_PATH = 8,
+    ENGINE_HOST_OP_GET_ASSET_TYPE = 9,
+    ENGINE_HOST_OP_GET_ASSET_GUID = 10,
+    ENGINE_HOST_OP_IMPORT_ASSET = 11,
+    ENGINE_HOST_OP_RENAME_ASSET = 12,
+    ENGINE_HOST_OP_GET_ENTITY_SPRITE = 13,
+    ENGINE_HOST_OP_GET_ENTITY_SCRIPT = 14,
+    ENGINE_HOST_OP_ASSIGN_SCRIPT = 15,
+    ENGINE_HOST_OP_SCRIPT_READ = 16,
+    ENGINE_HOST_OP_SCRIPT_SAVE = 17,
+    ENGINE_HOST_OP_SAVE_PROJECT = 18,
+    ENGINE_HOST_OP_ADD_COMPONENT = 19,
+    ENGINE_HOST_OP_REMOVE_COMPONENT = 20,
+    ENGINE_HOST_OP_HAS_COMPONENT = 21,
+    ENGINE_HOST_OP_GET_COMPONENT_PROPERTY = 22,
+    ENGINE_HOST_OP_SET_COMPONENT_PROPERTY = 23,
+    ENGINE_HOST_OP_IS_DIRTY = 24,
+    ENGINE_HOST_OP_GET_WARNINGS = 25,
+    ENGINE_HOST_OP_ASSIGN_SPRITE = 26,
+    ENGINE_HOST_OP_GET_ENTITY_POSITION = 27,
+    /// HRC-3 P2 新增（**Fetch-only**，v1.2）。通过既有 `EngineHost_Fetch` 取一整个
+    /// presentation 帧。packet 是**静态容量**的（尺寸编译期固定，见
+    /// ENGINE_HOST_PRESENTATION_* 与 ENGINE_HOST_FRAME_PACKET_*），无协商、无分配。
+    /// 布局（packed，小端，偏移以字节计）：
+    ///     0  int32  width
+    ///     4  int32  height
+    ///     8  uint64 frame_id      ← 与像素在**同一次 runtime-thread Submit** 内取得
+    ///    16  uint8  rgba[width * height * 4]   ← GL 原生布局：行优先、左下角起
+    /// 语义：
+    ///   - 有新帧：返回 packet 字节数，`result->status = ENGINE_HOST_STATUS_SUCCESS`；
+    ///   - 无新帧：返回 0，`result->status = ENGINE_HOST_STATUS_NO_NEW_FRAME`，
+    ///     **不写任何字节**（调用方不会读到被污染/过期的数据）。
+    /// `strArg*`/`arg0` 全部忽略。
+ENGINE_HOST_OP_GET_PRESENTATION_FRAME = 28,
+/// HRC-3 D3：pick 请求 / 结果。
+///
+/// 同一个 op 值在两个入口上语义不同（这正是"结果读取不得走普通 Dispatch 执行路径"
+/// 的实现方式）：
+///   - `EngineHost_Dispatch(PICK, floatArg=[x,y])` → 提交请求，返回 pending
+///     operation_id（`RuntimeResult.operation_id`），status = `EDIT_ACCEPTED`；
+///     仅表示"已受理"，执行发生在下一次 `PumpOneFrame` 内。
+///   - `EngineHost_Fetch(PICK, out=packet)` → 取回 typed pick 结果。
+ENGINE_HOST_OP_PICK = 29,
+/// Slice E：设置 presentation viewport 尺寸（**只登记**，不即时重建）。
+///
+/// 参数：`floatArg[0] = width`、`floatArg[1] = height`（像素）。
+/// 语义：
+///   - 仅当 `0 < w,h <= ENGINE_HOST_PRESENTATION_MAX_*` 且有限时受理；
+///   - **last-wins**：连续请求只保留最新一个，不排队、不逐次重建；
+///   - 真正生效发生在**下一次** `PumpOneFrame` 的 current-context 窗口内、
+///     渲染**之前** —— 因此"新尺寸"与"新像素"永远同帧，不存在
+///     "新尺寸 + 旧内容"的混用；
+///   - 生效那一帧会**作废**该帧的 pending pick（其坐标属于旧尺寸空间），
+///     产出 `ENGINE_HOST_PICK_NOT_READY`；
+///   - 零尺寸 / 超限 / 非有限值一律**拒绝**（不 clamp、不截断），
+///     保持当前 FBO 尺寸不变并记录诊断。
+ENGINE_HOST_OP_SET_VIEWPORT_SIZE = 30,
+ENGINE_HOST_OP_COUNT = 31
+};
+
+/// HRC-3 P2：presentation frame packet 的静态容量常量（编译期，非 ABI 结构）。
+/// header = width(4) + height(4) + frame_id(8) = 16 字节；像素 = w * h * 4。
+#define ENGINE_HOST_FRAME_PACKET_HEADER_BYTES 16
+
+/// Slice E：容量按**最大尺寸**计算，调用方一次分配、逐帧复用。
+/// 单帧实际字节数 = `16 + w*h*4`，其中 w/h 来自 header（<= 最大尺寸）。
+#define ENGINE_HOST_FRAME_PACKET_MAX_BYTES \
+    (ENGINE_HOST_FRAME_PACKET_HEADER_BYTES + \
+     ENGINE_HOST_PRESENTATION_MAX_WIDTH * ENGINE_HOST_PRESENTATION_MAX_HEIGHT * 4)
+
+/// 兼容别名。v1.5 起它的语义是**最大容量**，不再是"默认帧的大小"。
+#define ENGINE_HOST_FRAME_PACKET_BYTES ENGINE_HOST_FRAME_PACKET_MAX_BYTES
+
+/// 单帧（给定 w/h）所需的字节数。仅用于调用方自检容量，不做协商。
+#define ENGINE_HOST_FRAME_PACKET_BYTES_FOR(w, h) \
+    (ENGINE_HOST_FRAME_PACKET_HEADER_BYTES + (w) * (h) * 4)
+
+/// 需要 GL context 的 op：只能在 PumpOneFrame 的 current-context 窗口内执行。
+enum {
+    ENGINE_HOST_GL_OP_NONE = 0,
+    ENGINE_HOST_GL_OP_ASSIGN_SPRITE = 1
+};
+
+enum {
+    ENGINE_HOST_STATE_CREATED = 0,
+    ENGINE_HOST_STATE_BOOTSTRAPPING = 1,
+    ENGINE_HOST_STATE_READY = 2,
+    ENGINE_HOST_STATE_STOPPED = 3,
+    ENGINE_HOST_STATE_FAULTED = 4,
+    ENGINE_HOST_STATE_DISPOSED = 5
+};
+
+/// HRC-3 D3：`PickResultPacket` 字节数（编译期常量，非 ABI 结构）。
+/// struct_size(4) + status(4) + frame_id(8) + request_id(8) + entity_id(4) + entity_index(4) = 32
+#define ENGINE_HOST_PICK_RESULT_PACKET_BYTES 32
+
+/// v1.4：`entity_index` 的"无法解析"哨兵（实体在结果产生时已不在场景快照中）。
+/// 选 0xFFFFFFFF 而不是 0：0 是**合法的**场景索引（第一个实体），
+/// 用它当哨兵会让"第一个实体"与"无法解析"混同。
+#define ENGINE_HOST_PICK_INDEX_NONE 0xFFFFFFFFu
+
+/// HRC-3 D3：pick 结果状态（**packet 内部**枚举，与 RuntimeResult.status 是两套东西）。
+///
+/// `NoHit` 与 `OutsideViewport` **必须**结构化区分：前者是"查询有效、该像素无实体"
+/// （正常结果，sentinel -1），后者是"查询无效"（坐标越界，已显式拒绝，永不 clamp）。
+/// 合并二者就等于把 D3-C6 已经拆开的东西重新糊在一起。
+enum {
+    ENGINE_HOST_PICK_HIT = 0,               ///< entity_id >= 1（D3-C2 有效区间）
+    ENGINE_HOST_PICK_NO_HIT = 1,           ///< 正常未命中（sentinel -1），**不是失败**
+    ENGINE_HOST_PICK_OUTSIDE_VIEWPORT = 2, ///< 越界：查询无效，已显式拒绝
+    ENGINE_HOST_PICK_INVALID_COORDINATE = 3,///< 坐标非有限值
+    ENGINE_HOST_PICK_NOT_READY = 4,        ///< 无 pick 纹理 / 非 owner thread / 无 context
+    ENGINE_HOST_PICK_FAULT = 5             ///< host faulted / teardown 中
+};
+
+#pragma pack(push, 1)
+/// HRC-3 D3：typed pick 结果。
+///
+/// 只搬**一个像素**的 readback —— ID 表面**不**跨 ABI 传输（与 P2 的 1,920,016B
+/// 像素包形成对比，这是刻意的容量纪律）。
+///
+/// `frame_id` **必带**：D3-C4 要求 pick 结果可证明属于哪一帧，且不依赖调用方去读
+/// `RuntimeResult.frame_id`，使 frame 绑定无法被忘记。
+/// `request_id` 回显 `Dispatch` 侧的 `operation_id`；这是**唯一**的配对依据。
+///
+/// v1.4：`entity_index` 取代了原先的 `reserved`（布局不变，仍 32B、offset 28）。
+///   - `entity_id` 是 **`GameObject::ID`**（进程级 assign-once）；
+///   - `entity_index` 是**产生该结果时**该实体在 <c>Scene::GetObjects()</c> 中的下标，
+///     也就是所有 editor op 使用的 `entityIndex`。
+///
+/// 为什么不能由调用方用 `entity_id - 1` 推导：两者是不同的身份空间。
+/// 删除/重排实体后索引整体前移而 ID 不变，推导会**静默**选中邻居实体
+/// （`tests/test_pick` 的 `Identity*` 用例与 `--prodpick` 的 P8b 把它做成了永久断言）。
+///
+/// `entity_index` 只在 `status == ENGINE_HOST_PICK_HIT` 时有意义；
+/// 解析失败（实体已不在场景快照中）写 `ENGINE_HOST_PICK_INDEX_NONE`，
+/// 此时**不得**猜测索引，且不得改变 UI 选中。
+typedef struct PickResultPacket {
+    uint32_t struct_size;   ///< 必须 == sizeof(PickResultPacket) == 32
+    int32_t status;         ///< ENGINE_HOST_PICK_* 之一
+    uint64_t frame_id;      ///< 产生该结果的那一帧（必填）
+    uint64_t request_id;    ///< 回显 Dispatch 的 operation_id
+    uint32_t entity_id;     ///< 仅 status == HIT 时有效，且 >= 1
+    uint32_t entity_index;  ///< 仅 HIT 时有效；无法解析时为 ENGINE_HOST_PICK_INDEX_NONE
+} PickResultPacket;
+#pragma pack(pop)
+
+#pragma pack(push, 1)
+typedef struct RuntimeResult {
+    uint32_t struct_size;
+    uint32_t abi_version;
+    int32_t status;
+    int32_t stage;
+    uint64_t operation_id;
+    uint64_t frame_id;
+    uint64_t generation;
+    uint64_t owner_thread_id;
+    int32_t state_before;
+    int32_t state_after;
+    int32_t error_code;
+    uint32_t diagnostic_length;
+    uint32_t diagnostic_truncated;
+    float raw_dt_seconds;
+    float effective_dt_seconds;
+} RuntimeResult;
+
+#pragma pack(pop)
+
+typedef void (*EngineHostEventCallback)(int32_t eventType,
+                                        uint64_t generation,
+                                        const char* payload,
+                                        void* userData);
+
+EDITOR_BRIDGE_API int32_t EngineHost_GetApiVersion(void);
+EDITOR_BRIDGE_API EngineHostHandle EngineHost_Create(RuntimeResult* result);
+EDITOR_BRIDGE_API int32_t EngineHost_OpenProject(EngineHostHandle h,
+                                                  const char* manifestPath,
+                                                  const char* scenePath,
+                                                  RuntimeResult* result);
+EDITOR_BRIDGE_API int32_t EngineHost_Play(EngineHostHandle h,
+                                          int32_t assetIndex,
+                                          RuntimeResult* result);
+EDITOR_BRIDGE_API int32_t EngineHost_Reload(EngineHostHandle h,
+                                            RuntimeResult* result);
+EDITOR_BRIDGE_API int32_t EngineHost_Stop(EngineHostHandle h,
+                                          RuntimeResult* result);
+EDITOR_BRIDGE_API int32_t EngineHost_PumpOneFrame(EngineHostHandle h,
+                                                  float requestedDtSeconds,
+                                                  RuntimeResult* result);
+EDITOR_BRIDGE_API int32_t EngineHost_CloseProject(EngineHostHandle h,
+                                                   RuntimeResult* result);
+EDITOR_BRIDGE_API int32_t EngineHost_Shutdown(EngineHostHandle h,
+                                               RuntimeResult* result);
+EDITOR_BRIDGE_API void EngineHost_Destroy(EngineHostHandle h);
+EDITOR_BRIDGE_API int32_t EngineHost_GetLastFrameResult(EngineHostHandle h,
+                                                        RuntimeResult* result);
+EDITOR_BRIDGE_API int32_t EngineHost_SetEventCallback(
+    EngineHostHandle h, EngineHostEventCallback callback, void* userData);
+EDITOR_BRIDGE_API int32_t EngineHost_GetLastDiagnostic(EngineHostHandle h,
+                                                       char* out,
+                                                       int32_t cap);
+EDITOR_BRIDGE_API int32_t EngineHost_GetGraphicsState(EngineHostHandle h,
+                                                       int32_t* ready,
+                                                       int32_t* current);
+EDITOR_BRIDGE_API int32_t EngineHost_GetGraphicsCounters(EngineHostHandle h,
+                                                          uint64_t* makeCurrent,
+                                                          uint64_t* uncurrent);
+EDITOR_BRIDGE_API int32_t EngineHost_GetGlobalProofState(
+    EngineHostHandle h,
+    int32_t* applicationPresent,
+    int32_t* timeInitialized,
+    int32_t* sceneInitialized,
+    int32_t* jobSystemPresent,
+    int32_t* resourceManagerPresent,
+    int32_t* fileWatcherPresent);
+EDITOR_BRIDGE_API int32_t EngineHost_GetSessionProofState(
+    EngineHostHandle h,
+    EditorSessionRuntimeStats* stats);
+EDITOR_BRIDGE_API int32_t EngineHost_GetRuntimeProofState(
+    EngineHostHandle h,
+    int32_t* applicationReady,
+    int32_t* fboReady,
+    int32_t* sessionAttached,
+    int32_t* readbackVerified,
+    uint32_t* fboId,
+    uint32_t* fboWidth,
+    uint32_t* fboHeight,
+    uint64_t* frameCount,
+    uint64_t* tickCount);
+EDITOR_BRIDGE_API int32_t EngineHost_GetTeardownState(
+    EngineHostHandle h,
+    int32_t* emergencyRequested,
+    int32_t* emergencyCompleted,
+    int32_t* graphicsTeardownAttempted,
+    int32_t* graphicsTeardownSucceeded,
+    int32_t* lifecycleTimedOut);
+EDITOR_BRIDGE_API int32_t EngineHost_GetGlfwLifetimeState(int32_t* users,
+                                                          int32_t* initCount,
+                                                          int32_t* terminateCount);
+
+/// A7 op-dispatch seam。无输出缓冲的 session 操作。
+/// 返回值语义：SESSION op = op 自身的标量结果（失败为负）；
+/// GL op = pending edit id（>0），且 result.status 置为
+/// ENGINE_HOST_STATUS_EDIT_ACCEPTED —— 仅表示“已受理”，不表示已执行。
+EDITOR_BRIDGE_API int32_t EngineHost_Dispatch(EngineHostHandle h,
+                                              int32_t op,
+                                              int32_t arg0,
+                                              int32_t arg1,
+                                              const char* strArg,
+                                              const char* strArg2,
+                                              const char* strArg3,
+                                              const float* floatArg,
+                                              RuntimeResult* result);
+
+/// A7 op-dispatch seam。带输出缓冲的 session 查询。
+/// outBuffer 语义按 op 固定：UTF-8 字符串（cap 含 NUL）或 float3（cap >= 12）。
+EDITOR_BRIDGE_API int32_t EngineHost_Fetch(EngineHostHandle h,
+                                           int32_t op,
+                                           int32_t arg0,
+                                           const char* strArg,
+                                           const char* strArg2,
+                                           const char* strArg3,
+                                           uint8_t* outBuffer,
+                                           int32_t capacity,
+                                           RuntimeResult* result);
+
+/// A7 pending-edit completion seam。非阻塞。
+/// 返回 0 = 已完成（result 填最终 status/diagnostic）；
+/// 返回 1 = 仍在队列中；返回 -1 = 未知 edit id。
+EDITOR_BRIDGE_API int32_t EngineHost_PollPendingEdit(EngineHostHandle h,
+                                                      int64_t editId,
+                                                      RuntimeResult* result);
+
+/// A7 pending-edit proof：受理数 / 已执行 / 失败 / 最近一次执行时 context 是否 current /
+/// 最近一次执行的 frameId。用于证明 GL 依赖 edit 只在 frame 内执行。
+EDITOR_BRIDGE_API int32_t EngineHost_GetPendingEditProofState(
+    EngineHostHandle h,
+    int32_t* accepted,
+    int32_t* executed,
+    int32_t* failed,
+    int32_t* lastExecutedWithContextCurrent,
+    uint64_t* lastExecutedFrameId);

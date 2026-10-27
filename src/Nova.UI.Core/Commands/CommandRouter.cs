@@ -41,15 +41,34 @@ public sealed class CommandRouter : ICommandRouter
 
             descriptor.Execute();
             var result = CommandResult.Ok();
-            Executed?.Invoke(this, new CommandRoutedEventArgs(descriptor, result));
+            RaiseExecuted(descriptor, result);
             return result;
         }
         catch (Exception ex)
         {
             // Routing is a boundary: a failing command must not take down the shell.
             var result = Fail(id, ex.Message);
-            Executed?.Invoke(this, new CommandRoutedEventArgs(descriptor, result));
+            RaiseExecuted(descriptor, result);
             return result;
+        }
+    }
+
+    private void RaiseExecuted(CommandDescriptor descriptor, CommandResult result)
+    {
+        var handlers = Executed;
+        if (handlers is null) return;
+
+        var args = new CommandRoutedEventArgs(descriptor, result);
+        foreach (var handler in handlers.GetInvocationList())
+        {
+            try
+            {
+                ((EventHandler<CommandRoutedEventArgs>)handler)(this, args);
+            }
+            catch
+            {
+                // Routing observers cannot change a completed command result.
+            }
         }
     }
 

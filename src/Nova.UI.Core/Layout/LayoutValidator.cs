@@ -47,6 +47,7 @@ public static class LayoutValidator
             ShowInspector = candidate.ShowInspector,
             ShowConsole = candidate.ShowConsole,
             ThemeId = theme,
+            Dock = candidate.Dock,
         };
     }
 
