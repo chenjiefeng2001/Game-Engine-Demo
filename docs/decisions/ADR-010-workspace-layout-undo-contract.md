@@ -930,6 +930,23 @@ P = (2400, 1400, 640, 480)，首次 Show 钳制到 S = (1920, 1072, 640, 480)。
   `native/gate` 等内容，未修改系统显示缩放。
 - 未改动 schema 版本、未放宽 `Replay`、未引入 O1/O2 或无关 Shell 重构。
 
+### 12.6 合并 origin/avalonia 后的复验（2026-10-28）
+
+- 为推送准备：`origin/avalonia`（125 个提交，自 2026-10-12 分叉）合并为
+  `7b9670f`；仅 `README.md` 手工解决冲突（保留新 Nova 段与远端许可证标题），
+  其余 4 个重叠文件自动合并。远端改动集中在 engine/bridge/sandbox/native
+  tests/docs/CI，未触碰托管 Nova 源码。
+- 合并后 Debug 构建 0 错误 / 18 条 `NU1900`，全量 **371/371**；Release 构建
+  同样 0 错误 / 18 条 `NU1900`。
+- Release 全量执行三次：前两次各出现 1 个超时门禁——
+  `Real_shell_menu_undo_and_redo_replay_a_reset_without_borrowing_ctrl_z`
+  （10 s 内未打开 Edit 菜单）与
+  `DockHiddenPanelShellTests.Reset_layout_button_clears_unresolved_and_hidden_and_saves_a_clean_layout`
+  （`TimeoutException`，`DockHiddenPanelShellTests.cs:250`）；两者单独复跑均通过
+  （15 s / 363 ms），第三次全量 **371/371** 通过。两次失败均按**未判定**保留，
+  不归因于产品缺陷或环境噪声。
+- `dotnet format Nova.sln --verify-no-changes --no-restore` 退出 0。
+
 
 
 
