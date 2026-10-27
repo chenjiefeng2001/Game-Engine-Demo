@@ -265,7 +265,7 @@ namespace Rendering {
     // 注意：生产环境中应用 ShaderCompiler 编译
     // 当前返回占位符 PSO，待 Shaderc 集成后激活
 
-    static RHI::IRHIPipelineState* CreateFullscreenPSO(
+    static std::shared_ptr<RHI::IRHIPipelineState> CreateFullscreenPSO(
         RHI::IRHIDevice& device,
         const char* vsSource,
         const char* fsSource)
@@ -280,7 +280,7 @@ namespace Rendering {
         desc.rasterizer.cullMode = RHI::CullMode::None;
 
         auto& cache = RHI::PSOCache::Get();
-        auto* pso = cache.GetOrCreate(device, desc);
+        auto pso = cache.GetOrCreate(device, desc);
 
         if (!pso) {
             s_Log.Warn("PSO not found in cache, using placeholder");

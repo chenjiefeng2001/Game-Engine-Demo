@@ -7,6 +7,16 @@
 
 namespace {
     Engine::Logger s_Log("OpenGLTexture");
+
+    /// glad 的函数指针全为 null 表示「从未创建 GL 上下文」（gladLoadGLContext 未跑过）。
+    /// 此时调用任何 GL 入口都是跳转到地址 0 —— 在 Linux 上表现为 SIGSEGV 且 rip=0x0。
+    ///
+    /// 这条路径此前从未在 Linux CI 上执行到：场景 fixture 缺失导致项目打不开，
+    /// project-open 里的纹理上传根本不会发生；fixture 修好后它立刻暴露。
+    static bool HasGLEntryPoints(const GladGLContext& gl) {
+        return gl.CreateTextures && gl.TextureStorage2D &&
+               gl.TextureSubImage2D && gl.GenerateTextureMipmap;
+    }
 }
 
 namespace Engine {
@@ -30,6 +40,17 @@ namespace Engine {
 			} else if (channels == 3) {
 				internalFormat = GL_RGB8;
 				dataFormat = GL_RGB;
+			}
+
+			// 选择「明确失败」而不是「假装加载成功」：磁盘上有文件、尺寸已知，但 GPU
+			// 上并没有对应资源，标成 Loaded 会让真实渲染里出现「贴图全黑却无任何报错」。
+			// m_RendererID 保持 0，析构里的 DeleteTextures 守卫也因此不会碰空指针。
+			if (!HasGLEntryPoints(m_GL)) {
+				stbi_image_free(data);
+				SetState(ResourceState::Failed);
+				s_Log.Error("Failed to load texture {}: no OpenGL context (GL entry points not loaded)",
+					path);
+				return;
 			}
 
 			m_GL.CreateTextures(GL_TEXTURE_2D, 1, &m_RendererID);
@@ -94,6 +115,15 @@ namespace Engine {
 			} else if (channels == 3) {
 				internalFormat = GL_RGB8;
 				dataFormat = GL_RGB;
+			}
+
+			// 与构造函数同一个守卫：reload 路径同样可能在无上下文时被走到。
+			if (!HasGLEntryPoints(m_GL)) {
+				stbi_image_free(data);
+				SetState(ResourceState::Failed);
+				s_Log.Error("Failed to reload texture {}: no OpenGL context (GL entry points not loaded)",
+					path);
+				return false;
 			}
 
 			m_GL.CreateTextures(GL_TEXTURE_2D, 1, &m_RendererID);

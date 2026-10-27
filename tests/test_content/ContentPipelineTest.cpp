@@ -13,7 +13,14 @@
 #include "Engine/Scripting/GameplayAPI.h"
 #include "Engine/Scripting/ScriptAPI.h"
 #include "Engine/Scripting/ScriptInstance.h"
-#include "Engine/OpenGL/OpenGLGraphicsFactory.h"
+#include "StubGraphicsFactory.h"
+// StubGraphicsFactory 的 unique_ptr 返回值需要完整类型（否则默认 delete
+// 实例化会报 sizeof 不完整类型），这里显式包含。
+#include "Engine/Core/IWindow.h"
+#include "Engine/Core/IRenderContext.h"
+#include "Engine/Core/IUIManager.h"
+#include "Engine/Core/RHI/IPrimitiveBatch.h"
+#include "Engine/Core/RHI/GBuffer.h"
 
 #include <nlohmann/json.hpp>
 #include <filesystem>
@@ -95,6 +102,10 @@ TEST(ContentRegistryManifest, R9_Manifest_SurvivesSessionRestart) {
     ContentRegistry s1;
     auto tex = s1.Import("assets/textures/test.png", AssetType::Texture);
     auto scr = s1.Import("assets/scripts/dogfood_game.lua", AssetType::Script);
+    // SaveManifest 直接写 kDir/ 下的文件，不经过会建目录的 WriteFile 辅助函数，
+    // 所以目录必须由本用例自己保证存在。干净 CI 上它尚不存在；本地残留目录
+    // 曾掩盖这一点。
+    std::filesystem::create_directories(kDir);
     ASSERT_TRUE(s1.SaveManifest(manifest));
     ContentRegistry s2;
     ASSERT_TRUE(s2.LoadManifest(manifest));
@@ -130,7 +141,7 @@ TEST(SceneAdversarial, R12_MissingAsset_NonFatal) {
     ContentRegistry reg;
     auto snap = MakePlayerCube(ResourceGUID::Create(), ResourceGUID::Create());
     Engine::Scene scene;
-    OpenGLGraphicsFactory gfxF;
+    StubGraphicsFactory gfxF;
     Engine::TextureManager texMgr(gfxF);
     Scripting::GameplayAPI::Reset();
     Scripting::GameplayAPI::SetScene(&scene);
@@ -147,7 +158,7 @@ TEST(SceneAdversarial, R12_PresentAssets_BindFully) {
     auto scrG = reg.Import("assets/scripts/sandbox_player.lua", AssetType::Script);
     auto snap = MakePlayerCube(texG, scrG);
     Engine::Scene scene;
-    OpenGLGraphicsFactory gfxF;
+    StubGraphicsFactory gfxF;
     Engine::TextureManager texMgr(gfxF);
     Scripting::GameplayAPI::Reset();
     Scripting::GameplayAPI::SetScene(&scene);
@@ -410,6 +421,8 @@ TEST(ContentGolden, R13Golden_ProcessA_Save) {
     ContentRegistry reg;
     auto texG = reg.Import("assets/textures/test.png", AssetType::Texture);
     auto scrG = reg.Import("assets/scripts/sandbox_player.lua", AssetType::Script);
+    // 同 R9：kGM 指向 content_scratch/，目录需由本用例自行保证存在。
+    std::filesystem::create_directories(kDir);
     ASSERT_TRUE(reg.SaveManifest(kGM));
     auto snap = MakePlayerCube(texG, scrG);
     ASSERT_TRUE(SaveSnapshotToFile(snap, kGS));
@@ -422,7 +435,7 @@ TEST(ContentGolden, R13Golden_ProcessB_RestartLoadPlay) {
     SceneSnapshot snap; std::string err;
     ASSERT_TRUE(LoadSnapshotFromFile(kGS, snap, err)) << err;
     Engine::Scene scene;
-    OpenGLGraphicsFactory gfxF;
+    StubGraphicsFactory gfxF;
     Engine::TextureManager tm(gfxF);
     Scripting::GameplayAPI::Reset();
     Scripting::GameplayAPI::SetScene(&scene);
@@ -444,7 +457,7 @@ TEST(ContentRuntime, R14_LoadedScene_ScriptDrivesEntity) {
     SerializedEntity e; e.name = "Player"; e.scriptGuid = scrG; e.px = 5.f;
     snap.entities.push_back(e);
     Engine::Scene scene;
-    OpenGLGraphicsFactory gfxF;
+    StubGraphicsFactory gfxF;
     Engine::TextureManager tm(gfxF);
     Scripting::GameplayAPI::Reset();
     Scripting::GameplayAPI::SetScene(&scene);
@@ -472,7 +485,7 @@ TEST(GameplayAPIV2, M001_EntityFind_ByName) {
     SerializedEntity e2; e2.name = "Goal";
     snap.entities = { e1, e2 };
     Engine::Scene scene;
-    OpenGLGraphicsFactory gfxF;
+    StubGraphicsFactory gfxF;
     Engine::TextureManager tm(gfxF);
     Scripting::GameplayAPI::Reset();
     Scripting::GameplayAPI::SetScene(&scene);
@@ -510,6 +523,8 @@ TEST(TextureGoldenPath, T3_Reload_PreservesGuid) {
     std::string manifest = kDir + "/tex_manifest.json";
     ContentRegistry regA;
     auto guidA = regA.Import("assets/textures/test.png", AssetType::Texture);
+    // 同 R9：直接写 kDir/ 下的文件，目录不依赖其他用例的副作用。
+    std::filesystem::create_directories(kDir);
     ASSERT_TRUE(regA.SaveManifest(manifest));
 
     ContentRegistry regB;
@@ -548,7 +563,7 @@ TEST(TextureGoldenPath, T5_MissingTextureGuid_CleanFailure) {
     snap.entities.push_back(e);
 
     Engine::Scene scene;
-    OpenGLGraphicsFactory gfxF;
+    StubGraphicsFactory gfxF;
     Engine::TextureManager tm(gfxF);
     Scripting::GameplayAPI::Reset();
     Scripting::GameplayAPI::SetScene(&scene);
@@ -571,7 +586,7 @@ TEST(ContentDogfood, DF03_Smoke_LoadRunTimerExpire) {
     ASSERT_EQ(snap.entities.size(), 13u);
 
     Engine::Scene scene;
-    OpenGLGraphicsFactory gfxF;
+    StubGraphicsFactory gfxF;
     Engine::TextureManager tm(gfxF);
     Scripting::GameplayAPI::Reset();
     Scripting::GameplayAPI::SetScene(&scene);
@@ -631,7 +646,7 @@ TEST(ContentDogfood, DF03_EntityCount_MultiScript) {
     ASSERT_TRUE(LoadSnapshotFromFile("assets/scenes/dogfood03.scene", snap, err)) << err;
 
     Engine::Scene scene;
-    OpenGLGraphicsFactory gfxF;
+    StubGraphicsFactory gfxF;
     Engine::TextureManager tm(gfxF);
     Scripting::GameplayAPI::Reset();
     Scripting::GameplayAPI::SetScene(&scene);

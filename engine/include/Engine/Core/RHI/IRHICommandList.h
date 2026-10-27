@@ -61,6 +61,31 @@ namespace RHI {
     };
 
     // ============================================================
+    // 渲染作用域描述符
+    // ============================================================
+    /** 一次 BeginRendering / EndRendering 之间要写入的附件。
+     *
+     * 此前 IRHICommandList 完全没有渲染作用域的概念，导致 Vulkan 侧无法表达
+     * 「打开渲染目标 → 绘制 → 关闭」：离屏三角形测试因此只能绕过命令列表、
+     * 直接录制裸 Vulkan 命令。补充本契约后，命令列表本身即可拥有该能力。
+     */
+    struct RenderTargetDesc {
+        static constexpr uint32 kMaxColorAttachments = 4;
+
+        IRHITexture* color[kMaxColorAttachments] = { nullptr, nullptr, nullptr, nullptr };
+        uint32        colorCount = 0;
+        IRHITexture*  depth       = nullptr;
+
+        float clearColor[4] = { 0.0f, 0.0f, 0.0f, 1.0f };
+        bool  clear         = true;   ///< false 则保留附件原有内容（loadOp = LOAD）
+        /** 深度清除值，默认 1.0（Vulkan 约定中 1.0 为最远）。
+         *  此前该字段根本不存在，深度附件的 clearValue.depthStencil 保持零初始化，
+         *  于是深度总被清成 0.0；而 Less 系列的比较会把所有 z>0 的片元判为失败 ——
+         *  深度测试形同虚设，渲染结果只剩颜色清除。 */
+        float depthClearValue = 1.0f;
+    };
+
+    // ============================================================
     // IRHICommandList — 命令录制接口
     // ============================================================
     class IRHICommandList {
@@ -72,11 +97,39 @@ namespace RHI {
         /** 开始录制命令 */
         virtual void Begin() = 0;
 
-        /** 结束录制（之后不可再录制） */
-        virtual void End() = 0;
+/** 结束录制（之后不可再录制） */
+      virtual void End() = 0;
+
+      /**
+       * @brief 提交已录制的命令
+       *
+       * 此前命令列表**无法自行提交**：VulkanSwapChain::Present() 顺手把调用方录好的
+       * 命令缓冲提交了，提交语义被藏在「呈现」里。于是离屏或无窗口的场景根本没有
+       * 提交入口，调用方也无法知道一帧何时真正进入 GPU。
+       *
+       * 默认空实现：其它后端尚未提供提交入口，不应因此无法编译。
+       */
+      virtual void Submit() {}
 
         /** 重置命令列表以重新录制（重新回到 Begin 前的状态） */
         virtual void Reset() = 0;
+
+        // ── 渲染作用域 ──
+
+        /**
+         * @brief 打开渲染作用域，声明本段绘制写入哪些附件
+         *
+         * **默认实现为空操作**：立即模式后端（OpenGL）没有作用域概念，这正是
+         * 正确默认值。因此新增本方法不会破坏任何既有后端实现。
+         *
+         * 需要作用域的后端（Vulkan / D3D12）必须覆盖，并在 BeginRendering 与
+         * EndRendering 之间保证作用域成对。未覆盖的后端调用本方法不会有任何效果，
+         * 调用方不应据此假定发生了作用域切换。
+         */
+        virtual void BeginRendering(const RenderTargetDesc& /*desc*/) {}
+
+        /** 关闭渲染作用域。与 BeginRendering 成对。 */
+        virtual void EndRendering() {}
 
         // ── 管线状态 ──
 

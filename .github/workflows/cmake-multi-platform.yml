@@ -92,7 +92,8 @@ jobs:
         sudo apt-get install -y \
           libx11-dev libxrandr-dev libxinerama-dev libxcursor-dev libxi-dev \
           libgl1-mesa-dev libgl1-mesa-dri libwayland-dev wayland-protocols \
-          libxkbcommon-dev xvfb pkg-config
+          libxkbcommon-dev xvfb pkg-config \
+          libvulkan1 libvulkan-dev mesa-vulkan-drivers vulkan-validationlayers
 
     - name: Set reusable strings
       id: strings
@@ -181,6 +182,187 @@ jobs:
 
     # REQUIRE_SHADERC=ON：artifact 缺失时**硬失败**，杜绝静默降级后仍绿灯。
     # 缺省（本地开发）保持 OFF + WARNING，不改变既有本地行为。
+    #
+    # Windows 上 Vulkan 后端此前**从未被编译过**：CI 不装 SDK，find_package(Vulkan)
+    # 恒失败，于是 ENGINE_HAS_VULKAN 与 engine/src/Vulkan/* 一同被排除
+    # （见 docs/Handoff-Vulkan-Headless-GPU-Verification.md §1.9 的教训：那次把
+    # Windows 的链接错误归因成"runner 没有 VS"，真实原因其实是后端根本没参与编译）。
+    # 下面这一步装上 SDK 之后，Windows 会第一次真正编译并链接 Vulkan 后端。
+    # Windows 上给像素验证准备一个软件 Vulkan 设备，并且**先实测再接线**。
+    #
+    # 为什么需要：Windows runner 既给不出 GL 4.6 上下文（实测连不带版本提示的默认
+    # 上下文都 CREATE FAILED），也没有任何软件 Vulkan 驱动 —— 这是 4 个蒙皮像素
+    # 用例在 Windows 上只能显式跳过的唯一原因。可用的两块拼图：
+    #   * **编译期**：LunarG Vulkan SDK（头文件 + vulkan-1.lib），FindVulkan 认
+    #     $ENV{VULKAN_SDK}，装上后 Windows 才开始编译 Vulkan 后端。
+    #   * **运行期**：Mesa lavapipe（Mesa 的 CPU 版 Vulkan 驱动），mesa-dist-win
+    #     提供 Windows 预编译包：vulkan_lvp.dll + lvp_icd.x86_64.json，由 Vulkan
+    #     loader 通过 ICD 发现机制加载（VK_ICD_FILENAMES 指向该 json）。
+    #
+    # 本步**不让 job 失败**：它是能力测量，不是门禁。装不上就打印 NONE 与原因，
+    # 随后的用例按既有方式显式跳过。反过来，装上了却没有设备才是需要修的问题，
+    # 而那也会以同样的行暴露出来。
+    - name: Probe a software Vulkan device on Windows
+      if: runner.os == 'Windows'
+      shell: pwsh
+      run: |
+        $ErrorActionPreference = 'Continue'
+        $PSNativeCommandUseErrorActionPreference = $false
+        $sdkVersion = '1.4.363'
+
+        # ── 1. Vulkan SDK：只为了头文件与导入库（编译期需要） ──
+        try {
+            choco install vulkan-sdk --version=$sdkVersion -y --no-progress --limit-output |
+                Out-String | Write-Host
+        } catch {
+            Write-Host "WINDOWS-VULKAN-CAPABILITY: NONE (vulkan-sdk $sdkVersion install failed: $($_.Exception.Message))"
+        }
+        $sdkRoot = @(Get-ChildItem 'C:\VulkanSDK' -Directory -ErrorAction SilentlyContinue |
+                     Sort-Object Name -Descending | Select-Object -First 1)
+        if ($sdkRoot.Count -gt 0) {
+            "VULKAN_SDK=$($sdkRoot[0].FullName)" >> $env:GITHUB_ENV
+            # loader（vulkan-1.dll）跟着 SDK 装在 Bin 下。DLL 搜索顺序是
+            # 「可执行文件所在目录 → System32 → PATH」，探针和测试二进制都在
+            # RUNNER_TEMP / build 目录下，因此必须把 SDK 的 Bin 放进 PATH，
+            # 否则它们会以「找不到 vulkan-1.dll」起不来 —— 那看起来像"没有 Vulkan
+            # 设备"，而实际是 loader 根本没被加载。
+            "$($sdkRoot[0].FullName)\Bin" >> $env:GITHUB_PATH
+            $env:VULKAN_SDK = $sdkRoot[0].FullName
+            $env:PATH = "$($sdkRoot[0].FullName)\Bin;$env:PATH"
+            Write-Host "Vulkan SDK root: $($sdkRoot[0].FullName)"
+        } else {
+            Write-Host "WINDOWS-VULKAN-CAPABILITY: NONE (no C:\VulkanSDK after install; the Vulkan backend will stay off in this build)"
+        }
+
+        # ── 2. lavapipe：CPU 版 Vulkan 驱动（运行期需要） ──
+        $mesaTag = '26.2.4'
+        $archive = Join-Path $env:RUNNER_TEMP "mesa3d-$mesaTag-release-msvc.7z"
+        $url = "https://github.com/pal1000/mesa-dist-win/releases/download/$mesaTag/mesa3d-$mesaTag-release-msvc.7z"
+        try {
+            Write-Host "downloading $url"
+            Invoke-WebRequest -UseBasicParsing -Uri $url -OutFile $archive -TimeoutSec 600
+            $sevenZip = "${env:ProgramFiles}\7-Zip\7z.exe"
+            if (-not (Test-Path $sevenZip)) { throw "7-Zip is not present on this runner image" }
+            $extractDir = Join-Path $env:RUNNER_TEMP 'mesa3d'
+            & $sevenZip x -y "-o$extractDir" $archive | Out-Null
+            if ($LASTEXITCODE -ne 0) { throw "7z exited $LASTEXITCODE" }
+
+            # 整棵 x64 目录一起用，而不是只挑 vulkan_lvp.dll 与 json 两个文件：
+            # Mesa 的驱动依赖同包里的其它 DLL，只挑两样会让 loader 在加载 ICD 时
+            # 找不到依赖，而它对这种失败的报法是 VK_ERROR_INCOMPATIBLE_DRIVER
+            # （VkResult=-9）—— 看上去像"这台机器没有可用驱动"，实际是缺文件。
+            $x64 = Get-ChildItem $extractDir -Recurse -Directory -Filter 'x64' |
+                   Select-Object -First 1
+            if (-not $x64) { throw "the mesa package has no x64 directory (looked under $extractDir)" }
+            $lvpDir = Join-Path $env:RUNNER_TEMP 'mesa-x64'
+            Copy-Item $x64.FullName -Destination $lvpDir -Recurse -Force
+
+            $icd = Get-ChildItem $lvpDir -Recurse -Filter 'lvp_icd.x86_64.json' -File | Select-Object -First 1
+            if (-not $icd) { throw "lvp_icd.x86_64.json not found under $($x64.FullName)" }
+            Write-Host "--- lavapipe ICD manifest ---"
+            Get-Content $icd.FullName | Write-Host
+            Write-Host "--- vulkan_lvp.dll present: $(Test-Path (Join-Path $lvpDir 'vulkan_lvp.dll')) ---"
+            Write-Host "--- x64 top level ---"
+            Get-ChildItem $lvpDir -File | Select-Object -ExpandProperty Name | Write-Host
+
+            $icdOut = $icd.FullName
+            # **注册表登记**，这是 Windows 上唯一可靠的 ICD 发现方式。
+            # 环境变量在这台机器上**必然无效**：run 的 loader debug 输出写着
+            #   Loader is running with elevated permissions. Environment variable
+            #   VK_IMPLICIT_LAYER_PATH will be ignored
+            # 同一句提示也适用于 VK_ICD_FILENAMES / VK_DRIVER_FILES —— 以管理员
+            # 身份运行时 loader 会忽略这些变量（安全措施），而 GitHub 的 Windows
+            # runner 本来就是管理员会话。因此上一版「设好环境变量就能找到驱动」
+            # 的假设是错的，表现为 vkCreateInstance 返回 -9
+            # （VK_ERROR_INCOMPATIBLE_DRIVER）且日志里只有一句
+            # "Registry lookup failed to get ICD manifest files"。
+            # 环境变量仍然一并设置：非管理员场景下它有效，且不冲突。
+            $driversKey = 'HKLM:\SOFTWARE\Khronos\Vulkan\Drivers'
+            New-Item -Path $driversKey -Force | Out-Null
+            New-ItemProperty -Path $driversKey -Name $icdOut -Value 0 -PropertyType DWord -Force |
+                Out-Null
+            Write-Host "registered ICD manifest in $driversKey"
+            Get-ItemProperty -Path $driversKey | Format-List | Out-String | Write-Host
+
+            "VK_ICD_FILENAMES=$icdOut" >> $env:GITHUB_ENV
+            "VK_DRIVER_FILES=$icdOut" >> $env:GITHUB_ENV
+            $env:VK_ICD_FILENAMES = $icdOut
+            $env:VK_DRIVER_FILES = $icdOut
+            Write-Host "lavapipe ICD: $icdOut"
+        } catch {
+            Write-Host "WINDOWS-VULKAN-CAPABILITY: NONE (lavapipe unavailable: $($_.Exception.Message))"
+        }
+
+        # ── 3. 实测：这台 runner 到底能不能枚举出 Vulkan 设备 ──
+        # 用仓库自带的探针（与 vulkan-backend-compile job 同一个），不做第二套实现。
+        if (-not $env:VULKAN_SDK) {
+            Write-Host 'WINDOWS-VULKAN-CAPABILITY: NONE (no Vulkan SDK, probe not attempted)'
+            exit 0
+        }
+        $probe = Join-Path $env:RUNNER_TEMP 'vkprobe.exe'
+        # 编译探针写成 .bat 再执行，而不是在 pwsh 里嵌套 cmd /c "..." 的多层引号：
+        # 那样写的结果是 cl 一行输出都没有、二进制也没生成，日志里看不出是没跑还是
+        # 跑失败了。批处理只有一层转义，cl 的报错也能原样进日志。
+        #
+        # 内容用**数组字面量**而不是 here-string：YAML 块标量里未缩进的行会直接
+        # 结束该块并被当成新 token（here-string 那版把 workflow 弄成了非法 YAML）。
+        # 数组每行都带缩进，也不需要 cmd 的 `^` 续行。
+        #
+        # vcvars64 的路径**不能猜**：LunarG SDK 并不自带 MSVC 的 vcvars，路径猜错
+        # 时 cmd 报 9009（"找不到命令"），而上一版把 call 的输出重定向到 nul，
+        # 于是连这一行都没进日志 —— 只剩一个 9009，完全看不出是哪一步找不到东西。
+        # 这里用 vswhere 解析（与 ASan 运行时那一步同一套办法），并逐项打印存在性。
+        $vswhere = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
+        $vsInst = (& $vswhere -products * -latest -property installationPath | Select-Object -First 1)
+        $vcvars = if ($vsInst) { Join-Path $vsInst 'VC\Auxiliary\Build\vcvars64.bat' } else { '' }
+        Write-Host "vcvars64 candidate: $vcvars (exists=$(Test-Path $vcvars))"
+        if (-not $vcvars -or -not (Test-Path $vcvars)) {
+            Write-Host 'WINDOWS-VULKAN-CAPABILITY: NONE (cannot locate vcvars64.bat for the probe build)'
+            exit 0
+        }
+        $env:PROBE_VCVARS = $vcvars
+
+        $buildBat = Join-Path $env:RUNNER_TEMP 'build_vkprobe.bat'
+        $batLines = @(
+            '@echo off',
+            'call "%PROBE_VCVARS%" >nul',
+            'if errorlevel 1 echo VCVARS CALL FAILED: %PROBE_VCVARS%',
+            'cd /d "%GITHUB_WORKSPACE%"',
+            'cl /nologo /std:c++17 /EHsc /I "%VULKAN_SDK%\Include" tools\vk_capability_probe.cpp /Fe:"%RUNNER_TEMP%\vkprobe.exe" /link /LIBPATH:"%VULKAN_SDK%\Lib" vulkan-1.lib',
+            'exit /b %ERRORLEVEL%'
+        )
+        Set-Content -Path $buildBat -Value $batLines -Encoding ascii
+        $out = & $buildBat 2>&1
+        $rc = $LASTEXITCODE        # `&` 返回的是**输出**，退出码在 $LASTEXITCODE
+        $out | Write-Host
+        if ($rc -ne 0) { Write-Host "probe build exited $rc" }
+        if (-not (Test-Path $probe)) {
+            Write-Host 'WINDOWS-VULKAN-CAPABILITY: NONE (probe failed to build; see cl output above)'
+            exit 0
+        }
+        # 再跑一次，带上 loader 的诊断输出。VkResult=-9（VK_ERROR_INCOMPATIBLE_DRIVER）
+        # 本身不说明是哪个 ICD、因为什么被拒绝；loader 的 debug 输出会说。
+        # 这一跑只用于取证，不改变结论判定。
+        $env:VK_LOADER_DEBUG = 'all'
+        $dbg = & $probe 2>&1 | Out-String
+        Write-Host "--- probe run with VK_LOADER_DEBUG=all ---"
+        Write-Host $dbg
+        $env:VK_LOADER_DEBUG = ''
+
+        $out = $dbg
+        # 探针的输出形状（tools/vk_capability_probe.cpp）：
+        #   [VKPROBE] device: <name>            <- 每个枚举到的物理设备一行
+        #   [VKPROBE] NO PHYSICAL DEVICE -> lavapipe not usable
+        if ($out -match '(?m)^\[VKPROBE\] device:\s*(?<name>.+?)\s*$') {
+            Write-Host "WINDOWS-VULKAN-CAPABILITY: $($Matches['name'])"
+        } elseif ($out -match 'NO PHYSICAL DEVICE') {
+            Write-Host 'WINDOWS-VULKAN-CAPABILITY: NONE (loader enumerated no physical device; see probe output above)'
+        } elseif ($out -match '\[VKPROBE\].*FAILED') {
+            Write-Host 'WINDOWS-VULKAN-CAPABILITY: NONE (probe reported a Vulkan failure; see output above)'
+        } else {
+            Write-Host 'WINDOWS-VULKAN-CAPABILITY: UNKNOWN (probe output did not match any known shape)'
+        }
+
     - name: Configure CMake
       run: >
         cmake -B ${{ steps.strings.outputs.build-output-dir }}
@@ -195,6 +377,123 @@ jobs:
 
     - name: Build
       run: cmake --build ${{ steps.strings.outputs.build-output-dir }} --config ${{ matrix.build_type }}
+
+    # MSVC 的 /fsanitize=address 产出的是**动态** ASan 运行时：每个可执行文件都
+    # 依赖 clang_rt.asan_dynamic-x86_64.dll（dumpbin /dependents 可见），而该 DLL
+    # 只存在于 VS 工具链的 bin/Hostx64/x64 下，runner 的 PATH 里没有它。
+    # 后果不是「某个测试失败」，而是**本 job 里没有一个编译出来的可执行文件能启动**：
+    #   SpirVTest.exe    -> exit -1073741515 (0xC0000135 STATUS_DLL_NOT_FOUND)
+    #   AssetBakery.exe  -> Git Bash 报 exit 127，且**没有任何错误信息**
+    # 后者尤其误导：127 在 bash 里通常意味着「命令不存在」，会让人以为是路径拼错，
+    # 于是去改 find/路径——而路径是对的，二进制就在那里（见 481d202）。
+    #
+    # 本机复现（VS 2022 17.14 + Git Bash）：同一个 ASan 产物，PATH 含工具链目录时
+    # 正常启动；把它去掉后 pwsh 报 -1073741515、Git Bash 报 127 且无输出。
+    # 也就是说 127 与 -1073741515 是同一件事的两种呈现。
+    #
+    # 只在这一组开启：非 ASan 的产物不依赖该 DLL。
+    - name: Put the MSVC ASan runtime on PATH
+      if: runner.os == 'Windows' && matrix.enable_asan == 'ON'
+      shell: pwsh
+      run: |
+        $ErrorActionPreference = 'Stop'
+        $vswhere = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
+        if (-not (Test-Path $vswhere)) { throw "vswhere not found at $vswhere" }
+        $inst = (& $vswhere -products * -latest -property installationPath | Select-Object -First 1)
+        if (-not $inst) { throw 'vswhere found no Visual Studio instance' }
+        $dll = Get-ChildItem -Path (Join-Path $inst 'VC\Tools\MSVC') -Recurse `
+                 -Filter 'clang_rt.asan_dynamic-*.dll' -ErrorAction SilentlyContinue |
+               Where-Object { $_.FullName -like '*\bin\Hostx64\x64\*' } |
+               Select-Object -First 1
+        if (-not $dll) { throw "clang_rt.asan_dynamic-*.dll not found under $inst" }
+        Write-Host "ASan runtime: $($dll.FullName)"
+        "$($dll.Directory.FullName)" >> $env:GITHUB_PATH
+        # 记录到构建目录，便于事后核对「产物依赖的 DLL 来自哪里」
+        New-Item -ItemType Directory -Force -Path $env:GITHUB_WORKSPACE\build | Out-Null
+        Copy-Item $dll.FullName -Destination $env:GITHUB_WORKSPACE\build -Force
+
+    # .gitignore 排除了 *.scene 与 *.manifest.json，所以干净 checkout 里根本没有
+    # 场景文件，只有 manifest.json 与 .lua 脚本入库。ctest 又以
+    # WORKING_DIRECTORY=CMAKE_SOURCE_DIR 运行、直接读 assets/... 的相对路径，
+    # 于是 test_bridge / test_gp01 / test_content 在干净 checkout 上必然失败
+    # （"manifest load failed"）—— 这不是代码问题，是 fixture 缺失。
+    #
+    # 这里在跑测试之前用**已入库的** manifest 重新生成场景，使 checkout 自给自足。
+    # 生成器是 AssetBakery（见 37b8543 / 1e794a3），刻意走引擎自己的
+    # SceneSerializerV1，避免手写 JSON 与加载器漂移。
+    #
+    # 不静默跳过：生成失败就让本步失败，否则下游会呈现为一堆看不懂的
+    # "manifest load failed"。
+    - name: Generate scene fixtures
+      shell: bash
+      run: |
+        set -euo pipefail
+        # 不要把 ${{ steps.strings.outputs.build-output-dir }} 插进 bash 双引号里：
+        # 该值在 Windows 上形如 D:\a\Game-Engine-Demo\Game-Engine-Demo\build，
+        # 反斜杠会被 bash 当转义符吃掉，路径直接损坏（RelWithDebInfo job 就这样
+        # 找不到 AssetBakery）。GITHUB_WORKSPACE 是环境变量，展开时不做转义处理。
+        cd "$GITHUB_WORKSPACE"
+        # 多配置生成器（Windows/MSVC）把可执行文件放进 <Config>/ 子目录，
+        # 单配置（Linux）则直接放在目标目录。与其猜布局，不如找出来。
+        BAKERY="$(find build/sandbox/AssetBakery -maxdepth 2 -type f \
+                  \( -name 'AssetBakery' -o -name 'AssetBakery.exe' \) 2>/dev/null | head -1)"
+        if [[ -z "$BAKERY" ]]; then
+          echo "AssetBakery not found under build/sandbox/AssetBakery"
+          find build -name 'AssetBakery*' 2>/dev/null | head -5
+          exit 1
+        fi
+        echo "using bakery: $BAKERY"
+        "$BAKERY" --gp01-scene assets/gp01/manifest.json assets/gp01/Main.scene
+        "$BAKERY" --dogfood-scenes assets/scenes
+        # 立刻验证产物落在测试真正会去读的位置，而不是相信命令返回 0。
+        for f in assets/gp01/Main.scene \
+                 assets/scenes/dogfood03.scene assets/scenes/dogfood03.manifest.json \
+                 assets/scenes/dogfood05.scene assets/scenes/dogfood05.manifest.json \
+                 assets/scenes/dogfood06.scene assets/scenes/dogfood06.manifest.json \
+                 assets/scenes/dogfood07.scene assets/scenes/dogfood07.manifest.json; do
+          if [[ ! -s "$f" ]]; then
+            echo "expected fixture missing or empty: $f"
+            exit 1
+          fi
+          echo "  fixture OK: $f ($(wc -c < "$f") bytes)"
+        done
+
+    # Headless Vulkan 离屏三角形：在 lavapipe（软件 Vulkan）上验证引擎后端能真正
+    # 光栅化并回读像素。这是该后端的第一份运行时证据——此前它从未被任何 CI 编译过，
+    # 更没运行过。断言是像素而不是退出码：clear 为黑、片元固定输出固定色。
+    # continue-on-error 隔离：只提供证据，不 gate 主套件。
+    #
+    # 同时开启 validation layer：像素异常时，layer 能把回读路径上的
+    # barrier / layout 转换 / 命令缓冲生命周期问题直接报出来，而不是静默读回全 0。
+    # 注意它**抓不到**「忘记设置动态视口」——那属于合法 API 调用。
+    - name: Run headless Vulkan offscreen triangle on lavapipe
+      if: runner.os == 'Linux'
+      continue-on-error: true
+      shell: bash
+      run: |
+        set +e
+        LAVAPIPE_ICD="$(ls -1 /usr/share/vulkan/icd.d/lvp_icd*.json 2>/dev/null | head -1)"
+        BIN="${{ steps.strings.outputs.build-output-dir }}/sandbox/VulkanOffscreenTest/VulkanOffscreenTest"
+        if [[ -z "$LAVAPIPE_ICD" ]]; then
+          echo "lavapipe ICD not found; Vulkan triangle cannot run"
+          exit 0
+        fi
+        if [[ ! -x "$BIN" ]]; then
+          echo "VulkanOffscreenTest binary not found at $BIN"
+          find "${{ steps.strings.outputs.build-output-dir }}" -name 'VulkanOffscreenTest*' -type f 2>/dev/null | head -5
+          exit 0
+        fi
+        # 明确报告 layer 是否真的被加载，避免「以为开着其实没开」。
+        LAYER_JSON="$(ls -1 /usr/share/vulkan/explicit_layer.d/VkLayer_khronos_validation.json 2>/dev/null | head -1)"
+        if [[ -n "$LAYER_JSON" ]]; then
+          echo "validation layer manifest present: $LAYER_JSON"
+        else
+          echo "WARNING: validation layer not installed; messages will be absent"
+        fi
+        env VK_DRIVER_FILES="$LAVAPIPE_ICD" VK_ICD_FILENAMES="$LAVAPIPE_ICD" \
+            ENGINE_VULKAN_VALIDATION=1 ENGINE_VULKAN_SYNC_VALIDATION=1 \
+            stdbuf -o0 -e0 "$BIN"
+        echo "VulkanOffscreenTest exit = $?"
 
     # 可审计的启用证据（§8.9）：确认 SPIR-V 路径**确实**参与构建，而不是仅
     # 因 artifact 缺失而降级。三项都通过才允许后续 Test 步骤给出绿灯。
@@ -247,12 +546,95 @@ jobs:
       shell: bash
       working-directory: ${{ steps.strings.outputs.build-output-dir }}
       run: |
+        # --output-on-failure：失败时必须能看到用例自身的输出。否则 test_renderer
+        # 之类的失败在日志里只有一行 ***Failed，无法区分是断言失败、SKIP 还是
+        # 段错误，等于没有诊断信息。
+        #
+        # GPU_SKINNING_NO_GL46=1：显式声明本 runner 提供不了像素验证所需的后端。
+        # 证据由 gl-capability-probe job 与本文上方的 Windows Vulkan probe 持续采集。
+        #
+        # **两个平台都不再声明**（run 39098083475 起）。此前的实测：
+        #   Linux  llvmpipe 最高 4.5 core（4.6 CREATE FAILED），Zink+lavapipe 亦
+        #          无法初始化（ZINK: failed to choose pdev）
+        #   Windows 连不带版本提示的默认 GL 上下文都建不出来
+        # 两者都缺 GL 4.6，于是像素验证改走 Vulkan：Linux 用系统 lavapipe，
+        # Windows 用 mesa-dist-win 的 lavapipe（经注册表登记，见上方 probe 步骤）。
+        # 现在两边都实测到了设备：
+        #   Linux  llvmpipe (LLVM 20.1.2, 256 bits)
+        #   Windows llvmpipe (LLVM 23.1.2, 256 bits)，apiVersion 1.4.354，CPU 设备
+        #
+        # 撤掉声明是刻意的：留着会把「Vulkan 建不起来」变成一次静默跳过，
+        # 正好盖住最需要被发现的回归。现在任一平台拿不到后端都是**失败**。
+        # 声明机制本身仍保留（它是 opt-in 的），只是当前没有平台再声明。
         if [[ "${{ runner.os }}" == "Linux" ]]; then
           xvfb-run -a -s "-screen 0 1280x800x24" \
             env LIBGL_ALWAYS_SOFTWARE=1 XDG_SESSION_TYPE=x11 \
-            ctest --build-config ${{ matrix.build_type }}
+            ctest --build-config ${{ matrix.build_type }} --output-on-failure
         else
-          ctest --build-config ${{ matrix.build_type }}
+          ctest --build-config ${{ matrix.build_type }} --output-on-failure
+        fi
+
+    # ctest 只在失败时打印用例输出，而 SKIP 计入 Passed。因此上面一行
+    # "test_renderer ... Passed" **不能**被读成 GPU 像素已验证。此处单独重跑
+    # GPU 蒙皮用例并把 SKIP 原因打进日志，让"没验证"这件事在 CI 上显式可见，
+    # 而不是藏在一个绿色对勾后面。
+    - name: Report GPU skinning verification status
+      # 必须 always()：套件红的时候恰恰最需要知道 GPU 像素到底验没验，
+      # 若跟随前置步骤失败而被跳过，这条证据就永远丢了。
+      if: always()
+      shell: bash
+      working-directory: ${{ steps.strings.outputs.build-output-dir }}
+      run: |
+        # 多配置生成器（Windows/MSVC）把可执行文件放进 <Config>/ 子目录，单配置
+        # （Linux）直接放在目标目录 —— 与 fixture 步骤踩的是同一个坑（481d202）。
+        # 假设布局的后果不是报错，而是静默退化成 "not found; nothing was verified"：
+        # 实测 run 39016478050 的两个 Windows job 都打印了这一行，也就是说这一步
+        # **恰好在 Windows 上不再产出它唯一的证据**，而 Windows 正是刚刚改成靠它
+        # 来显式声明「像素验证没跑」的那一侧。
+        BIN="$(find tests -maxdepth 3 -type f \
+                 \( -name 'test_renderer' -o -name 'test_renderer.exe' \) 2>/dev/null | head -1)"
+        if [[ -z "$BIN" ]]; then
+          echo "GPU-SKINNING-STATUS: test_renderer not found under tests/; nothing was verified"
+          find tests -name 'test_renderer*' 2>/dev/null | head -5
+          exit 0
+        fi
+        echo "using test_renderer: $BIN"
+        FILTER='GPUSkinningPixelTest.*'
+        # 这一步会真的建后端并光栅化。Linux 上是 Vulkan（lavapipe），因此打开
+        # validation layer：像素不对时 layer 能把 barrier / layout / 生命周期
+        # 问题指名报出，而不是只留一个"读回全 0"。
+        if [[ "${{ runner.os }}" == "Linux" ]]; then
+          out=$(xvfb-run -a -s "-screen 0 1280x800x24" \
+            env LIBGL_ALWAYS_SOFTWARE=1 XDG_SESSION_TYPE=x11 \
+                ENGINE_VULKAN_VALIDATION=1 ENGINE_VULKAN_SYNC_VALIDATION=1 \
+            "$BIN" --gtest_filter="$FILTER" 2>&1) || true
+        else
+          out=$("$BIN" --gtest_filter="$FILTER" 2>&1) || true
+        fi
+        # 保留两类行：用例结论，以及用例自己打印的实测数字（后端名、每个姿势的
+        # 分带计数）。此前只保留第一类，于是日志只说「ran for real」却不给出
+        # 是哪个后端、每条带多少亮像素 —— 结论成立但不可复核。
+        echo "$out" | grep -E '\[  SKIPPED \]|\[       OK \]|\[  FAILED  \]|DID NOT RUN|tests? from|\[skin-pixel\]|bind pose \(|moved pose:|product path:' || true
+        # 只数带 "(N ms)" 的逐用例行；gtest 结尾的清单行没有时长，会被重复计数。
+        # 用 wc -l 而不是 grep -c：grep 无匹配时退出码为 1，在 pipefail 下会中断本步，
+        # 而"0 个用例执行"恰恰是最需要正常报出来的一种情况。
+        ok_cases=$(grep -E '^\[       OK \].*\([0-9]+ ms\)$' <<<"$out" | wc -l | tr -d ' ' || true)
+        skip_cases=$(grep -E '^\[  SKIPPED \].*\([0-9]+ ms\)$' <<<"$out" | wc -l | tr -d ' ' || true)
+        if grep -q '\[  FAILED  \]' <<<"$out"; then
+          echo "GPU-SKINNING-STATUS: FAILED (see output above)."
+          exit 1
+        elif grep -q 'DID NOT RUN' <<<"$out"; then
+          echo "GPU-SKINNING-STATUS: NOT VERIFIED on this runner (explicit skip above)."
+          echo "GPU-SKINNING-STATUS: no backend could rasterise the rig here; see both attempts above."
+        elif [[ "$ok_cases" -eq 0 ]]; then
+          # 一个用例都没执行时**不能**说 "ran for real"：那正是本项目文档反复警告的
+          # 假绿 —— 绿色的对勾底下什么都没验证。
+          echo "GPU-SKINNING-STATUS: NOT VERIFIED on this runner (0 cases executed, ${skip_cases} skipped)."
+          grep -E '^\[  SKIPPED \].*\([0-9]+ ms\)$' <<<"$out" | sed 's/^/GPU-SKINNING-SKIPPED-CASE: /' || true
+        else
+          echo "GPU-SKINNING-STATUS: ran for real on this runner (${ok_cases} case(s) executed, ${skip_cases} skipped)."
+          # 跳过的用例逐条点名，不让「4 个里有 1 个没跑」只体现成一个数字。
+          grep -E '^\[  SKIPPED \].*\([0-9]+ ms\)$' <<<"$out" | sed 's/^/GPU-SKINNING-SKIPPED-CASE: /' || true
         fi
 
     - name: Upload HRC test receipt
@@ -369,16 +751,21 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Install GLFW and Xvfb
+      - name: Install GLFW, Xvfb and the software Vulkan stack
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
-            build-essential libglfw3-dev xvfb mesa-utils
+            build-essential libglfw3-dev xvfb mesa-utils \
+            mesa-vulkan-drivers libvulkan1 libvulkan-dev vulkan-tools glslang-tools
 
-      - name: Record the Mesa stack actually installed
+      - name: Record the Mesa and Vulkan stack actually installed
         run: |
           echo "Mesa packages:"
           dpkg -l | grep -Ei 'mesa|libgl1-mesa' | awk '{print "  " $2, $3}'
+          echo "Vulkan ICDs:"
+          ls -1 /usr/share/vulkan/icd.d/ 2>&1 | sed 's/^/  /'
+          echo "Mesa DRI drivers:"
+          ls -1 /usr/lib/x86_64-linux-gnu/dri/ 2>&1 | sed 's/^/  /'
 
       - name: Build the probe
         run: |
@@ -397,9 +784,294 @@ jobs:
             env LIBGL_ALWAYS_SOFTWARE=1 XDG_SESSION_TYPE=x11 \
             "$RUNNER_TEMP/glprobe" 2>&1 | tee "$RUNNER_TEMP/probe-default.txt"
 
+      # 引擎要求 OpenGL 4.6，而 llvmpipe 最高只给 4.5。Zink 是 Mesa 的
+      # OpenGL-on-Vulkan 驱动，跑在 lavapipe（软件 Vulkan）之上时可以提供
+      # 真正的 4.6 core 上下文，从而让 GPU 像素用例在无 GPU 的 runner 上
+      # 真正跑起来。此处只做**取证**：记录两个驱动栈分别能给到什么版本，
+      # 不改任何门禁、不改引擎、不改测试。
+      - name: Confirm lavapipe is a usable Vulkan device
+        run: |
+          {
+            echo "=== vulkan loader present? ==="
+            ldconfig -p | grep -i vulkan || echo "  (no libvulkan in ldconfig)"
+            echo "=== lvp ICD contents ==="
+            ls -1 /usr/share/vulkan/icd.d/lvp_icd*.json 2>&1 | while read -r f; do
+              echo "  $f"; cat "$f"; done
+            echo "=== lavapipe shared object present? ==="
+            ls -1 /usr/lib/x86_64-linux-gnu/libvulkan_lvp.so 2>&1 | sed 's/^/  /'
+            echo "=== vulkaninfo --summary ==="
+            vulkaninfo --summary 2>&1 || echo "  (vulkaninfo failed rc=$?)"
+          } | tee "$RUNNER_TEMP/vulkaninfo.txt"
+
+      # 引擎把 OpenGL 4.6 作为产品承诺，而 runner 的 llvmpipe 最高 4.5、
+      # Zink 在 lavapipe 上无法初始化，于是 headless GPU 验证只剩 Vulkan 一路。
+      # 投入前必须先测环境侧是否真的可行，而不是假设。此探针不链接引擎，
+      # 只测：实例、物理设备、graphics 队列族、颜色附件格式、逻辑设备创建。
+      - name: Probe whether lavapipe can host offscreen Vulkan rendering
+        run: |
+          LAVAPIPE_ICD="$(ls -1 /usr/share/vulkan/icd.d/lvp_icd*.json 2>/dev/null | head -1)"
+          OUT="$RUNNER_TEMP/probe-vulkan-lavapipe.txt"
+          if [[ -z "$LAVAPIPE_ICD" ]]; then
+            echo "lavapipe ICD not found; Vulkan probe cannot run" | tee "$OUT"
+            exit 0
+          fi
+          g++ -std=c++17 -O1 tools/vk_capability_probe.cpp -o "$RUNNER_TEMP/vkprobe" -lvulkan
+          # 不能写成 `probe | tee`：管道下退出码取自 tee，探针崩溃会被吞掉，
+          # 而且 stdout 是块缓冲，段错误时缓冲区丢失——日志与产物都会是 0 字节，
+          # 看起来像"成功但无输出"。这里重定向落盘，再单独取退出码。
+          PROBE_RC=0
+          env VK_DRIVER_FILES="$LAVAPIPE_ICD" VK_ICD_FILENAMES="$LAVAPIPE_ICD" \
+            stdbuf -o0 -e0 "$RUNNER_TEMP/vkprobe" > "$OUT" 2>&1 || PROBE_RC=$?
+          cat "$OUT"
+          echo "vkprobe exit = $PROBE_RC" | tee -a "$OUT"
+          if [[ "$PROBE_RC" -ne 0 ]]; then
+            echo "vkprobe did not succeed (exit $PROBE_RC)"
+          fi
+
+      # 设备可用 ≠ 能画出东西。上一支只到逻辑设备创建为止；这一支补上
+      # image / render pass / framebuffer / draw / copy-to-buffer / map 全链路，
+      # 并用像素断言收尾：clear 为黑，片元着色器输出固定色，
+      # 中心像素若等于该色，说明光栅化与回读都真实发生。
+      # 着色器用 printf 写入而非 heredoc —— heredoc 结束标记必须顶格，
+      # 会破坏 YAML 块标量的缩进。
+      - name: Rasterise a triangle offscreen on lavapipe and read it back
+        run: |
+          LAVAPIPE_ICD="$(ls -1 /usr/share/vulkan/icd.d/lvp_icd*.json 2>/dev/null | head -1)"
+          OUT="$RUNNER_TEMP/probe-vk-offscreen.txt"
+          if [[ -z "$LAVAPIPE_ICD" ]]; then
+            echo "lavapipe ICD not found; offscreen probe cannot run" | tee "$OUT"
+            exit 0
+          fi
+          printf "%s\n" "#version 450" \
+            "void main() {" \
+            "  vec2 p = vec2((gl_VertexIndex << 1) & 2, gl_VertexIndex & 2);" \
+            "  gl_Position = vec4(p * 2.0 - 1.0, 0.0, 1.0);" \
+            "}" > "$RUNNER_TEMP/probe.vert"
+          printf "%s\n" "#version 450" \
+            "layout(location = 0) out vec4 outColor;" \
+            "void main() { outColor = vec4(0.25, 0.5, 0.75, 1.0); }" > "$RUNNER_TEMP/probe.frag"
+          glslangValidator -V "$RUNNER_TEMP/probe.vert" -o "$RUNNER_TEMP/probe.vert.spv"
+          glslangValidator -V "$RUNNER_TEMP/probe.frag" -o "$RUNNER_TEMP/probe.frag.spv"
+          g++ -std=c++17 -O1 tools/vk_offscreen_probe.cpp -o "$RUNNER_TEMP/vkoffscreen" -lvulkan
+          RC=0
+          env VK_DRIVER_FILES="$LAVAPIPE_ICD" VK_ICD_FILENAMES="$LAVAPIPE_ICD" \
+            stdbuf -o0 -e0 "$RUNNER_TEMP/vkoffscreen" \
+              "$RUNNER_TEMP/probe.vert.spv" "$RUNNER_TEMP/probe.frag.spv" \
+              > "$OUT" 2>&1 || RC=$?
+          cat "$OUT"
+          echo "vkoffscreen exit = $RC" | tee -a "$OUT"
+          exit 0
+      - name: Probe under Xvfb with Zink and no ICD restriction
+        run: |
+          xvfb-run -a -s "-screen 0 1280x800x24" \
+            env MESA_LOADER_DRIVER_OVERRIDE=zink \
+                XDG_SESSION_TYPE=x11 \
+            "$RUNNER_TEMP/glprobe" 2>&1 | tee "$RUNNER_TEMP/probe-zink-defaulticd.txt"
+
+      - name: Probe under Xvfb with Zink on lavapipe
+        run: |
+          LAVAPIPE_ICD="$(ls -1 /usr/share/vulkan/icd.d/lvp_icd*.json 2>/dev/null | head -1)"
+          echo "lavapipe ICD = ${LAVAPIPE_ICD:-<not found>}"
+          if [[ -z "$LAVAPIPE_ICD" ]]; then
+            echo "lavapipe ICD not found; Zink cannot be exercised" \
+              | tee "$RUNNER_TEMP/probe-zink-lavapipe.txt"
+            exit 0
+          fi
+          xvfb-run -a -s "-screen 0 1280x800x24" \
+            env MESA_LOADER_DRIVER_OVERRIDE=zink \
+                VK_DRIVER_FILES="$LAVAPIPE_ICD" \
+                VK_ICD_FILENAMES="$LAVAPIPE_ICD" \
+                LP_NUM_THREADS=4 \
+                XDG_SESSION_TYPE=x11 \
+            "$RUNNER_TEMP/glprobe" 2>&1 | tee "$RUNNER_TEMP/probe-zink-lavapipe.txt"
+
+      - name: Probe under Xvfb with Zink and LIBGL_KOPPER_DRI2
+        run: |
+          LAVAPIPE_ICD="$(ls -1 /usr/share/vulkan/icd.d/lvp_icd*.json 2>/dev/null | head -1)"
+          if [[ -z "$LAVAPIPE_ICD" ]]; then
+            echo "lavapipe ICD not found; skipping kopper variant" \
+              | tee "$RUNNER_TEMP/probe-zink-kopper.txt"
+            exit 0
+          fi
+          xvfb-run -a -s "-screen 0 1280x800x24" \
+            env MESA_LOADER_DRIVER_OVERRIDE=zink \
+                LIBGL_KOPPER_DRI2=1 \
+                VK_DRIVER_FILES="$LAVAPIPE_ICD" \
+                VK_ICD_FILENAMES="$LAVAPIPE_ICD" \
+                XDG_SESSION_TYPE=x11 \
+            "$RUNNER_TEMP/glprobe" 2>&1 | tee "$RUNNER_TEMP/probe-zink-kopper.txt"
+
       - name: Upload probe output
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: GL-capability-probe-${{ github.sha }}
           path: ${{ runner.temp }}/probe-*.txt
+
+  # ── RenderTest 链接失败取证 ──
+  #
+  # 独立 job，不在 build 矩阵内：RenderTest 链接失败时 build job 会中止，
+  # 而本 job 必须仍能采集证据。已知失败现象：
+  #   undefined reference to `typeinfo for JPH::DebugRenderer`
+  # GitHub 展示日志会截断该行、丢失引用者 object 文件名，故此处采集原始证据。
+  #
+  # 本 job 只读取构建产物并运行 nm / make，不修改任何源码、宏、Jolt 选项或
+  # 构建门禁；不触发 main 工作流的 dispatch。
+  jolt-link-diagnose:
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+          fetch-depth: 0
+
+      - name: Install Linux build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libx11-dev libxrandr-dev libxinerama-dev libxcursor-dev libxi-dev \
+            libgl1-mesa-dev libgl1-mesa-dri libwayland-dev wayland-protocols \
+            libxkbcommon-dev xvfb pkg-config \
+            libvulkan1 libvulkan-dev mesa-vulkan-drivers
+
+      - name: Configure and build until RenderTest
+        id: build
+        continue-on-error: true
+        run: |
+          cmake -B build -DCMAKE_CXX_COMPILER=g++ -DCMAKE_C_COMPILER=gcc \
+            -DCMAKE_BUILD_TYPE=Release -DENABLE_TESTS=ON -DENABLE_ASAN=OFF \
+            -Wno-dev -S "${{ github.workspace }}" > cfg.log 2>&1 \
+            || { echo "=== CONFIGURE FAILED ==="; tail -30 cfg.log; exit 1; }
+          cmake --build build -j2 > build.log 2>&1 || true
+          echo "--- last 30 lines of build output ---"
+          tail -30 build.log
+          grep -n 'undefined reference' build.log || echo "no undefined reference found"
+
+      - name: Collect link and symbol evidence
+        if: always()
+        shell: bash
+        run: |
+          set +e
+          OUT="$RUNNER_TEMP/jolt-evidence"
+          mkdir -p "$OUT"
+          cd build || exit 0
+
+          echo "===== 1. RenderTest link command ====="
+          f=$(find . -path '*RenderTest.dir/link.txt' | head -1)
+          if [ -n "$f" ]; then cat "$f" | tee "$OUT/rendertest_link.txt"; else echo "link.txt NOT FOUND"; fi
+
+          echo "===== 2. JPH_DEBUG_RENDERER actual macro state ====="
+          for t in RenderTest EngineCore Jolt; do
+            f=$(find . -path "*${t}.dir/flags.make" | head -1)
+            echo "--- $t ($f) ---"
+            if [ -n "$f" ]; then grep -E '^CXX_DEFINES' "$f" | tee -a "$OUT/macros.txt"; else echo "flags.make NOT FOUND for $t"; fi
+          done
+
+          echo "===== 3. does Jolt DebugRenderer.cpp.o define the typeinfo? ====="
+          o=$(find . -name 'DebugRenderer.cpp.o' | head -1)
+          echo "object: ${o:-<not built>}"
+          if [ -n "$o" ]; then
+            nm -C "$o" > "$OUT/jolt_dr_nm.txt" 2>&1
+            grep -E 'typeinfo for JPH::DebugRenderer|vtable for JPH::DebugRenderer' "$OUT/jolt_dr_nm.txt" \
+              || echo "  -> NO typeinfo/vtable for JPH::DebugRenderer in this object"
+          fi
+
+          echo "===== 4. WHO requires the undefined typeinfo? ====="
+          found=0
+          for o in $(find . -name '*.o'); do
+            if nm -C "$o" 2>/dev/null | grep -q 'U .*typeinfo for JPH::DebugRenderer'; then
+              echo "  REFERENCES IT: $o"
+              nm -C "$o" 2>/dev/null | grep 'typeinfo for JPH::DebugRenderer' | sed 's/^/      /'
+              found=1
+            fi
+          done
+          [ "$found" -eq 0 ] && echo "  -> no object carries the undefined reference"
+
+          echo "===== 5. does libJolt.a carry it? ====="
+          la=$(find . -name 'libJolt.a' | head -1)
+          echo "archive: ${la:-<not found>}"
+          if [ -n "$la" ]; then
+            nm -C "$la" 2>/dev/null | grep -E 'typeinfo for JPH::DebugRenderer' | head -5 | tee "$OUT/libjolt_nm.txt" \
+              || echo "  -> libJolt.a has NO typeinfo for JPH::DebugRenderer"
+          fi
+
+          echo "===== 6. engine JoltDebugRenderer.cpp.o ====="
+          o2=$(find . -path '*EngineCore.dir*' -name 'JoltDebugRenderer.cpp.o' | head -1)
+          echo "object: ${o2:-<not built>}"
+          if [ -n "$o2" ]; then
+            nm -C "$o2" 2>&1 | grep -E 'typeinfo for JPH::DebugRenderer|typeinfo for Engine::JoltDebugRenderer' \
+              || echo "  -> no JPH::DebugRenderer typeinfo here"
+          fi
+
+          cd "$RUNNER_TEMP" || exit 0
+          tar czf jolt-evidence.tar.gz jolt-evidence 2>/dev/null
+          echo "===== archive contents ====="
+          tar tzf jolt-evidence.tar.gz
+
+      - name: Upload Jolt link evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: Jolt-link-evidence-${{ github.sha }}
+          path: ${{ runner.temp }}/jolt-evidence.tar.gz
+          if-no-files-found: warn
+# ── Vulkan 后端编译取证 ──
+  #
+  # 主构建 job 从未安装 libvulkan-dev，因此 find_package(Vulkan) 一直失败，
+  # "Vulkan SDK not found" 使 engine/src/Vulkan/ 的 15 个文件**从未被编译过**。
+  # 在给离屏设施接线之前，必须先知道这批代码能否编译——但不能拿主构建去试错。
+  # 本 job 独立、continue-on-error、always 上传日志，只回答"能否编译"。
+  vulkan-backend-compile:
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Install build dependencies including Vulkan headers
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            build-essential libx11-dev libxrandr-dev libxinerama-dev libxcursor-dev libxi-dev \
+            libgl1-mesa-dev libgl1-mesa-dri libwayland-dev wayland-protocols \
+            libxkbcommon-dev xvfb pkg-config \
+            libvulkan1 libvulkan-dev mesa-vulkan-drivers
+
+      - name: Configure with Vulkan enabled
+        run: |
+          cmake -B build -DCMAKE_BUILD_TYPE=Release -DENABLE_TESTS=OFF \
+                -DENABLE_ASAN=OFF -Wno-dev -S . 2>&1 | tee vulkan-cfg.log
+          echo "--- Vulkan lines from configure ---"
+          grep -iE "vulkan" vulkan-cfg.log | sed 's/^/  /' || echo "  (no Vulkan lines)"
+
+      - name: Compile only the Vulkan backend objects
+        continue-on-error: true
+        run: |
+          # 只编译 src/Vulkan/ 下的目标文件：全量引擎构建会超出本 job 的时限
+          # （实测被 runner SIGTERM，exit 143），而这里要回答的问题只与 Vulkan 有关。
+          set +e
+          RC=0
+          for src in engine/src/Vulkan/*.cpp; do
+            base="$(basename "$src")"
+            obj="engine/CMakeFiles/EngineCore.dir/src/Vulkan/${base}.o"
+            make -C build -f engine/CMakeFiles/EngineCore.dir/build.make "$obj" \
+              >> vulkan-build.log 2>&1 || RC=1
+          done
+          echo "compile-all-objects rc = $RC"
+          echo "--- errors, if any ---"
+          grep -E "error:" vulkan-build.log | head -30 | sed 's/^/  /' || echo "  (none)"
+          echo "--- objects attempted ---"
+          ls engine/src/Vulkan/*.cpp | wc -l
+
+      - name: Upload Vulkan compile evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: vulkan-compile-${{ github.sha }}
+          path: |
+            vulkan-cfg.log
+            vulkan-build.log
+          if-no-files-found: warn

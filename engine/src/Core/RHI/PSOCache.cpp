@@ -14,7 +14,7 @@ namespace {
 namespace Engine {
 namespace RHI {
 
-    IRHIPipelineState* PSOCache::GetOrCreate(IRHIDevice& device, const GraphicsPSODesc& desc) {
+    std::shared_ptr<IRHIPipelineState> PSOCache::GetOrCreate(IRHIDevice& device, const GraphicsPSODesc& desc) {
         uint64_t hash = desc.GetHash();
 
         {
@@ -27,7 +27,7 @@ namespace RHI {
         }
 
         m_Misses++;
-        auto* pso = device.CreateGraphicsPSO(desc);
+        auto pso = device.CreateGraphicsPSO(desc);
         if (!pso) {
             s_Log.Error("Failed to create Graphics PSO (hash={})", hash);
             return nullptr;
@@ -43,7 +43,7 @@ namespace RHI {
         return pso;
     }
 
-    IRHIPipelineState* PSOCache::GetOrCreate(IRHIDevice& device, const ComputePSODesc& desc) {
+    std::shared_ptr<IRHIPipelineState> PSOCache::GetOrCreate(IRHIDevice& device, const ComputePSODesc& desc) {
         uint64_t hash = desc.GetHash();
 
         {
@@ -56,7 +56,7 @@ namespace RHI {
         }
 
         m_Misses++;
-        auto* pso = device.CreateComputePSO(desc);
+        auto pso = device.CreateComputePSO(desc);
         if (!pso) {
             s_Log.Error("Failed to create Compute PSO (hash={})", hash);
             return nullptr;

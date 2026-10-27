@@ -132,7 +132,18 @@ TEST(FileSystemTest, NormalizeIsPurelyLexicalAndDoesNotRequireExistence)
 
 TEST(FileSystemTest, IsAbsoluteDistinguishesDriveFromRelative)
 {
+    // 什么是绝对路径由平台定义：Windows 认盘符，POSIX 认前导 '/'。
+    // 因此用**本平台**的绝对写法去验证“能被认成绝对”，再用各平台一致的
+    // 相对写法验证“被认成相对”。原先固定写 "C:/x/y.txt" 并期望为真，
+    // 在 Linux 上是错的——那里它只是一个名字里带冒号的相对路径。
+#ifdef _WIN32
     EXPECT_TRUE(FileSystem::IsAbsolute("C:/x/y.txt"));
+#else
+    EXPECT_TRUE(FileSystem::IsAbsolute("/x/y.txt"));
+    // 非 Windows 上，Windows 盘符写法必须被判为相对，否则会把资产路径
+    // 解析到错误位置。
+    EXPECT_FALSE(FileSystem::IsAbsolute("C:/x/y.txt"));
+#endif
     EXPECT_FALSE(FileSystem::IsAbsolute("x/y.txt"));
     EXPECT_FALSE(FileSystem::IsAbsolute("./x.txt"));
     EXPECT_FALSE(FileSystem::IsAbsolute(""));

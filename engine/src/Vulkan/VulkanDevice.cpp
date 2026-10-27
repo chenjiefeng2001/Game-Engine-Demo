@@ -10,22 +10,98 @@
 #include "Engine/Vulkan/VulkanFrameResource.h"
 #include "Engine/Vulkan/VulkanPipelineLayoutCache.h"
 #include "Engine/Vulkan/VulkanDeferredDeletion.h"
+#include "Engine/Vulkan/ShaderRegistry.h"
 #include <cstdio>
 #include <cstdlib>
+#include <cstring>
 #include <vector>
 #include <set>
 #include <mutex>
 #define NOMINMAX
+// Win32 只用于**带窗口的呈现路径**（surface 创建）。headless 离屏渲染不需要它，
+// 而此前这两个头文件是无条件包含的 —— 于是整个 Vulkan 后端在 Linux 上根本
+// 无法编译（find_package(Vulkan) 一旦成功就会把 src/Vulkan/*.cpp 纳入构建）。
+#ifdef _WIN32
 #include <windows.h>
 #include <vulkan/vulkan_win32.h>
+#else
+#include <dlfcn.h>
+#endif
 
 #define VK_CHECK(x) do { VkResult _e = (x); if (_e) { std::fprintf(stderr, "[Vulkan] Error %d\n", _e); abort(); } } while(0)
 
 namespace Engine {
 namespace RHI {
+namespace {
 
-IRHIPipelineState* CreateGraphicsPipeline(VkDevice, VkPipelineLayout, const GraphicsPSODesc&, VkShaderModule, VkShaderModule);
-IRHIPipelineState* CreateComputePipeline(VkDevice, VkPipelineLayout, VkShaderModule);
+// ── Validation layer 支持 ──────────────────────────────────────────────────
+//
+// 注意边界：validation **抓不到**「忘记设置动态视口」这类问题 —— 未设置动态状态
+// 是合法的 API 调用，layer 不会报错，回读只会得到全 0。
+// 它真正能抓的是本工程的实际风险面：离屏回读路径上的 barrier / image layout 转换、
+// 命令缓冲生命周期、对象销毁次序。像素异常时这些是第二类候选根因。
+//
+// 环境变量（均为可选，缺省关闭，不影响正常构建与发布）：
+//   ENGINE_VULKAN_VALIDATION=1        请求 VK_LAYER_KHRONOS_validation
+//   ENGINE_VULKAN_VALIDATION_VERBOSE=1 额外打印 VERBOSE 级别
+//   ENGINE_VULKAN_SYNC_VALIDATION=1   额外启用同步验证（barrier / 竞争检测）
+
+bool EnvFlag(const char* name) {
+    const char* v = std::getenv(name);
+    return v && v[0] == '1' && v[1] == '\0';
+}
+
+const char* SeverityName(VkDebugUtilsMessageSeverityFlagBitsEXT s) {
+    switch (s) {
+        case VK_DEBUG_UTILS_MESSAGE_SEVERITY_VERBOSE_BIT_EXT: return "VERBOSE";
+        case VK_DEBUG_UTILS_MESSAGE_SEVERITY_INFO_BIT_EXT:    return "INFO";
+        case VK_DEBUG_UTILS_MESSAGE_SEVERITY_WARNING_BIT_EXT: return "WARNING";
+        case VK_DEBUG_UTILS_MESSAGE_SEVERITY_ERROR_BIT_EXT:   return "ERROR";
+        default: return "?";
+    }
+}
+
+VKAPI_ATTR VkBool32 VKAPI_CALL DebugCallback(
+    VkDebugUtilsMessageSeverityFlagBitsEXT severity,
+    VkDebugUtilsMessageTypeFlagsEXT types,
+    const VkDebugUtilsMessengerCallbackDataEXT* data,
+    void*)
+{
+    // 只打引擎关心的两类：状态机/对象生命周期 与 同步。前者噪声太大反而淹没信号。
+    const bool relevant = (types & (VK_DEBUG_UTILS_MESSAGE_TYPE_VALIDATION_BIT_EXT |
+                                     VK_DEBUG_UTILS_MESSAGE_TYPE_PERFORMANCE_BIT_EXT)) != 0;
+    if (!relevant) return VK_FALSE;
+    std::fprintf(stderr, "[Vulkan][validation] %s: %s\n",
+                 SeverityName(severity), data && data->pMessage ? data->pMessage : "(no message)");
+    return VK_FALSE;
+}
+
+bool LayerAvailable(const char* name) {
+    uint32_t count = 0;
+    if (vkEnumerateInstanceLayerProperties(&count, nullptr) != VK_SUCCESS) return false;
+    std::vector<VkLayerProperties> layers(count);
+    if (count && vkEnumerateInstanceLayerProperties(&count, layers.data()) != VK_SUCCESS) return false;
+    for (uint32 i = 0; i < count; ++i) {
+        if (std::strcmp(layers[i].layerName, name) == 0) return true;
+    }
+    return false;
+}
+
+bool InstanceExtensionAvailable(const char* name) {
+    uint32_t count = 0;
+    if (vkEnumerateInstanceExtensionProperties(nullptr, &count, nullptr) != VK_SUCCESS) return false;
+    std::vector<VkExtensionProperties> exts(count);
+    if (count && vkEnumerateInstanceExtensionProperties(nullptr, &count, exts.data()) != VK_SUCCESS) return false;
+    for (uint32 i = 0; i < count; ++i) {
+        if (std::strcmp(exts[i].extensionName, name) == 0) return true;
+    }
+    return false;
+}
+
+}  // namespace
+
+std::shared_ptr<IRHIPipelineState> CreateGraphicsPipeline(VkDevice, VkPipelineLayout, const GraphicsPSODesc&, VkShaderModule, VkShaderModule);
+std::shared_ptr<IRHIPipelineState> CreateComputePipeline(VkDevice, VkPipelineLayout, VkShaderModule);
 
 struct VulkanDevice::Impl {
     VkInstance instance{VK_NULL_HANDLE};
@@ -35,17 +111,34 @@ struct VulkanDevice::Impl {
     VkQueue transferQueue{VK_NULL_HANDLE};
     uint32_t graphicsQueueIndex{UINT32_MAX};
     uint32_t transferQueueIndex{UINT32_MAX};
+    // 设备级命令池：供一次性命令缓冲使用（离屏回读、初始化上传等）。
+    // 帧渲染另有 VulkanFrameContext::commandPool。
+    VkCommandPool cmdPool{VK_NULL_HANDLE};
     VmaAllocator vmaAllocator{VK_NULL_HANDLE};
     VkSwapchainKHR swapChain{VK_NULL_HANDLE};
     VkSurfaceKHR surface{VK_NULL_HANDLE};
+    // 原生窗口句柄：X11 的 Display / Wayland 的 wl_display。必须在 Initialize 之前设置，
+    // 否则非 Windows 上无法创建 surface。
+    NativeWindow nativeWindow{};
     std::vector<VkImage> swapChainImages;
     VulkanFrameContext frameContext;
     VulkanQueue* graphicsQueueWrapper{nullptr};
     VulkanPipelineLayoutCache* pipelineLayoutCache{nullptr};
     VulkanDeferredDeletion* deletionQueue{nullptr};
+      // 描述符池。描述符系统此前整条链都不存在（pool 从未创建），因此
+      // SetConstantBuffer 无法为着色器写入任何 UBO / 纹理描述符。
+      VkDescriptorPool descriptorPool{VK_NULL_HANDLE};
+      // 共享采样器。描述符里的纹理必须有配套 sampler，而命令列表此前没有任何
+      // 采样器来源 —— 这是 SetShaderResource 一直写不出描述符的原因之一。
+      VkSampler sampler{VK_NULL_HANDLE};
     uint32_t uboAlignment{256}; // 默认 256，初始化时从设备获取
     bool initialized{false};
     std::string deviceName;
+
+    // ── 调试 / validation（可选，由环境变量开启）──
+    VkDebugUtilsMessengerEXT debugMessenger{VK_NULL_HANDLE};
+    bool enableValidation{false};
+    bool syncValidation{false};
     ~Impl() {
         delete pipelineLayoutCache;
         delete graphicsQueueWrapper;
@@ -105,6 +198,111 @@ QueueType VulkanQueue::GetType() const noexcept { return m_Impl->type; }
 VulkanDevice::VulkanDevice() : m_Impl(std::make_unique<Impl>()) {}
 VulkanDevice::~VulkanDevice() { Shutdown(); }
 
+void VulkanDevice::SetNativeWindow(const NativeWindow& win) noexcept {
+    m_Impl->nativeWindow = win;
+}
+
+const NativeWindow& VulkanDevice::GetNativeWindow() const noexcept {
+    return m_Impl->nativeWindow;
+}
+
+VkSampler VulkanDevice::GetSampler() const noexcept {
+    return m_Impl->sampler;
+}
+
+bool VulkanDevice::ReadbackTexture(IRHITexture* texture, std::vector<uint8_t>& out) noexcept {
+    // 此前引擎无法回读任意纹理：只有 VulkanOffscreenTarget 能读回它自己那一张。
+    // 于是任何「渲染到自建纹理再验证」的路径都做不了 —— 而这正是深度测试、
+    // 离屏渲染等验证的前提。
+    auto* tex = static_cast<VulkanTexture*>(texture);
+    if (!tex || tex->GetVkImage() == VK_NULL_HANDLE) return false;
+    const uint32 w = tex->GetWidth(), h = tex->GetHeight();
+    if (w == 0 || h == 0) return false;
+    const VkDeviceSize bytes = static_cast<VkDeviceSize>(w) * h * 4;
+
+    VkBufferCreateInfo bi{VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO};
+    bi.size = bytes;
+    bi.usage = VK_BUFFER_USAGE_TRANSFER_DST_BIT;
+    bi.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
+    VkBuffer staging = VK_NULL_HANDLE; VmaAllocation sAlloc = VK_NULL_HANDLE;
+    VmaAllocationInfo sInfo{};
+    VmaAllocationCreateInfo sai{};
+    sai.usage = VMA_MEMORY_USAGE_CPU_ONLY;
+    sai.flags = VMA_ALLOCATION_CREATE_MAPPED_BIT | VMA_ALLOCATION_CREATE_HOST_ACCESS_RANDOM_BIT;
+    if (vmaCreateBuffer(m_Impl->vmaAllocator, &bi, &sai, &staging, &sAlloc, &sInfo) != VK_SUCCESS ||
+        !sInfo.pMappedData)
+        return false;
+
+    bool ok = false;
+    VkCommandPool pool = GetOrCreateThreadCommandPool();
+    VkCommandBufferAllocateInfo ai{VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO};
+    ai.commandPool = pool; ai.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY; ai.commandBufferCount = 1;
+    VkCommandBuffer cmd = VK_NULL_HANDLE;
+    if (vkAllocateCommandBuffers(m_Impl->device, &ai, &cmd) == VK_SUCCESS) {
+        VkCommandBufferBeginInfo cbi{VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO};
+        cbi.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
+        vkBeginCommandBuffer(cmd, &cbi);
+        VkImageMemoryBarrier b{VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER};
+        b.srcAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT | VK_ACCESS_SHADER_READ_BIT;
+        b.dstAccessMask = VK_ACCESS_TRANSFER_READ_BIT;
+        b.oldLayout = tex->GetLayout();
+        b.newLayout = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;
+        b.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+        b.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+        b.image = tex->GetVkImage();
+        b.subresourceRange = { VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1 };
+        vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT |
+                                 VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT,
+                             VK_PIPELINE_STAGE_TRANSFER_BIT, 0,
+                             0, nullptr, 0, nullptr, 1, &b);
+        VkBufferImageCopy copy{};
+        copy.imageSubresource = { VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1 };
+        copy.imageExtent = { w, h, 1 };
+        vkCmdCopyImageToBuffer(cmd, tex->GetVkImage(), VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+                               staging, 1, &copy);
+        // 回读会改变图像布局，读回后交还给调用方继续使用：留在 TRANSFER_SRC 是不安全的。
+        VkImageMemoryBarrier back = b;
+        back.srcAccessMask = VK_ACCESS_TRANSFER_READ_BIT;
+        back.dstAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT | VK_ACCESS_SHADER_READ_BIT;
+        back.oldLayout = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;
+        back.newLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
+        vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_TRANSFER_BIT,
+                             VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT |
+                             VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT, 0,
+                             0, nullptr, 0, nullptr, 1, &back);
+        vkEndCommandBuffer(cmd);
+        VkSubmitInfo si{VK_STRUCTURE_TYPE_SUBMIT_INFO};
+        si.commandBufferCount = 1; si.pCommandBuffers = &cmd;
+        VkFenceCreateInfo fci{VK_STRUCTURE_TYPE_FENCE_CREATE_INFO};
+        VkFence fence = VK_NULL_HANDLE;
+        vkCreateFence(m_Impl->device, &fci, nullptr, &fence);
+        vkQueueSubmit(GetGraphicsQueue(), 1, &si, fence);
+        vkWaitForFences(m_Impl->device, 1, &fence, VK_TRUE, UINT64_MAX);
+        vkDestroyFence(m_Impl->device, fence, nullptr);
+        vkFreeCommandBuffers(m_Impl->device, pool, 1, &cmd);
+        tex->SetLayout(VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL);
+        out.assign(static_cast<uint8_t*>(sInfo.pMappedData),
+                   static_cast<uint8_t*>(sInfo.pMappedData) + static_cast<size_t>(bytes));
+        ok = true;
+    }
+    vmaDestroyBuffer(m_Impl->vmaAllocator, staging, sAlloc);
+    return ok;
+}
+
+VkDescriptorSet VulkanDevice::AllocateDescriptorSet(VkDescriptorSetLayout layout) noexcept {
+    if (layout == VK_NULL_HANDLE || m_Impl->descriptorPool == VK_NULL_HANDLE) return VK_NULL_HANDLE;
+    VkDescriptorSetAllocateInfo ai{VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO};
+    ai.descriptorPool = m_Impl->descriptorPool;
+    ai.descriptorSetCount = 1;
+    ai.pSetLayouts = &layout;
+    VkDescriptorSet set = VK_NULL_HANDLE;
+    if (vkAllocateDescriptorSets(m_Impl->device, &ai, &set) != VK_SUCCESS) {
+        std::fprintf(stderr, "[Vulkan] vkAllocateDescriptorSets failed (pool exhausted?)\n");
+        return VK_NULL_HANDLE;
+    }
+    return set;
+}
+
 bool VulkanDevice::Initialize(void* windowHandle, uint32_t width, uint32_t height) {
     if (m_Impl->initialized) return true;
     if (!VulkanLoader::Initialize()) return false;
@@ -117,17 +315,119 @@ bool VulkanDevice::Initialize(void* windowHandle, uint32_t width, uint32_t heigh
     std::vector<const char*> instanceExts;
     if (windowHandle) {
         instanceExts.push_back(VK_KHR_SURFACE_EXTENSION_NAME);
+#ifdef _WIN32
         instanceExts.push_back("VK_KHR_win32_surface");
+#else
+        // XCB / Xlib / Wayland 三者按可用性择一。必须在 vkCreateInstance 之前决定，
+        // 此刻还没有 instance 可查询，因此退而查询**全局**实例扩展列表。
+        if (const char* platformExt = GetAvailablePlatformSurfaceExtension(VK_NULL_HANDLE, m_Impl->nativeWindow.platform)) {
+            instanceExts.push_back(platformExt);
+        }
+#endif
     }
     VkInstanceCreateInfo ici{VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO};
     ici.pApplicationInfo = &app;
+    // ppEnabledExtensionNames / enabledExtensionCount **不能**在这里赋值：下面的
+    // validation 分支还会往 instanceExts 里 push_back，vector 扩容后先前缓存的
+    // data() 就是悬空指针，vkCreateInstance 会在已释放内存上 strcmp 扩展名而崩溃。
+    // 因此统一在 vkCreateInstance 之前再取一次。
+
+    // ── Validation layer：可选，按环境变量开启 ──
+    // 只有 layer 与 VK_EXT_debug_utils 都真实存在时才请求，否则 vkCreateInstance
+    // 会以 VK_ERROR_LAYER_NOT_PRESENT 直接失败 —— 缺 layer 必须降级而不是报错。
+    std::vector<const char*> instanceLayers;
+    VkValidationFeaturesEXT validationFeatures{};
+    validationFeatures.sType = VK_STRUCTURE_TYPE_VALIDATION_FEATURES_EXT;
+    if (EnvFlag("ENGINE_VULKAN_VALIDATION")) {
+        const bool hasLayer = LayerAvailable("VK_LAYER_KHRONOS_validation");
+        const bool hasUtils = InstanceExtensionAvailable(VK_EXT_DEBUG_UTILS_EXTENSION_NAME);
+        // VkValidationFeaturesEXT 挂在 VkInstanceCreateInfo::pNext 上，**必须**同时启用
+        // VK_EXT_validation_features 实例扩展，否则 vkCreateInstance 直接失败
+        // （layer 本身存在也救不了）。这一点此前遗漏，表现为 CI 上
+        // 「validation layer enabled」之后紧跟「Failed to create instance」。
+        const bool hasFeatures = InstanceExtensionAvailable(VK_EXT_VALIDATION_FEATURES_EXTENSION_NAME);
+        // 只按 layer + debug_utils 判定是否启用 validation。把 VK_EXT_validation_features
+        // 也当作硬前提，会出现「引擎以为没有 validation、实际 layer 已被 VK_INSTANCE_LAYERS
+        // 强制加载」的错位：WSL 上实测就是层在跑并报出 VUID 违规，而日志写着
+        // "continuing without validation"。该扩展只用于逐项开关（同步校验），
+        // 缺失时降级即可，不该让整个 validation 失效。
+        if (hasLayer && hasUtils) {
+            instanceLayers.push_back("VK_LAYER_KHRONOS_validation");
+            instanceExts.push_back(VK_EXT_DEBUG_UTILS_EXTENSION_NAME);
+            m_Impl->enableValidation = true;
+
+            if (hasFeatures) {
+                instanceExts.push_back(VK_EXT_VALIDATION_FEATURES_EXTENSION_NAME);
+                VkValidationFeatureEnableEXT enables[2]{};
+                uint32_t enableCount = 0;
+                enables[enableCount++] = VK_VALIDATION_FEATURE_ENABLE_BEST_PRACTICES_EXT;
+                if (EnvFlag("ENGINE_VULKAN_SYNC_VALIDATION")) {
+                    enables[enableCount++] = VK_VALIDATION_FEATURE_ENABLE_SYNCHRONIZATION_VALIDATION_EXT;
+                }
+                validationFeatures.enabledValidationFeatureCount = enableCount;
+                validationFeatures.pEnabledValidationFeatures = enables;
+                ici.pNext = &validationFeatures;
+                m_Impl->syncValidation = EnvFlag("ENGINE_VULKAN_SYNC_VALIDATION");
+            } else {
+                std::fprintf(stderr,
+                             "[Vulkan] validation layer enabled, but %s is not exposed; "
+                             "per-feature toggles (including sync validation) unavailable\n",
+                             VK_EXT_VALIDATION_FEATURES_EXTENSION_NAME);
+                m_Impl->syncValidation = false;
+            }
+
+            ici.enabledLayerCount = static_cast<uint32_t>(instanceLayers.size());
+            ici.ppEnabledLayerNames = instanceLayers.data();
+            std::fprintf(stderr, "[Vulkan] validation layer enabled (sync validation: %s)\n",
+                         m_Impl->syncValidation ? "on" : "off");
+        } else {
+            std::fprintf(stderr, "[Vulkan] ENGINE_VULKAN_VALIDATION set but a prerequisite is "
+                                 "missing (layer=%d debug_utils=%d); continuing without validation\n",
+                         hasLayer ? 1 : 0, hasUtils ? 1 : 0);
+        }
+    }
+
+    // 所有 push_back 都已完成，此刻取 data() 才安全（见上方注释）。
     ici.enabledExtensionCount = static_cast<uint32_t>(instanceExts.size());
-    ici.ppEnabledExtensionNames = instanceExts.data();
-    if (vkCreateInstance(&ici, nullptr, &m_Impl->instance) != VK_SUCCESS) {
-        std::fprintf(stderr, "[Vulkan] Failed to create instance\n");
+    ici.ppEnabledExtensionNames = instanceExts.empty() ? nullptr : instanceExts.data();
+    if (instanceLayers.empty()) {
+        ici.enabledLayerCount = 0;
+        ici.ppEnabledLayerNames = nullptr;
+    }
+
+    const VkResult instanceResult = vkCreateInstance(&ici, nullptr, &m_Impl->instance);
+    if (instanceResult != VK_SUCCESS) {
+        // 此前只打印固定文案，排查时无法区分是缺 layer 还是扩展不匹配。
+        std::fprintf(stderr, "[Vulkan] Failed to create instance (VkResult=%d, %zu layer(s), %zu ext(s))\n",
+                     static_cast<int>(instanceResult), ici.enabledLayerCount, ici.enabledExtensionCount);
         return false;
     }
     VulkanLoader::LoadInstance(m_Impl->instance);
+
+    // ── Debug messenger：必须在实例创建之后、任何其它 Vulkan 调用之前挂上，
+    //    否则 layer 已经产生的消息无处可去。
+    if (m_Impl->enableValidation) {
+        auto create = reinterpret_cast<PFN_vkCreateDebugUtilsMessengerEXT>(
+            vkGetInstanceProcAddr(m_Impl->instance, "vkCreateDebugUtilsMessengerEXT"));
+        if (create) {
+            VkDebugUtilsMessengerCreateInfoEXT dci{VK_STRUCTURE_TYPE_DEBUG_UTILS_MESSENGER_CREATE_INFO_EXT};
+            dci.messageSeverity = EnvFlag("ENGINE_VULKAN_VALIDATION_VERBOSE")
+                ? (VK_DEBUG_UTILS_MESSAGE_SEVERITY_WARNING_BIT_EXT |
+                   VK_DEBUG_UTILS_MESSAGE_SEVERITY_ERROR_BIT_EXT   |
+                   VK_DEBUG_UTILS_MESSAGE_SEVERITY_INFO_BIT_EXT    |
+                   VK_DEBUG_UTILS_MESSAGE_SEVERITY_VERBOSE_BIT_EXT)
+                : (VK_DEBUG_UTILS_MESSAGE_SEVERITY_WARNING_BIT_EXT |
+                   VK_DEBUG_UTILS_MESSAGE_SEVERITY_ERROR_BIT_EXT);
+            dci.messageType = VK_DEBUG_UTILS_MESSAGE_TYPE_GENERAL_BIT_EXT |
+                              VK_DEBUG_UTILS_MESSAGE_TYPE_VALIDATION_BIT_EXT |
+                              VK_DEBUG_UTILS_MESSAGE_TYPE_PERFORMANCE_BIT_EXT;
+            dci.pfnUserCallback = DebugCallback;
+            if (create(m_Impl->instance, &dci, nullptr, &m_Impl->debugMessenger) != VK_SUCCESS) {
+                m_Impl->debugMessenger = VK_NULL_HANDLE;
+                std::fprintf(stderr, "[Vulkan] failed to create debug messenger\n");
+            }
+        }
+    }
 
     uint32_t devCnt = 0;
     vkEnumeratePhysicalDevices(m_Impl->instance, &devCnt, nullptr);
@@ -179,9 +479,28 @@ bool VulkanDevice::Initialize(void* windowHandle, uint32_t width, uint32_t heigh
     vkGetDeviceQueue(m_Impl->device, m_Impl->graphicsQueueIndex, 0, &m_Impl->graphicsQueue);
 
     if (windowHandle) {
+#ifdef _WIN32
         VkWin32SurfaceCreateInfoKHR sci{VK_STRUCTURE_TYPE_WIN32_SURFACE_CREATE_INFO_KHR};
         sci.hinstance = GetModuleHandle(nullptr); sci.hwnd = (HWND)windowHandle;
         vkCreateWin32SurfaceKHR(m_Impl->instance, &sci, nullptr, &m_Impl->surface);
+#else
+        // Linux/macOS：windowHandle 单独一个指针不足以建 surface，需要 Display 或
+        // wl_display。这些句柄必须由调用方经 SetNativeWindow 提供 ——
+        // RHIWindow 在非 Windows 上把 GetHWND() 显式置空，因此这里常常拿不到。
+        NativeWindow native = m_Impl->nativeWindow;
+        native.window = windowHandle;
+        if (native.display) {
+            if (!CreatePlatformSurface(m_Impl->instance, native, &m_Impl->surface)) {
+                std::fprintf(stderr,
+                             "[Vulkan] window handle given but no surface could be created; "
+                             "call SetNativeWindow() with the Display/wl_display before Initialize()\n");
+            }
+        } else {
+            std::fprintf(stderr,
+                         "[Vulkan] window handle given without a display connection; "
+                         "no surface will be created (present path unavailable)\n");
+        }
+#endif
     }
 
     VmaVulkanFunctions vf{};
@@ -207,6 +526,55 @@ bool VulkanDevice::Initialize(void* windowHandle, uint32_t width, uint32_t heigh
     m_Impl->graphicsQueueWrapper->m_Impl->type = QueueType::Graphics;
 
     for (uint32 i = 0; i < kMaxFramesInFlight; ++i) CreateFrameResource(m_Impl->frameContext.frames[i]);
+
+    // 描述符池：每帧若干个 set，够覆盖常见的「每帧重建描述符」用法。
+    // 上限设得保守而明确 —— 池耗尽时 AllocateDescriptorSet 会失败并报错，
+    // 而不是静默地返回一个无效 set。
+    {
+        VkDescriptorPoolSize poolSizes[5]{};
+        const VkDescriptorType types[5] = {
+            VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
+            VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE, VK_DESCRIPTOR_TYPE_SAMPLER,
+            VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER};
+        for (int i = 0; i < 5; ++i) { poolSizes[i].type = types[i]; poolSizes[i].descriptorCount = 256; }
+        VkDescriptorPoolCreateInfo dpCI{VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO};
+        dpCI.maxSets = kMaxFramesInFlight * 64;
+        dpCI.poolSizeCount = 5;
+        dpCI.pPoolSizes = poolSizes;
+        if (vkCreateDescriptorPool(m_Impl->device, &dpCI, nullptr, &m_Impl->descriptorPool) != VK_SUCCESS) {
+            std::fprintf(stderr, "[Vulkan] vkCreateDescriptorPool failed; descriptors unavailable\n");
+            m_Impl->descriptorPool = VK_NULL_HANDLE;
+        }
+    }
+
+    // 共享采样器：线性过滤 + 钳制到边缘，全局一个即可。
+    {
+        VkSamplerCreateInfo si{VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO};
+        si.magFilter = VK_FILTER_LINEAR;
+        si.minFilter = VK_FILTER_LINEAR;
+        si.mipmapMode = VK_SAMPLER_MIPMAP_MODE_LINEAR;
+        si.addressModeU = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
+        si.addressModeV = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
+        si.addressModeW = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
+        si.maxLod = 1.0f;
+        si.borderColor = VK_BORDER_COLOR_INT_OPAQUE_BLACK;
+        if (vkCreateSampler(m_Impl->device, &si, nullptr, &m_Impl->sampler) != VK_SUCCESS)
+            m_Impl->sampler = VK_NULL_HANDLE;
+    }
+
+    // 设备级命令池。一次性命令缓冲（离屏回读等）需要一个可分配的池；
+    // 此前 GetOrCreateThreadCommandPool() 直接返回 VK_NULL_HANDLE，
+    // 使得任何依赖它的路径都无法工作。
+    VkCommandPoolCreateInfo pci{VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO};
+    pci.queueFamilyIndex = m_Impl->graphicsQueueIndex;
+    pci.flags = VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT |
+               VK_COMMAND_POOL_CREATE_TRANSIENT_BIT;
+    if (vkCreateCommandPool(m_Impl->device, &pci, nullptr, &m_Impl->cmdPool) != VK_SUCCESS) {
+        std::fprintf(stderr, "[Vulkan] Failed to create device command pool\n");
+        m_Impl->cmdPool = VK_NULL_HANDLE;
+        return false;
+    }
+
     m_Impl->initialized = true;
     return true;
 }
@@ -247,12 +615,30 @@ void VulkanDevice::Shutdown() {
     // 清理全局 PSO 缓存（确保没有资源引用残留）
     PSOCache::Get().Clear();
     for (uint32 i = 0; i < kMaxFramesInFlight; ++i) DestroyFrameResource(m_Impl->frameContext.frames[i]);
+    if (m_Impl->cmdPool) vkDestroyCommandPool(m_Impl->device, m_Impl->cmdPool, nullptr);
+    m_Impl->cmdPool = VK_NULL_HANDLE;
     if (m_Impl->swapChain) vkDestroySwapchainKHR(m_Impl->device, m_Impl->swapChain, nullptr);
+      if (m_Impl->descriptorPool) {
+          vkDestroyDescriptorPool(m_Impl->device, m_Impl->descriptorPool, nullptr);
+          m_Impl->descriptorPool = VK_NULL_HANDLE;
+      }
+      if (m_Impl->sampler) {
+          vkDestroySampler(m_Impl->device, m_Impl->sampler, nullptr);
+          m_Impl->sampler = VK_NULL_HANDLE;
+      }
     if (m_Impl->surface) vkDestroySurfaceKHR(m_Impl->instance, m_Impl->surface, nullptr);
     // VMA 要求：销毁前所有由它分配的资源必须已释放
     if (m_Impl->vmaAllocator) vmaDestroyAllocator(m_Impl->vmaAllocator);
     m_Impl->vmaAllocator = VK_NULL_HANDLE;
     if (m_Impl->device) vkDestroyDevice(m_Impl->device, nullptr);
+    // messenger 依赖实例，必须在 vkDestroyInstance 之前销毁
+    if (m_Impl->debugMessenger != VK_NULL_HANDLE) {
+        if (auto destroy = reinterpret_cast<PFN_vkDestroyDebugUtilsMessengerEXT>(
+                vkGetInstanceProcAddr(m_Impl->instance, "vkDestroyDebugUtilsMessengerEXT"))) {
+            destroy(m_Impl->instance, m_Impl->debugMessenger, nullptr);
+        }
+        m_Impl->debugMessenger = VK_NULL_HANDLE;
+    }
     if (m_Impl->instance) vkDestroyInstance(m_Impl->instance, nullptr);
     m_Impl->initialized = false;
 }
@@ -266,7 +652,25 @@ std::shared_ptr<IRHIBuffer> VulkanDevice::CreateBuffer(const RHIBufferDesc& desc
     VkBufferCreateInfo bi{VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO};
     bi.size = desc.size; bi.usage = VK_BUFFER_USAGE_VERTEX_BUFFER_BIT | VK_BUFFER_USAGE_INDEX_BUFFER_BIT |
                VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT | VK_BUFFER_USAGE_STORAGE_BUFFER_BIT;
-    VmaAllocationCreateInfo ai{}; ai.usage = VMA_MEMORY_USAGE_AUTO_PREFER_HOST;
+    // VMA 默认**不**映射内存：ari.pMappedData 只会是 nullptr。于是此前
+    //   - initialData 被静默丢弃（顶点/索引上传全部失效）
+    //   - GetMappedPtr() 恒返回 null
+    // 调用方拿到的顶点缓冲里是未初始化数据，光栅化时越界读会直接崩。
+    //
+    // 注意不能用 AUTO_PREFER_HOST：它不保证所选内存类型可映射，VMA 会接受
+    // MAPPED_BIT 却仍返回 nullptr。CPU 可访问的用途必须显式用 CPU_TO_GPU 并
+    // 配一个 HOST_ACCESS 位，否则 VMA 的断言会直接失败。
+    VmaAllocationCreateInfo ai{};
+    const bool cpuAccessible = (desc.memoryUsage == MemoryUsage::CPU_To_GPU ||
+                                desc.memoryUsage == MemoryUsage::GPU_To_CPU ||
+                                desc.memoryUsage == MemoryUsage::CPU_Only);
+    if (desc.initialData != nullptr || cpuAccessible) {
+        ai.usage  = VMA_MEMORY_USAGE_CPU_TO_GPU;
+        ai.flags  = VMA_ALLOCATION_CREATE_MAPPED_BIT |
+                    VMA_ALLOCATION_CREATE_HOST_ACCESS_SEQUENTIAL_WRITE_BIT;
+    } else {
+        ai.usage  = VMA_MEMORY_USAGE_GPU_ONLY;
+    }
     VkBuffer vkBuf; VmaAllocation alloc; VmaAllocationInfo ari;
     if (vmaCreateBuffer(m_Impl->vmaAllocator, &bi, &ai, &vkBuf, &alloc, &ari) != VK_SUCCESS) {
         std::fprintf(stderr, "[Vulkan] CreateBuffer failed\n");
@@ -275,37 +679,260 @@ std::shared_ptr<IRHIBuffer> VulkanDevice::CreateBuffer(const RHIBufferDesc& desc
     buf->SetVkBuffer(vkBuf); buf->SetSize(desc.size);
     buf->SetAllocator(m_Impl->vmaAllocator); // VMA RAII 析构需要
     buf->SetVmaAllocation(alloc); // 【核心修复】保存 VmaAllocation 句柄给 RAII 析构
-    GPUAllocation ga; ga.mappedPtr = ari.pMappedData; buf->SetAllocation(ga);
-    if (desc.initialData && ari.pMappedData) std::memcpy(ari.pMappedData, desc.initialData, desc.size);
+    GPUAllocation ga;
+      ga.size = desc.size; ga.requestedSize = desc.size;
+      ga.mappedPtr = ari.pMappedData; ga.mappedSize = desc.size;
+      // 此前除 mappedPtr 外全部为零值，GetAllocation() 返回的结构体毫无信息量
+      // （size / requestedSize 均为 0，MappedSize() 也会退回 0）。
+      ga.usage = desc.memoryUsage;
+      // strategy 保持默认：AllocationStrategy 描述的是引擎侧分配器（Bump/Buddy 等），
+      // 而 VMA 是后端分配器，没有对应值，填任何一个都是假的。
+      buf->SetAllocation(ga);
+    if (desc.initialData) {
+        if (ari.pMappedData) {
+            std::memcpy(ari.pMappedData, desc.initialData, desc.size);
+        } else {
+            // 静默丢弃会让调用方拿到未初始化的顶点数据，光栅化时才以越界读的形式
+            // 崩在驱动里，极难定位。必须显式报出来。
+            std::fprintf(stderr,
+                         "[Vulkan] CreateBuffer: initialData given (%llu bytes) but the allocation is "
+                         "not host-mapped; upload SKIPPED\n",
+                         static_cast<unsigned long long>(desc.size));
+        }
+    }
     return buf;
 }
 
 std::shared_ptr<IRHITexture> VulkanDevice::CreateTexture(const TextureDesc& desc) {
-    auto tex = std::make_shared<VulkanTexture>();
-    VkImageCreateInfo ii{VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO};
-    ii.imageType = VK_IMAGE_TYPE_2D; ii.format = FormatToVk(desc.format);
-    ii.extent = {desc.width, desc.height, 1}; ii.mipLevels = 1; ii.arrayLayers = 1;
-    ii.samples = VK_SAMPLE_COUNT_1_BIT; ii.tiling = VK_IMAGE_TILING_OPTIMAL;
-    ii.usage = VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT;
-    VkImage vkImg; VmaAllocation alloc;
-    vmaCreateImage(m_Impl->vmaAllocator, &ii, nullptr, &vkImg, &alloc, nullptr);
+auto tex = std::make_shared<VulkanTexture>();
+      VkImageCreateInfo ii{VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO};
+      ii.imageType = VK_IMAGE_TYPE_2D; ii.format = FormatToVk(desc.format);
+      ii.extent = {desc.width, desc.height, 1}; ii.mipLevels = 1; ii.arrayLayers = 1;
+      ii.samples = VK_SAMPLE_COUNT_1_BIT; ii.tiling = VK_IMAGE_TILING_OPTIMAL;
+      // 深度 / 模板格式必须用 DEPTH_STENCIL_ATTACHMENT 用途，且视图 aspect 也要跟着变。
+      // 此前一律 COLOR_ATTACHMENT + COLOR aspect：对 D32_Float 这类格式是非法组合，
+      // 深度附件根本无法使用（命令列表虽接受 desc.depth，却没有可用的 DSV）。
+      const bool isDepth = IsDepthFormat(desc.format);
+      ii.usage = isDepth ? (VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT)
+                         : (VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT);
+      // TRANSFER_SRC 始终加上：ReadbackTexture 需要它。纹理若「有的能读有的不能」，
+      // 验证路径就得先猜创建参数 —— 深度测试这类验证正是卡在这里。
+      ii.usage |= VK_IMAGE_USAGE_TRANSFER_SRC_BIT;
+      // 有初始数据时还需 TRANSFER_DST 走 staging 上传：VK_IMAGE_TILING_OPTIMAL 的
+      // 图像不能被 CPU 直接写入。此前 TextureDesc::initialData 被完全忽略，调用方
+      // 拿到的纹理内容是未定义的。
+      const bool hasUpload = desc.initialData != nullptr;
+      if (hasUpload) ii.usage |= VK_IMAGE_USAGE_TRANSFER_DST_BIT;
+      VkImage vkImg; VmaAllocation alloc; VmaAllocationInfo allocInfo{};
+      // pAllocationCreateInfo 不能为 nullptr：VMA 直接断言它非空。此前这里传的是
+      // nullptr，于是 **CreateTexture 从未成功执行过** —— 只是没有任何验证路径调用它，
+      // 这个断言一直没被触发。
+      VmaAllocationCreateInfo ai{};
+      ai.usage = (desc.memoryUsage == MemoryUsage::CPU_To_GPU ||
+                  desc.memoryUsage == MemoryUsage::CPU_Only)
+                     ? VMA_MEMORY_USAGE_CPU_TO_GPU : VMA_MEMORY_USAGE_GPU_ONLY;
+      if (vmaCreateImage(m_Impl->vmaAllocator, &ii, &ai, &vkImg, &alloc, &allocInfo) != VK_SUCCESS) {
+          std::fprintf(stderr, "[Vulkan] vmaCreateImage failed in CreateTexture\n");
+          return nullptr;
+      }
     tex->SetVkImage(vkImg); tex->SetWidth(desc.width); tex->SetHeight(desc.height); tex->SetFormat(desc.format);
     tex->SetAllocator(m_Impl->vmaAllocator); // VMA RAII 析构需要
     tex->SetAllocation(alloc);
-    return tex;
+
+    // 创建 image view：渲染作用域（vkCmdBeginRendering）绑定的是 view 而非 image。
+    // 此前 CreateTexture 只给 image，view 恒为 VK_NULL_HANDLE，因此通过
+    // IRHITexture* 构造的任何渲染目标都会被跳过 —— 命令列表的渲染路径无法用于离屏。
+    VkImageViewCreateInfo vi{VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO};
+    vi.image = vkImg;
+    vi.viewType = VK_IMAGE_VIEW_TYPE_2D;
+    vi.format = ii.format;
+    vi.subresourceRange = { FormatToAspect(desc.format), 0, 1, 0, 1 };
+    VkImageView view = VK_NULL_HANDLE;
+    if (vkCreateImageView(m_Impl->device, &vi, nullptr, &view) != VK_SUCCESS) {
+        std::fprintf(stderr, "[Vulkan] vkCreateImageView failed in CreateTexture\n");
+        vmaDestroyImage(m_Impl->vmaAllocator, vkImg, alloc);
+        return nullptr;
+    }
+tex->SetVkImageView(view);
+      tex->SetVkDevice(m_Impl->device);
+
+      // 上传初始数据：staging buffer → 一次性命令缓冲 → vkCmdCopyBufferToImage。
+      if (hasUpload) {
+          const VkDeviceSize bytes = static_cast<VkDeviceSize>(desc.width) * desc.height * 4;
+          VkBufferCreateInfo bi{VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO};
+          bi.size = bytes;
+          bi.usage = VK_BUFFER_USAGE_TRANSFER_SRC_BIT;
+          bi.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
+          VkBuffer staging = VK_NULL_HANDLE;
+          VmaAllocation sAlloc = VK_NULL_HANDLE; VmaAllocationInfo sInfo{};
+          VmaAllocationCreateInfo sai{};
+          sai.usage = VMA_MEMORY_USAGE_CPU_ONLY;
+          sai.flags = VMA_ALLOCATION_CREATE_MAPPED_BIT |
+                      VMA_ALLOCATION_CREATE_HOST_ACCESS_SEQUENTIAL_WRITE_BIT;
+          if (vmaCreateBuffer(m_Impl->vmaAllocator, &bi, &sai, &staging, &sAlloc, &sInfo) != VK_SUCCESS ||
+              !sInfo.pMappedData) {
+              std::fprintf(stderr, "[Vulkan] CreateTexture: staging buffer failed\n");
+          } else {
+              std::memcpy(sInfo.pMappedData, desc.initialData, static_cast<size_t>(bytes));
+              VkCommandPool pool = GetOrCreateThreadCommandPool();
+              VkCommandBufferAllocateInfo ai{VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO};
+              ai.commandPool = pool;
+              ai.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
+              ai.commandBufferCount = 1;
+              VkCommandBuffer cmd = VK_NULL_HANDLE;
+              if (vkAllocateCommandBuffers(m_Impl->device, &ai, &cmd) == VK_SUCCESS) {
+                  VkCommandBufferBeginInfo cbi{VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO};
+                  cbi.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
+                  vkBeginCommandBuffer(cmd, &cbi);
+                  VkImageMemoryBarrier toDst{VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER};
+                  toDst.srcAccessMask = 0;
+                  toDst.dstAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+                  toDst.oldLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+                  toDst.newLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
+                  toDst.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+                  toDst.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+                  toDst.image = vkImg;
+                  toDst.subresourceRange = { FormatToAspect(desc.format), 0, 1, 0, 1 };
+                  vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT,
+                                       VK_PIPELINE_STAGE_TRANSFER_BIT, 0,
+                                       0, nullptr, 0, nullptr, 1, &toDst);
+                  VkBufferImageCopy copy{};
+                  copy.imageSubresource = { FormatToAspect(desc.format), 0, 0, 1 };
+                  copy.imageExtent = { desc.width, desc.height, 1 };
+                  vkCmdCopyBufferToImage(cmd, staging, vkImg,
+                                         VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &copy);
+                  // 上传后直接落到 SHADER_READ_ONLY：调用方最常见的用法是采样，
+                  // 让它自己再转换一次纯属多余。
+                  VkImageMemoryBarrier toRo = toDst;
+                  toRo.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+                  toRo.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
+                  toRo.oldLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
+                  toRo.newLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+                  vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_TRANSFER_BIT,
+                                       VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT, 0,
+                                       0, nullptr, 0, nullptr, 1, &toRo);
+                  vkEndCommandBuffer(cmd);
+                  VkSubmitInfo si{VK_STRUCTURE_TYPE_SUBMIT_INFO};
+                  si.commandBufferCount = 1; si.pCommandBuffers = &cmd;
+                  VkFenceCreateInfo fci{VK_STRUCTURE_TYPE_FENCE_CREATE_INFO};
+                  VkFence fence = VK_NULL_HANDLE;
+                  vkCreateFence(m_Impl->device, &fci, nullptr, &fence);
+                  vkQueueSubmit(GetGraphicsQueue(), 1, &si, fence);
+                  // 同步等待：调用方在 CreateTexture 返回后就要用这张纹理。
+                  vkWaitForFences(m_Impl->device, 1, &fence, VK_TRUE, UINT64_MAX);
+                  vkDestroyFence(m_Impl->device, fence, nullptr);
+                  vkFreeCommandBuffers(m_Impl->device, pool, 1, &cmd);
+                  tex->SetLayout(VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+              }
+              vmaDestroyBuffer(m_Impl->vmaAllocator, staging, sAlloc);
+          }
+      }
+      return tex;
 }
 
-IRHIPipelineState* VulkanDevice::CreateGraphicsPSO(const GraphicsPSODesc& desc) {
+std::shared_ptr<IRHIPipelineState> VulkanDevice::CreateGraphicsPSO(const GraphicsPSODesc& desc) {
     uint64_t hash = desc.GetHash();
-    if (auto* hit = PSOCache::Get().Find<GraphicsPSODesc>(hash)) return hit;
-    VkPipelineLayout layout; VkPipelineLayoutCreateInfo plCI{VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO};
-    vkCreatePipelineLayout(m_Impl->device, &plCI, nullptr, &layout);
-    auto* pso = CreateGraphicsPipeline(m_Impl->device, layout, desc, VK_NULL_HANDLE, VK_NULL_HANDLE);
-    if (pso) PSOCache::Get().Store<GraphicsPSODesc>(hash, pso);
-    return pso;
+    if (auto hit = PSOCache::Get().Find<GraphicsPSODesc>(hash)) return hit;
+
+      // 描述符 set 布局。此前这里 setLayoutCount 恒为 0，于是着色器即使声明了
+      // set/binding 也无法拿到任何描述符 —— 整条描述符链在此断开。
+      VkDescriptorSetLayout setLayout = VK_NULL_HANDLE;
+      std::vector<VkDescriptorSetLayout> setLayouts;
+      if (!desc.bindings.empty()) {
+          // 按 set 归并：同一 set 的多个 binding 合成一个 set 布局。
+          std::vector<uint32> setIds;
+          for (const auto& b : desc.bindings) {
+              if (std::find(setIds.begin(), setIds.end(), b.set) == setIds.end())
+                  setIds.push_back(b.set);
+          }
+          std::sort(setIds.begin(), setIds.end());
+          for (uint32 setId : setIds) {
+              std::vector<VkDescriptorSetLayoutBinding> binds;
+              for (const auto& b : desc.bindings) {
+                  if (b.set != setId) continue;
+                  VkDescriptorSetLayoutBinding lb{};
+                  lb.binding         = b.binding;
+                  lb.descriptorCount = b.count ? b.count : 1;
+                  lb.descriptorType  = DescriptorKindToVk(b.kind);
+                  lb.stageFlags      = VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT;
+                  binds.push_back(lb);
+              }
+              VkDescriptorSetLayoutCreateInfo slCI{VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO};
+              slCI.bindingCount = static_cast<uint32_t>(binds.size());
+              slCI.pBindings = binds.data();
+              VkDescriptorSetLayout sl = VK_NULL_HANDLE;
+              if (vkCreateDescriptorSetLayout(m_Impl->device, &slCI, nullptr, &sl) != VK_SUCCESS) {
+                  std::fprintf(stderr, "[Vulkan] vkCreateDescriptorSetLayout failed\n");
+                  for (auto s : setLayouts) vkDestroyDescriptorSetLayout(m_Impl->device, s, nullptr);
+                  return nullptr;
+              }
+              setLayouts.push_back(sl);
+              // 单 set 的常见情形：命令列表只需要记住一个布局来分配描述符集。
+              if (setLayouts.size() == 1) setLayout = sl;
+          }
+      }
+
+      VkPipelineLayout layout = VK_NULL_HANDLE;
+      VkPipelineLayoutCreateInfo plCI{VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO};
+      plCI.setLayoutCount = static_cast<uint32_t>(setLayouts.size());
+      plCI.pSetLayouts = setLayouts.empty() ? nullptr : setLayouts.data();
+      if (vkCreatePipelineLayout(m_Impl->device, &plCI, nullptr, &layout) != VK_SUCCESS) {
+          std::fprintf(stderr, "[Vulkan] vkCreatePipelineLayout failed\n");
+          for (auto s : setLayouts) vkDestroyDescriptorSetLayout(m_Impl->device, s, nullptr);
+          return nullptr;
+      }
+
+    // 着色器解析：此前这里传的是两个 VK_NULL_HANDLE，而 CreateGraphicsPipeline
+    // 对空模块的处理是 stages.empty() → 返回 nullptr，于是图形管线**永远无法创建**。
+    // GraphicsPSODesc 用 StringID 引用着色器，StringID 是单向哈希无法反解回名字，
+    // 因此走运行时注册表（加载期填充）。
+    VkShaderModule vsModule = VK_NULL_HANDLE;
+    VkShaderModule fsModule = VK_NULL_HANDLE;
+
+    if (const auto* vs = ShaderRegistry::Get().Find(desc.vertexShader, ShaderStageType::Vertex)) {
+        VkShaderModuleCreateInfo ci{VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO};
+        ci.codeSize = vs->size() * sizeof(uint32_t);
+        ci.pCode = vs->data();
+        if (vkCreateShaderModule(m_Impl->device, &ci, nullptr, &vsModule) != VK_SUCCESS)
+            vsModule = VK_NULL_HANDLE;
+    } else {
+        std::fprintf(stderr, "[Vulkan] vertex shader not registered (id=%llu)\n",
+                     static_cast<unsigned long long>(desc.vertexShader.Value()));
+    }
+
+    if (const auto* fs = ShaderRegistry::Get().Find(desc.pixelShader, ShaderStageType::Fragment)) {
+        VkShaderModuleCreateInfo ci{VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO};
+        ci.codeSize = fs->size() * sizeof(uint32_t);
+        ci.pCode = fs->data();
+        if (vkCreateShaderModule(m_Impl->device, &ci, nullptr, &fsModule) != VK_SUCCESS)
+            fsModule = VK_NULL_HANDLE;
+    } else {
+        std::fprintf(stderr, "[Vulkan] pixel shader not registered (id=%llu)\n",
+                     static_cast<unsigned long long>(desc.pixelShader.Value()));
+    }
+
+std::shared_ptr<IRHIPipelineState> pso =
+            CreateGraphicsPipeline(m_Impl->device, layout, desc, vsModule, fsModule);
+      // 模块只用于创建管线，创建完即可销毁（管线内部已持有）。
+      if (vsModule) vkDestroyShaderModule(m_Impl->device, vsModule, nullptr);
+      if (fsModule) vkDestroyShaderModule(m_Impl->device, fsModule, nullptr);
+      if (pso) {
+          // 管线失败时上面已建好的 set 布局不会进入 pipeline layout，必须自行回收，
+          // 否则每次失败的 PSO 请求都泄漏一个 VkDescriptorSetLayout。
+          auto* vpso = dynamic_cast<VulkanPipelineState*>(pso.get());
+          if (vpso) vpso->SetDescriptorSetLayout(setLayout);
+          if (pso && (!vpso || vpso->GetVkPipeline() == VK_NULL_HANDLE)) {
+              for (auto s : setLayouts) vkDestroyDescriptorSetLayout(m_Impl->device, s, nullptr);
+              pso.reset();
+          }
+      } else {
+          for (auto s : setLayouts) vkDestroyDescriptorSetLayout(m_Impl->device, s, nullptr);
+      }
+      if (pso) PSOCache::Get().Store<GraphicsPSODesc>(hash, pso);
+      return pso;
 }
 
-IRHIPipelineState* VulkanDevice::CreateComputePSO(const ComputePSODesc& desc) {
+std::shared_ptr<IRHIPipelineState> VulkanDevice::CreateComputePSO(const ComputePSODesc& desc) {
     VkPipelineLayout layout; VkPipelineLayoutCreateInfo plCI{VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO};
     vkCreatePipelineLayout(m_Impl->device, &plCI, nullptr, &layout);
     return CreateComputePipeline(m_Impl->device, layout, VK_NULL_HANDLE);
@@ -334,30 +961,93 @@ std::unique_ptr<IRHISwapChain> VulkanDevice::CreateSwapChain(const SwapChainDesc
     uint32_t fmtCnt; vkGetPhysicalDeviceSurfaceFormatsKHR(m_Impl->physicalDevice, m_Impl->surface, &fmtCnt, nullptr);
     std::vector<VkSurfaceFormatKHR> fmts(fmtCnt);
     vkGetPhysicalDeviceSurfaceFormatsKHR(m_Impl->physicalDevice, m_Impl->surface, &fmtCnt, fmts.data());
+    // 此前盲取 fmts[0] —— 驱动把什么排在第一个就用什么，于是管线声明的
+    // rtvFormat 可能与交换链实际格式对不上（B8G8R8A8_SRGB vs R8G8B8A8_UNORM），
+    // 表现为每一次 vkCmdDraw 都违反
+    // VUID-vkCmdDraw-dynamicRenderingUnusedAttachments-08910。
+    // 优先选非 sRGB 的 8 位 RGBA/BGRA：调用方无从得知「实际选了哪个格式」，
+    // 而 sRGB 会让引擎里按线性值写的清除色看起来偏亮。
     auto selFmt = fmts[0];
+    for (const auto& f : fmts) {
+        if (f.format == VK_FORMAT_B8G8R8A8_UNORM || f.format == VK_FORMAT_R8G8B8A8_UNORM) {
+            selFmt = f;
+            break;
+        }
+    }
     VkSurfaceCapabilitiesKHR caps;
     vkGetPhysicalDeviceSurfaceCapabilitiesKHR(m_Impl->physicalDevice, m_Impl->surface, &caps);
     uint32_t imgCnt = std::max(caps.minImageCount, std::min(desc.bufferCount, caps.maxImageCount));
     VkSwapchainCreateInfoKHR sci{VK_STRUCTURE_TYPE_SWAPCHAIN_CREATE_INFO_KHR};
     sci.surface = m_Impl->surface; sci.minImageCount = imgCnt;
+    std::fprintf(stderr, "[Vulkan] swapchain format: VkFormat=%d colorspace=%d (%d offered)\n",
+                 (int)selFmt.format, (int)selFmt.colorSpace, fmtCnt);
     sci.imageFormat = selFmt.format; sci.imageColorSpace = selFmt.colorSpace;
-    sci.imageExtent = {desc.width, desc.height}; sci.imageArrayLayers = 1;
+    // currentExtent 非 0xFFFFFFFF 时，规范要求 imageExtent **必须**等于它。此前直接
+    // 用调用方请求的尺寸，于是任何固定表面尺寸的合成器（WSLg 的 X11 虚拟屏、
+    // Wayland 合成器、tiling WM）都会让 vkCreateSwapchainKHR 失败，validation 报
+    // VUID-VkSwapchainCreateInfoKHR-pNext-07781，且后续 present 会连锁炸出
+    // "semaphore has no way to be signaled" / "image is in UNDEFINED layout"。
+    uint32_t sw = desc.width, sh = desc.height;
+    if (caps.currentExtent.width != 0xFFFFFFFFu && caps.currentExtent.height != 0xFFFFFFFFu) {
+        sw = caps.currentExtent.width; sh = caps.currentExtent.height;
+    } else {
+        sw = std::clamp(sw, caps.minImageExtent.width, caps.maxImageExtent.width);
+        sh = std::clamp(sh, caps.minImageExtent.height, caps.maxImageExtent.height);
+    }
+    if (sw != desc.width || sh != desc.height) {
+        std::fprintf(stderr, "[Vulkan] surface fixes extent: requested %ux%u -> using %ux%u\n",
+                     desc.width, desc.height, sw, sh);
+    }
+    sci.imageExtent = {sw, sh}; sci.imageArrayLayers = 1;
     sci.imageUsage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT;
     sci.preTransform = caps.currentTransform; sci.compositeAlpha = VK_COMPOSITE_ALPHA_OPAQUE_BIT_KHR;
     sci.presentMode = VK_PRESENT_MODE_FIFO_KHR; sci.clipped = VK_TRUE;
-    if (vkCreateSwapchainKHR(m_Impl->device, &sci, nullptr, &m_Impl->swapChain) != VK_SUCCESS) return nullptr;
+    VkResult scRes = vkCreateSwapchainKHR(m_Impl->device, &sci, nullptr, &m_Impl->swapChain);
+    if (scRes != VK_SUCCESS) {
+        // 此前静默返回 nullptr，调用方只能在几百行之外看到一个空指针，
+        // 而 validation 的抱怨（present 时信号量无人 signal）指向的却是别处。
+        std::fprintf(stderr, "[Vulkan] vkCreateSwapchainKHR failed: VkResult=%d "
+                             "(extent=%ux%u, minImageCount=%u, format=%d)\n",
+                     (int)scRes, sw, sh, imgCnt, (int)selFmt.format);
+        return nullptr;
+    }
     uint32_t actualCnt; vkGetSwapchainImagesKHR(m_Impl->device, m_Impl->swapChain, &actualCnt, nullptr);
     m_Impl->swapChainImages.resize(actualCnt);
     vkGetSwapchainImagesKHR(m_Impl->device, m_Impl->swapChain, &actualCnt, m_Impl->swapChainImages.data());
     auto sc = std::make_unique<VulkanSwapChain>();
     sc->SetDevice(this); sc->SetSwapChain(m_Impl->swapChain);
     sc->SetSwapChainImages(m_Impl->swapChainImages);
-    for (auto vkImg : m_Impl->swapChainImages) {
+for (auto vkImg : m_Impl->swapChainImages) {
         auto tex = std::make_shared<VulkanTexture>();
-        tex->SetVkImage(vkImg); tex->SetWidth(desc.width); tex->SetHeight(desc.height);
-        // 初始布局：交换链图像创建后处于 PRESENT_SRC_KHR
-        tex->SetLayout(VK_IMAGE_LAYOUT_PRESENT_SRC_KHR);
-        sc->AddBackBuffer(tex);
+        tex->SetVkImage(vkImg); tex->SetWidth(sw); tex->SetHeight(sh);
+        tex->SetFormat(VkToFormat(selFmt.format));
+        // 初始 layout 必须是 UNDEFINED：新创建的交换链图像，其内容与布局都是未定义的，
+        // 并非 PRESENT_SRC_KHR。此前谎报为 PRESENT_SRC_KHR，于是首次使用该图像时
+        // 屏障会声明一个与实际不符的 oldLayout，validation layer 随即报出
+        // "expects PRESENT_SRC_KHR, current layout is UNDEFINED"。
+        tex->SetLayout(VK_IMAGE_LAYOUT_UNDEFINED);
+        // 渲染作用域（vkCmdBeginRendering）绑定的是 image **view**，不是 image。
+        // 此前这里只设了 image，导致 backbuffer 的 view 恒为 VK_NULL_HANDLE，
+        // 任何以 IRHITexture* 构造的渲染附件都会被跳过 —— 窗口路径永远画不出东西。
+        VkImageViewCreateInfo vci{VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO};
+        vci.image = vkImg;
+        vci.viewType = VK_IMAGE_VIEW_TYPE_2D;
+        vci.format = selFmt.format;
+        vci.subresourceRange = { VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1 };
+        VkImageView view = VK_NULL_HANDLE;
+        if (vkCreateImageView(m_Impl->device, &vci, nullptr, &view) != VK_SUCCESS || view == VK_NULL_HANDLE) {
+            std::fprintf(stderr, "[Vulkan] vkCreateImageView failed for a swapchain backbuffer\n");
+            vkDestroySwapchainKHR(m_Impl->device, m_Impl->swapChain, nullptr);
+            m_Impl->swapChain = VK_NULL_HANDLE;
+            return nullptr;
+        }
+tex->SetVkImageView(view);
+          tex->SetVkDevice(m_Impl->device);   // view 由纹理自己析构销毁
+          // 标记为可呈现图像：EndRendering 据此在渲染结束后把它转成
+          // PRESENT_SRC_KHR，否则每次 vkQueuePresentKHR 都违反
+          // VUID-VkPresentInfoKHR-pImageIndices-01430。
+          tex->SetIsSwapChainImage(true);
+          sc->AddBackBuffer(tex);
     }
     return sc;
 }
@@ -373,10 +1063,29 @@ uint32_t VulkanDevice::GetGraphicsQueueIndex() const noexcept { return m_Impl->g
 VulkanFrameContext& VulkanDevice::GetFrameContext() noexcept { return m_Impl->frameContext; }
 uint32_t VulkanDevice::GetUBOAlignment() const noexcept { return m_Impl->uboAlignment; }
 VulkanDeferredDeletion* VulkanDevice::GetDeletionQueue() const noexcept { return m_Impl->deletionQueue; }
-VkCommandPool VulkanDevice::GetOrCreateThreadCommandPool() { return VK_NULL_HANDLE; }
+VkCommandPool VulkanDevice::GetOrCreateThreadCommandPool() {
+    // 单一设备级池。真正的 per-thread 池需要 thread_local 存储，
+    // 但 headless 一次性命令缓冲（离屏回读等）只需一个可重置的池。
+    return m_Impl ? m_Impl->cmdPool : VK_NULL_HANDLE;
+}
 void VulkanDevice::ResetAllThreadCommandPools() {}
 
-bool HasVulkanSupport() noexcept { HMODULE m = LoadLibraryA("vulkan-1.dll"); if (!m) return false; FreeLibrary(m); return true; }
+bool HasVulkanSupport() noexcept {
+        // 跨平台探测：Windows 走 vulkan-1.dll，POSIX 走 libvulkan.so。
+        // 原实现只用 LoadLibraryA，在非 Windows 上必然编译失败。
+#ifdef _WIN32
+        HMODULE m = LoadLibraryA("vulkan-1.dll");
+        if (!m) return false;
+        FreeLibrary(m);
+        return true;
+#else
+        void* h = dlopen("libvulkan.so.1", RTLD_LAZY | RTLD_LOCAL);
+        if (!h) h = dlopen("libvulkan.so", RTLD_LAZY | RTLD_LOCAL);
+        if (!h) return false;
+        dlclose(h);
+        return true;
+#endif
+    }
 std::string GetVulkanDeviceInfo() noexcept { return "Vulkan 1.3"; }
 std::unique_ptr<IRHIDevice> CreateVulkanDevice() {
     auto dev = std::make_unique<VulkanDevice>();

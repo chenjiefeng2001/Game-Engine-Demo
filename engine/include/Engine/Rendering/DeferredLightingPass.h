@@ -76,7 +76,7 @@ namespace Engine {
             bool m_Initialized = false;
 
             // 全屏四边形 PSO（占位符，需要链接到 ShaderCompiler 编译的着色器）
-            RHI::IRHIPipelineState* m_DeferredLightingPSO = nullptr;
+            std::shared_ptr<RHI::IRHIPipelineState> m_DeferredLightingPSO = nullptr;
         };
 
     } // namespace Rendering

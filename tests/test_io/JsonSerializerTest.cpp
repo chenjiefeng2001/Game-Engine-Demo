@@ -30,6 +30,7 @@
 //     DeserializeGameObject 忽略其返回值并恒返回 true
 //   - Deserialize 不调用 Scene::Clear()，是追加语义
 //   - Transform 的 rotation 走欧拉角 <-> 四元数，故用 NEAR 而非精确相等
+#include <utility>
 #include <gtest/gtest.h>
 
 #include <filesystem>

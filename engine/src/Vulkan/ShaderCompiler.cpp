@@ -17,6 +17,7 @@
  */
 
 #include "Engine/Vulkan/VulkanCommon.h"
+#include "Engine/Vulkan/ShaderRegistry.h"
 #include "Engine/Core/RHI/PSODesc.h"
 
 #ifdef ENGINE_HAS_SHADERC
@@ -192,5 +193,135 @@ private:
 #endif
 };
 
+
+// ════════════════════════════════════════════════════════════
+// ShaderRegistry 实现
+//
+// 放在本文件是因为 ShaderCompiler 是文件内私有类（无法从其它 TU 引用）。
+// 本文件在 src/Vulkan/ 下，engine/CMakeLists.txt 的 GLOB 会自动纳入。
+// ════════════════════════════════════════════════════════════
+
+namespace {
+// RHI::ShaderStageType → 本文件私有的 RHI::ShaderStage 枚举。
+ShaderStage ToLocalStage(::Engine::ShaderStageType stage)
+{
+    switch (stage) {
+    case ::Engine::ShaderStageType::Vertex:   return ShaderStage::Vertex;
+    case ::Engine::ShaderStageType::Fragment: return ShaderStage::Fragment;
+    case ::Engine::ShaderStageType::Compute:  return ShaderStage::Compute;
+    case ::Engine::ShaderStageType::Geometry: return ShaderStage::Geometry;
+    case ::Engine::ShaderStageType::TessControl:    return ShaderStage::TessControl;
+    case ::Engine::ShaderStageType::TessEvaluation: return ShaderStage::TessEval;
+    default: return ShaderStage::Fragment;
+    }
+}
+} // namespace
+
+ShaderRegistry& ShaderRegistry::Get()
+{
+    static ShaderRegistry instance;
+    return instance;
+}
+
+bool ShaderRegistry::RegisterCompiled(const std::string& name, ShaderStageType stage,
+                                      std::vector<uint32_t>&& words)
+{
+    if (words.empty()) return false;
+    StringID id = StringID::Runtime(name);
+    Key key{ id.Value(), static_cast<uint8_t>(stage) };
+    m_Shaders[std::move(key)] = std::move(words);
+    return true;
+}
+
+bool ShaderRegistry::RegisterSource(const std::string& name, ShaderStageType stage,
+                                    const std::string& glslSource)
+{
+#ifdef ENGINE_HAS_SHADERC
+    ShaderCompiler compiler;
+    // 本文件在 Engine::RHI 内定义了自己的 ShaderStage 枚举（且 IGraphicsFactory.h
+    // 在同一命名空间还有一个不透明前向声明），因此 ShaderStage 与
+    // ShaderStageType::Vertex 都不能直接对应，必须显式映射。
+    SpirVBinary result = compiler.Compile(glslSource, ToLocalStage(stage));
+    if (!result.success) {
+        std::fprintf(stderr, "[ShaderRegistry] compile failed for '%s': %s\n",
+                     name.c_str(), result.errorMessage.c_str());
+        return false;
+    }
+    return RegisterCompiled(name, stage, std::move(result.data));
+#else
+    (void)name; (void)stage; (void)glslSource;
+    std::fprintf(stderr, "[ShaderRegistry] shaderc unavailable (ENGINE_HAS_SHADERC undefined)\n");
+    return false;
+#endif
+}
+
+bool ShaderRegistry::RegisterFile(const std::string& name, ShaderStageType stage,
+                                  const std::string& glslPath)
+{
+    std::ifstream in(glslPath, std::ios::binary);
+    if (!in.is_open()) {
+        std::fprintf(stderr, "[ShaderRegistry] cannot open '%s'\n", glslPath.c_str());
+        return false;
+    }
+    std::stringstream ss;
+    ss << in.rdbuf();
+    return RegisterSource(name, stage, ss.str());
+}
+
+bool ShaderRegistry::RegisterSpirv(const std::string& name, ShaderStageType stage,
+                                   const uint32_t* data, size_t wordCount)
+{
+    if (!data || wordCount == 0) return false;
+    return RegisterCompiled(name, stage, std::vector<uint32_t>(data, data + wordCount));
+}
+
+bool ShaderRegistry::RegisterSpirvFile(const std::string& name, ShaderStageType stage,
+                                       const std::string& spvPath)
+{
+    std::ifstream in(spvPath, std::ios::binary);
+    if (!in.is_open()) {
+        std::fprintf(stderr, "[ShaderRegistry] cannot open SPIR-V '%s'\n", spvPath.c_str());
+        return false;
+    }
+    std::stringstream ss;
+    ss << in.rdbuf();
+    const std::string bytes = ss.str();
+
+    // 长度不是 4 的整数倍说明这文件不是 SPIR-V 字流。直接按字读会读出半个字，
+    // 而 vkCreateShaderModule 随后会以难以定位的方式失败 —— 在这里就报出来。
+    if (bytes.empty() || (bytes.size() % 4u) != 0u) {
+        std::fprintf(stderr, "[ShaderRegistry] '%s' is %zu bytes: not a whole number of "
+                             "32-bit SPIR-V words\n", spvPath.c_str(), bytes.size());
+        return false;
+    }
+    // SPIR-V 魔数 0x07230203。文件存在不等于内容是 SPIR-V：这里顺手验一道，
+    // 免得一个被截断或被别的格式覆盖的 .spv 安静地变成"注册成功"。
+    const uint32_t magic = static_cast<uint32_t>(
+        static_cast<uint8_t>(bytes[0])       | (static_cast<uint8_t>(bytes[1]) << 8) |
+        (static_cast<uint8_t>(bytes[2]) << 16) | (static_cast<uint8_t>(bytes[3]) << 24));
+    if (magic != 0x07230203u) {
+        std::fprintf(stderr, "[ShaderRegistry] '%s' does not start with the SPIR-V magic "
+                             "(got 0x%08x, want 0x07230203)\n", spvPath.c_str(), magic);
+        return false;
+    }
+
+    const size_t wordCount = bytes.size() / 4u;
+    std::vector<uint32_t> words(wordCount);
+    for (size_t i = 0; i < wordCount; ++i) {
+        const uint8_t* p = reinterpret_cast<const uint8_t*>(bytes.data()) + i * 4u;
+        words[i] = static_cast<uint32_t>(p[0]) | (static_cast<uint32_t>(p[1]) << 8) |
+                   (static_cast<uint32_t>(p[2]) << 16) | (static_cast<uint32_t>(p[3]) << 24);
+    }
+    return RegisterCompiled(name, stage, std::move(words));
+}
+
+const std::vector<uint32_t>* ShaderRegistry::Find(StringID id, ShaderStageType stage) const
+{
+    Key key{ id.Value(), static_cast<uint8_t>(stage) };
+    auto it = m_Shaders.find(key);
+    return (it == m_Shaders.end()) ? nullptr : &it->second;
+}
+
+size_t ShaderRegistry::Count() const noexcept { return m_Shaders.size(); }
 } // namespace RHI
 } // namespace Engine

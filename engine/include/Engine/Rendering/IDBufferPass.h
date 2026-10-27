@@ -88,7 +88,7 @@ namespace Rendering {
         // ── GPU 资源 ──
         RHI::IRHITexture*       m_IDTexture     = nullptr;  // R32_UINT 渲染目标
         RHI::IRHIBuffer*        m_ReadbackBuffer = nullptr;  // Readback buffer
-        RHI::IRHIPipelineState* m_IDPSO          = nullptr;  // ID 写入 PSO
+        std::shared_ptr<RHI::IRHIPipelineState> m_IDPSO           = nullptr;  // ID 写入 PSO
         RHI::IRHIBuffer*        m_StagingBuffer  = nullptr;  // 像素读回 staging
 
         // ── 状态 ──

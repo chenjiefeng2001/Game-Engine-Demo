@@ -24,7 +24,7 @@
 #include "Engine/Scripting/GameplayAPI.h"
 #include "Engine/Scripting/ScriptAPI.h"
 #include "Engine/Scripting/ScriptInstance.h"
-#include "Engine/OpenGL/OpenGLGraphicsFactory.h"
+#include "StubGraphicsFactory.h"
 
 #include <cmath>
 #include <cstdio>
@@ -81,7 +81,7 @@ TEST(Dogfood08, LongSession_EditorWorkflow) {
     ContentRegistry reg;
     ASSERT_EQ(reg.Count(), 0u);
     Engine::Scene scene;
-    OpenGLGraphicsFactory gfxF;
+    StubGraphicsFactory gfxF;
     TextureManager tm(gfxF);
     GameplayAPI::Reset();
     GameplayAPI::SetScene(&scene);

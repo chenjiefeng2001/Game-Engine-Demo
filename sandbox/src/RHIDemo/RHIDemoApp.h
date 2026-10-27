@@ -1,6 +1,7 @@
 #pragma once
 
 #include "Engine/Core/RHI/RHIWindow.h"
+#include "Engine/Core/RHI/IRHIDevice.h"
 #include <memory>
 #include <string>
 #include <cstdint>
@@ -13,12 +14,33 @@ public:
     ~RHIDemoApp();
     bool Initialize();
     void Run();
+    /** Vulkan 一帧：acquire → 录制清除 → 提交并呈现。
+     *  仅在构建含 Vulkan 后端时存在；声明保留无妨，定义受 ENGINE_HAS_VULKAN 守卫。 */
+    void RenderVulkanFrame();
 
 private:
     RHI::RHIBackend m_Backend;
 
     // Vulkan/D3D12 路径
     std::unique_ptr<RHI::RHIWindow> m_RHIWindow;
+    // 设备必须由成员持有：此前 InitVulkan / InitD3D12 把设备建在局部变量里，
+    // 函数一返回就析构，窗口随即失去设备，而日志仍打印「✅」。
+    std::unique_ptr<RHI::IRHIDevice> m_Device;
+    std::unique_ptr<RHI::IRHISwapChain> m_SwapChain;
+    bool m_SwapChainReported = false;   ///< 交换链失败只报告一次，避免每帧刷屏
+
+    // Vulkan 真实几何：顶点缓冲、UBO、深度纹理、管线。
+    // 此前 Vulkan 路径只做 clear —— 描述符、纹理、深度测试虽已分别验证可用，
+    // 但 demo 从未真正画过东西，这些成员就是那份缺失的接线。
+    std::shared_ptr<RHI::IRHIBuffer>  m_VkVertexBuffer;
+    std::shared_ptr<RHI::IRHIBuffer>  m_VkUniformBuffer;
+    std::shared_ptr<RHI::IRHITexture> m_VkDepthTexture;
+    std::shared_ptr<RHI::IRHIPipelineState> m_VkPipeline;
+    uint32 m_VkVertexCount = 0;
+    bool m_DrawEnabled = true;   // 管线创建失败后永久退回清除，不每帧重试刷日志
+    bool m_DrawConfirmed = false;   // 首帧成功绘制后确认一次，避免"没报错"被误读成"画了"
+    uint32 m_VkDepthWidth = 0;
+    uint32 m_VkDepthHeight = 0;
 
     std::string m_GPUName;
     std::string m_BackendName;

@@ -12,6 +12,7 @@
  */
 
 #include "Engine/Core/RHI/PSODesc.h"
+#include <memory>
 #include <unordered_map>
 #include <mutex>
 #include <cstdint>
@@ -31,7 +32,7 @@ namespace RHI {
      *   GraphicsPSODesc desc = GraphicsPSODesc::DefaultOpaque();
      *   desc.vertexShader = SID("main_vs");
      *   desc.pixelShader  = SID("main_ps");
-     *   IRHIPipelineState* pso = PSOCache::Get().GetOrCreate(device, desc);
+     *   auto pso = PSOCache::Get().GetOrCreate(device, desc);
      * @endcode
      */
     class PSOCache {
@@ -49,20 +50,20 @@ namespace RHI {
          *
          * @param device RHI 设备（用于创建 PSO）
          * @param desc   管线描述符
-         * @return 指向管线状态对象的指针（生命周期由设备管理）
+         * @return 共享所有权的管线状态对象
          *
          * 线程安全。相同 desc 返回相同的 PSO。
          */
-        IRHIPipelineState* GetOrCreate(IRHIDevice& device, const GraphicsPSODesc& desc);
+        std::shared_ptr<IRHIPipelineState> GetOrCreate(IRHIDevice& device, const GraphicsPSODesc& desc);
 
         /**
          * @brief 获取或创建 Compute PSO
          */
-        IRHIPipelineState* GetOrCreate(IRHIDevice& device, const ComputePSODesc& desc);
+        std::shared_ptr<IRHIPipelineState> GetOrCreate(IRHIDevice& device, const ComputePSODesc& desc);
 
         /** 按哈希查找 PSO（不创建） */
         template<typename DescT>
-        IRHIPipelineState* Find(uint64_t hash) const {
+        std::shared_ptr<IRHIPipelineState> Find(uint64_t hash) const {
             std::lock_guard<std::mutex> lock(m_Mutex);
             const auto& cache = std::is_same_v<DescT, GraphicsPSODesc> ? m_GraphicsCache : m_ComputeCache;
             auto it = cache.find(hash);
@@ -72,7 +73,7 @@ namespace RHI {
 
         /** 存储 PSO 到缓存 */
         template<typename DescT>
-        void Store(uint64_t hash, IRHIPipelineState* pso) {
+        void Store(uint64_t hash, std::shared_ptr<IRHIPipelineState> pso) {
             std::lock_guard<std::mutex> lock(m_Mutex);
             auto& cache = std::is_same_v<DescT, GraphicsPSODesc> ? m_GraphicsCache : m_ComputeCache;
             cache[hash] = pso;
@@ -94,10 +95,10 @@ namespace RHI {
         mutable std::mutex m_Mutex;
 
         // Graphics PSO 缓存：hash → PSO
-        std::unordered_map<uint64_t, IRHIPipelineState*> m_GraphicsCache;
+        std::unordered_map<uint64_t, std::shared_ptr<IRHIPipelineState>> m_GraphicsCache;
 
         // Compute PSO 缓存：hash → PSO
-        std::unordered_map<uint64_t, IRHIPipelineState*> m_ComputeCache;
+        std::unordered_map<uint64_t, std::shared_ptr<IRHIPipelineState>> m_ComputeCache;
 
         mutable uint64_t m_Hits   = 0;
         uint64_t m_Misses = 0;

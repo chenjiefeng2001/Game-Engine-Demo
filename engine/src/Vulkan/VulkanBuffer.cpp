@@ -40,6 +40,11 @@ uint64_t VulkanBuffer::GetSize() const noexcept {
 const GPUAllocation& VulkanBuffer::GetAllocation() const noexcept {
     return m_Impl->gpuAlloc;
 }
+void* VulkanBuffer::GetMappedPtr() const noexcept {
+    // 此前未覆盖，基类默认返回 nullptr，于是即使 CreateBuffer 已经把内存映射好，
+    // 通过 IRHIBuffer* 拿到的也永远是 nullptr。
+    return m_Impl->gpuAlloc.mappedPtr;
+}
 
 VkBuffer VulkanBuffer::GetVkBuffer() const noexcept {
     return m_Impl->vkBuffer;

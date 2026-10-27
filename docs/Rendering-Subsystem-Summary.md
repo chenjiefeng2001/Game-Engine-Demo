@@ -1,6 +1,7 @@
 # 渲染子系统实现总结报告
 
 > **生成日期**: 2026-07-12  
+> **最近校正**: 2026-10-13 —— Vulkan 验证层状态纠正（见 §六「Vulkan 验证层」行）；状态图标改为 Material Symbols  
 > **分析范围**: `engine/src/Rendering/`、`engine/src/RHI/`、`engine/src/OpenGL/`、`engine/src/Vulkan/`、`engine/include/Engine/Core/RHI/`、`engine/CMakeLists.txt`
 
 ---
@@ -164,10 +165,10 @@ Frame Begin
 
 | 维度 | 评估 | 说明 |
 |------|------|------|
-| **RAII 资源管理** | 🟢 良好 | VMA 自动管理显存，Vulkan 对象通过智能指针包装，`VulkanDeferredDeletion` 确保安全销毁 |
-| **线程安全** | 🟡 中等 | `PSOCache` 使用 `mutex` 保护，`StagingBufferManager` 无锁。Compute Culling 命令录制在 JobSystem 中并行 |
-| **错误处理** | 🟢 良好 | Vulkan `VK_CHECK` 宏，OpenGL `glGetError`，VMA 错误回调 |
-| **Vulkan 验证层** | 🟢 良好 | Debug 模式下启用 Validation Layers，无重大报错 |
+| **RAII 资源管理** | <span class="material-symbols-outlined">check_circle</span> 良好 | VMA 自动管理显存，Vulkan 对象通过智能指针包装，`VulkanDeferredDeletion` 确保安全销毁 |
+| **线程安全** | <span class="material-symbols-outlined">warning</span> 中等 | `PSOCache` 使用 `mutex` 保护，`StagingBufferManager` 无锁。Compute Culling 命令录制在 JobSystem 中并行 |
+| **错误处理** | <span class="material-symbols-outlined">check_circle</span> 良好 | Vulkan `VK_CHECK` 宏，OpenGL `glGetError`，VMA 错误回调 |
+| **Vulkan 验证层** | <span class="material-symbols-outlined">warning</span> 部分 | 此前**从未真正启用**：`VulkanDeviceInternal.h` 声明了 `debugMessenger` / `enableValidation`，但该头文件无人 include，字段从未被赋值。现已按 env 门控接线（`ENGINE_VULKAN_VALIDATION=1`），CI 亦安装 layer 包。**尚无实际输出证据** |
 
 ### 4.3 关键架构缺口
 

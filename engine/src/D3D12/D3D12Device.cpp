@@ -461,11 +461,11 @@ void D3D12Device::Impl::SavePipelineCache() {
     // 如果 Serialize 失败（buffer 太小），忽略缓存 — 下次启动重新构建
 }
 
-IRHIPipelineState* D3D12Device::CreateGraphicsPSO(const GraphicsPSODesc& desc) {
+std::shared_ptr<IRHIPipelineState> D3D12Device::CreateGraphicsPSO(const GraphicsPSODesc& desc) {
     uint64_t hash = desc.GetHash();
-    { auto* c = PSOCache::Get().Find<GraphicsPSODesc>(hash); if (c) return c; }
+    { auto c = PSOCache::Get().Find<GraphicsPSODesc>(hash); if (c) return c; }
     if (!m_Impl->globalRootSignature) return nullptr;
-    auto* pso = new D3D12PipelineState();
+    auto pso = std::make_shared<D3D12PipelineState>();
     pso->m_Impl->isCompute = false;
     D3D12_GRAPHICS_PIPELINE_STATE_DESC pd = {};
     pd.pRootSignature = m_Impl->globalRootSignature.Get();
@@ -526,7 +526,7 @@ IRHIPipelineState* D3D12Device::CreateGraphicsPSO(const GraphicsPSODesc& desc) {
             PSOCache::Get().Store<GraphicsPSODesc>(hash, pso); return pso;
         }
     }
-    if (FAILED(m_Impl->device->CreateGraphicsPipelineState(&pd, IID_PPV_ARGS(&pso->m_Impl->pso)))) { delete pso; return nullptr; }
+    if (FAILED(m_Impl->device->CreateGraphicsPipelineState(&pd, IID_PPV_ARGS(&pso->m_Impl->pso)))) { return nullptr; }
     if (m_Impl->pipelineLibrary) {
         std::wstring n = L"pso_" + std::to_wstring(hash);
         m_Impl->pipelineLibrary->StorePipeline(n.c_str(), pso->m_Impl->pso.Get());
@@ -573,13 +573,13 @@ bool D3D12Device::Impl::CreateComputeRootSignature() {
     return true;
 }
 
-IRHIPipelineState* D3D12Device::CreateComputePSO(const ComputePSODesc& desc) {
+std::shared_ptr<IRHIPipelineState> D3D12Device::CreateComputePSO(const ComputePSODesc& desc) {
     uint64_t hash = desc.GetHash();
     
     // 检查缓存
     auto cacheIt = m_Impl->computePSOCache.find(hash);
     if (cacheIt != m_Impl->computePSOCache.end()) {
-        auto* pso = new D3D12PipelineState();
+        auto pso = std::make_shared<D3D12PipelineState>();
         pso->m_Impl->isCompute = true;
         pso->m_Impl->pso = cacheIt->second;
         return pso;
@@ -593,16 +593,18 @@ IRHIPipelineState* D3D12Device::CreateComputePSO(const ComputePSODesc& desc) {
     }
 
     // 创建计算 PSO（需要从 PSOCache 获取着色器字节码）
-    auto* cachedPSO = PSOCache::Get().Find<ComputePSODesc>(hash);
+    auto cachedPSO = PSOCache::Get().Find<ComputePSODesc>(hash);
     if (cachedPSO) {
-        auto* pso = new D3D12PipelineState();
+        auto pso = std::make_shared<D3D12PipelineState>();
         pso->m_Impl->isCompute = true;
-        pso->m_Impl->pso = static_cast<D3D12PipelineState*>(cachedPSO)->m_Impl->pso;
+        // 缓存现在返回 shared_ptr<IRHIPipelineState>，要拿具体类型必须经
+            // static_pointer_cast，不能再 static_cast 成裸指针。
+            pso->m_Impl->pso = std::static_pointer_cast<D3D12PipelineState>(cachedPSO)->m_Impl->pso;
         m_Impl->computePSOCache[hash] = pso->m_Impl->pso;
         return pso;
     }
 
-    auto* pso = new D3D12PipelineState();
+    auto pso = std::make_shared<D3D12PipelineState>();
     pso->m_Impl->isCompute = true;
     // PSO 将在运行时通过 SetPipelineState 设置，此处仅创建包装器
     // 实际 D3D12_COMPUTE_PIPELINE_STATE_DESC 创建由外部 ShaderCompiler 提供

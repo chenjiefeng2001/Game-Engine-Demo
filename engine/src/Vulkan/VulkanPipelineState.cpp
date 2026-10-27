@@ -15,13 +15,20 @@ namespace RHI {
 
 struct VulkanPipelineState::Impl {
     VkPipeline       pipeline{VK_NULL_HANDLE};
-    VkPipelineLayout layout{VK_NULL_HANDLE};
-    VkDevice         device{VK_NULL_HANDLE};
+VkPipelineLayout layout{VK_NULL_HANDLE};
+      // 本 PSO 的描述符 set 布局；无描述符时为 VK_NULL_HANDLE。命令列表要靠它
+      // 分配并写入对应的描述符集。
+      VkDescriptorSetLayout setLayout{VK_NULL_HANDLE};
+      VkDevice         device{VK_NULL_HANDLE};
     bool             isCompute{false};
 
     ~Impl() {
-        if (pipeline != VK_NULL_HANDLE && device != VK_NULL_HANDLE) {
-            vkDestroyPipeline(device, pipeline, nullptr);
+        if (device != VK_NULL_HANDLE) {
+            if (pipeline != VK_NULL_HANDLE) vkDestroyPipeline(device, pipeline, nullptr);
+            // 布局此前无人销毁：每个 PSO 泄漏一个 VkPipelineLayout，
+            // vkDestroyDevice 时报 VUID-vkDestroyDevice-device-05137。
+            if (layout != VK_NULL_HANDLE) vkDestroyPipelineLayout(device, layout, nullptr);
+              if (setLayout != VK_NULL_HANDLE) vkDestroyDescriptorSetLayout(device, setLayout, nullptr);
         }
     }
 };
@@ -39,23 +46,29 @@ VkPipelineLayout VulkanPipelineState::GetVkPipelineLayout() const noexcept {
 }
 
 void VulkanPipelineState::SetNativeHandles(VkPipeline pipeline, VkPipelineLayout layout, VkDevice device) noexcept {
-    m_Impl->pipeline = pipeline;
-    m_Impl->layout = layout;
-    m_Impl->device = device;
-}
+      m_Impl->pipeline = pipeline;
+      m_Impl->layout = layout;
+      m_Impl->device = device;
+  }
+  void VulkanPipelineState::SetDescriptorSetLayout(VkDescriptorSetLayout l) noexcept {
+      m_Impl->setLayout = l;
+  }
+  VkDescriptorSetLayout VulkanPipelineState::GetDescriptorSetLayout() const noexcept {
+      return m_Impl->setLayout;
+  }
 
 // ════════════════════════════════════════════════════════════
 // 工厂：创建 Graphics PSO
 // ════════════════════════════════════════════════════════════
 
-IRHIPipelineState* CreateGraphicsPipeline(
+std::shared_ptr<IRHIPipelineState> CreateGraphicsPipeline(
     VkDevice device,
     VkPipelineLayout pipelineLayout,
     const GraphicsPSODesc& desc,
     VkShaderModule vsModule,
     VkShaderModule fsModule)
 {
-    auto pso = new VulkanPipelineState();
+    std::shared_ptr<IRHIPipelineState> pso(new VulkanPipelineState());
 
     std::vector<VkPipelineShaderStageCreateInfo> stages;
 
@@ -80,12 +93,66 @@ IRHIPipelineState* CreateGraphicsPipeline(
     // Vulkan 规范要求 stageCount >= 1。若没有 shader module 则无法创建合法的 PSO。
     if (stages.empty()) {
         std::fprintf(stderr, "[Vulkan] CreateGraphicsPipeline: no shader stages provided\n");
-        delete pso;
         return nullptr;
     }
 
     // 顶点输入
     VkPipelineVertexInputStateCreateInfo vertexInput{VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO};
+    // 顶点输入契约此前完全缺失，带顶点缓冲的网格因此无法绘制。此处按 binding
+    // 索引把 VertexInputDesc 展开成 Vulkan 的 binding / attribute 描述。
+    // 留空时（默认）保持原样：全屏三角形走 gl_VertexIndex，不需要任何顶点绑定。
+    std::vector<VkVertexInputBindingDescription> vkBindings;
+    std::vector<VkVertexInputAttributeDescription> vkAttributes;
+    if (!desc.vertexInput.buffers.empty() || !desc.vertexInput.attributes.empty()) {
+        vkBindings.reserve(desc.vertexInput.buffers.size());
+        for (const auto& b : desc.vertexInput.buffers) {
+            VkVertexInputBindingDescription bd{};
+            bd.binding   = b.slot;
+            bd.stride    = b.stride;
+            bd.inputRate = (b.rate == VertexInputRate::Instance) ? VK_VERTEX_INPUT_RATE_INSTANCE
+                                                                  : VK_VERTEX_INPUT_RATE_VERTEX;
+            vkBindings.push_back(bd);
+        }
+        vkAttributes.reserve(desc.vertexInput.attributes.size());
+        for (const auto& a : desc.vertexInput.attributes) {
+            if (a.binding >= vkBindings.size()) {
+                std::fprintf(stderr,
+                             "[Vulkan] vertex attribute location=%u references binding=%u but only "
+                             "%zu binding(s) declared; attribute dropped\n",
+                             a.location, a.binding, vkBindings.size());
+                continue;
+            }
+            if (a.format == Format::Unknown) {
+                std::fprintf(stderr, "[Vulkan] vertex attribute location=%u has no format; dropped\n",
+                             a.location);
+                continue;
+            }
+            // FormatToVk 对未映射的枚举返回 VK_FORMAT_UNDEFINED，而那是**非法值**
+            // 而非「跳过」：传下去会建出非法管线，绘制时表现为驱动崩溃或挂起，
+            // 排查成本极高。此处必须显式拦截。
+            if (FormatToVk(a.format) == VK_FORMAT_UNDEFINED) {
+                std::fprintf(stderr,
+                             "[Vulkan] vertex attribute location=%u has unmapped format %u; dropped\n",
+                             a.location, static_cast<unsigned>(a.format));
+                continue;
+            }
+            VkVertexInputAttributeDescription ad{};
+            ad.location = a.location;
+            ad.binding  = a.binding;
+            ad.format   = FormatToVk(a.format);
+            ad.offset   = a.offset;
+            vkAttributes.push_back(ad);
+        }
+        if (!vkBindings.empty()) {
+            vertexInput.vertexBindingDescriptionCount = static_cast<uint32_t>(vkBindings.size());
+            vertexInput.pVertexBindingDescriptions = vkBindings.data();
+        }
+        if (!vkAttributes.empty()) {
+            vertexInput.vertexAttributeDescriptionCount = static_cast<uint32_t>(vkAttributes.size());
+            vertexInput.pVertexAttributeDescriptions = vkAttributes.data();
+        }
+    }
+
 
     // 输入组装
     VkPipelineInputAssemblyStateCreateInfo inputAssembly{VK_STRUCTURE_TYPE_PIPELINE_INPUT_ASSEMBLY_STATE_CREATE_INFO};
@@ -100,7 +167,11 @@ IRHIPipelineState* CreateGraphicsPipeline(
     VkPipelineRasterizationStateCreateInfo rasterizer{VK_STRUCTURE_TYPE_PIPELINE_RASTERIZATION_STATE_CREATE_INFO};
     rasterizer.polygonMode = VK_POLYGON_MODE_FILL;
     rasterizer.cullMode = VK_CULL_MODE_BACK_BIT;
-    rasterizer.frontFace = VK_FRONT_FACE_COUNTER_CLOCKWISE;
+    // 绕序：Vulkan 的正/负面积约定与 OpenGL 相反。CCW 在这里会剔除掉所有
+    // 按 OpenGL 习惯逆时针书写的三角形——离屏三角形正是如此，结果是整张图只有
+    // clear 的颜色。实测（lavapipe，WSL）：frontFace=CLOCKWISE + cullMode=BACK
+    // 才能正常光栅化。
+    rasterizer.frontFace = VK_FRONT_FACE_CLOCKWISE;
     rasterizer.lineWidth = 1.0f;
 
     // 多重采样
@@ -111,7 +182,7 @@ IRHIPipelineState* CreateGraphicsPipeline(
     VkPipelineDepthStencilStateCreateInfo depthStencil{VK_STRUCTURE_TYPE_PIPELINE_DEPTH_STENCIL_STATE_CREATE_INFO};
     depthStencil.depthTestEnable = desc.depthStencil.depthTest ? VK_TRUE : VK_FALSE;
     depthStencil.depthWriteEnable = desc.depthStencil.depthWrite ? VK_TRUE : VK_FALSE;
-    depthStencil.depthCompareOp = VK_COMPARE_OP_LESS;
+    depthStencil.depthCompareOp = CompareFuncToVk(desc.depthStencil.depthFunc);
 
     // 颜色混合
     VkPipelineColorBlendAttachmentState blendAttachment{};
@@ -159,20 +230,19 @@ IRHIPipelineState* CreateGraphicsPipeline(
     VkResult result = vkCreateGraphicsPipelines(device, VK_NULL_HANDLE, 1, &ci, nullptr, &vkPipeline);
     if (result != VK_SUCCESS) {
         std::fprintf(stderr, "[Vulkan] Failed to create graphics pipeline\n");
-        delete pso;
         return nullptr;
     }
 
-    pso->SetNativeHandles(vkPipeline, pipelineLayout, device);
+    std::static_pointer_cast<VulkanPipelineState>(pso)->SetNativeHandles(vkPipeline, pipelineLayout, device);
     return pso;
 }
 
-IRHIPipelineState* CreateComputePipeline(
+std::shared_ptr<IRHIPipelineState> CreateComputePipeline(
     VkDevice device,
     VkPipelineLayout pipelineLayout,
     VkShaderModule csModule)
 {
-    auto pso = new VulkanPipelineState();
+    std::shared_ptr<IRHIPipelineState> pso(new VulkanPipelineState());
 
     VkPipelineShaderStageCreateInfo csCI{VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO};
     csCI.stage = VK_SHADER_STAGE_COMPUTE_BIT;
@@ -185,13 +255,13 @@ IRHIPipelineState* CreateComputePipeline(
 
     VkPipeline vkPipeline;
     VkResult result = vkCreateComputePipelines(device, VK_NULL_HANDLE, 1, &ci, nullptr, &vkPipeline);
-    if (result != VK_SUCCESS) {
-        std::fprintf(stderr, "[Vulkan] Failed to create compute pipeline\n");
-        delete pso;
-        return nullptr;
-    }
+if (result != VK_SUCCESS) {
+          std::fprintf(stderr, "[Vulkan] Failed to create compute pipeline\n");
+          // 所有权已改为 shared_ptr，不能再 delete：由 pso 析构自动回收
+          return nullptr;
+      }
 
-    pso->SetNativeHandles(vkPipeline, pipelineLayout, device);
+    std::static_pointer_cast<VulkanPipelineState>(pso)->SetNativeHandles(vkPipeline, pipelineLayout, device);
     return pso;
 }
 

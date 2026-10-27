@@ -1,4 +1,4 @@
-# 🎮 Game Engine Demo
+# <span class="material-symbols-outlined">sports_esports</span> Game Engine Demo
 
 <p align="center">
   <h3 align="center">一个模块化游戏引擎演示项目 · 技术验证与原型开发</h3>
@@ -32,13 +32,13 @@
 
 ---
 
-## 📖 项目简介
+## <span class="material-symbols-outlined">menu_book</span> 项目简介
 
 **Game Engine Demo** 是一个实验性的模块化游戏引擎演示项目，使用 **C++20** 标准开发。项目采用分层解耦架构，通过纯虚接口层（RHI 风格）将核心逻辑与具体实现分离，已集成：
 
 - **OpenGL 4.6** 渲染（2D 精灵批处理 + 3D 光照管线 + 延迟渲染 / SSAO）
 - **Vulkan 1.3** 渲染后端（95% 完成 — Dynamic Rendering / VMA / Bindless Descriptor，跨平台首选）
-- **D3D12** 渲染后端（⏸️ 休眠状态 — 777 行完整 IRHIDevice + D3D12MA，基础架构已跑通但功能未对齐 Vulkan，暂不作为日常迭代重心）
+- **D3D12** 渲染后端（<span class="material-symbols-outlined">pause_circle</span> 休眠状态 — 777 行完整 IRHIDevice + D3D12MA，基础架构已跑通但功能未对齐 Vulkan，暂不作为日常迭代重心）
 - **Jolt Physics 5.5** 3D 物理引擎（多线程 JobSystem 适配，v4.0-v7.0 迭代）
 - **Box2D 3.0** 2D 物理模拟（刚体、碰撞、关节）
 - **Bare2D** 纯 CPU 2D 物理引擎（自制，1302 行完整物理管线）
@@ -49,11 +49,11 @@
 - **Tracy** 性能剖析
 - **FreeType** 字体渲染
 
-> ⚠️ 该项目仍处于快速迭代阶段，API 可能发生破坏性变化，不建议直接用于正式项目。
+> <span class="material-symbols-outlined">warning</span> 该项目仍处于快速迭代阶段，API 可能发生破坏性变化，不建议直接用于正式项目。
 
 ---
 
-## 🚀 快速开始
+## <span class="material-symbols-outlined">rocket_launch</span> 快速开始
 
 ### 环境要求
 
@@ -97,7 +97,7 @@ cmake --build build --target AudioPhysicsSandbox
 
 ---
 
-## 🏗️ 引擎架构
+## <span class="material-symbols-outlined">architecture</span> 引擎架构
 
 ```
 ┌──────────────────────────────────────────────────────────────────────────┐
@@ -169,9 +169,9 @@ cmake --build build --target AudioPhysicsSandbox
 
 ---
 
-## 📦 模块详解
+## <span class="material-symbols-outlined">inventory_2</span> 模块详解
 
-### 🖼️ 渲染系统 — OpenGL 4.6
+### <span class="material-symbols-outlined">image</span> 渲染系统 — OpenGL 4.6
 
 | 组件 | 说明 |
 |------|------|
@@ -186,26 +186,35 @@ cmake --build build --target AudioPhysicsSandbox
 | `ISpriteBatch` / `IPrimitiveBatch` | 批处理抽象接口（精灵 + 图元） |
 | `TextureManager` | 纹理缓存管理器，自动去重 |
 
-### 🖼️ 渲染系统 — Vulkan 1.3
+### <span class="material-symbols-outlined">image</span> 渲染系统 — Vulkan 1.3
+
+> **状态**：<span class="material-symbols-outlined">check_circle</span> 离屏三角形**像素断言已通过**
+> （`centre pixel = 64 128 191 255`，WSL + lavapipe 实测）。
+> 根因是 `frontFace` 绕序与 `cullMode` 不匹配，导致几何被整体剔除而画面只剩 clear；
+> 另有两处真实但非根因的缺陷（动态视口未设置、`att.clearValue` 未赋值）同期修复。
+> 尚未绘制带顶点缓冲的几何 —— `GraphicsPSODesc` 仍无顶点输入契约。
+> 详见 `docs/Handoff-Vulkan-Headless-GPU-Verification.md`。
 
 | 组件 | 说明 |
 |------|------|
-| `VulkanDevice` | Vulkan 设备封装（VkInstance / VkPhysicalDevice / VkDevice / VMA / Volk） |
-| `VulkanCommandList` | Vulkan 命令列表（Begin / End / Draw / DrawIndexed / Barrier / Viewport / Scissor） |
-| `VulkanSwapChain` | 交换链（Present / Resize / FrameInFlight 三帧飞行） |
+| `VulkanDevice` | Vulkan 设备封装（VkInstance / VkPhysicalDevice / VkDevice / VMA）。直连 `vulkan-1`，**未使用 Volk** |
+| `VulkanCommandList` | Vulkan 命令列表（Begin / End / Draw / DrawIndexed / Barrier / Viewport / Scissor / **BeginRendering** / **EndRendering**） |
+| `VulkanSwapChain` | 交换链（**AcquireNextImage** / Present / Resize / FrameInFlight 三帧飞行） |
 | `VulkanPipelineState` | 管线状态（SPIR-V 反射 + Dynamic Rendering + PSO Factory） |
 | `VulkanPipelineLayoutCache` | PipelineLayout 缓存（SPIRV-Cross 反射 UBO / Sampler / SSBO / PushConstant） |
 | `BindlessAllocator` | Bindless Descriptor Indexing（4096 binding，UpdateAfterBind，VariableDescriptorCount） |
 | `VulkanBuffer` | VMA Buffer（Vertex / Index / Uniform / Storage） |
-| `VulkanTexture` | VMA Image（支持各种格式和 mip levels） |
+| `VulkanTexture` | VMA Image + image view；`mipLevels` 目前固定为 1 |
 | `VulkanQueue` | 命令队列（Graphics / Compute） |
 | `VulkanFrameResource` | 每帧资源（Fence / Semaphore / CommandPool / DynamicUBO） |
-| `VulkanLoader` | Volk 加载器（Instance / Device 函数加载） |
+| `VulkanLoader` | **空壳**：直接链接 `vulkan-1`，`Initialize`/`LoadInstance`/`LoadDevice` 均不做函数解析 |
+| `ShaderRegistry` | 运行时着色器注册表（StringID → SPIR-V）；`CreateGraphicsPSO` 经它解析着色器 |
+| `VulkanOffscreenTarget` | 独立离屏目标（自有image/view 与一次性命令缓冲）；**仅被 sandbox 测试使用** |
 | `PSOCache` | PSO 去重缓存（64-bit hash，线程安全 Find / Store） |
 | `DescriptorRingBuffer` | 描述符环缓冲区（支持多帧飞行） |
 | `GPUProfiler` | GPU 性能剖析（Timestamp Query） |
 
-### 🧱 物理系统 — 2D (Box2D + Bare2D)
+### <span class="material-symbols-outlined">view_in_ar</span> 物理系统 — 2D (Box2D + Bare2D)
 
 | 组件 | 说明 |
 |------|------|
@@ -220,7 +229,7 @@ cmake --build build --target AudioPhysicsSandbox
 | `PhysicsComponent` | 可挂载到 GameObject 的物理组件 |
 | `PhysicsDefs` | 纯数据结构（BodyDef/ShapeDef/JointDef/ContactManifold/CollisionLayers） |
 
-### 🧱 物理系统 — 3D (Jolt Physics) — v4.0 至 v7.0 迭代
+### <span class="material-symbols-outlined">view_in_ar</span> 物理系统 — 3D (Jolt Physics) — v4.0 至 v7.0 迭代
 
 | 版本 | 核心改进 | 文件 |
 |------|----------|------|
@@ -255,7 +264,7 @@ cmake --build build --target AudioPhysicsSandbox
 - **碰撞滤波** `SetContactPreSolveCallback` — 运行时控制碰撞
 - **ECS 碰撞监听** `CollisionListenerComponent` — OnCollisionEnter/Exit 回调
 
-### 🔊 音频系统 (`Engine::OpenAL`)
+### <span class="material-symbols-outlined">volume_up</span> 音频系统 (`Engine::OpenAL`)
 
 | 组件 | 说明 |
 |------|------|
@@ -274,7 +283,7 @@ cmake --build build --target AudioPhysicsSandbox
 
 支持的音频格式：`.wav`、`.ogg`（通过 stb_vorbis 解码）
 
-### 🎮 输入系统
+### <span class="material-symbols-outlined">sports_esports</span> 输入系统
 
 | 组件 | 说明 |
 |------|------|
@@ -284,7 +293,7 @@ cmake --build build --target AudioPhysicsSandbox
 | `GlfwWindow` | GLFW 窗口实现（支持事件回调、窗口缩放自适应、输入抢占） |
 | `GlfwInput` | GLFW 输入轮询实现 |
 
-### 🎬 场景与游戏对象
+### <span class="material-symbols-outlined">movie</span> 场景与游戏对象
 
 | 组件 | 说明 |
 |------|------|
@@ -297,7 +306,7 @@ cmake --build build --target AudioPhysicsSandbox
 | `PhysicsComponent` | 物理组件（连接 GameObject 与 IPhysicsBody），支持 JSON 序列化 |
 | `AudioSourceComponent` | 音频源组件（可挂载到 GameObject） |
 
-### 🧩 Core 基础设施
+### <span class="material-symbols-outlined">extension</span> Core 基础设施
 
 | 组件 | 说明 |
 |------|------|
@@ -319,7 +328,7 @@ cmake --build build --target AudioPhysicsSandbox
 | `IRenderContext` | 渲染上下文接口 |
 | `EventBus` | 类型安全的发布-订阅事件总线（支持 ECS 集成事件） |
 
-### 📦 资源管理系统
+### <span class="material-symbols-outlined">inventory_2</span> 资源管理系统
 
 | 组件 | 说明 |
 |------|------|
@@ -335,7 +344,7 @@ cmake --build build --target AudioPhysicsSandbox
 | `AsyncLoadData` | 异步加载数据结构 |
 | `FileWatcher` | 文件变更监视器，后台轮询 mtime，支持资源热加载 |
 
-### 🎭 动画系统 (`Engine::Animation`)
+### <span class="material-symbols-outlined">theater_comedy</span> 动画系统 (`Engine::Animation`)
 
 | 组件 | 说明 |
 |------|------|
@@ -367,14 +376,15 @@ cmake --build build --target AudioPhysicsSandbox
 | `Locator` | 定位器（用于挂载点 / 附着点） |
 | `BlendMask` | 混合遮罩（控制每根骨骼的混合权重） |
 
-### 🖥️ RHI / Rendering 层
+### <span class="material-symbols-outlined">desktop_windows</span> RHI / Rendering 层
 
 | 组件 | 说明 |
 |------|------|
 | `IRHIDevice` | 渲染硬件设备抽象（CreateBuffer/CreateTexture/CreatePSO/CreateSwapChain） |
-| `IRHICommandList` | 命令列表抽象（Begin/End/Draw/Barrier/Bind） |
+| `IRHICommandList` | 命令列表抽象（Begin/End/Draw/Barrier/Bind/**BeginRendering**/**EndRendering**）。渲染作用域默认空操作，立即模式后端（OpenGL）无需覆盖 |
 | `IRHICommandQueue` | 命令队列抽象（ExecuteCommandLists/WaitIdle） |
 | `IRHISwapChain` | 交换链抽象（Present/Resize/GetBackBuffer） |
+| `RHIDeviceFactory` | 后端 → `IRHIDevice` 的创建入口（`CreateRHIDevice`）。`RHIWindow` 尚不持有设备，该路径仍未接入引擎运行时 |
 | `IRHIBuffer` / `IRHITexture` / `IRHIPipelineState` | 渲染资源抽象 |
 | `PSOCache` | 全局 PSO 去重缓存，64-bit hash，线程安全 |
 | `SceneRenderer` | 场景渲染器 — 管理渲染队列和 pass 执行 |
@@ -387,7 +397,7 @@ cmake --build build --target AudioPhysicsSandbox
 | `ComputeCullingPass` | GPU Drivan 可见性剔除计算 Pass |
 | `IDBufferPass` | 延迟渲染 ID Buffer Pass |
 
-### 🐛 调试系统
+### <span class="material-symbols-outlined">bug_report</span> 调试系统
 
 | 组件 | 说明 |
 |------|------|
@@ -404,7 +414,7 @@ cmake --build build --target AudioPhysicsSandbox
 
 ---
 
-## 🌿 分支策略
+## <span class="material-symbols-outlined">eco</span> 分支策略
 
 本项目采用双分支策略，将实验性 ECS 架构与稳定主干分离：
 
@@ -433,7 +443,7 @@ cmake --build build --target AudioPhysicsSandbox
 
 ---
 
-## 🧪 沙盒示例
+## <span class="material-symbols-outlined">science</span> 沙盒示例
 
 | 目标 | 说明 |
 |------|------|
@@ -451,18 +461,18 @@ cmake --build build --target AudioPhysicsSandbox
 | **`ImGuiTest`** | ImGui 功能测试 — 窗口管理/输入抢占/性能窗口 |
 | **`SerializationTest`** | 场景 JSON 序列化/反序列化单元测试 |
 | **`ComplexSceneTest`** | 复杂场景序列化与重建测试 |
-| **`MarioDemo`** | 🎯 超级马里奥 Demo — 2D 平台游戏完整实现，含 BGM |
-| **`AudioPhysicsSandbox`** | 🎯 综合演示 — 物理+音频+输入 |
-| **`EditorDemo`** | 🎯 编辑器框架演示 — EngineEditor 全功能面板 |
-| **`SystemTest`** | 🎯 系统综合测试 — JobSystem/FileSystem/Config/混合调度 |
-| **`_3DTest`** | 🎯 3D 渲染测试 — 3D 光照 / 延迟渲染管线验证 |
-| **`AnimationTest`** | 🎯 动画系统测试 — 骨骼/蒙皮/混合树基础功能 |
-| **`AnimationDemo`** | 🎯 动画系统演示 — 骨骼动画播放与混合展示 |
+| **`MarioDemo`** | <span class="material-symbols-outlined">flag</span> 超级马里奥 Demo — 2D 平台游戏完整实现，含 BGM |
+| **`AudioPhysicsSandbox`** | <span class="material-symbols-outlined">flag</span> 综合演示 — 物理+音频+输入 |
+| **`EditorDemo`** | <span class="material-symbols-outlined">flag</span> 编辑器框架演示 — EngineEditor 全功能面板 |
+| **`SystemTest`** | <span class="material-symbols-outlined">flag</span> 系统综合测试 — JobSystem/FileSystem/Config/混合调度 |
+| **`_3DTest`** | <span class="material-symbols-outlined">flag</span> 3D 渲染测试 — 3D 光照 / 延迟渲染管线验证 |
+| **`AnimationTest`** | <span class="material-symbols-outlined">flag</span> 动画系统测试 — 骨骼/蒙皮/混合树基础功能 |
+| **`AnimationDemo`** | <span class="material-symbols-outlined">flag</span> 动画系统演示 — 骨骼动画播放与混合展示 |
 | **`CrashTest`** | 崩溃报告测试 — 触发 SEH 异常验证 CrashHandler |
 
 ---
 
-## 📁 项目结构
+## <span class="material-symbols-outlined">folder</span> 项目结构
 
 ```
 game-engine-demo/
@@ -505,7 +515,7 @@ game-engine-demo/
 
 ---
 
-## 🧰 第三方依赖
+## <span class="material-symbols-outlined">toolbox</span> 第三方依赖
 
 | 库 | 版本 | 用途 |
 |----|------|------|
@@ -530,7 +540,7 @@ game-engine-demo/
 
 ---
 
-## ⚠️ 注意事项
+## <span class="material-symbols-outlined">warning</span> 注意事项
 
 - 项目处于**快速迭代阶段**，API 和架构可能随时变更
 - 渲染后端支持 **OpenGL 4.6**（生产级）和 **Vulkan 1.3**（~95%，**主力后端**），**D3D12** 处于休眠状态
@@ -566,7 +576,7 @@ v0.2 明确不包含完整 Docking、Timeline、复杂 DSL 或 3D 渲染后端�
 
 ---
 
-## 📝 许可证
+## <span class="material-symbols-outlined">description</span> 许可证
 
 本项目采用 **MIT License** 开源。详见 [LICENSE.txt](./LICENSE.txt)。
 

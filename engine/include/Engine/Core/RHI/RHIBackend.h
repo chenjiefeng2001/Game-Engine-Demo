@@ -13,6 +13,7 @@
  */
 
 #include "Engine/Types.h"
+#include <memory>  // CreateRHI 返回 std::unique_ptr，此前漏掉导致任何包含者编译失败
 
 namespace Engine {
 namespace RHI {

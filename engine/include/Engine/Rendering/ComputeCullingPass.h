@@ -52,7 +52,7 @@ namespace Engine { namespace Rendering {
         RHI::IRHIBuffer* m_FrustumBuffer = nullptr;
         RHI::IRHIBuffer* m_VisibleIndicesBuffer = nullptr;
         RHI::IRHIBuffer* m_IndirectArgsBuffer = nullptr;
-        RHI::IRHIPipelineState* m_CullPSO = nullptr;
+        std::shared_ptr<RHI::IRHIPipelineState> m_CullPSO = nullptr;
         uint32_t m_MaxObjects = 100000;
         uint32_t m_CurrentObjectCount = 0;
         bool m_Initialized = false;

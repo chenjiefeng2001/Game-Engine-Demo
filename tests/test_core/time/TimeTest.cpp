@@ -24,6 +24,7 @@
 //     恒 <= now，该分支在当前实现下不可达
 //   - CalibrateAccumulator(fixedDt == 0)：std::fmod(x, 0) 为 UB，唯一生产
 //     调用点传入 1.0f/60.0f 常量，属 latent boundary
+#include <cmath>
 #include <gtest/gtest.h>
 
 #include <chrono>

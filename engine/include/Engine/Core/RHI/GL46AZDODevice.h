@@ -60,8 +60,8 @@ namespace RHI {
 
         std::shared_ptr<IRHIBuffer> CreateBuffer(const RHIBufferDesc& desc) override;
         std::shared_ptr<IRHITexture> CreateTexture(const TextureDesc& desc) override;
-        IRHIPipelineState* CreateGraphicsPSO(const GraphicsPSODesc& desc) override;
-        IRHIPipelineState* CreateComputePSO(const ComputePSODesc& desc) override;
+        std::shared_ptr<IRHIPipelineState> CreateGraphicsPSO(const GraphicsPSODesc& desc) override;
+        std::shared_ptr<IRHIPipelineState> CreateComputePSO(const ComputePSODesc& desc) override;
         std::unique_ptr<IRHICommandList> CreateCommandList(CommandListType t) override;
         IRHICommandQueue* GetQueue(QueueType type) override;
         std::unique_ptr<IRHISwapChain> CreateSwapChain(const SwapChainDesc& desc) override;

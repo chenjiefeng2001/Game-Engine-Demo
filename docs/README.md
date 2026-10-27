@@ -1,5 +1,19 @@
 # Game-Engine-Demo
 
+## 图标约定
+
+状态标记统一使用 [Material Symbols](https://fonts.google.com/icons)，不使用 emoji：
+
+| 图标 | 含义 |
+|---|---|
+| `<span class="material-symbols-outlined">check_circle</span>` | 已验证 / 已修复 |
+| `<span class="material-symbols-outlined">warning</span>` | 部分可用、存在已知缺口或尚未验证 |
+| `<span class="material-symbols-outlined">cancel</span>` | 阻塞、不可触碰 |
+
+**图标必须紧跟中文文字**（如 `<span class="material-symbols-outlined">check_circle</span> 已验证`），
+这样即使平台不渲染图标字体，语义仍然完整可读。历史文档中的 ASCII 树图框线字符
+（`─` `├` `│` `└`）属结构符号而非 emoji，予以保留。
+
 ## 最新更新
 
 ### 多线程渲染器架构重构

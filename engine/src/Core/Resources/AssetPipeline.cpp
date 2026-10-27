@@ -10,6 +10,15 @@ namespace {
 #include <set>
 #include <chrono>
 #include <cstring>
+#include <fstream>
+#include <iterator>
+// ShaderStageType 住在与后端无关的 RenderResources 里；stage 推断必须在
+// ENGINE_HAS_VULKAN 守卫**之外**可用，否则「不认识扩展名」与「没有 Vulkan 后端」
+// 这两种完全不同的原因会被混为一谈。
+#include "Engine/Core/RenderResources/ShaderStage.h"
+#if defined(ENGINE_HAS_VULKAN)
+#include "Engine/Vulkan/ShaderRegistry.h"
+#endif
 
 namespace Engine {
 
@@ -190,39 +199,139 @@ namespace Engine {
     // ============================================================
 
     bool ShaderCompileRule::Execute(PipelineContext& ctx) {
+        // 失败必须**说得清原因**。AssetPipeline::Process 不设置 ctx.onProgress，
+        // 所以规则里的进度回调在生产路径上永远是空指针；而 RunRule 只把
+        // metadata["validation_error"] 抄进 PipelineResult::errorMessage。
+        // 两者都不写的话，CI 上只会看到 "Rule 'ShaderCompile' failed"，
+        // 失败原因需要再复现一次才能拿到。
+        const auto fail = [&ctx](const std::string& reason) {
+            ctx.metadata["validation_error"] = reason;
+            if (ctx.onProgress) ctx.onProgress(1.0f, reason);
+            return false;
+        };
+
         if (ctx.onProgress)
             ctx.onProgress(0.0f, "Compiling shader: " + ctx.entry->path);
-
-        // 占位：实际的 GLSL→SPIR-V 编译需要调用 glslangValidator
-        // 或 shaderc 库。在此仅模拟编译过程。
-        //
-        // 真实实现：
-        //   1. 读取 GLSL 源文件
-        //   2. 调用 shaderc::Compiler 编译为 SPIR-V
-        //   3. 写入 .spv 文件到输出目录
 
         std::string stem = ctx.entry->fileName;
         auto dotPos = stem.find_last_of('.');
         if (dotPos != std::string::npos)
             stem = stem.substr(0, dotPos);
 
-        std::string outputPath = ctx.outputDir + "/" + stem + ".spv";
+        // ── stage 推断：不猜 ──────────────────────────────────────────────
+        // 无法识别的扩展名不猜，避免把顶点着色器当成片元着色器登记后静默产出
+        // 错误的管线。识别不出时本规则**不适用**，因此返回 true 但**不产出任何
+        // 文件**——此前正是在这一步之前就 push_back 了 .spv 路径，于是报告里出现
+        // 一个从未被编译、也从未被写出的"产物"。
+        const std::string ext = [&] {
+            const auto dot = ctx.entry->fileName.find_last_of('.');
+            return dot == std::string::npos
+                ? std::string()
+                : ctx.entry->fileName.substr(dot + 1);
+        }();
+        ShaderStageType stage;
+        if      (ext == "vert" || ext == "vs")   stage = ShaderStageType::Vertex;
+        else if (ext == "frag" || ext == "fs")   stage = ShaderStageType::Fragment;
+        else if (ext == "comp" || ext == "cs")   stage = ShaderStageType::Compute;
+        else if (ext == "geom" || ext == "gs")   stage = ShaderStageType::Geometry;
+        else if (ext == "tesc" || ext == "tcs")  stage = ShaderStageType::TessControl;
+        else if (ext == "tese" || ext == "tes")  stage = ShaderStageType::TessEvaluation;
+        else {
+            // 不适用 ≠ 失败：不产出文件、不写 metadata，返回 true 让规则安静退出。
+            if (ctx.onProgress) {
+                ctx.onProgress(1.0f, "Shader stage unknown for " + ctx.entry->fileName +
+                                     " (extension '" + ext + "'); nothing was compiled");
+            }
+            return true;
+        }
+
+        // ctx.sourcePath 由 Process 解析过；缺省时退回 entry->path，保持单点真相。
+        const std::string sourcePath = FileSystem::ResolvePath(
+            ctx.sourcePath.empty() ? ctx.entry->path : ctx.sourcePath);
+        std::ifstream src(sourcePath, std::ios::binary);
+        if (!src) {
+            // 源文件读不到是**失败**：NeedsRebuild 对缺失源文件返回 false（当作
+            // 「不需要重建」），于是这里再返回 true 就形成了一条静默跳过。
+            return fail("Shader source unreadable: " + sourcePath);
+        }
+        const std::string glsl((std::istreambuf_iterator<char>(src)),
+                               std::istreambuf_iterator<char>());
+
+        // ── SPIR-V：编译、登记、真正落盘 ───────────────────────────────────
+        // ShaderRegistry 位于 engine/src/Vulkan，仅在 Vulkan_FOUND 时编译，
+        // 故必须用 ENGINE_HAS_VULKAN 守卫，否则无 Vulkan 的构建会链接失败。
+        //
+        // 副作用边界（重要）：**SPIR-V 编译器目前就住在 Vulkan 后端里**
+        // （engine/src/Vulkan/ShaderCompiler.cpp 的 ShaderCompiler 是文件私有类）。
+        // 因此本规则在「有 shaderc 但无 Vulkan」的构建里无法产出 .spv，只能
+        // 如实报告。把它提到与后端无关的位置是后续一项独立工作。
+#if defined(ENGINE_HAS_VULKAN)
+        // ShaderRegistry 位于 Engine::RHI，而本文件在 Engine 命名空间内，需显式限定。
+        if (!RHI::ShaderRegistry::Get().RegisterSource(stem, stage, glsl)) {
+            // 此前编译失败只打印一行，然后照样 return true，于是「GLSL 写错了」
+            // 会得到 success=true **加上**一个 .spv 条目。
+            return fail("Shader compile failed: " + stem);
+        }
+
+        // 真正写出 .spv。注册表是唯一的 SPIR-V 出处（Find 是公开的唯一取词途径），
+        // 因此落盘的就是刚刚交给 vkCreateShaderModule 的那份字节。
+        const std::vector<uint32_t>* words =
+            RHI::ShaderRegistry::Get().Find(StringID::Runtime(stem), stage);
+        if (!words || words->empty()) {
+            return fail("Shader compiled but absent from the registry: " + stem);
+        }
+
+        const std::string outputPath = ctx.outputDir + "/" + stem + ".spv";
+        // **只在目录确实不存在时创建**，并且「仍然不存在」才算失败。
+        // fs::create_directories 对「目录已存在」返回 false，而 Process 早一步就
+        // 建过 outputDir/.intermediate（顺带建好了 outputDir），因此无条件调用它
+        // 会把一次**成功**的编译报成失败 —— 这正是上一轮 CI 里
+        // "Rule 'ShaderCompile' failed" 的真实原因，而规则内的原因只走 onProgress，
+        // Process 又从不设置它，于是日志里什么线索都没有。
+        if (!FileSystem::Exists(ctx.outputDir) && !FileSystem::CreateDirectory(ctx.outputDir)) {
+            return fail("Cannot create shader output directory: " + ctx.outputDir);
+        }
+        if (!FileSystem::Exists(ctx.outputDir)) {
+            return fail("Shader output directory is still missing: " + ctx.outputDir);
+        }
+
+        // SPIR-V 是 32 位字流；逐字拷贝而不是把 vector<uint32> 当字节数组，
+        // 这样不依赖宿主字节序假设。
+        std::vector<uint8> bytes;
+        bytes.reserve(words->size() * sizeof(uint32_t));
+        for (uint32_t word : *words) {
+            bytes.push_back(static_cast<uint8>(word & 0xFFu));
+            bytes.push_back(static_cast<uint8>((word >> 8) & 0xFFu));
+            bytes.push_back(static_cast<uint8>((word >> 16) & 0xFFu));
+            bytes.push_back(static_cast<uint8>((word >> 24) & 0xFFu));
+        }
+        if (!FileSystem::WriteFile(outputPath, bytes)) {
+            return fail("Cannot write SPIR-V: " + outputPath);
+        }
+
+        // 只有文件真的存在才登记为产物。
         ctx.generatedFiles.push_back(outputPath);
         ctx.metadata["compiled_spv"] = outputPath;
-
-        // 模拟编译成功
         if (ctx.onProgress)
-            ctx.onProgress(1.0f, "Shader compiled: " + stem);
+            ctx.onProgress(1.0f, "Shader compiled and written: " + outputPath);
+#else
+        if (ctx.onProgress) {
+            ctx.onProgress(1.0f, "No Vulkan backend in this build: no SPIR-V produced for " + stem);
+        }
+#endif
 
         return true;
     }
 
     bool ShaderCompileRule::NeedsRebuild(PipelineContext& ctx) {
-        std::string resolved = FileSystem::ResolvePath(ctx.entry->path);
+        std::string resolved = FileSystem::ResolvePath(
+            ctx.sourcePath.empty() ? ctx.entry->path : ctx.sourcePath);
 
-        // 检查源文件是否存在
+        // 源文件不存在时返回 true（需要重建），而不是 false。
+        // Process 把 !NeedsRebuild 当作「跳过这条规则」，于是此前这条路径让整个
+        // 编译**静默跳过**：源文件被删掉或路径写错，既不编译也不报错。
         if (!FileSystem::Exists(resolved))
-            return false;
+            return true;
 
         // 检查是否有对应的 .spv 输出
         std::string stem = ctx.entry->fileName;
@@ -360,11 +469,18 @@ namespace Engine {
                 continue;
             }
 
-            bool ruleOk = RunRule(*rule, ctx).success;
-            if (!ruleOk) {
+            const PipelineResult ruleResult = RunRule(*rule, ctx);
+            if (!ruleResult.success) {
                 result.success = false;
                 result.errorMessage = "Rule '" + std::string(rule->GetName()) +
                                       "' failed for " + entry.path;
+                // 保留规则自己给出的原因。RunRule 会把 metadata["validation_error"]
+                // 抄进 ruleResult.errorMessage，而此前 Process 只取 .success 并把
+                // 原因覆盖掉 —— 于是每一条规则失败到了调用方手里都只剩一个规则名，
+                // 排查必须先复现一次才看得到真正的原因。
+                if (!ruleResult.errorMessage.empty()) {
+                    result.errorMessage += ": " + ruleResult.errorMessage;
+                }
                 result.lastStage = rule->GetStage();
                 auto endTime = std::chrono::steady_clock::now();
                 result.elapsedSeconds = std::chrono::duration<double>(

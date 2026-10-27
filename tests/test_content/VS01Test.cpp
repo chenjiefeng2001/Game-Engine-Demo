@@ -24,7 +24,7 @@
 #include "Engine/Scripting/GameplayAPI.h"
 #include "Engine/Scripting/ScriptAPI.h"
 #include "Engine/Scripting/ScriptInstance.h"
-#include "Engine/OpenGL/OpenGLGraphicsFactory.h"
+#include "StubGraphicsFactory.h"
 
 #include <cmath>
 #include <cstdio>
@@ -71,7 +71,7 @@ namespace {
 
     struct Ctx {
         ContentRegistry          reg;
-        OpenGLGraphicsFactory    gfxF;
+        StubGraphicsFactory    gfxF;
         TextureManager           tm{gfxF};
         Engine::Scene            scene;
         ScriptInstance           inst;
@@ -440,7 +440,7 @@ TEST(VS01Debug, MinimalReloadRepro) {
     };
 
     Engine::Scene scene;
-    OpenGLGraphicsFactory gfxF;
+    StubGraphicsFactory gfxF;
     TextureManager tm(gfxF);
     GameplayAPI::Reset();
     GameplayAPI::SetScene(&scene);
