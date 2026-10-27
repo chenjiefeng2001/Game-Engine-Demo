@@ -897,29 +897,37 @@ Release 全量运行均通过。本轮从零重建后两个配置的全量运行
 实证几何（F1-01）：主屏 2560×1600、工作区 2560×1552、缩放 1.0；提交时请求
 P = (2400, 1400, 640, 480)，首次 Show 钳制到 S = (1920, 1072, 640, 480)。
 
-### 12.3 已执行的定向证据（实测）
+### 12.3 已执行证据（实测）
 
 | 项 | 结果 |
 | --- | --- |
-| `dotnet build Nova.sln -c Debug`（全部改动落地后） | 0 错误；18 条 `NU1900`（同一包源不可达警告，日志中项目段与汇总段共 36 行） |
-| `DockLayoutHistoryTests`（含 Lh18/Lh19） | 19/19 通过 |
-| `DockSettlementCalibrationTests`（F1-01） | 1/1 通过 |
-| `DockLayoutFaultMatrixTests`（LM-01…LM-07） | 7/7 通过 |
+| `dotnet build Nova.sln -c Debug` | 0 错误；18 条 `NU1900`（同一不可达包源警告，项目段与汇总段共 36 行） |
+| `dotnet test Nova.sln -c Debug --no-build` | **371/371** 通过（Core 119、Controls 101、Integration 146、Performance 5） |
+| `dotnet build Nova.sln -c Release` | 0 错误；18 条 `NU1900`（同一警告，共 36 行） |
+| `dotnet test Nova.sln -c Release --no-build` | **371/371** 通过（分布同上） |
+| `dotnet format Nova.sln --verify-no-changes --no-restore` | 退出码 0（仅 workspace 加载警告） |
+| `DockLayoutHistoryTests`（含 Lh18/Lh19，Debug 定向） | 19/19 通过 |
+| `DockSettlementCalibrationTests`（F1-01，Debug 定向） | 1/1 通过 |
+| `DockLayoutFaultMatrixTests`（LM-01…LM-07，Debug 定向） | 7/7 通过 |
 | `DockWorkspaceCoordinatorTests` + `DockFloatPlacementHostTests` | 45/45 通过 |
 
-### 12.4 未执行项（用户 2026-10-28 指令暂停测试）
+### 12.4 全量回归记录与既有未判定项
 
-- Debug/Release 全量回归、`dotnet format` 与最终测试总数**尚未执行**；本轮不给出
-  全量 PASS 结论，也不以定向数字外推全量结果。
+- 2026-10-28 解除测试暂停后补跑 Debug/Release 全量：两配置均 371/371、0 错误、
+  18 条 `NU1900`，`dotnet format` 退出 0。较 D9-F 的 368 新增 3 项，即 Lh18、
+  Lh19 与 F1-01。
+- ADR-011 中"未判定"的 Release 失败
+  （`DockHiddenPanelShellTests.Undo_after_a_reset_returns_unknown_panels_and_pauses_persistence_again`）
+  在本次 Release 全量中通过；判定仍保持**未判定**，不因一次通过改写既有失败记录。
 - D9-F 的 368/368（双配置）、§11 关闭记录与 D9 总体 `CLOSED — scope-bound` 均按
   原样保留，不被本节改写。
-- ADR-011 中"未判定"的 Release 失败继续未判定；D10 总体状态与 D10-D 真实多显示器/
-  混合 DPI 验收保持原样，不因 F1 补遗推进。
+- D10 总体状态与 D10-D 真实多显示器/混合 DPI 验收保持原样，不因 F1 补遗推进。
 
 ### 12.5 边界纪律
 
-- 工作树保持未提交：无 commit/push/tag/merge；`editor_avalonia`、`native/gate` 及
-  其他无关 dirty 文件未触碰；未修改系统显示缩放。
+- 2026-10-28 用户指示提交当前全部改动：创建 `dfd70f5`（416 个文件，排除
+  `crashes/` 本地转储）；无 push/tag/merge；提交前未修改 `editor_avalonia`、
+  `native/gate` 等内容，未修改系统显示缩放。
 - 未改动 schema 版本、未放宽 `Replay`、未引入 O1/O2 或无关 Shell 重构。
 
 
