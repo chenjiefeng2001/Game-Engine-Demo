@@ -305,12 +305,12 @@ struct DogfoodSpec {
 
 static const DogfoodAsset kDf03Assets[] = {
     { "df03aabbccddeeff0011223344556677", "assets/scripts/dogfood03_game.lua", "Script" },
-    // 三个不同 GUID 指向同一张 test.png：df03 的脚本按 GUID 分别取三张贴图，
-    // 用来验证「多张贴图可共存」。LoadManifest 直接写 m_ByGuid/m_ByPath，
-    // 不走 RegisterExplicit 的重复检测，所以同路径多 GUID 是允许的。
+    // M1-B（K1.4/K4.5）：同一 PathKey 不允许绑定多个 GUID。
+    // df03 需要三张共存贴图，因此使用三个不同路径；脚本按 GUID 取图，
+    // 不依赖三个路径指向同一文件。
     { "df03c3d4e5f6a7b8c9d0e1f2a3b4c5d6", "assets/textures/test.png", "Texture" },
-    { "df03e5f6a7b8c9d0e1f2a3b4c5d6e7f8", "assets/textures/test.png", "Texture" },
-    { "df03a9b8c7d6e5f4a3b2c1d0e9f8a7b6", "assets/textures/test.png", "Texture" },
+    { "df03e5f6a7b8c9d0e1f2a3b4c5d6e7f8", "assets/textures/mario/goomba.png", "Texture" },
+    { "df03a9b8c7d6e5f4a3b2c1d0e9f8a7b6", "assets/textures/mario/coin.png", "Texture" },
 };
 
 // 实体表转录自 provisioned 工作区的 fixtures，理由同 kGp01Entities：

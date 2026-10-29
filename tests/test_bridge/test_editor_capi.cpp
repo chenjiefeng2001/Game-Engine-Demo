@@ -1725,6 +1725,236 @@ TEST_F(EditorBridgeTest, F2ColliderNegativePaths) {
     std::filesystem::current_path(oldcwd);
     }
 
+// ════════════════════════════════════════════════════════════
+// T-1-B：RigidBody 序列化 / 冷启（三字段 components[]）
+// ════════════════════════════════════════════════════════════
+
+TEST_F(EditorBridgeTest, T1BRigidBodySaveLoadColdRestart) {
+    const std::string oldcwd = MakeScratchFacing();
+    ASSERT_EQ(EditorSession_OpenProject(m_Session, kManifest, kScene), 1);
+    const int32_t idx = EditorSession_CreateEntity(m_Session, "RigidRig");
+    ASSERT_GE(idx, 0);
+
+    EXPECT_EQ(EditorSession_AddComponent(m_Session, idx, "RigidBody"), 0);
+    EXPECT_EQ(EditorSession_SetComponentProperty(m_Session, idx, "RigidBody",
+                                                 "motionType", "Kinematic"), 0);
+    EXPECT_EQ(EditorSession_SetComponentProperty(m_Session, idx, "RigidBody",
+                                                 "linearDamping", "0.25"), 0);
+    EXPECT_EQ(EditorSession_SetComponentProperty(m_Session, idx, "RigidBody",
+                                                 "angularDamping", "0.5"), 0);
+    EXPECT_EQ(EditorSession_SaveProject(m_Session), 1);
+
+    // 落盘证据：RigidBody 三字段进入 components[]，且无运行时句柄。
+    {
+        std::ifstream f("assets/gp01/Main.scene", std::ios::binary);
+        ASSERT_TRUE(f.good());
+        std::string text((std::istreambuf_iterator<char>(f)),
+                         std::istreambuf_iterator<char>());
+        EXPECT_NE(text.find("RigidBody"), std::string::npos);
+        EXPECT_NE(text.find("\"motionType\": \"Kinematic\""), std::string::npos);
+        EXPECT_NE(text.find("\"linearDamping\": 0.25"), std::string::npos);
+        EXPECT_NE(text.find("\"angularDamping\": 0.5"), std::string::npos);
+        EXPECT_EQ(text.find("runtimeBodyID"), std::string::npos);
+        EXPECT_EQ(text.find("\"bodyID\""), std::string::npos);
+    }
+
+    // 冷重启等价：重新 OpenProject → LoadSnapshotFromFile → Instantiate。
+    EXPECT_EQ(EditorSession_OpenProject(m_Session, kManifest, kScene), 1);
+    const int32_t reloadIdx = FindEntityIndexByName(m_Session, "RigidRig");
+    ASSERT_GE(reloadIdx, 0);
+    EXPECT_EQ(EditorSession_HasComponent(m_Session, reloadIdx, "RigidBody"), 1);
+
+    char v[128] = {};
+    EXPECT_GT(EditorSession_GetComponentProperty(m_Session, reloadIdx, "RigidBody",
+                                                 "motionType", v, sizeof(v)), 0);
+    EXPECT_STREQ(v, "Kinematic");
+
+    EXPECT_GT(EditorSession_GetComponentProperty(m_Session, reloadIdx, "RigidBody",
+                                                 "linearDamping", v, sizeof(v)), 0);
+    EXPECT_NEAR(std::stof(v), 0.25f, 1e-5f);
+
+    EXPECT_GT(EditorSession_GetComponentProperty(m_Session, reloadIdx, "RigidBody",
+                                                 "angularDamping", v, sizeof(v)), 0);
+    EXPECT_NEAR(std::stof(v), 0.5f, 1e-5f);
+
+    // T-1-A 过渡数据：空 data 必须可加载为默认值，而不是 DataBad。
+    // 先移除 scratch 内的 revision，让 OpenProject 走 legacy scene 路径。
+    {
+        std::error_code ec;
+        std::filesystem::remove_all(".engine-content", ec);
+        ASSERT_FALSE(ec) << ec.message();
+    }
+    WriteScratchScript("assets/gp01/T1BEmpty.scene",
+        std::string("{\n")
+        + "  \"format\": \"engine.scene\", \"version\": 1,\n"
+        + "  \"entities\": [ { \"name\": \"Legacy\", \"position\": [0,0,0],\n"
+        + "     \"components\": [ { \"type\": \"RigidBody\", \"data\": {} } ] } ]\n"
+        + "}\n");
+    ASSERT_EQ(EditorSession_OpenProject(m_Session, kManifest,
+                                        "assets/gp01/T1BEmpty.scene"), 1);
+    const int32_t legacyIdx = FindEntityIndexByName(m_Session, "Legacy");
+    ASSERT_GE(legacyIdx, 0);
+    EXPECT_EQ(EditorSession_HasComponent(m_Session, legacyIdx, "RigidBody"), 1);
+
+    EXPECT_GT(EditorSession_GetComponentProperty(m_Session, legacyIdx, "RigidBody",
+                                                 "motionType", v, sizeof(v)), 0);
+    EXPECT_STREQ(v, "Dynamic");
+    EXPECT_GT(EditorSession_GetComponentProperty(m_Session, legacyIdx, "RigidBody",
+                                                 "linearDamping", v, sizeof(v)), 0);
+    EXPECT_NEAR(std::stof(v), 0.0f, 1e-6f);
+    EXPECT_GT(EditorSession_GetComponentProperty(m_Session, legacyIdx, "RigidBody",
+                                                 "angularDamping", v, sizeof(v)), 0);
+    EXPECT_NEAR(std::stof(v), 0.0f, 1e-6f);
+
+    (void)oldcwd;
+    std::filesystem::current_path(oldcwd);
+}
+
+TEST_F(EditorBridgeTest, T1CPlayStartsAndStopsPhysicsRuntime) {
+    const std::string oldcwd = MakeScratchFacing();
+    ASSERT_EQ(EditorSession_OpenProject(m_Session, kManifest, kScene), 1);
+    const int32_t idx = EditorSession_CreateEntity(m_Session, "PhysBody");
+    ASSERT_GE(idx, 0);
+    const float position[3] = {0.0f, 3.0f, 0.0f};
+    ASSERT_EQ(EditorSession_SetEntityPosition(m_Session, idx, position), 0);
+
+    ASSERT_EQ(EditorSession_AddComponent(m_Session, idx, "Collider"), 0);
+    ASSERT_EQ(EditorSession_SetComponentProperty(m_Session, idx, "Collider",
+                                                 "shape", "Box"), 0);
+    ASSERT_EQ(EditorSession_SetComponentProperty(m_Session, idx, "Collider",
+                                                 "halfX", "0.5"), 0);
+    ASSERT_EQ(EditorSession_SetComponentProperty(m_Session, idx, "Collider",
+                                                 "halfY", "0.5"), 0);
+    ASSERT_EQ(EditorSession_AddComponent(m_Session, idx, "RigidBody"), 0);
+    ASSERT_EQ(EditorSession_SetComponentProperty(m_Session, idx, "RigidBody",
+                                                 "motionType", "Dynamic"), 0);
+
+    ASSERT_EQ(EditorSession_Play(m_Session, -1), 1);
+    EXPECT_EQ(EditorSession_IsPlaying(m_Session), 1);
+    for (int i = 0; i < 5; ++i) {
+        EditorSession_RuntimeTick(m_Session, 1.0f / 60.0f);
+    }
+    EXPECT_EQ(EditorSession_IsPlaying(m_Session), 1);
+
+    EditorSession_Stop(m_Session);
+    EXPECT_EQ(EditorSession_IsPlaying(m_Session), 0);
+    EXPECT_EQ(EditorSession_Play(m_Session, -1), 1);
+    EXPECT_EQ(EditorSession_IsPlaying(m_Session), 1);
+    EditorSession_Stop(m_Session);
+
+    (void)oldcwd;
+    std::filesystem::current_path(oldcwd);
+}
+
+TEST_F(EditorBridgeTest, T1FEndToEndPhysicsSaveReopenPlayStopReplay) {
+    const std::string oldcwd = MakeScratchFacing();
+    ASSERT_EQ(EditorSession_OpenProject(m_Session, kManifest, kScene), 1);
+
+    auto makeBoxEntity = [&](const char* name, float x, float y,
+                             float halfX, float halfY) {
+        const int32_t idx = EditorSession_CreateEntity(m_Session, name);
+        EXPECT_GE(idx, 0);
+        const float pos[3] = {x, y, 0.0f};
+        EXPECT_EQ(EditorSession_SetEntityPosition(m_Session, idx, pos), 0);
+        EXPECT_EQ(EditorSession_AddComponent(m_Session, idx, "Collider"), 0);
+        EXPECT_EQ(EditorSession_SetComponentProperty(m_Session, idx, "Collider",
+                                                     "shape", "Box"), 0);
+        EXPECT_EQ(EditorSession_SetComponentProperty(m_Session, idx, "Collider",
+                                                     "halfX", std::to_string(halfX).c_str()), 0);
+        EXPECT_EQ(EditorSession_SetComponentProperty(m_Session, idx, "Collider",
+                                                     "halfY", std::to_string(halfY).c_str()), 0);
+        return idx;
+    };
+
+    const int32_t groundIdx = makeBoxEntity("T1F_Ground", 0.0f, 0.0f, 5.0f, 0.5f);
+    const int32_t bodyIdx = makeBoxEntity("T1F_Body", 0.0f, 3.0f, 0.5f, 0.5f);
+    ASSERT_EQ(EditorSession_AddComponent(m_Session, bodyIdx, "RigidBody"), 0);
+    ASSERT_EQ(EditorSession_SetComponentProperty(m_Session, bodyIdx, "RigidBody",
+                                                 "motionType", "Dynamic"), 0);
+    ASSERT_EQ(EditorSession_SaveProject(m_Session), 1);
+
+    WriteScratchScript("assets/gp01/t1f_physics.lua",
+        "_PERSIST = _PERSIST or {}\n"
+        "function OnUpdate(dt)\n"
+        "  _PERSIST.updates = (_PERSIST.updates or 0) + 1\n"
+        "  local h = Engine.entity.find('T1F_Body')\n"
+        "  _PERSIST.found = h and 1 or 0\n"
+        "  if h then\n"
+        "    local x, y, z = Engine.transform.get_position(h)\n"
+        "    _PERSIST.y_milli = math.floor(y * 1000.0)\n"
+        "    if _PERSIST.updates == 90 then\n"
+        "      local r = Engine.component.get(h, 'RigidBody')\n"
+        "      assert(r)\n"
+        "      assert(Engine.component.set_string(r, 'motionType', 'Static'))\n"
+        "      _PERSIST.phase = 2\n"
+        "    end\n"
+        "  end\n"
+        "end\n");
+    const int32_t importedScript = EditorSession_ImportAsset(
+        m_Session, "assets/gp01/t1f_physics.lua", 1);
+    ASSERT_GE(importedScript, 0);
+    ASSERT_EQ(EditorSession_SaveProject(m_Session), 1);
+
+    // 冷启动：重新打开 revision，实体与脚本资产仍在。
+    ASSERT_EQ(EditorSession_OpenProject(m_Session, kManifest, kScene), 1);
+    const int32_t reloadedBody = FindEntityIndexByName(m_Session, "T1F_Body");
+    ASSERT_GE(reloadedBody, 0);
+    char v[128] = {};
+    ASSERT_GT(EditorSession_GetComponentProperty(m_Session, reloadedBody, "RigidBody",
+                                                 "motionType", v, sizeof(v)), 0);
+    EXPECT_STREQ(v, "Dynamic");
+
+    int scriptIdx = -1;
+    for (int32_t i = 0; i < EditorSession_GetAssetCount(m_Session); ++i) {
+        char path[512] = {};
+        if (EditorSession_GetAssetPath(m_Session, i, path, sizeof(path)) <= 0) continue;
+        if (std::strstr(path, "t1f_physics.lua")) { scriptIdx = i; break; }
+    }
+    ASSERT_GE(scriptIdx, 0) << "script asset must survive the cold reopen";
+
+    ASSERT_EQ(EditorSession_Play(m_Session, scriptIdx), 1);
+    for (int i = 0; i < 60; ++i) EditorSession_RuntimeTick(m_Session, 1.0f / 60.0f);
+    const int32_t yMid = EditorSession_RuntimePersistInt(m_Session, "y_milli", -1);
+    EXPECT_EQ(EditorSession_RuntimePersistInt(m_Session, "found", 0), 1);
+    EXPECT_EQ(EditorSession_RuntimePersistInt(m_Session, "updates", 0), 60);
+    EXPECT_GT(yMid, 500) << "dynamic body must not fall through the ground";
+    EXPECT_LT(yMid, 3000) << "dynamic body must actually move before stopping";
+
+    for (int i = 0; i < 35; ++i) EditorSession_RuntimeTick(m_Session, 1.0f / 60.0f);
+    EXPECT_EQ(EditorSession_RuntimePersistInt(m_Session, "phase", 0), 2)
+        << "Lua must write motionType=Static at update 90";
+    const int32_t yStatic = EditorSession_RuntimePersistInt(m_Session, "y_milli", -1);
+    for (int i = 0; i < 30; ++i) EditorSession_RuntimeTick(m_Session, 1.0f / 60.0f);
+    EXPECT_EQ(EditorSession_RuntimePersistInt(m_Session, "y_milli", -1), yStatic)
+        << "Static body must stop moving after the Lua write";
+
+    EditorSession_Stop(m_Session);
+    EXPECT_EQ(EditorSession_IsPlaying(m_Session), 0);
+    float editPos[3] = {};
+    ASSERT_EQ(EditorSession_GetEntityPosition(m_Session, reloadedBody, editPos), 0);
+    EXPECT_NEAR(editPos[1], 3.0f, 1e-5f) << "runtime physics must not mutate edit state";
+
+    ASSERT_EQ(EditorSession_SaveProject(m_Session), 1);
+    ASSERT_EQ(EditorSession_OpenProject(m_Session, kManifest, kScene), 1);
+    const int32_t savedBody = FindEntityIndexByName(m_Session, "T1F_Body");
+    ASSERT_GE(savedBody, 0);
+    ASSERT_EQ(EditorSession_GetEntityPosition(m_Session, savedBody, editPos), 0);
+    EXPECT_NEAR(editPos[1], 3.0f, 1e-5f);
+    ASSERT_GT(EditorSession_GetComponentProperty(m_Session, savedBody, "RigidBody",
+                                                 "motionType", v, sizeof(v)), 0);
+    EXPECT_STREQ(v, "Dynamic");
+
+    // 再次 Play：新的运行时从编辑态重建，不得复用上次 body 句柄。
+    ASSERT_EQ(EditorSession_Play(m_Session, scriptIdx), 1);
+    for (int i = 0; i < 30; ++i) EditorSession_RuntimeTick(m_Session, 1.0f / 60.0f);
+    EXPECT_LT(EditorSession_RuntimePersistInt(m_Session, "y_milli", -1), 3000);
+    EditorSession_Stop(m_Session);
+
+    (void)groundIdx;
+    (void)oldcwd;
+    std::filesystem::current_path(oldcwd);
+}
+
     // ================================================================
     // HRC-3 P1（V1-a）：production scene render 的 native contract test
     //
@@ -1855,8 +2085,11 @@ TEST_F(EditorBridgeTest, F2ColliderNegativePaths) {
 
     TEST(EngineHostAbiTest, P2AbiVersionIncrementIsAdditiveOnly) {
         // 版本演进：v1.2 加 P2 fetch op；v1.3 加 PICK；v1.4 reserved->entity_index；
-        // v1.5 加 SET_VIEWPORT_SIZE 并把容量常量拆成"默认/最大"。始终 append-only。
-        EXPECT_EQ(ENGINE_HOST_ABI_VERSION, (1 << 16) | 5);
+        // v1.5 加 SET_VIEWPORT_SIZE 并把容量常量拆成"默认/最大"；
+        // v1.6（M1-A）追加 RootedOpen 导出；
+        // v1.7（M1-E）追加 EditorSession_ReattachAsset 导出；
+        // 均不新增 op、不改结构体与既有取值。始终 append-only。
+        EXPECT_EQ(ENGINE_HOST_ABI_VERSION, (1 << 16) | 8);
         EXPECT_EQ(ENGINE_HOST_OP_GET_PRESENTATION_FRAME, 28);
         EXPECT_EQ(ENGINE_HOST_OP_PICK, 29);
         EXPECT_EQ(ENGINE_HOST_OP_SET_VIEWPORT_SIZE, 30);

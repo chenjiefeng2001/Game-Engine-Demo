@@ -24,6 +24,8 @@
 #include "Engine/Core/GameObject/GameObject.h"
 #include "Engine/Core/GameObject/CameraComponent.h"
 #include "Engine/Core/GameObject/ColliderComponent.h"
+#include "Engine/Core/GameObject/RigidBodyComponent.h"
+#include "Engine/Core/Physics/PhysicsRuntime2D.h"
 
 #include <set>
 #include <string>
@@ -342,6 +344,80 @@ TEST_F(ScriptingGameplayTest, F2E_ComponentContract_LuaCollider) {
 
     EXPECT_EQ(scene.GetObjectCount(), 0u);
     EXPECT_EQ(GameplayAPI::HandleCount(), 0u);
+}
+
+// ── T1-D：RigidBody 通过通用 Engine.component.* 访问，无旁路物理域 ──
+TEST_F(ScriptingGameplayTest, T1D_ComponentContract_LuaRigidBody) {
+    EXPECT_TRUE(eng.RunString(
+        "h = Engine.entity.spawn('rigid_lua')\n"
+        "assert(h and h > 0)\n"
+        "assert(Engine.component.has(h, 'RigidBody') == false)\n"
+        "assert(Engine.component.add(h, 'RigidBody'))\n"
+        "assert(Engine.component.has(h, 'RigidBody'))\n"
+        "c = Engine.component.get(h, 'RigidBody')\n"
+        "assert(c and c > 0)\n"
+        "-- 默认值由 T-1-A 契约冻结\n"
+        "assert(Engine.component.get_string(c, 'motionType') == 'Dynamic')\n"
+        "assert(Engine.component.get_number(c, 'linearDamping') == 0.0)\n"
+        "assert(Engine.component.get_number(c, 'angularDamping') == 0.0)\n"
+        "-- 合法写入\n"
+        "assert(Engine.component.set_string(c, 'motionType', 'Kinematic'))\n"
+        "assert(Engine.component.set_number(c, 'linearDamping', 0.25))\n"
+        "assert(Engine.component.set_number(c, 'angularDamping', 0.5))\n"
+        "assert(Engine.component.get_string(c, 'motionType') == 'Kinematic')\n"
+        "assert(Engine.component.get_number(c, 'linearDamping') == 0.25)\n"
+        "assert(Engine.component.get_number(c, 'angularDamping') == 0.5)\n"
+        "-- 非法写入拒绝且不改值\n"
+        "assert(Engine.component.set_string(c, 'motionType', 'Flying') == false)\n"
+        "assert(Engine.component.set_number(c, 'linearDamping', -1) == false)\n"
+        "assert(Engine.component.get_string(c, 'motionType') == 'Kinematic')\n"
+        "assert(Engine.component.get_number(c, 'linearDamping') == 0.25)\n"
+        "-- 移除/重加\n"
+        "assert(Engine.component.remove(h, 'RigidBody'))\n"
+        "assert(Engine.component.has(h, 'RigidBody') == false)\n"
+        "assert(Engine.component.add(h, 'RigidBody'))\n"
+        "assert(Engine.entity.destroy(h))\n"))
+        << eng.GetLastError().message;
+
+    EXPECT_EQ(scene.GetObjectCount(), 0u);
+    EXPECT_EQ(GameplayAPI::HandleCount(), 0u);
+}
+
+TEST_F(ScriptingGameplayTest, T1D_LuaWriteRebuildsRuntimeBody) {
+    EXPECT_TRUE(eng.RunString(
+        "h = Engine.entity.spawn('lua_physics')\n"
+        "assert(Engine.component.add(h, 'Collider'))\n"
+        "c = Engine.component.get(h, 'Collider')\n"
+        "assert(Engine.component.set_string(c, 'shape', 'Box'))\n"
+        "assert(Engine.component.set_number(c, 'halfX', 0.5))\n"
+        "assert(Engine.component.set_number(c, 'halfY', 0.5))\n"
+        "assert(Engine.component.add(h, 'RigidBody'))\n"
+        "r = Engine.component.get(h, 'RigidBody')\n"
+        "assert(Engine.component.set_string(r, 'motionType', 'Dynamic'))\n"))
+        << eng.GetLastError().message;
+
+    ASSERT_EQ(scene.GetObjectCount(), 1u);
+    auto& go = *scene.GetObjects()[0];
+    go.GetTransform().SetPosition(0.0f, 3.0f, 0.0f);
+
+    Engine::PhysicsRuntime2D runtime;
+    ASSERT_TRUE(runtime.Start(scene));
+    for (int i = 0; i < 30; ++i) {
+        ASSERT_TRUE(runtime.Step(1.0f / 60.0f));
+    }
+    const float fallingY = go.GetTransform().GetPosition().y;
+    EXPECT_LT(fallingY, 3.0f);
+
+    EXPECT_TRUE(eng.RunString(
+        "h = Engine.entity.find('lua_physics')\n"
+        "r = Engine.component.get(h, 'RigidBody')\n"
+        "assert(Engine.component.set_string(r, 'motionType', 'Static'))\n"))
+        << eng.GetLastError().message;
+    for (int i = 0; i < 30; ++i) {
+        ASSERT_TRUE(runtime.Step(1.0f / 60.0f));
+    }
+    EXPECT_NEAR(go.GetTransform().GetPosition().y, fallingY, 1e-5f)
+        << "Lua Static write must rebuild the runtime body and stop falling";
 }
 
 // ── F2-C/E cross-check：Lua 创建的 Collider 落在真实 GameObject 组件上 ──

@@ -4,6 +4,7 @@
  */
 
 #include "Engine/Core/Content/SceneSerializerV1.h"
+#include "Engine/Core/Content/Utf8Path.h"
 #include "Engine/Core/Scene/Scene.h"
 #include "Engine/Core/GameObject/GameObject.h"
 #include "Engine/Core/GameObject/Component.h"
@@ -14,6 +15,7 @@
 #include "Engine/Core/Log.h"
 
 #include <fstream>
+#include <utility>
 
 namespace Engine::Content {
 
@@ -146,9 +148,20 @@ SceneSnapshot CaptureScene(const Scene& scene,
 
 LoadResult InstantiateScene(const SceneSnapshot& snap, Scene& outScene,
                             TextureManager& texMgr,
-                            const ContentRegistry& registry) {
+                            const ContentRegistry& registry,
+                            AssetPathResolver resolveAssetPath) {
     LoadResult r;
     r.ok = true;
+
+    // 空解析器 = v1 语义（路径原样交给 TextureManager）；
+    // 非空时，空返回表示"路径被 ProjectRoot 拒绝"，与"GUID 缺失"区分告警。
+    const auto resolveStored = [&resolveAssetPath](const std::string& stored)
+        -> std::pair<std::string, bool> {
+        if (stored.empty()) return {"", false};
+        if (!resolveAssetPath) return {stored, true};
+        const std::string resolved = resolveAssetPath(stored);
+        return {resolved, !resolved.empty()};
+    };
 
     for (const auto& e : snap.entities) {
         auto obj = std::make_shared<::Engine::GameObject>(e.name);
@@ -158,25 +171,39 @@ LoadResult InstantiateScene(const SceneSnapshot& snap, Scene& outScene,
 
         // Sprite：GUID 可解析 → 挂组件；缺失 → warning + 无 Sprite（契约）
         if (!e.spriteGuid.IsNull()) {
-            const std::string path = registry.ResolvePath(e.spriteGuid);
-            if (path.empty()) {
+            const std::string stored = registry.ResolvePath(e.spriteGuid);
+            if (stored.empty()) {
                 r.warnings.push_back("entity '" + e.name
                     + "': sprite GUID missing in registry (loaded without sprite)");
             } else {
-                auto* spr = obj->AddComponent<SpriteComponent>();
-                spr->SetTexture(texMgr, path);
-                binding.spriteGuid = e.spriteGuid;
+                auto [path, usable] = resolveStored(stored);
+                if (!usable) {
+                    r.warnings.push_back("entity '" + e.name
+                        + "': sprite path '" + stored
+                        + "' rejected by project root (loaded without sprite)");
+                } else {
+                    auto* spr = obj->AddComponent<SpriteComponent>();
+                    spr->SetTexture(texMgr, path);
+                    binding.spriteGuid = e.spriteGuid;
+                }
             }
         }
 
         // Script：同契约 —— 缺失非致命，实体照常存在
         if (!e.scriptGuid.IsNull()) {
-            const std::string path = registry.ResolvePath(e.scriptGuid);
-            if (path.empty()) {
+            const std::string stored = registry.ResolvePath(e.scriptGuid);
+            if (stored.empty()) {
                 r.warnings.push_back("entity '" + e.name
                     + "': script GUID missing in registry (loaded without script)");
             } else {
-                binding.scriptGuid = e.scriptGuid;
+                auto [path, usable] = resolveStored(stored);
+                if (!usable) {
+                    r.warnings.push_back("entity '" + e.name
+                        + "': script path '" + stored
+                        + "' rejected by project root (loaded without script)");
+                } else {
+                    binding.scriptGuid = e.scriptGuid;
+                }
             }
         }
 
@@ -206,7 +233,7 @@ LoadResult InstantiateScene(const SceneSnapshot& snap, Scene& outScene,
 // ── 文件 IO ─────────────────────────────────────────────
 
 bool SaveSnapshotToFile(const SceneSnapshot& snap, const std::string& path) {
-    std::ofstream f(path, std::ios::binary | std::ios::trunc);
+    std::ofstream f(PathFromUtf8(path), std::ios::binary | std::ios::trunc);
     if (!f.is_open()) return false;
     f << SerializeSnapshot(snap).dump(2);
     return f.good();
@@ -214,7 +241,7 @@ bool SaveSnapshotToFile(const SceneSnapshot& snap, const std::string& path) {
 
 bool LoadSnapshotFromFile(const std::string& path, SceneSnapshot& out,
                           std::string& err) {
-    std::ifstream f(path, std::ios::binary);
+    std::ifstream f(PathFromUtf8(path), std::ios::binary);
     if (!f.is_open()) { err = "cannot open file: " + path; return false; }
     nlohmann::json j;
     try {

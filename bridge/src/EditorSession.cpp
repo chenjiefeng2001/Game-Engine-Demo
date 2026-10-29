@@ -7,12 +7,16 @@
 #include "editor_bridge/capi.h"
 
 #include <Engine/Application.h>
+#include <Engine/Core/Content/AtomicFile.h>
+#include <Engine/Core/Content/RevisionStore.h>
 #include <Engine/Core/Content/SceneSerializerV1.h>
+#include <Engine/Core/Content/Utf8Path.h>
 #include <Engine/Core/GameObject/GameObject.h>
 #include <Engine/Core/GameObject/Component.h>
 #include <Engine/Core/GameObject/ComponentRegistry_Go.h>
 #include <Engine/Core/GameObject/SpriteComponent.h>
 #include <Engine/Core/RHI/RenderQueue.h>
+#include <Engine/Core/Physics/PhysicsRuntime2D.h>
 #include <Engine/Core/Scene/Scene.h>
 #include <Engine/Core/Log.h>
 #include <Engine/Scripting/GameplayAPI.h>
@@ -20,6 +24,7 @@
 #include <Engine/Scripting/ScriptAPI.h>
 
 #include <algorithm>
+#include <atomic>
 #include <cctype>
 #include <cstdlib>
 #include <cstring>
@@ -49,6 +54,10 @@ EditorSession::EditorSession(Engine::OpenGLGraphicsFactory& factory,
 EditorSession::~EditorSession() {
     SetEventCallback(nullptr);
     if (m_Playing.load()) Stop();
+    if (m_Physics) {
+        m_Physics->Stop();
+        m_Physics.reset();
+    }
     Engine::Scripting::GameplayAPI::Reset();
     Engine::Scripting::ScriptAPI::Reset();
     PublishRuntimeState();
@@ -57,9 +66,48 @@ EditorSession::~EditorSession() {
 
 namespace {
 
+    /// K4.7：链接 real path 等结构化诊断与错误码一起进入错误通道，
+    /// 而不是只报一个无法定位的 LinkEscape。
+    std::string DescribePathError(
+        const Engine::Content::PathResolution& resolution) {
+        std::string out = Engine::Content::ToString(resolution.error);
+        if (!resolution.diagnostic.empty())
+            out += " (" + resolution.diagnostic + ")";
+        return out;
+    }
+
     bool TestFailure(const char* name) {
         const char* value = std::getenv(name);
         return value && std::strcmp(value, "1") == 0;
+    }
+
+    std::string UniqueSuffix() {
+        static std::atomic<uint64_t> counter{0};
+        return std::to_string(
+            static_cast<unsigned long long>(counter.fetch_add(1)));
+    }
+
+    bool LooksAbsolutePath(std::string_view path) {
+        if (path.empty()) return false;
+        if (path[0] == '/' || path[0] == '\\') return true;
+        return path.size() >= 2 &&
+               ((path[0] >= 'A' && path[0] <= 'Z') ||
+                (path[0] >= 'a' && path[0] <= 'z')) &&
+               path[1] == ':';
+    }
+
+    std::string WithForwardSlashesCopy(const std::string& input) {
+        std::string out = input;
+        for (char& c : out)
+            if (c == '\\') c = '/';
+        return out;
+    }
+
+    int32_t IndexOfGuid(const std::vector<Engine::ResourceGUID>& order,
+                        const Engine::ResourceGUID& guid) {
+        for (size_t i = 0; i < order.size(); ++i)
+            if (order[i] == guid) return static_cast<int32_t>(i);
+        return -1;
     }
 
     std::string ScriptError(const Engine::Scripting::ScriptInstance& instance) {
@@ -122,19 +170,107 @@ namespace {
 
 bool EditorSession::OpenProject(const std::string& manifestPath,
                                 const std::string& scenePath) {
+    // Legacy 兼容入口（K4.4）：CWD 在此一次性捕获为显式 legacy root，
+    // 之后的解析全部锚定该根，不再二次读取进程工作目录。
+    std::error_code ec;
+    const fs::path cwd = fs::current_path(ec);
+    if (ec)
+        return Fail("open project: process working directory unavailable: " +
+                    ec.message());
+    return OpenProjectInternal(cwd.generic_string(), manifestPath, scenePath);
+}
+
+bool EditorSession::OpenProjectRooted(const std::string& projectRoot,
+                                      const std::string& manifestPath,
+                                      const std::string& scenePath) {
+    return OpenProjectInternal(projectRoot, manifestPath, scenePath);
+}
+
+bool EditorSession::OpenProjectInternal(const std::string& projectRoot,
+                                        const std::string& manifestPath,
+                                        const std::string& scenePath) {
+    Engine::Content::ProjectRoot root;
+    Engine::Content::PathError rootError = Engine::Content::PathError::None;
+    std::string rootDiagnostic;
+    if (!Engine::Content::ProjectRoot::Create(projectRoot, &root, &rootError,
+                                              &rootDiagnostic)) {
+        return Fail("open project: project root '" + projectRoot +
+                    "' rejected: " +
+                    Engine::Content::ToString(rootError) + " (" +
+                    rootDiagnostic + ")");
+    }
+
+    const auto manifestRes = root.ResolveAny(manifestPath);
+    if (!manifestRes.ok) {
+        return Fail("open project: manifest path '" + manifestPath +
+                    "' rejected: " + DescribePathError(manifestRes));
+    }
+    const auto sceneRes = root.ResolveAny(scenePath);
+    if (!sceneRes.ok) {
+        return Fail("open project: scene path '" + scenePath +
+                    "' rejected: " + DescribePathError(sceneRes));
+    }
+
+    // M1-D：current 是唯一提交点。读取端只认 current，不扫描 revision 目录。
+    Engine::Content::RevisionStore revisions;
+    const auto revisionOpen = revisions.Open(root);
+    if (revisionOpen.state ==
+        Engine::Content::RevisionOpenState::RecoveryRequired) {
+        return Fail("open project: RecoveryRequired: " +
+                    revisionOpen.diagnostic);
+    }
+    const bool versioned =
+        revisionOpen.state == Engine::Content::RevisionOpenState::Current;
+
+    // M1-B：严格候选加载。revision 内清单必须是规范工程相对路径；
+    // 旧工程（无 current）保留 K4.4 legacy 绝对路径兼容。
+    std::vector<std::string> pathWarnings;
+    Engine::Content::ManifestLoadOptions loadOptions;
+    loadOptions.root = &root;
+    loadOptions.allowLegacyAbsolute = !versioned;
+    loadOptions.caseMode = root.CaseMode();
+    loadOptions.warnings = &pathWarnings;
+
+    const std::string manifestLoadPath =
+        versioned ? revisionOpen.manifestPath : manifestRes.path;
+    const std::string sceneLoadPath =
+        versioned ? revisionOpen.scenePath : sceneRes.path;
+
     Engine::Content::ContentRegistry reg;
-    if (!reg.LoadManifest(manifestPath))
-        return Fail("manifest load failed: " + manifestPath);
+    if (!reg.LoadManifest(manifestLoadPath, loadOptions)) {
+        if (versioned) {
+            return Fail("open project: RecoveryRequired: revision " +
+                        std::to_string(revisionOpen.revision) +
+                        " manifest failed strict validation");
+        }
+        return Fail("manifest load failed (strict): " + manifestLoadPath);
+    }
 
     Engine::Content::SceneSnapshot snap;
     std::string err;
-    if (!Engine::Content::LoadSnapshotFromFile(scenePath, snap, err))
-        return Fail("scene load failed: " + scenePath + " (" + err + ")");
+    if (!Engine::Content::LoadSnapshotFromFile(sceneLoadPath, snap, err)) {
+        if (versioned) {
+            return Fail("open project: RecoveryRequired: revision " +
+                        std::to_string(revisionOpen.revision) +
+                        " scene failed validation (" + err + ")");
+        }
+        return Fail("scene load failed: " + sceneLoadPath + " (" + err + ")");
+    }
 
     auto scene = std::make_shared<Engine::Scene>("AvaloniaSession");
-    auto r = Engine::Content::InstantiateScene(snap, *scene, m_TexMgr, reg);
+    auto r = Engine::Content::InstantiateScene(
+        snap, *scene, m_TexMgr, reg,
+        [&root](const std::string& stored) {
+            const auto resolved = root.ResolveAny(stored);
+            return resolved.ok ? resolved.path : std::string();
+        });
     if (!r.ok) {
-        return Fail("instantiate failed: " + scenePath);
+        if (versioned) {
+            return Fail("open project: RecoveryRequired: revision " +
+                        std::to_string(revisionOpen.revision) +
+                        " instantiate failed");
+        }
+        return Fail("instantiate failed: " + sceneLoadPath);
     }
     if (m_Playing.load()) { Stop(); m_RuntimeError.clear(); }
     Engine::Scripting::GameplayAPI::Reset();
@@ -142,17 +278,25 @@ bool EditorSession::OpenProject(const std::string& manifestPath,
     Engine::Scripting::GameplayAPI::SetScene(scene.get());
     // E3 负路径：契约内缺失 GUID 资产的非致命告警（实体保留），拼接供读取
     m_Warnings.clear();
+    for (const auto& w : pathWarnings) {
+        if (!m_Warnings.empty()) m_Warnings += "\n";
+        m_Warnings += w;
+    }
     for (const auto& w : r.warnings) {
         if (!m_Warnings.empty()) m_Warnings += "\n";
         m_Warnings += w;
     }
 
+    m_Root = std::move(root);
+    m_Revisions = std::move(revisions);
     m_Reg = std::move(reg);
     m_EditScene = std::move(scene);
     m_Bindings = std::move(r.bindings);
-    m_ScenePath = scenePath;
-    m_ManifestPath = manifestPath;
+    m_ScenePath = sceneRes.path;
+    m_ManifestPath = manifestRes.path;
     m_Dirty = false;
+    m_RecoveryRequired = false;
+    m_PendingCleanup.clear();
     // 会话稳定序：以本次打开时的注册表快照建立（此后只 append）
     m_AssetOrder.clear();
     for (const auto& e : m_Reg.GetAllEntries())
@@ -168,19 +312,63 @@ bool EditorSession::OpenProject(const std::string& manifestPath,
 }
 
 bool EditorSession::SaveProject() {
+    if (m_RecoveryRequired)
+        return Fail("save blocked: RecoveryRequired (explicit recovery required)");
     if (!m_EditScene) return Fail("save: no project loaded");
+    RetryPendingCleanup();
     RealignBindings();
-    Engine::Content::SceneSnapshot live = Engine::Content::CaptureScene(*m_EditScene, m_Bindings);
-    if (!Engine::Content::SaveSnapshotToFile(live, m_ScenePath))
-        return Fail("cannot write scene file: " + m_ScenePath);
-    if (!m_Reg.SaveManifest(m_ManifestPath))
-        return Fail("cannot write manifest: " + m_ManifestPath +
-                    " (scene already written)");
+    // K4.4：显式保存把 registry 路径迁移为工程相对规范形式。
+    // 无法规范化 = 不能写出一份合契约的 Manifest → 结构化失败（不静默保留旧形式）。
+    Engine::Content::ContentRegistry canonical;
+    for (const auto& entry : m_Reg.GetAllEntries()) {
+        const auto path = m_Root.ToCanonicalProjectPath(entry.path);
+        if (!path.ok) {
+            return Fail("save: asset " + entry.guid.ToHex() + " path '" +
+                        entry.path + "' rejected: " + DescribePathError(path));
+        }
+        if (!canonical.RegisterExplicit(entry.guid, path.path, entry.type)) {
+            return Fail("save: asset identity conflict: GUID " +
+                        entry.guid.ToHex() + " path '" + path.path + "'");
+        }
+    }
+    Engine::Content::SceneSnapshot live =
+        Engine::Content::CaptureScene(*m_EditScene, m_Bindings);
+    const std::string manifestJson = canonical.SerializeManifest();
+    const std::string sceneJson =
+        Engine::Content::SerializeSnapshot(live).dump(2);
+
+    // M1-D：Manifest+Scene 作为同一 revision 先写盘校验，再原子替换 current。
+    const auto published =
+        m_Revisions.Publish(m_Root, manifestJson, sceneJson);
+    if (!published.ok) {
+        if (published.recoveryRequired) {
+            m_RecoveryRequired = true;
+            return Fail("save: RecoveryRequired (commit state uncertain): " +
+                        published.diagnostic);
+        }
+        return Fail("save: NotCommitted (revision publish failed): " +
+                    published.diagnostic);
+    }
+    m_Reg = std::move(canonical);
     m_Dirty = false;
-    Engine::Log::Info("[EditorBridge] project saved: {} ({} entities)",
-                      m_ScenePath, live.entities.size());
+    Engine::Log::Info("[EditorBridge] project saved: revision {} ({} entities)",
+                      published.revision, live.entities.size());
     Emit(EV_PROJECT_SAVED,
-         "entities=" + std::to_string(live.entities.size()));
+         "entities=" + std::to_string(live.entities.size()) +
+             ";revision=" + std::to_string(published.revision));
+
+    // current 已提交：旧路径文件仅作非权威镜像；失败不回滚已提交 revision。
+    const auto sceneMirror =
+        Engine::Content::WriteFileAtomic(m_ScenePath, sceneJson);
+    const auto manifestMirror =
+        Engine::Content::WriteFileAtomic(m_ManifestPath, manifestJson);
+    if (!sceneMirror.ok || !manifestMirror.ok) {
+        if (!m_Warnings.empty()) m_Warnings += "\n";
+        m_Warnings +=
+            "save: CommittedCleanupPending; legacy mirror update failed";
+        Engine::Log::Warn(
+            "[EditorBridge] legacy mirror update failed after commit");
+    }
     return true;
 }
 
@@ -329,14 +517,18 @@ bool EditorSession::AssignSprite(int32_t assetIndex, int32_t entityIndex) {
     if (entry.type != Engine::Content::AssetType::Texture)
         return Fail("assign sprite: asset is not a texture");
 
+    const std::string texturePath = ResolveAssetPath(entry.path);
+    if (texturePath.empty())
+        return Fail("assign sprite: asset path rejected: " + entry.path);
+
     const auto& objs = m_EditScene->GetObjects();
     auto obj = objs[static_cast<size_t>(entityIndex)].get();
     // 复刻 GP01ProductionSession::AssignSpriteToSelected 的 DL-02 纪律路径
     if (!obj->HasComponent<Engine::SpriteComponent>())
-        obj->AddComponent<Engine::SpriteComponent>(m_TexMgr, entry.path);
+        obj->AddComponent<Engine::SpriteComponent>(m_TexMgr, texturePath);
     else
         obj->GetComponent<Engine::SpriteComponent>()
-           ->SetTexture(m_TexMgr, entry.path);
+           ->SetTexture(m_TexMgr, texturePath);
     RealignBindings();
     m_Bindings[static_cast<size_t>(entityIndex)].spriteGuid = entry.guid;
     MarkDirty();
@@ -557,43 +749,257 @@ bool EditorSession::GetAssetGuid(int32_t index, std::string* out) const {
 // ════════════════════════════════════════════════════════════
 
 int32_t EditorSession::ImportAsset(const std::string& path, int32_t type) {
+    return ImportAssetInternal(path, type, std::string());
+}
+
+bool EditorSession::ReattachAsset(const std::string& missingGuidHex,
+                                  const std::string& sourcePath,
+                                  int32_t type) {
+    if (!m_EditScene) return Fail("reattach asset: no project loaded");
+    const Engine::ResourceGUID guid =
+        Engine::ResourceGUID::FromHex(missingGuidHex);
+    if (guid.IsNull())
+        return Fail("reattach asset: invalid GUID '" + missingGuidHex + "'");
+    if (m_Reg.ContainsGuid(guid))
+        return Fail("reattach asset: GUID already registered: " +
+                    guid.ToHex());
+    return ImportAssetInternal(sourcePath, type, guid.ToHex()) >= 0;
+}
+
+int32_t EditorSession::ImportAssetInternal(const std::string& input,
+                                           int32_t type,
+                                           const std::string& reattachHex) {
+    if (m_RecoveryRequired) {
+        Fail("import blocked: RecoveryRequired (explicit recovery required)");
+        return -1;
+    }
     if (!m_EditScene) { Fail("import asset: no project loaded"); return -1; }
-    if (path.empty()) { Fail("import asset: empty path"); return -1; }
+    if (input.empty()) { Fail("import asset: empty path"); return -1; }
+    if (input.find('\0') != std::string::npos) {
+        Fail("import asset: path contains NUL");
+        return -1;
+    }
     using AT = Engine::Content::AssetType;
     AT t;
     if (type == 0) t = AT::Texture;
     else if (type == 1) t = AT::Script;
     else { Fail("import asset: bad type " + std::to_string(type)); return -1; }
 
-    // 文件必须真实存在（避免登记不存在的资产造成假成功，GP-DX-007 纪律）
-    const std::string filePath = ResolveContentPath(path);
-    std::error_code ec;
-    if (!fs::is_regular_file(filePath, ec) || ec) {
-        Fail("import asset: file not found: " + filePath);
+    bool reattach = false;
+    Engine::ResourceGUID reattachGuid;
+    if (!reattachHex.empty()) {
+        reattachGuid = Engine::ResourceGUID::FromHex(reattachHex);
+        if (reattachGuid.IsNull())
+            return Fail("import asset: invalid reattach GUID"), -1;
+        if (!m_Reg.ContainsGuid(reattachGuid)) reattach = true;
+        else return Fail("import asset: reattach GUID already registered"), -1;
+    }
+
+    const std::string fwd = WithForwardSlashesCopy(input);
+    const bool absolute = LooksAbsolutePath(fwd);
+    if (absolute &&
+        (fwd.rfind("//?/", 0) == 0 || fwd.rfind("//./", 0) == 0)) {
+        Fail("import asset: device/long-path prefix is not supported: " +
+             input);
+        return -1;
+    }
+    if (absolute && fwd.rfind("//", 0) == 0) {
+        Fail("import asset: UNC path is not a valid content source: " + input);
+        return -1;
+    }
+    if (absolute && fwd.size() >= 2 && fwd[1] == ':' &&
+        !(fwd.size() >= 3 && fwd[2] == '/')) {
+        Fail("import asset: drive-relative path is not absolute: " + input);
         return -1;
     }
 
-    // ContentRegistry::Import 幂等：同路径返回既有 GUID
-    const Engine::ResourceGUID guid = m_Reg.Import(path, t);
-    MarkDirty();
-    // 会话稳定序：新 GUID 只 append，既有索引不位移
-    if (std::find(m_AssetOrder.begin(), m_AssetOrder.end(), guid) ==
-        m_AssetOrder.end())
+    std::string targetRel;
+    std::string sourceAbs;
+    bool copySource = false;
+    std::error_code ec;
+
+    if (!absolute) {
+        const auto normalized =
+            Engine::Content::NormalizeProjectRelative(input);
+        if (!normalized.ok) {
+            Fail("import asset: path '" + input + "' rejected: " +
+                 Engine::Content::ToString(normalized.error));
+            return -1;
+        }
+        targetRel = normalized.path;
+        const auto resolved = m_Root.Resolve(targetRel);
+        if (!resolved.ok) {
+            Fail("import asset: path '" + targetRel + "' rejected: " +
+                 DescribePathError(resolved));
+            return -1;
+        }
+        sourceAbs = resolved.path;
+    } else {
+        const auto inside = m_Root.ToProjectRelative(input);
+        if (inside.ok) {
+            targetRel = inside.path;
+            const auto resolved = m_Root.Resolve(targetRel);
+            if (!resolved.ok) {
+                Fail("import asset: path '" + targetRel + "' rejected: " +
+                     DescribePathError(resolved));
+                return -1;
+            }
+            sourceAbs = resolved.path;
+        } else if (inside.error == Engine::Content::PathError::EscapesRoot) {
+            copySource = true;
+            sourceAbs = fwd;
+            const fs::path src = Engine::Content::PathFromUtf8(sourceAbs);
+            if (!fs::is_regular_file(src, ec) || ec) {
+                Fail("import asset: source file not found: " + sourceAbs);
+                return -1;
+            }
+            const std::string filename =
+                Engine::Content::PathToUtf8(src.filename());
+            if (filename.empty()) {
+                Fail("import asset: source has no filename: " + sourceAbs);
+                return -1;
+            }
+            targetRel = std::string("assets/imported/") +
+                        (t == AT::Texture ? "tex" : "scripts") + "/" +
+                        filename;
+            const auto normalized =
+                Engine::Content::NormalizeProjectRelative(targetRel);
+            if (!normalized.ok) {
+                Fail(std::string("import asset: target path rejected: ") +
+                     Engine::Content::ToString(normalized.error));
+                return -1;
+            }
+            targetRel = normalized.path;
+        } else {
+            Fail("import asset: path '" + input + "' rejected: " +
+                 Engine::Content::ToString(inside.error));
+            return -1;
+        }
+    }
+
+    const auto targetResolved = m_Root.Resolve(targetRel);
+    if (!targetResolved.ok) {
+        Fail("import asset: target path '" + targetRel + "' rejected: " +
+             DescribePathError(targetResolved));
+        return -1;
+    }
+    const std::string targetAbs = targetResolved.path;
+
+    // K4/PathKey：目标不得与任何既有资产冲突（reattach 的 GUID 尚未注册）。
+    for (const auto& other : m_Reg.GetAllEntries()) {
+        if (other.guid == reattachGuid) continue;
+        if (!m_Root.KeysEqual(other.path, targetRel)) continue;
+        if (!copySource && !reattach) {
+            const int32_t existing = IndexOfGuid(m_AssetOrder, other.guid);
+            if (existing >= 0) return existing;   // 同路径幂等
+        }
+        Fail("import asset: target path '" + targetRel +
+             "' conflicts with asset " + other.guid.ToHex());
+        return -1;
+    }
+
+    if (copySource) {
+        if (fs::exists(Engine::Content::PathFromUtf8(targetAbs), ec)) {
+            Fail("import asset: target already exists: " + targetRel);
+            return -1;
+        }
+        fs::create_directories(
+            Engine::Content::PathFromUtf8(targetAbs).parent_path(), ec);
+        if (ec) {
+            Fail("import asset: cannot create target directory: " +
+                 ec.message());
+            return -1;
+        }
+        const auto copied = Engine::Content::CopyFileNoOverwrite(
+            sourceAbs, targetAbs);
+        if (!copied.ok) {
+            Fail("import asset: copy failed: " +
+                 std::string(Engine::Content::ToString(copied.error)) + " (" +
+                 copied.diagnostic + ")");
+            return -1;
+        }
+    } else {
+        if (!fs::is_regular_file(Engine::Content::PathFromUtf8(sourceAbs), ec) ||
+            ec) {
+            Fail("import asset: file not found: " + sourceAbs);
+            return -1;
+        }
+    }
+
+    Engine::Content::ContentRegistry candidate = m_Reg;
+    Engine::ResourceGUID guid;
+    if (reattach) {
+        if (!candidate.RegisterExplicit(reattachGuid, targetRel, t)) {
+            if (copySource)
+                fs::remove(Engine::Content::PathFromUtf8(targetAbs), ec);
+            return Fail("import asset: reattach registration failed"), -1;
+        }
+        guid = reattachGuid;
+    } else {
+        guid = candidate.Import(targetRel, t);
+        if (guid.IsNull()) {
+            if (copySource)
+                fs::remove(Engine::Content::PathFromUtf8(targetAbs), ec);
+            return Fail("import asset: GUID allocation failed"), -1;
+        }
+    }
+
+    std::string committedScene;
+    if (!m_Revisions.ReadCommittedScene(m_ScenePath, &committedScene)) {
+        if (copySource)
+            fs::remove(Engine::Content::PathFromUtf8(targetAbs), ec);
+        Fail("import asset: committed scene unavailable");
+        return -1;
+    }
+    const std::string manifestJson = candidate.SerializeManifest();
+    const auto published =
+        m_Revisions.Publish(m_Root, manifestJson, committedScene);
+    if (!published.ok) {
+        if (published.recoveryRequired) {
+            m_RecoveryRequired = true;
+            Fail("import asset: RecoveryRequired (commit state uncertain): " +
+                 published.diagnostic);
+            return -1;
+        }
+        if (copySource)
+            fs::remove(Engine::Content::PathFromUtf8(targetAbs), ec);
+        Fail("import asset: NotCommitted (revision publish failed): " +
+             published.diagnostic);
+        return -1;
+    }
+
+    m_Reg = std::move(candidate);
+    int32_t idx = IndexOfGuid(m_AssetOrder, guid);
+    if (idx < 0) {
         m_AssetOrder.push_back(guid);
-    int32_t idx = -1;
-    for (size_t i = 0; i < m_AssetOrder.size(); ++i)
-        if (m_AssetOrder[i] == guid) { idx = static_cast<int32_t>(i); break; }
-    Engine::Log::Info("[EditorBridge] asset imported: {} ({})", path,
-                      Engine::Content::ToString(t));
+        idx = static_cast<int32_t>(m_AssetOrder.size()) - 1;
+    }
+    const auto mirror =
+        Engine::Content::WriteFileAtomic(m_ManifestPath, manifestJson);
+    if (!mirror.ok) {
+        if (!m_Warnings.empty()) m_Warnings += "\n";
+        m_Warnings +=
+            "import: CommittedCleanupPending; legacy manifest mirror "
+            "update failed";
+    }
+    if (reattach) BindEditSceneSpriteTextures();
+    MarkDirty();
+    Engine::Log::Info("[EditorBridge] asset imported: {} ({})",
+                      targetRel, Engine::Content::ToString(t));
     Emit(EV_ASSET_IMPORTED,
          "idx=" + std::to_string(idx) + ";guid=" + guid.ToHex() +
-         ";path=" + path + ";type=" + std::to_string(type));
+         ";path=" + targetRel + ";type=" + std::to_string(type) +
+         ";reattach=" + (reattach ? "1" : "0"));
     return idx;
 }
 
 bool EditorSession::RenameAsset(int32_t assetIndex, const std::string& newName) {
+    if (m_RecoveryRequired)
+        return Fail("rename blocked: RecoveryRequired (explicit recovery required)");
     if (!m_EditScene)
         return Fail("rename asset: no project loaded");
+    if (m_ManifestPath.empty())
+        return Fail("rename asset: no committed manifest path");
     if (assetIndex < 0 || assetIndex >= static_cast<int32_t>(m_Reg.Count()))
         return Fail("rename asset: bad asset index " +
                     std::to_string(assetIndex));
@@ -602,40 +1008,224 @@ bool EditorSession::RenameAsset(int32_t assetIndex, const std::string& newName) 
     if (cleaned.empty() ||
         std::all_of(cleaned.begin(), cleaned.end(), isSpace))
         return Fail("rename asset: empty name rejected");
-
-    Engine::Content::AssetEntry entry;
-    if (!AssetAt(assetIndex, &entry))   // 稳定索引（会话序）
-        return Fail("rename asset: bad asset index " +
-                    std::to_string(assetIndex));
-    // 只允许改 basename（不含路径分隔符/扩展名语义由调用方给裸名）
     if (cleaned.find_first_of("/\\") != std::string::npos)
         return Fail("rename asset: name must be a bare filename");
 
-    const fs::path oldPath(ResolveContentPath(entry.path));
-    const std::string ext = oldPath.extension().string();
-    const fs::path newPath = oldPath.parent_path() / (cleaned + ext);
+    Engine::Content::AssetEntry entry;
+    if (!AssetAt(assetIndex, &entry))
+        return Fail("rename asset: bad asset index " +
+                    std::to_string(assetIndex));
 
-    // 物理改名（失败即止，不污染注册表）
-    std::error_code ec;
-    fs::rename(oldPath, newPath, ec);
-    if (ec)
-        return Fail("rename asset: fs rename failed: " + ec.message());
+    RetryPendingCleanup();
 
-    // 注册表路径更新：GUID 不变 → 场景绑定稳定（DL-02 契约）
-    m_Reg.Unregister(entry.guid);
-    const std::string newRel = fs::relative(newPath, fs::current_path(ec), ec)
-                                   .lexically_normal().generic_string();
-    if (ec || !m_Reg.RegisterExplicit(entry.guid, newRel, entry.type)) {
-        // 回滚物理改名，保持一致性
-        fs::rename(newPath, oldPath, ec);
-        return Fail("rename asset: registry update failed (rolled back)");
+    const auto oldResolved = m_Root.ResolveAny(entry.path);
+    if (!oldResolved.ok) {
+        return Fail("rename asset: source path '" + entry.path +
+                    "' rejected: " + DescribePathError(oldResolved));
     }
-    MarkDirty();
-    Engine::Log::Info("[EditorBridge] asset renamed: {} -> {}",
-                      entry.path, newRel);
-    Emit(EV_ASSET_RENAMED,
-         "idx=" + std::to_string(assetIndex) + ";guid=" + entry.guid.ToHex() +
-         ";old=" + entry.path + ";new=" + newRel);
+    const fs::path oldAbs = Engine::Content::PathFromUtf8(oldResolved.path);
+    std::error_code ec;
+    if (!fs::is_regular_file(oldAbs, ec) || ec)
+        return Fail("rename asset: source is not a regular file: " +
+                    oldResolved.path);
+
+    const std::string ext = Engine::Content::PathToUtf8(oldAbs.extension());
+    const fs::path newAbs =
+        oldAbs.parent_path() / Engine::Content::PathFromUtf8(cleaned + ext);
+    if (!fs::is_directory(newAbs.parent_path(), ec) || ec)
+        return Fail("rename asset: target parent directory missing");
+
+    const auto newRelative =
+        m_Root.ToProjectRelative(Engine::Content::PathToUtf8(newAbs));
+    if (!newRelative.ok) {
+        return Fail("rename asset: target path rejected: " +
+                    DescribePathError(newRelative));
+    }
+
+    // K2.1：目标不得与另一已注册资产在 PathKey 下冲突
+    for (const auto& other : m_Reg.GetAllEntries()) {
+        if (other.guid == entry.guid) continue;
+        if (m_Root.KeysEqual(other.path, newRelative.path)) {
+            return Fail("rename asset: target path '" + newRelative.path +
+                        "' conflicts with asset " + other.guid.ToHex());
+        }
+    }
+
+    const bool samePath = entry.path == newRelative.path;
+    if (samePath) {
+        // K2.1：规范路径相同 → no-op，不提交、不改磁盘
+        return true;
+    }
+    const bool sameKey = m_Root.KeysEqual(entry.path, newRelative.path);
+
+    // K1.1：rename 的 revision 复用“已提交 Scene”，不提交未保存的编辑。
+    std::string committedScene;
+    if (!m_Revisions.ReadCommittedScene(m_ScenePath, &committedScene))
+        return Fail("rename asset: committed scene unavailable");
+
+    auto emitRenamed = [&](const std::string& newRel) {
+        MarkDirty();
+        Engine::Log::Info("[EditorBridge] asset renamed: {} -> {}",
+                          entry.path, newRel);
+        Emit(EV_ASSET_RENAMED,
+             "idx=" + std::to_string(assetIndex) + ";guid=" +
+                 entry.guid.ToHex() + ";old=" + entry.path + ";new=" + newRel);
+    };
+
+    if (sameKey) {
+        // K4.6 大小写-only rename：两阶段临时名，GUID 不变。
+        if (fs::exists(newAbs, ec)) {
+            if (ec || !fs::equivalent(oldAbs, newAbs, ec))
+                return Fail("rename asset: case-only target exists as a "
+                            "different file: " + newRelative.path);
+        }
+
+        fs::path tempAbs;
+        for (;;) {
+            tempAbs = newAbs.parent_path() /
+                      Engine::Content::PathFromUtf8(
+                          ".m1c_case_" + UniqueSuffix() + ext);
+            if (fs::exists(tempAbs, ec)) continue;
+            const auto tempRel = m_Root.ToProjectRelative(
+                Engine::Content::PathToUtf8(tempAbs));
+            bool clash = false;
+            if (tempRel.ok) {
+                for (const auto& other : m_Reg.GetAllEntries()) {
+                    if (m_Root.KeysEqual(other.path, tempRel.path)) {
+                        clash = true;
+                        break;
+                    }
+                }
+            }
+            if (!clash) break;
+        }
+
+        fs::rename(oldAbs, tempAbs, ec);
+        if (ec)
+            return Fail("rename asset: case-only prepare failed: " +
+                        ec.message());
+        fs::rename(tempAbs, newAbs, ec);
+        if (ec) {
+            const std::string prepareError = ec.message();
+            fs::rename(tempAbs, oldAbs, ec);
+            if (ec) {
+                m_RecoveryRequired = true;
+                return Fail("rename asset: RecoveryRequired (case-only "
+                            "prepare could not be undone): " + prepareError);
+            }
+            return Fail("rename asset: case-only target rename failed: " +
+                        prepareError);
+        }
+
+        Engine::Content::ContentRegistry candidate = m_Reg;
+        candidate.Unregister(entry.guid);
+        if (!candidate.RegisterExplicit(entry.guid, newRelative.path,
+                                        entry.type)) {
+            fs::rename(newAbs, oldAbs, ec);
+            if (ec) m_RecoveryRequired = true;
+            return Fail("rename asset: registry update failed" +
+                        std::string(ec ? " (RecoveryRequired)" : ""));
+        }
+        const std::string manifestJson = candidate.SerializeManifest();
+        const auto published =
+            m_Revisions.Publish(m_Root, manifestJson, committedScene);
+        if (!published.ok) {
+            if (published.recoveryRequired) {
+                m_RecoveryRequired = true;
+                return Fail("rename asset: RecoveryRequired (commit state "
+                            "uncertain): " + published.diagnostic);
+            }
+            fs::rename(newAbs, oldAbs, ec);
+            if (ec) {
+                m_RecoveryRequired = true;
+                return Fail("rename asset: NotCommitted but old case could "
+                            "not be restored (RecoveryRequired): " +
+                            published.diagnostic);
+            }
+            return Fail("rename asset: NotCommitted (case restored): " +
+                        published.diagnostic);
+        }
+
+        m_Reg = std::move(candidate);
+        const auto mirror = Engine::Content::WriteFileAtomic(
+            m_ManifestPath, manifestJson);
+        if (!mirror.ok) {
+            if (!m_Warnings.empty()) m_Warnings += "\n";
+            m_Warnings +=
+                "rename: CommittedCleanupPending; legacy manifest mirror "
+                "update failed";
+        }
+        emitRenamed(newRelative.path);
+        return true;
+    }
+
+    // 普通 rename：copy（不覆盖）→ manifest 提交 → 删除旧源。
+    if (fs::exists(newAbs, ec))
+        return Fail("rename asset: target already exists: " +
+                    newRelative.path);
+    if (ec)
+        return Fail("rename asset: target check failed: " + ec.message());
+
+    const Engine::Content::AtomicFileResult copied =
+        Engine::Content::CopyFileNoOverwrite(
+            oldResolved.path, Engine::Content::PathToUtf8(newAbs));
+    if (!copied.ok) {
+        if (copied.error == Engine::Content::AtomicFileError::TargetExists)
+            return Fail("rename asset: target appeared during prepare: " +
+                        newRelative.path);
+        return Fail("rename asset: prepare failed: " +
+                    std::string(Engine::Content::ToString(copied.error)) +
+                    " (" + copied.diagnostic + ")");
+    }
+
+    Engine::Content::ContentRegistry candidate = m_Reg;
+    candidate.Unregister(entry.guid);
+    if (!candidate.RegisterExplicit(entry.guid, newRelative.path, entry.type)) {
+        fs::remove(newAbs, ec);
+        return Fail("rename asset: registry update failed (new copy removed)");
+    }
+    const std::string manifestJson = candidate.SerializeManifest();
+    const auto published =
+        m_Revisions.Publish(m_Root, manifestJson, committedScene);
+    if (!published.ok) {
+        if (published.recoveryRequired) {
+            m_RecoveryRequired = true;
+            return Fail("rename asset: RecoveryRequired (commit state "
+                        "uncertain): " + published.diagnostic);
+        }
+        fs::remove(newAbs, ec);
+        if (ec) {
+            if (!m_Warnings.empty()) m_Warnings += "\n";
+            m_Warnings += "rename: unregistered copy retained at '" +
+                          newRelative.path + "' after commit failure";
+        }
+        return Fail("rename asset: NotCommitted (revision publish failed): " +
+                    published.diagnostic);
+    }
+
+    m_Reg = std::move(candidate);
+    const auto mirror =
+        Engine::Content::WriteFileAtomic(m_ManifestPath, manifestJson);
+    if (!mirror.ok) {
+        if (!m_Warnings.empty()) m_Warnings += "\n";
+        m_Warnings +=
+            "rename: CommittedCleanupPending; legacy manifest mirror "
+            "update failed";
+    }
+    emitRenamed(newRelative.path);
+
+    // K2.4：提交成功后删除旧源；失败保留为可恢复副本，不回滚。
+    Engine::Content::InvokeContentFaultForTesting(
+        Engine::Content::ContentFaultPoint::BeforeRenameSourceCleanup);
+    fs::remove(oldAbs, ec);
+    if (ec) {
+        m_PendingCleanup.push_back(Engine::Content::PathToUtf8(oldAbs));
+        if (!m_Warnings.empty()) m_Warnings += "\n";
+        m_Warnings += "rename: CommittedCleanupPending; old source kept at '" +
+                      entry.path + "'";
+        Engine::Log::Warn("[EditorBridge] rename cleanup pending: {}",
+                          entry.path);
+    }
     return true;
 }
 
@@ -646,8 +1236,14 @@ bool EditorSession::ScriptRead(int32_t assetIndex, std::string* out) {
     if (!AssetAt(assetIndex, &entry) ||
         entry.type != Engine::Content::AssetType::Script)
         return false;
-    const std::string filePath = ResolveContentPath(entry.path);
-    std::ifstream f(filePath, std::ios::binary);
+    const auto resolved = ResolveContentPath(entry.path);
+    if (!resolved.ok) {
+        Fail("script read: path '" + entry.path + "' rejected: " +
+             DescribePathError(resolved));
+        return false;
+    }
+    const std::string filePath = resolved.path;
+    std::ifstream f(Engine::Content::PathFromUtf8(filePath), std::ios::binary);
     if (!f.good()) {
         Fail("script read failed (cannot open): " + filePath);
         return false;
@@ -659,6 +1255,8 @@ bool EditorSession::ScriptRead(int32_t assetIndex, std::string* out) {
 }
 
 bool EditorSession::ScriptSave(int32_t assetIndex, const std::string& text) {
+    if (m_RecoveryRequired)
+        return Fail("script save blocked: RecoveryRequired (explicit recovery required)");
     if (assetIndex < 0 || assetIndex >= static_cast<int32_t>(m_Reg.Count()))
         return Fail("script save: bad asset index " +
                     std::to_string(assetIndex));
@@ -668,13 +1266,22 @@ bool EditorSession::ScriptSave(int32_t assetIndex, const std::string& text) {
                     std::to_string(assetIndex));
     if (entry.type != Engine::Content::AssetType::Script)
         return Fail("script save: asset is not a script");
-    const std::string filePath = ResolveContentPath(entry.path);
-    std::ofstream f(filePath, std::ios::binary | std::ios::trunc);
-    if (!f.good())
-        return Fail("script save failed (cannot open): " + filePath);
-    f.write(text.data(), static_cast<std::streamsize>(text.size()));
-    if (!f.good())
-        return Fail("script save failed (write error): " + filePath);
+    const auto resolved = ResolveContentPath(entry.path);
+    if (!resolved.ok) {
+        return Fail("script save: path '" + entry.path + "' rejected: " +
+                    DescribePathError(resolved));
+    }
+    const std::string filePath = resolved.path;
+    const Engine::Content::AtomicFileResult written =
+        Engine::Content::WriteFileAtomic(filePath, text);
+    if (!written.ok) {
+        return Fail("script save failed (" +
+                    std::string(Engine::Content::ToString(written.error)) +
+                    "): " + filePath +
+                    (written.diagnostic.empty()
+                         ? std::string()
+                         : " (" + written.diagnostic + ")"));
+    }
     // AUD-1：以真实写盘结果为准；成功才算完成（并在会话层面置 dirty）
     MarkDirty();
     Engine::Log::Info("[EditorBridge] script saved: {}", filePath);
@@ -691,6 +1298,8 @@ bool EditorSession::ScriptSave(int32_t assetIndex, const std::string& text) {
 
 bool EditorSession::Play(int32_t assetIndex) {
     m_RuntimeError.clear();
+    if (m_RecoveryRequired)
+        return Fail("play blocked: RecoveryRequired (explicit recovery required)");
     if (m_Playing.load()) return Fail("play: already playing (stop first)");
     if (!m_EditScene) return Fail("play: no project loaded");
 
@@ -716,7 +1325,12 @@ bool EditorSession::Play(int32_t assetIndex) {
         if (scriptPath.empty())
             return Fail("play: no script binding -> cannot play");
     }
-    m_RuntimeScriptPath = ResolveContentPath(scriptPath);
+    const auto scriptResolved = ResolveContentPath(scriptPath);
+    if (!scriptResolved.ok) {
+        return Fail("play: script path '" + scriptPath + "' rejected: " +
+                    DescribePathError(scriptResolved));
+    }
+    m_RuntimeScriptPath = scriptResolved.path;
 
     // ── 克隆编辑场景为新建运行场景 ──
     auto rollback = [this]() noexcept {
@@ -727,6 +1341,10 @@ bool EditorSession::Play(int32_t assetIndex) {
         Engine::Scripting::GameplayAPI::Reset();
         Engine::Scripting::ScriptAPI::Reset();
         Engine::Scripting::GameplayAPI::SetScene(m_EditScene.get());
+        if (m_Physics) {
+            m_Physics->Stop();
+            m_Physics.reset();
+        }
         m_Runtime.reset();
         m_RuntimeScriptPath.clear();
         m_Playing.store(false);
@@ -736,11 +1354,25 @@ bool EditorSession::Play(int32_t assetIndex) {
 
     try {
         auto rt = std::make_shared<Engine::Scene>("AvaloniaRuntime");
-        auto r = Engine::Content::InstantiateScene(live, *rt, m_TexMgr, m_Reg);
+        auto r = Engine::Content::InstantiateScene(
+            live, *rt, m_TexMgr, m_Reg,
+            [this](const std::string& stored) {
+                return ResolveAssetPath(stored);
+            });
         if (!r.ok) {
             m_RuntimeScriptPath.clear();
             PublishRuntimeState();
             return Fail("play: scene clone failed");
+        }
+
+        // T-1-C：在运行场景上建立 2D 物理 World；失败则不进入 Play。
+        auto physics = std::make_unique<Engine::PhysicsRuntime2D>();
+        std::string physicsError;
+        if (!physics->Start(*rt, &physicsError)) {
+            m_RuntimeError = physicsError;
+            m_RuntimeScriptPath.clear();
+            PublishRuntimeState();
+            return Fail("play: physics init failed: " + physicsError);
         }
 
         // ── 绑定 GameplayAPI 到运行场景并登记句柄 ──
@@ -767,6 +1399,7 @@ bool EditorSession::Play(int32_t assetIndex) {
         }
 
         m_Runtime = std::move(rt);
+        m_Physics = std::move(physics);
         m_Playing.store(true);
         PublishRuntimeState();
         if (m_Application) m_Application->SetPlaying(true);
@@ -786,6 +1419,8 @@ bool EditorSession::Play(int32_t assetIndex) {
 
 bool EditorSession::Reload() {
     m_RuntimeError.clear();
+    if (m_RecoveryRequired)
+        return Fail("reload blocked: RecoveryRequired (explicit recovery required)");
     if (!m_Playing.load() || !m_Inst.IsValid())
         return Fail("reload: not playing");
     if (!m_Inst.Reload()) {
@@ -814,6 +1449,10 @@ void EditorSession::Stop() {
     Engine::Scripting::GameplayAPI::Reset();
     Engine::Scripting::GameplayAPI::SetScene(m_EditScene.get());
     Engine::Scripting::ScriptAPI::Reset();
+    if (m_Physics) {
+        m_Physics->Stop();
+        m_Physics.reset();
+    }
     m_Runtime.reset();
     m_RuntimeScriptPath.clear();
     m_Playing.store(false);
@@ -826,9 +1465,21 @@ void EditorSession::Stop() {
 bool EditorSession::RuntimeTick(float dt) {
     if (!m_Playing.load() || !m_Inst.IsValid()) return false;
     const bool updated = m_Inst.OnUpdate(dt);
-    if (!updated) m_RuntimeError = ScriptError(m_Inst);
+    if (!updated) {
+        m_RuntimeError = ScriptError(m_Inst);
+        PublishRuntimeState();
+        return false;
+    }
+    if (m_Physics) {
+        std::string physicsError;
+        if (!m_Physics->Step(dt, &physicsError)) {
+            m_RuntimeError = "physics: " + physicsError;
+            Stop();
+            return false;
+        }
+    }
     PublishRuntimeState();
-    return updated;
+    return true;
 }
 
 int32_t EditorSession::RuntimePersistInt(const std::string& key, int32_t def) {
@@ -922,14 +1573,36 @@ void EditorSession::MarkDirty() {
     m_Dirty = true;
 }
 
-std::string EditorSession::ResolveContentPath(const std::string& path) const {
-    // 与 GP01 运行时一致：registry path 相对当前工作目录（进程 CWD）解析。
-    // 引擎契约不含绝对路径/VFS；保持该语义，scratch 工程由宿主以 CWD 定向。
-    fs::path p(path);
-    if (p.is_absolute()) return p.string();
-    std::error_code ec;
-    fs::path abs = fs::absolute(p, ec);
-    return (ec ? p : abs).lexically_normal().string();
+Engine::Content::PathResolution EditorSession::ResolveContentPath(
+    const std::string& path) const {
+    // M1-A：内容路径的唯一解析锚点是打开时固定的显式 ProjectRoot（K4.1/K4.3）。
+    // 相对路径按工程相对解析；根内绝对路径接受（legacy 兼容读）；
+    // 越界/UNC/盘符/`.`/`..` → 结构化错误，绝不回退到 CWD。
+    if (!m_Root.IsValid()) {
+        return Engine::Content::PathResolution{
+            false, Engine::Content::PathError::RootMissing, {}};
+    }
+    return m_Root.ResolveAny(path);
+}
+
+std::string EditorSession::ResolveAssetPath(const std::string& stored) const {
+    const auto resolved = ResolveContentPath(stored);
+    return resolved.ok ? resolved.path : std::string();
+}
+
+void EditorSession::RetryPendingCleanup() {
+    if (m_PendingCleanup.empty()) return;
+    for (auto it = m_PendingCleanup.begin(); it != m_PendingCleanup.end();) {
+        std::error_code ec;
+        fs::remove(Engine::Content::PathFromUtf8(*it), ec);
+        if (!ec) {
+            Engine::Log::Info("[EditorBridge] rename cleanup completed: {}",
+                              *it);
+            it = m_PendingCleanup.erase(it);
+        } else {
+            ++it;
+        }
+    }
 }
 
 bool EditorSession::Fail(const std::string& msg) {
@@ -1206,7 +1879,7 @@ int32_t EditorSession::GetViewportPixels(uint8_t* outBuffer, int32_t bufferSize)
       if (!obj) continue;
       auto* sprite = obj->GetComponent<Engine::SpriteComponent>();
       if (sprite && sprite->GetTexture()) continue;   // 已有纹理（显式 AssignSprite 过）
-      const std::string path = m_Reg.ResolvePath(guid);
+      const std::string path = ResolveAssetPath(m_Reg.ResolvePath(guid));
       if (path.empty()) continue;
       if (!sprite) {
         sprite = obj->AddComponent<Engine::SpriteComponent>(m_TexMgr, path);

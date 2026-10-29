@@ -27,7 +27,7 @@ public static class D3ManagedPickGate
     private const string ManifestRelative = "assets/gp01/manifest.json";
     private const string SceneRelative = "assets/gp01/Main.scene";
 
-    private const int AbiV1_5 = (1 << 16) | 5;
+    private const int AbiV1_6 = (1 << 16) | 6;
 
     private static void Check(bool condition, string what)
     {
@@ -60,12 +60,12 @@ public static class D3ManagedPickGate
     private static void M1_VersionLockstep(Action<string> log)
     {
         int expected = EditorBridgeApi.EngineHostExpectedVersion;
-        Check(expected == AbiV1_5,
-              $"managed must declare v1.5, declares v{(expected >> 16)}.{(expected & 0xFFFF)}");
+        Check(expected == AbiV1_6,
+              $"managed must declare v1.6, declares v{(expected >> 16)}.{(expected & 0xFFFF)}");
         int actual = EditorBridgeApi.EngineHost_GetApiVersion();
         Check(actual == expected,
               $"native reports 0x{actual:X8}, managed expects 0x{expected:X8}");
-        log($"[D3-M1] ABI lockstep OK (native=managed=0x{actual:X8} = v1.5)");
+        log($"[D3-M1] ABI lockstep OK (native=managed=0x{actual:X8} = v1.6)");
     }
 
     /// <summary>
@@ -164,8 +164,8 @@ public static class D3ManagedPickGate
     private static void M8B_LoadedAbiIdentity(Action<string> log)
     {
         int loaded = EditorBridgeApi.EngineHost_GetApiVersion();
-        Check(loaded == AbiV1_5,
-              $"loaded native must report 0x{AbiV1_5:X8}, reports 0x{loaded:X8}");
+        Check(loaded == AbiV1_6,
+              $"loaded native must report 0x{AbiV1_6:X8}, reports 0x{loaded:X8}");
         Check(EditorBridgeApi.EngineHostExpectedVersion == loaded,
               "loaded native and managed declaration must be the same value");
         log($"[D3-M8B] loaded ABI identity OK (loaded=0x{loaded:X8} = v1.5)");

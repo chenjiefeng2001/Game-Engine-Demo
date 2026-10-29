@@ -16,17 +16,18 @@
 #include <chrono>
 
 // ════════════════════════════════════════════════════════
-// GPU 调试标记 + 时间戳分析器（全局实例）
+// GPU 时间戳分析器（T-4，全局实例）
 // ════════════════════════════════════════════════════════
-// 在 app 初始化时调用 profiler.Initialize()
-// 然后在 RenderGraph 执行过程中自动调用 BeginPass/EndPass
-static Engine::RHI::GPUProfiler* g_GPUProfiler = nullptr;
+// 调用方在 app 初始化时创建/Initialize，并在 GPU 完成后 Resolve；
+// RenderGraph 只负责在 Pass 边界 BeginSegment/EndSegment。
+static Engine::RHI::IGpuTimestampProfiler* g_GpuTimestampProfiler = nullptr;
 
-void SetRenderGraphGPUProfiler(Engine::RHI::GPUProfiler* profiler) {
-    g_GPUProfiler = profiler;
+void SetRenderGraphGpuTimestampProfiler(
+    Engine::RHI::IGpuTimestampProfiler* profiler) {
+    g_GpuTimestampProfiler = profiler;
 }
-Engine::RHI::GPUProfiler* GetRenderGraphGPUProfiler() {
-    return g_GPUProfiler;
+Engine::RHI::IGpuTimestampProfiler* GetRenderGraphGpuTimestampProfiler() {
+    return g_GpuTimestampProfiler;
 }
 
 namespace {
@@ -339,6 +340,10 @@ namespace Engine { namespace Rendering {
         auto cmdList = device.CreateCommandList(RHI::CommandListType::Direct);
         if (!cmdList) { s_Log.Error("RenderGraph::Execute: failed to create command list"); return; }
 
+        auto* profiler = g_GpuTimestampProfiler;
+        const bool profile = profiler && profiler->IsAvailable();
+        if (profile) profiler->BeginFrame();
+
         cmdList->Begin();
         for (uint32_t passIdx = 0; passIdx < m_Passes.size(); ++passIdx) {
             auto& pass = m_Passes[passIdx];
@@ -347,6 +352,10 @@ namespace Engine { namespace Rendering {
                     cmdList->ResourceBarrier(1, &barrier.desc);
             InjectViewportAndScissor(*cmdList, pass);
 
+            const uint32_t segment = profile
+                ? profiler->BeginSegment(*cmdList,
+                      pass.name.empty() ? "pass" : pass.name.c_str())
+                : UINT32_MAX;
             if (pass.passType == Type_Scene && pass.extraction && pass.drawPacket) {
                 const auto& packets = pass.extraction->packets;
                 for (size_t i = 0; i < packets.size(); ++i)
@@ -354,6 +363,8 @@ namespace Engine { namespace Rendering {
             } else if (pass.execute) {
                 pass.execute(*cmdList);
             }
+            if (profile && segment != UINT32_MAX)
+                profiler->EndSegment(*cmdList, segment);
         }
         cmdList->End();
 
@@ -376,6 +387,10 @@ namespace Engine { namespace Rendering {
             if (p.passType == Type_Scene) { hasScenePass = true; break; }
 
         if (!hasScenePass) {
+            auto* profiler = g_GpuTimestampProfiler;
+            const bool profile = profiler && profiler->IsAvailable();
+            if (profile) profiler->BeginFrame();
+
             uint32_t maxLayer = 0;
             for (const auto& p : m_Passes)
                 if (p.layer > maxLayer) maxLayer = p.layer;
@@ -389,8 +404,14 @@ namespace Engine { namespace Rendering {
                 for (const auto& barrier : m_Barriers)
                     if (barrier.passIndex == passIdx && layerCmdLists[p.layer])
                         layerCmdLists[p.layer]->ResourceBarrier(1, &barrier.desc);
+                const uint32_t segment = (profile && layerCmdLists[p.layer])
+                    ? profiler->BeginSegment(*layerCmdLists[p.layer],
+                          p.name.empty() ? "pass" : p.name.c_str())
+                    : UINT32_MAX;
                 if (p.execute && layerCmdLists[p.layer])
                     p.execute(*layerCmdLists[p.layer]);
+                if (profile && segment != UINT32_MAX && layerCmdLists[p.layer])
+                    profiler->EndSegment(*layerCmdLists[p.layer], segment);
             }
             for (auto& cmdList : layerCmdLists)
                 if (cmdList) cmdList->End();

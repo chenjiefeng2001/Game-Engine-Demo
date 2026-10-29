@@ -55,6 +55,15 @@ typedef void (*EditorEventCallback)(int32_t eventType,
                                     const char* payload,
                                     void* userData);
 
+/// M1-F 测试专用故障注入钩子（生产默认空）。point 对应 RevisionStore
+/// RevisionFaultPoint / ContentFaultPoint 的枚举值。
+typedef void (*EditorFaultPointCallback)(int32_t point, void* userData);
+/// 返回非 0 = 注入失败；tempPath/targetPath 为 UTF-8。
+typedef int32_t (*EditorAtomicFaultCallback)(int32_t point,
+                                             const char* tempPath,
+                                             const char* targetPath,
+                                             void* userData);
+
 enum {
     EV_PROJECT_LOADED  = 1, ///< payload: "objects=<n>;assets=<n>"
     EV_ENTITY_CREATED  = 2, ///< payload: 实体名
@@ -95,9 +104,18 @@ EDITOR_BRIDGE_API void EditorSession_Destroy(EditorSessionHandle h);
 // ── 工程 ─────────────────────────────────────────────────────
 
 /// 打开工程（manifest + scene）。成功后广播 EV_PROJECT_LOADED。
+/// Legacy 兼容入口（K4.4）：相对路径以进程 CWD 为 legacy root 解析；
+/// CWD 在调用边界一次性捕获为显式根，之后不再读取。新调用方用 Rooted 版本。
 EDITOR_BRIDGE_API int32_t EditorSession_OpenProject(EditorSessionHandle h,
                                                     const char* manifestPath,
                                                     const char* scenePath);
+/// 打开工程（M1-A 规范入口）：工程根显式提供（必须为已存在的绝对目录）。
+/// manifestPath / scenePath 为工程相对路径（根内绝对路径兼容接受）；
+/// 解析不读取进程 CWD，越界/UNC/盘符/`.`/`..` 以结构化错误拒绝。
+EDITOR_BRIDGE_API int32_t EditorSession_OpenProjectRooted(EditorSessionHandle h,
+                                                          const char* projectRoot,
+                                                          const char* manifestPath,
+                                                          const char* scenePath);
 EDITOR_BRIDGE_API int32_t EditorSession_SaveProject(EditorSessionHandle h);
 
 // ── 场景查询 / 实体操作 ────────────────────────────────────────
@@ -149,12 +167,18 @@ EDITOR_BRIDGE_API int32_t EditorSession_GetEntityScript(EditorSessionHandle h,
 EDITOR_BRIDGE_API int32_t EditorSession_AssignScript(EditorSessionHandle h,
                                                      int32_t assetIndex,
                                                      int32_t entityIndex);
-/// 导入资产（ContentRegistry::Import，幂等）：path 为相对 CWD 的工程路径，
-/// type 0=Texture 1=Script。文件必须已存在。成功返回资产索引（≥0），
-/// 失败 -1。会置 dirty。成功广播 EV_ASSET_IMPORTED。P3-C。
+/// 导入资产（ContentRegistry::Import，幂等）：path 为工程相对路径
+/// （M1-A 起锚定打开时的 ProjectRoot，不再相对 CWD），type 0=Texture 1=Script。
+/// 文件必须已存在。成功返回资产索引（≥0），失败 -1。
+/// 会置 dirty。成功广播 EV_ASSET_IMPORTED。P3-C。
 EDITOR_BRIDGE_API int32_t EditorSession_ImportAsset(EditorSessionHandle h,
                                                     const char* path,
                                                     int32_t type);
+/// M1-E：显式 reattach —— 用指定缺失 GUID 导入源文件（K3.5）。
+EDITOR_BRIDGE_API int32_t EditorSession_ReattachAsset(EditorSessionHandle h,
+                                                      const char* missingGuid,
+                                                      const char* sourcePath,
+                                                      int32_t type);
 /// 重命名资产（GUID 不变 → 场景绑定稳定）：物理文件改名 + 注册表路径更新。
 /// newName 不含扩展名（按原扩展名补全）。成功 0，失败 -1。会置 dirty。
 /// 成功广播 EV_ASSET_RENAMED。P3-C。
@@ -180,7 +204,7 @@ EDITOR_BRIDGE_API int32_t EditorSession_GetAssetGuid(EditorSessionHandle h,
 // ── 脚本文档（Script Editor；纯内容文件 IO，走 registry 解析 + manifest 目录兜底）─
 
 /// 读取脚本资产全文（UTF-8）。失败返回 -1，否则返回实际长度。
-/// 路径解析：先按 registry path；若为相对路径则锚定到 manifest 目录，
+/// 路径解析：registry 路径锚定打开时的 ProjectRoot（M1-A；不读 CWD），
 /// 使 scratch 工程自包含。
 EDITOR_BRIDGE_API int32_t EditorSession_ScriptRead(EditorSessionHandle h,
                                                    int32_t assetIndex,
@@ -349,6 +373,14 @@ EDITOR_BRIDGE_API int32_t EditorSession_IsDirty(EditorSessionHandle h);
 EDITOR_BRIDGE_API void EditorSession_SetEventCallback(
     EditorSessionHandle h, EditorEventCallback cb, void* userData);
 
+/// M1-F 测试专用：进程级故障注入钩子；cb=null 清除。
+EDITOR_BRIDGE_API void EditorSession_SetRevisionFaultHookForTesting(
+    EditorFaultPointCallback cb, void* userData);
+EDITOR_BRIDGE_API void EditorSession_SetContentFaultHookForTesting(
+    EditorFaultPointCallback cb, void* userData);
+EDITOR_BRIDGE_API void EditorSession_SetAtomicFaultHookForTesting(
+    EditorAtomicFaultCallback cb, void* userData);
+
 // ── 诊断 ─────────────────────────────────────────────────────
 
 /// 取最近一次失败的 UTF-8 错误文本（无错误返回空串）。
@@ -391,7 +423,19 @@ typedef int32_t EngineHostStage;
 /// （从"帧大小"变成"最大容量"）。不升版本时，v1.4 managed（按 1.92 MB 分配）
 /// 与 v1.5 native（可能产出更大帧）会在**运行时**才失败，而不是在 `Create()`
 /// 处被 lockstep 抓住。
-#define ENGINE_HOST_ABI_VERSION ((1 << 16) | 5)
+///
+/// v1.5 -> v1.6（Content v2 M1-A）：新增两个导出
+/// `EditorSession_OpenProjectRooted` 与 `EngineHost_OpenProjectRooted`，
+/// 打开工程时显式接收 `ProjectRoot`（K4.1），既有导出/结构/op/status 不变。
+/// 为什么必须升版本：导出本身是 additive，但 managed 生产打开路径改为 rooted 后，
+/// 与 v1.5 native 混搭只会在**首次打开工程**时失败；升版本让 lockstep 在 `Create()`
+/// 处抓住混搭，而不是让 rooted 调用在运行期才暴露缺失符号。
+///
+/// v1.6 -> v1.7（Content v2 M1-E）：新增导出 `EditorSession_ReattachAsset`
+/// （显式缺失 GUID reattach）。既有导出、结构、op、status 不变。
+/// v1.7 -> v1.8（M1-F）：新增**测试专用**故障注入钩子导出；生产默认空，
+/// 不改变正常路径语义。既有导出、结构、op、status 不变。
+#define ENGINE_HOST_ABI_VERSION ((1 << 16) | 8)
 
 /// HRC-3 P1（D4 已后置 ⇒ v1 目标尺寸固定）：production presentation target 的尺寸。
 /// 单一来源，供 P1 的 presentation FBO、P2 的 Fetch 静态容量、P3 的 gate 断言共用。
@@ -647,6 +691,13 @@ EDITOR_BRIDGE_API int32_t EngineHost_OpenProject(EngineHostHandle h,
                                                   const char* manifestPath,
                                                   const char* scenePath,
                                                   RuntimeResult* result);
+/// M1-A 规范入口：显式 ProjectRoot（绝对、存在）。既有 legacy 导出的语义不变，
+/// 两者共用同一会话打开实现（Rooted 不做 CWD 回退）。
+EDITOR_BRIDGE_API int32_t EngineHost_OpenProjectRooted(EngineHostHandle h,
+                                                       const char* projectRoot,
+                                                       const char* manifestPath,
+                                                       const char* scenePath,
+                                                       RuntimeResult* result);
 EDITOR_BRIDGE_API int32_t EngineHost_Play(EngineHostHandle h,
                                           int32_t assetIndex,
                                           RuntimeResult* result);

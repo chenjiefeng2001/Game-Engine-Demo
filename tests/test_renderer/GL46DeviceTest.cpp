@@ -15,6 +15,7 @@
  */
 #include <gtest/gtest.h>
 #include "Engine/Core/RHI/GL46AZDODevice.h"
+#include "Engine/Core/RHI/GpuTimestampProfiler.h"
 #include "Engine/Core/RHI/IRHICommandList.h"
 #include "Engine/Core/RHI/RHITypes.h"
 #include <GLFW/glfw3.h>
@@ -266,4 +267,32 @@ TEST(GLRunnerCapabilityProbe, ReportRunnerOpenGLCapability)
 
     std::fflush(stdout);
     glfwTerminate();
+}
+
+TEST_F(GL46DeviceTest, GLCommandListTimestampQuery) {
+    if (!s_Window) GTEST_SKIP() << "no GL context";
+    glfwMakeContextCurrent(s_Window);
+    GladGLContext gl;
+    std::memset(&gl, 0, sizeof(gl));
+    if (gladLoadGLContext(&gl, glfwGetProcAddress) == 0)
+        GTEST_SKIP() << "gladLoadGLContext failed";
+
+    GLint bits = 0;
+    gl.GetQueryiv(GL_TIMESTAMP, GL_QUERY_COUNTER_BITS, &bits);
+    if (bits == 0) GTEST_SKIP() << "GL_TIMESTAMP unavailable on this context";
+
+    GL46CommandList cmd;
+    cmd.SetGLContext(&gl);
+    cmd.Begin();
+    const uint32_t begin = cmd.WriteTimestamp();
+    const uint32_t end = cmd.WriteTimestamp();
+    ASSERT_NE(begin, IRHICommandList::kInvalidTimestamp);
+    ASSERT_NE(end, IRHICommandList::kInvalidTimestamp);
+    cmd.End();
+    gl.Finish();
+
+    double ms = -1.0;
+    ASSERT_TRUE(cmd.ResolveTimestampSpan(begin, end, ms));
+    EXPECT_GE(ms, 0.0);
+    EXPECT_NE(ms, 0.5); // 旧 stub 的占位值不得回流
 }

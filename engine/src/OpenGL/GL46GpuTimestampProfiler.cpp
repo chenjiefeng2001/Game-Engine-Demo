@@ -120,7 +120,9 @@ private:
 };
 
 std::unique_ptr<IGpuTimestampProfiler> CreateGpuTimestampProfiler() {
-    return std::make_unique<GL46GpuTimestampProfiler>();
+    // T-4：统一走后端无关实现；GL46/Vulkan 的差异只在 command list 的
+    // timestamp 实现与 IRHIDevice::SupportsGpuTimestamps()。
+    return CreateCommandListGpuTimestampProfiler();
 }
 
 } // namespace RHI

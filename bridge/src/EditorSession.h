@@ -26,6 +26,8 @@
 #include <Engine/Editor/EditorCameraInput.h>
 
 #include <Engine/Core/Content/ContentAsset.h>
+#include <Engine/Core/Content/ProjectPaths.h>
+#include <Engine/Core/Content/RevisionStore.h>
 #include <Engine/Core/Content/SceneSerializerV1.h>
 #include <Engine/Core/Scene/Scene.h>
 #include <Engine/Core/RenderResources/TextureManager.h>
@@ -34,6 +36,7 @@
 
 namespace Engine {
 class Application;
+class PhysicsRuntime2D;
 }
 
 namespace editor_bridge {
@@ -49,8 +52,16 @@ public:
     EditorSession(const EditorSession&) = delete;
     EditorSession& operator=(const EditorSession&) = delete;
 
+    /// 打开工程（legacy 入口）：manifest/scene 相对进程 CWD 解析。
+    /// M1-A 起该入口在边界处把 CWD 一次性捕获为显式 legacy root；
+    /// 新调用方应使用 OpenProjectRooted（K4.1 禁止从 CWD 推断工程根）。
     bool OpenProject(const std::string& manifestPath,
                      const std::string& scenePath);
+    /// 打开工程（M1-A 规范入口）：工程根显式提供且固定；
+    /// manifest/scene 是工程相对路径（根内绝对路径也接受，用于兼容读）。
+    bool OpenProjectRooted(const std::string& projectRoot,
+                           const std::string& manifestPath,
+                           const std::string& scenePath);
     bool SaveProject();
 
     int32_t GetEntityCount() const;
@@ -101,6 +112,9 @@ public:
     int32_t ImportAsset(const std::string& path, int32_t type);
     /// 重命名资产（GUID 不变 → 场景绑定稳定）。物理文件改名 + 注册表更新。
     bool RenameAsset(int32_t assetIndex, const std::string& newName);
+    /// M1-E：显式 reattach —— 用指定缺失 GUID 导入源文件（K3.5）。
+    bool ReattachAsset(const std::string& missingGuidHex,
+                       const std::string& sourcePath, int32_t type);
 
     bool ScriptRead(int32_t assetIndex, std::string* out);
     bool ScriptSave(int32_t assetIndex, const std::string& text);
@@ -194,6 +208,8 @@ public:
     bool IsGraphicsReady() const { return m_Gfx && m_Gfx->IsReady(); }
     bool IsCreationThread() const { return m_CreationThreadId == std::this_thread::get_id(); }
     bool IsDirty() const { return m_Dirty; }
+    /// K2.7：提交状态或身份完整性不可判定时置位，保存与 Play 被拒绝。
+    bool IsRecoveryRequired() const { return m_RecoveryRequired; }
 
     void SetEventCallback(EventFn cb);
     const std::string& GetLastError() const { return m_LastError; }
@@ -236,8 +252,20 @@ private:
     bool Fail(const std::string& msg);
     /// 置 dirty（任何编辑路径统一入口）
     void MarkDirty();
-    /// 把 registry path 解析为可读写文件路径：相对路径锚定到 manifest 目录
-    std::string ResolveContentPath(const std::string& path) const;
+    /// 共用打开实现：root 已在边界显式给出（legacy 入口传 CWD）。
+    bool OpenProjectInternal(const std::string& projectRoot,
+                             const std::string& manifestPath,
+                             const std::string& scenePath);
+    /// 把 registry path 解析为可读写文件路径：锚定 m_Root（M1-A，无 CWD）。
+    Engine::Content::PathResolution ResolveContentPath(
+        const std::string& path) const;
+    /// 同上，失败返回空串（InstantiateScene 的可选解析器契约）。
+    std::string ResolveAssetPath(const std::string& stored) const;
+    /// K2.4：重试已提交但清理未完成的旧源删除（幂等）。
+    void RetryPendingCleanup();
+    /// M1-E：统一导入服务（工程内登记 / 外部源拷贝 / 显式 reattach 共用）。
+    int32_t ImportAssetInternal(const std::string& input, int32_t type,
+                                const std::string& reattachHex);
 
     std::thread::id m_CreationThreadId = std::this_thread::get_id();
     std::unique_ptr<Engine::OpenGLGraphicsFactory> m_OwnedGfx;
@@ -245,6 +273,10 @@ private:
     Engine::Application* m_Application = nullptr;
     Engine::TextureManager m_TexMgr;
     Engine::Content::ContentRegistry m_Reg;
+    /// 显式工程根（M1-A）：打开成功后固定；所有内容路径解析的唯一锚点。
+    Engine::Content::ProjectRoot m_Root;
+    /// M1-D：K1 单一提交点（current/Revision）。
+    Engine::Content::RevisionStore m_Revisions;
     std::shared_ptr<Engine::Scene> m_EditScene;
     std::vector<Engine::Content::EntityContentBinding> m_Bindings;
     /// 会话内稳定资产序（只追加 GUID；索引语义 = 此 vector 下标）
@@ -261,6 +293,7 @@ private:
     std::string m_RuntimeError;
     Engine::Scripting::ScriptInstance m_Inst;   ///< 运行态导演脚本实例
     std::shared_ptr<Engine::Scene> m_Runtime;    ///< 运行态场景（编辑场景克隆）
+    std::unique_ptr<Engine::PhysicsRuntime2D> m_Physics; ///< 运行态 2D 物理（Play 生命周期）
     std::string m_RuntimeScriptPath;             ///< 当前运行脚本的绝对路径
     std::atomic<bool> m_Playing{false};
     std::atomic<bool> m_RuntimeScenePresent{false};
@@ -270,6 +303,10 @@ private:
     std::atomic<uint32_t> m_StopCount{0};
     RuntimeStats m_LastStats;
     bool m_Dirty = false;
+    /// K2.4：提交成功但旧源清理失败的路径；重试幂等，成功即移除。
+    std::vector<std::string> m_PendingCleanup;
+    /// K2.7：提交状态不可证明时阻止保存与 Play（M1-D 将提供显式恢复入口）。
+    bool m_RecoveryRequired = false;
 
     // ── Viewport state（Phase 7）──
     int32_t  m_ViewportWidth = 0;        ///< Bridge 侧缓存的视口宽度（用于 GetViewportSize 快速查询）

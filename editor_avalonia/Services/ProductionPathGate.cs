@@ -43,6 +43,7 @@ public static class ProductionPathGate
             PP_06_RenameHandler(window, host, vm, log);
             PP_07_TransformHandler(window, host, vm, log);
             PP_08_CameraComponentHandlers(window, host, vm, log);
+            PP_08b_RigidBodyComponentHandlers(window, host, vm, log);
             await PP_09_AssignSpritePendingEditAsync(window, host, vm, log);
             await PP_10_AssignScriptHandlerAsync(window, host, vm, log);
             await PP_11_PlayReloadStopTransportAsync(window, host, vm, log);
@@ -295,6 +296,50 @@ public static class ProductionPathGate
         Check(N<Button>(window, "AddCameraBtn").IsEnabled,
             "the camera buttons follow HasCamera after the component was removed");
         log("[PP-08] camera component handlers work; deselect cannot clobber the VM selection");
+    }
+
+    // PP-08b：RigidBody 组件三按钮、默认值、合法写回与非法输入拒绝。
+    private static void PP_08b_RigidBodyComponentHandlers(
+        MainWindow window, EditorHostService host, MainViewModel vm, Action<string> log)
+    {
+        int idx = vm.SelectedEntity!.Index;
+        Click(N<Button>(window, "AddRigidBodyBtn"));
+        Check(vm.HasRigidBody, "the inspector reveals the rigidbody block after Add RigidBody");
+        Check(host.HasComponent(idx, "RigidBody"), "the session really holds the RigidBody component");
+        Check(vm.RigidBodyMotionType == "Dynamic",
+            "the rigidbody fields are back-filled with the contract default");
+
+        vm.RigidBodyMotionType = "Kinematic";
+        vm.RigidBodyLinearDamping = "0.25";
+        vm.RigidBodyAngularDamping = "0.5";
+        Click(N<Button>(window, "ApplyRigidBodyBtn"));
+        Check(host.GetComponentProperty(idx, "RigidBody", "motionType") == "Kinematic",
+            "Apply RigidBody wrote motionType through the host");
+        Check(host.GetComponentProperty(idx, "RigidBody", "linearDamping") == "0.25",
+            "Apply RigidBody wrote linearDamping through the host");
+        Check(vm.RigidBodyMotionType == "Kinematic",
+            "the rigidbody fields are back-filled from the session");
+
+        int consoleBefore = vm.ConsoleLines.Count;
+        vm.RigidBodyLinearDamping = "-1";
+        Click(N<Button>(window, "ApplyRigidBodyBtn"));
+        Check(host.GetComponentProperty(idx, "RigidBody", "linearDamping") == "0.25",
+            "invalid negative damping is rejected without writing");
+        Check(LogSince(vm, consoleBefore).Contains("RIGIDBODY APPLY FAILED"),
+            "invalid damping produces a visible diagnostic");
+
+        consoleBefore = vm.ConsoleLines.Count;
+        vm.RigidBodyMotionType = "Flying";
+        Click(N<Button>(window, "ApplyRigidBodyBtn"));
+        Check(host.GetComponentProperty(idx, "RigidBody", "motionType") == "Kinematic",
+            "invalid motionType is rejected without writing");
+        Check(LogSince(vm, consoleBefore).Contains("RIGIDBODY APPLY FAILED"),
+            "invalid motionType produces a visible diagnostic");
+
+        Click(N<Button>(window, "RemoveRigidBodyBtn"));
+        Check(!vm.HasRigidBody && !host.HasComponent(idx, "RigidBody"),
+            "Remove RigidBody removed the component and the inspector agrees");
+        log("[PP-08b] rigidbody inspector add/edit/invalid/remove handlers work");
     }
 
     // PP-09：Asset Browser 选择 + Assign Sprite 的 accepted ≠ executed 生产证据。

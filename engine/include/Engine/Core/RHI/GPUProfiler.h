@@ -30,6 +30,10 @@ namespace RHI {
 
     // ============================================================
     // GPUProfiler — 高级 GPU 分析器
+    //
+    // @deprecated T-4：本类为历史 stub（EndFrame 填 0.5ms 占位值），
+    // 已无生产调用点。真实 GPU 计时请使用 IGpuTimestampProfiler
+    // （GpuTimestampProfiler.h），GL46/Vulkan 共用。
     // ============================================================
     class GPUProfiler {
     public:

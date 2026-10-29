@@ -229,6 +229,12 @@ virtual std::shared_ptr<IRHIPipelineState> CreateGraphicsPSO(const GraphicsPSODe
         /** 获取设备名称（"OpenGL 4.6", "Vulkan 1.3" 等） */
         virtual const char* GetDeviceName() const = 0;
 
+        /**
+         * 设备是否支持 GPU 时间戳查询。
+         * 默认 false；后端必须显式覆盖并做驱动/队列能力检查。
+         */
+        virtual bool SupportsGpuTimestamps() const { return false; }
+
         /** 获取显存使用统计 */
         virtual MemoryStats GetMemoryStats() const {
             return m_MemoryAllocator ? m_MemoryAllocator->GetStats() : MemoryStats{};

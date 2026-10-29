@@ -216,6 +216,8 @@ class GameObject : public IRenderable {
         void SetActive(bool active) { m_Active = active; }
         bool IsActive() const noexcept { return m_Active; }
         bool IsActiveInHierarchy() const;
+        /// 析构期间为 true（供 Adapter 在组件 detach 回调中避免重建 body）。
+        bool IsBeingDestroyed() const noexcept { return m_BeingDestroyed; }
 
         // ── 可见性层级（Layer 系统，对应 ViewportConfig::VisibilityMask） ──
         void SetLayer(uint32 layer) { m_Layer = layer; }
@@ -249,6 +251,7 @@ class GameObject : public IRenderable {
         uint32 m_Layer = 0;          ///< 渲染层级（0=Default, 1=UI, 2=Effects...）
         uint32 m_LayerMask = 0xFFFFFFFF; ///< 自身可见性掩码（默认全可见）
         bool m_Active = true;
+        bool m_BeingDestroyed = false;
 
         GameObject* m_Parent = nullptr;
         std::vector<std::shared_ptr<GameObject>> m_Children;

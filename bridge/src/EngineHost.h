@@ -49,6 +49,11 @@ public:
     int32_t OpenProject(const char* manifestPath,
                         const char* scenePath,
                         RuntimeResult* result);
+    /// M1-A：显式 ProjectRoot 的打开入口（不做 CWD 回退）。
+    int32_t OpenProjectRooted(const char* projectRoot,
+                              const char* manifestPath,
+                              const char* scenePath,
+                              RuntimeResult* result);
     int32_t Play(int32_t assetIndex, RuntimeResult* result);
     int32_t Reload(RuntimeResult* result);
     int32_t Stop(RuntimeResult* result);
@@ -200,6 +205,10 @@ private:
     void PublishSessionProofState() noexcept;
     bool EnsureRuntimeSession();
     int32_t MakeRuntimeContextCurrent();
+    int32_t SubmitOpenProject(const char* projectRoot,
+                              const char* manifestPath,
+                              const char* scenePath,
+                              RuntimeResult* result);
     int32_t Submit(std::function<int32_t()> operation,
                    RuntimeResult* result,
                    int32_t stage);

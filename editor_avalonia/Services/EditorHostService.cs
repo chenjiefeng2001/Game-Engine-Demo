@@ -123,6 +123,8 @@ public sealed class HostCapabilityNotAvailableException : NotSupportedException
 internal interface IEditorOps
 {
     bool OpenProject(string manifestPath, string scenePath);
+    /// <summary>M1-A：显式 ProjectRoot 的打开入口（不依赖进程 CWD）。</summary>
+    bool OpenProjectRooted(string projectRoot, string manifestPath, string scenePath);
     bool SaveProject();
     (int entities, int assets) GetCounts();
     int CreateEntity(string? name);
@@ -370,6 +372,13 @@ public sealed class EditorHostService : IDisposable
 
     /// <summary>Starting → Ready 的唯一入口；Stopping/Faulted 态明确拒绝。</summary>
     public bool OpenProject(string manifestPath, string scenePath)
+        => OpenProjectCore(ops => ops.OpenProject(manifestPath, scenePath));
+
+    /// <summary>M1-A 规范入口：工程根显式给出，manifest/scene 为工程相对路径。</summary>
+    public bool OpenProjectRooted(string projectRoot, string manifestPath, string scenePath)
+        => OpenProjectCore(ops => ops.OpenProjectRooted(projectRoot, manifestPath, scenePath));
+
+    private bool OpenProjectCore(Func<IEditorOps, bool> open)
     {
         ThrowIfDisposed();
         if (State == HostRuntimeState.Stopping)
@@ -379,7 +388,7 @@ public sealed class EditorHostService : IDisposable
                 "host runtime is faulted; terminal Dispose is required before reopening a project");
         // F2-04：OpenProject 保留"隐含 bootstrap"的调用时机，但实现收敛到唯一命名操作。
         EnsureRuntime();
-        var opened = Ops().OpenProject(manifestPath, scenePath);
+        var opened = open(Ops());
         IsOpen = opened;
         if (opened)
         {
@@ -957,6 +966,15 @@ internal sealed class EngineHostChannel : IEditorOps, IDisposable
         return true;
     }
 
+    public bool OpenProjectRooted(string projectRoot, string manifestPath, string scenePath)
+    {
+        var result = default(EditorBridgeApi.RuntimeResult);
+        int code = EditorBridgeApi.EngineHost_OpenProjectRooted(_host, projectRoot, manifestPath, scenePath, ref result);
+        if (code != 0) throw Failure("open project (rooted)", result);
+        BumpGeneration();
+        return true;
+    }
+
     public bool SaveProject() => Dispatch(EditorBridgeApi.EngineHostOpSaveProject) == 0;
     public (int entities, int assets) GetCounts()
     {
@@ -1322,6 +1340,7 @@ internal sealed class LegacySessionChannel : IEditorOps
         : throw new InvalidOperationException("native session not created");
 
     public bool OpenProject(string manifestPath, string scenePath) => EditorBridgeApi.EditorSession_OpenProject(Require(), manifestPath, scenePath);
+    public bool OpenProjectRooted(string projectRoot, string manifestPath, string scenePath) => EditorBridgeApi.EditorSession_OpenProjectRooted(Require(), projectRoot, manifestPath, scenePath);
     public bool SaveProject() => EditorBridgeApi.EditorSession_SaveProject(Require());
     public (int entities, int assets) GetCounts() => (EditorBridgeApi.EditorSession_GetEntityCount(Require()), EditorBridgeApi.EditorSession_GetAssetCount(Require()));
     public int CreateEntity(string? name) => EditorBridgeApi.EditorSession_CreateEntity(Require(), name);

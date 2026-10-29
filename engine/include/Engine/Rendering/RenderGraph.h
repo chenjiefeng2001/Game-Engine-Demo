@@ -4,7 +4,7 @@
 #include "Engine/Core/RHI/RHITypes.h"
 #include "Engine/Core/RHI/RenderPacket.h"
 #include "Engine/Core/RHI/PSODesc.h"
-#include "Engine/Core/RHI/GPUProfiler.h"
+#include "Engine/Core/RHI/GpuTimestampProfiler.h"
 #include "Engine/Core/StringID.h"
 #include "Engine/Core/TaskGraph.h"
 #include "Engine/Core/JobSystem.h"
@@ -16,6 +16,14 @@
 #include <queue>
 
 namespace Engine { namespace Rendering {
+
+    /**
+     * T-4：RenderGraph 的生产 GPU 时间段插桩入口。
+     * profiler 由调用方持有；Execute 只负责 BeginFrame/BeginSegment/EndSegment，
+     * Resolve 必须在 GPU 完成对应提交后由调用方执行。
+     */
+    void SetRenderGraphGpuTimestampProfiler(RHI::IGpuTimestampProfiler* profiler);
+    RHI::IGpuTimestampProfiler* GetRenderGraphGpuTimestampProfiler();
 
     // ============================================================
     // RGResource — RenderGraph 内的虚拟资源

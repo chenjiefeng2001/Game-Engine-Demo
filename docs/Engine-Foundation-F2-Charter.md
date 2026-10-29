@@ -6,6 +6,14 @@
 > 状态：**F2-0 已完成（Baseline Freeze）；F2-A 已完成（Collider Contract，声明式上卷）。**
 > 下一步：**F2-B Physics Binding**（才写 Physics Adapter）。
 
+> **2026-10-28 路线裁决注记（errata，原文保留）**
+> 本文 §2 的 F2-C~F2-F 编号与 `Engine-Foundation-Phase-Plan.md` 的权威 F0–F5 编号冲突。
+> 权威映射、原文保留方式与开放项见 `docs/Roadmap-Decision-Record-2026-10-28.md`。
+> 自该记录起：**F2-C = RigidBody Contract**；Collider Serialization 另立 `F2-S1`；
+> 本文的 F2-D/F2-E/F2-F 不再作为阶段编号使用。本文正文不删改。
+> 本文头部「下一步：F2-B」为 2026-08-28 历史状态；F2-B 已由
+> `Engine-Foundation-F2B-Closure.md` 冻结。
+
 ---
 
 ## 1. F2 的核心问题（唯一裁决）

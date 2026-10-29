@@ -206,6 +206,32 @@ public partial class MainWindow : Window
                 Environment.Exit(code);
             };
 
+        // T-1 Managed UI Acceptance A：RigidBody Inspector + 保存/重开/Play/Stop。
+        if (Environment.CommandLine.Contains("--t1ui"))
+            Opened += async (_, _) =>
+            {
+                int code = await T1ManagedAcceptanceGate.RunAsync(this, _host, Vm, Log);
+                Log($"t1ui exit={code}");
+                Environment.Exit(code);
+            };
+
+        // RF-4 后续（#141）：只打开 scratch 工程的 host harness，供独立 UIA 测试
+        // 通过真实 Import 按钮 + Windows 文件选择器驱动导入。成功时保持窗口运行；
+        // 不提供任何导入旁路，也不改变生产导入路径。
+        if (Environment.CommandLine.Contains(M1ImportHostBootstrap.Flag))
+        {
+            var m1Root = M1ImportHostBootstrap.FindRoot(Environment.GetCommandLineArgs());
+            Opened += (_, _) =>
+            {
+                int code = M1ImportHostBootstrap.Run(this, Vm, Log, m1Root);
+                if (code != 0)
+                {
+                    Log($"m1import-host exit={code}");
+                    Environment.Exit(code);
+                }
+            };
+        }
+
         // 阶段 A/A2：F-2 bootstrap trigger contract 证据。
         // 场景由进程启动时已存在的 EDITOR_BRIDGE_FAIL_* 注入决定（每个注入需独立进程）。
         if (Environment.CommandLine.Contains("--boot"))
@@ -328,11 +354,15 @@ public partial class MainWindow : Window
         {
             var root = FindRepoRoot();
             if (root is null) { Vm.LogToConsole("repo root not found"); return; }
-            // manifest 内相对路径（assets/gp01/...）按进程 CWD 解析（GP01 运行时语义），
-            // 宿主把 CWD 定向到工程根，使脚本/贴图读写落到真实内容。
+            // M1-A：工程根显式传给 native（manifest/scene 为工程相对路径），
+            // 打开链路不再依赖进程 CWD。
+            // 这里的 SetCurrentDirectory 只服务**诊断 gate** 的 legacy
+            // `host.OpenProject`（其语义以 CWD 为 legacy root）；
+            // 生产打开与导入都以显式工程根为准，不读取 CWD。
             Directory.SetCurrentDirectory(root.FullName);
-            Vm.OpenProject(Path.Combine(root.FullName, "assets", "gp01", "manifest.json"),
-                           Path.Combine(root.FullName, "assets", "gp01", "Main.scene"));
+            Vm.OpenProjectRooted(root.FullName,
+                                 "assets/gp01/manifest.json",
+                                 "assets/gp01/Main.scene");
             // Phase 7-B: Enable engine EditorCamera external input mode
             if (_host.SupportsViewport) _host.SetCameraExternalInput(true);
             SyncStatusBar();
@@ -440,8 +470,8 @@ public partial class MainWindow : Window
     private async void OnImportAsset(object? sender, RoutedEventArgs e)
     {
         if (!Vm.IsOpen) { Vm.LogToConsole("import ignored: no project"); return; }
-        // C3：File Dialog → Import → ContentRegistry → 自动刷新。
-        // 选文件后拷入工程 assets 目录再注册（ImportAsset 要求工程内相对路径）。
+        // M1-E：目标目录、拷贝、冲突、GUID 与 revision 提交统一由 native 导入服务处理；
+        // UI 只提交源文件路径（绝对路径），不再自行拼接/拷贝到工程目录。
         var files = await StorageProvider.OpenFilePickerAsync(new FilePickerOpenOptions
         {
             Title = "Import asset",
@@ -459,21 +489,7 @@ public partial class MainWindow : Window
         var src = files[0].Path.LocalPath;
         string ext = System.IO.Path.GetExtension(src).ToLowerInvariant();
         int type = ext == ".lua" ? 1 : 0;
-        string name = System.IO.Path.GetFileName(src);
-        var dst = System.IO.Path.Combine(Directory.GetCurrentDirectory(),
-            "assets", "gp01", ext == ".lua" ? "scripts" : "tex", name);
-        try
-        {
-            Directory.CreateDirectory(System.IO.Path.GetDirectoryName(dst)!);
-            System.IO.File.Copy(src, dst, overwrite: true);
-        }
-        catch (Exception ex)
-        {
-            Vm.LogToConsole("IMPORT COPY FAILED: " + ex.Message);
-            return;
-        }
-        Vm.ImportAssetFromPath(System.IO.Path.GetRelativePath(Directory.GetCurrentDirectory(), dst)
-            .Replace('\\', '/'), type);
+        Vm.ImportAssetFromPath(src, type);
     }
 
     private void OnRenameAsset(object? sender, RoutedEventArgs e)
@@ -497,6 +513,11 @@ public partial class MainWindow : Window
     private void OnAddCamera(object? sender, RoutedEventArgs e) => Vm.AddCameraToSelected();
     private void OnRemoveCamera(object? sender, RoutedEventArgs e) => Vm.RemoveCameraFromSelected();
     private void OnApplyCamera(object? sender, RoutedEventArgs e) => Vm.ApplyCamera();
+
+    // ── T-1-E (RigidBody Inspector) ──
+    private void OnAddRigidBody(object? sender, RoutedEventArgs e) => Vm.AddRigidBodyToSelected();
+    private void OnRemoveRigidBody(object? sender, RoutedEventArgs e) => Vm.RemoveRigidBodyFromSelected();
+    private void OnApplyRigidBody(object? sender, RoutedEventArgs e) => Vm.ApplyRigidBody();
 
     private void OnSaveScript(object? sender, RoutedEventArgs e)
     {

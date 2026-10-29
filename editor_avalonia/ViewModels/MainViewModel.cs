@@ -318,6 +318,85 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
         RefreshDirtyState();
     }
 
+    // ── T-1-E：RigidBody Inspector（复用通用组件通道，不接触物理后端）──
+    private bool _hasRigidBody;
+    public bool HasRigidBody
+    {
+        get => _hasRigidBody;
+        private set => Set(ref _hasRigidBody, value);
+    }
+    public string[] RigidBodyMotionTypes { get; } = { "Static", "Kinematic", "Dynamic" };
+    private string _rigidBodyMotionType = "Dynamic";
+    public string RigidBodyMotionType { get => _rigidBodyMotionType; set => Set(ref _rigidBodyMotionType, value); }
+    private string _rigidBodyLinearDamping = "0";
+    public string RigidBodyLinearDamping { get => _rigidBodyLinearDamping; set => Set(ref _rigidBodyLinearDamping, value); }
+    private string _rigidBodyAngularDamping = "0";
+    public string RigidBodyAngularDamping { get => _rigidBodyAngularDamping; set => Set(ref _rigidBodyAngularDamping, value); }
+
+    public bool AddRigidBodyToSelected()
+    {
+        if (_selectedEntity is null) { LogToConsole("add rigidbody ignored: no selection"); return false; }
+        if (!_host.AddComponent(_selectedEntity.Index, "RigidBody"))
+        {
+            LogToConsole("ADD RIGIDBODY FAILED: " + _host.GetLastError());
+            return false;
+        }
+        LogToConsole($"rigidbody added: {_selectedEntity.Name}");
+        RefreshInspectorFromSession();
+        RefreshDirtyState();
+        return true;
+    }
+
+    public bool RemoveRigidBodyFromSelected()
+    {
+        if (_selectedEntity is null) { LogToConsole("remove rigidbody ignored: no selection"); return false; }
+        if (!_host.RemoveComponent(_selectedEntity.Index, "RigidBody"))
+        {
+            LogToConsole("REMOVE RIGIDBODY FAILED: " + _host.GetLastError());
+            return false;
+        }
+        LogToConsole($"rigidbody removed: {_selectedEntity.Name}");
+        RefreshInspectorFromSession();
+        RefreshDirtyState();
+        return true;
+    }
+
+    /// 应用 RigidBody 三字段；非法输入在 UI 侧拒绝，不触发部分写入。
+    public bool ApplyRigidBody()
+    {
+        if (_selectedEntity is null || !HasRigidBody) return false;
+        if (Array.IndexOf(RigidBodyMotionTypes, RigidBodyMotionType) < 0)
+        {
+            LogToConsole("RIGIDBODY APPLY FAILED: motionType must be Static/Kinematic/Dynamic");
+            return false;
+        }
+        if (!TryParse(RigidBodyLinearDamping, out var linear)
+            || !float.IsFinite(linear) || linear < 0.0f)
+        {
+            LogToConsole("RIGIDBODY APPLY FAILED: linearDamping must be finite and >= 0");
+            return false;
+        }
+        if (!TryParse(RigidBodyAngularDamping, out var angular)
+            || !float.IsFinite(angular) || angular < 0.0f)
+        {
+            LogToConsole("RIGIDBODY APPLY FAILED: angularDamping must be finite and >= 0");
+            return false;
+        }
+
+        var idx = _selectedEntity.Index;
+        if (!_host.SetComponentProperty(idx, "RigidBody", "motionType", RigidBodyMotionType)
+            || !_host.SetComponentProperty(idx, "RigidBody", "linearDamping", RigidBodyLinearDamping)
+            || !_host.SetComponentProperty(idx, "RigidBody", "angularDamping", RigidBodyAngularDamping))
+        {
+            LogToConsole("RIGIDBODY APPLY FAILED: " + _host.GetLastError());
+            return false;
+        }
+        LogToConsole($"rigidbody applied: {_selectedEntity.Name} ({RigidBodyMotionType})");
+        RefreshInspectorFromSession();
+        RefreshDirtyState();
+        return true;
+    }
+
     // ── Viewport（Phase 7）──
 
     /// 获取视口 FBO 颜色纹理的 OpenGL 句柄（用于 Avalonia 纹理互操作）
@@ -563,6 +642,7 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
         RebuildFilteredEntities();
         RebuildFilteredAssets();
         HasCamera = false;
+        HasRigidBody = false;
         IsRunning = false;
         StatusText = $"no project loaded ({reason})";
         LogToConsole($"project projection cleared: {reason} (dropped {dropped} local entities)");
@@ -571,10 +651,19 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
 
     // ── 会话生命周期（P1-B）────────────────────────────────
     public bool OpenProject(string manifestPath, string scenePath)
+        => OpenProjectCore("open project",
+                           () => _host.OpenProject(manifestPath, scenePath));
+
+    /// <summary>M1-A：显式 ProjectRoot 打开（不依赖进程 CWD）。</summary>
+    public bool OpenProjectRooted(string projectRoot, string manifestPath, string scenePath)
+        => OpenProjectCore("open project (rooted)",
+                           () => _host.OpenProjectRooted(projectRoot, manifestPath, scenePath));
+
+    private bool OpenProjectCore(string operation, Func<bool> open)
     {
         // A2/F2-05：bootstrap / open 的 native typed failure 在此转成可观测状态，
         // 绝不让异常逃进 XAML handler（否则会被反射派发包成 TargetInvocationException 并丢失诊断）。
-        if (!TryHost("open project", () => _host.OpenProject(manifestPath, scenePath), out bool opened))
+        if (!TryHost(operation, open, out bool opened))
         {
             ReconcileWithHostState("open failed");   // A3/D1：消除"旧集合 + host 已关闭"分叉
             return false;
@@ -623,6 +712,7 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
         ScriptError = "";
         IsRunning = false;
         HasCamera = false;
+        HasRigidBody = false;
         Raise(nameof(HasScriptOpen));
         IsDirty = false;
         StatusText = "no project loaded";
@@ -772,8 +862,9 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
         return true;
     }
 
-    // ── P3-C：资产导入（File Dialog → ContentRegistry → 自动刷新）──
-    /// path 为相对进程 CWD 的工程路径；type 0=Texture 1=Script。
+    // ── M1-E：资产导入（统一 native 导入服务 → RevisionStore）──
+    /// path 为源文件绝对路径（或工程内相对路径，供无头/门禁使用）；
+    /// 拷贝、目标目录、冲突、GUID 与 revision 提交由 native 负责。type 0=Texture 1=Script。
     public bool ImportAssetFromPath(string path, int type)
     {
         if (!IsOpen)
@@ -1499,12 +1590,14 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
             SelectedSprite = "(none)";
             SelectedScript = "(none)";
             RefreshCamera(null);
+            RefreshRigidBody(null);
         }
         else if (!TryHost("refresh inspector",
                      () => _host.GetEntityPosition(_selectedEntity.Index), out var p))
         {
             // runtime 不可用：保留上一次回填值，不伪造新状态。
             RefreshCamera(null);
+            RefreshRigidBody(null);
         }
         else
         {
@@ -1515,6 +1608,7 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
             SelectedScript = _host.GetEntityScript(_selectedEntity.Index);
             if (SelectedScript.Length == 0) SelectedScript = "(none)";
             RefreshCamera(_selectedEntity.Index);
+            RefreshRigidBody(_selectedEntity.Index);
         }
     }
 
@@ -1539,6 +1633,25 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
         CameraViewport = vp.Length == 0 ? "0 0 1280 720" : vp;
         var b = _host.GetComponentProperty(idx, "Camera", "bounds");
         CameraBounds = b.Length == 0 ? "" : b;
+    }
+
+    /// T-1-E：从会话读取 RigidBody 反射属性（存在则回填 Inspector 字段）
+    private void RefreshRigidBody(int? entityIndex)
+    {
+        if (entityIndex is not int idx
+            || !TryHost("refresh rigidbody", () => _host.HasComponent(idx, "RigidBody"), out bool has)
+            || !has)
+        {
+            HasRigidBody = false;
+            return;
+        }
+        HasRigidBody = true;
+        var motion = _host.GetComponentProperty(idx, "RigidBody", "motionType");
+        RigidBodyMotionType = motion.Length == 0 ? "Dynamic" : motion;
+        var linear = _host.GetComponentProperty(idx, "RigidBody", "linearDamping");
+        RigidBodyLinearDamping = linear.Length == 0 ? "0" : linear;
+        var angular = _host.GetComponentProperty(idx, "RigidBody", "angularDamping");
+        RigidBodyAngularDamping = angular.Length == 0 ? "0" : angular;
     }
 
     private void RefreshDirtyState()

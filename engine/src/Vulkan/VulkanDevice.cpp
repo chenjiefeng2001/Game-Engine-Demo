@@ -1054,6 +1054,23 @@ tex->SetVkImageView(view);
 
 void VulkanDevice::WaitIdle() { if (m_Impl->device) vkDeviceWaitIdle(m_Impl->device); }
 const char* VulkanDevice::GetDeviceName() const { return m_Impl->deviceName.c_str(); }
+
+bool VulkanDevice::SupportsGpuTimestamps() const {
+    if (!m_Impl || m_Impl->physicalDevice == VK_NULL_HANDLE ||
+        m_Impl->graphicsQueueIndex == UINT32_MAX)
+        return false;
+
+    uint32_t qCnt = 0;
+    vkGetPhysicalDeviceQueueFamilyProperties(m_Impl->physicalDevice, &qCnt, nullptr);
+    if (m_Impl->graphicsQueueIndex >= qCnt) return false;
+    std::vector<VkQueueFamilyProperties> qProps(qCnt);
+    vkGetPhysicalDeviceQueueFamilyProperties(m_Impl->physicalDevice, &qCnt, qProps.data());
+    if (qProps[m_Impl->graphicsQueueIndex].timestampValidBits == 0) return false;
+
+    VkPhysicalDeviceProperties props{};
+    vkGetPhysicalDeviceProperties(m_Impl->physicalDevice, &props);
+    return props.limits.timestampPeriod > 0.0f;
+}
 VkDevice VulkanDevice::GetVkDevice() const noexcept { return m_Impl->device; }
 VmaAllocator VulkanDevice::GetVmaAllocator() const noexcept { return m_Impl->vmaAllocator; }
 VkPhysicalDevice VulkanDevice::GetVkPhysicalDevice() const noexcept { return m_Impl->physicalDevice; }

@@ -7,6 +7,7 @@
 #include "EngineHost.h"
 #include "Engine/Platform/GlfwLifetime.h"
 #include "EditorSession.h"
+#include <Engine/Core/Content/AtomicFile.h>
 
 #include <cstdio>
 #include <cstdlib>
@@ -225,6 +226,16 @@ EDITOR_BRIDGE_API int32_t EditorSession_OpenProject(EditorSessionHandle h,
         }
         if (!h || !manifestPath || !scenePath) return 0;
         return S(h)->OpenProject(manifestPath, scenePath) ? 1 : 0;
+    });
+}
+
+EDITOR_BRIDGE_API int32_t EditorSession_OpenProjectRooted(
+    EditorSessionHandle h, const char* projectRoot, const char* manifestPath,
+    const char* scenePath) {
+    return LegacyInt32([&]() -> int32_t {
+        if (!h || !projectRoot || !manifestPath || !scenePath) return 0;
+        return S(h)->OpenProjectRooted(projectRoot, manifestPath, scenePath) ? 1
+                                                                           : 0;
     });
 }
 
@@ -454,6 +465,15 @@ EDITOR_BRIDGE_API int32_t EditorSession_ImportAsset(EditorSessionHandle h,
     return LegacyInt32([&]() -> int32_t {
         if (!h || !path) return -1;
         return S(h)->ImportAsset(path, type);
+    });
+}
+
+EDITOR_BRIDGE_API int32_t EditorSession_ReattachAsset(
+    EditorSessionHandle h, const char* missingGuid, const char* sourcePath,
+    int32_t type) {
+    return LegacyInt32([&]() -> int32_t {
+        if (!h || !missingGuid || !sourcePath) return -1;
+        return S(h)->ReattachAsset(missingGuid, sourcePath, type) ? 0 : -1;
     });
 }
 
@@ -756,6 +776,45 @@ EDITOR_BRIDGE_API void EditorSession_SetEventCallback(
     });
 }
 
+EDITOR_BRIDGE_API void EditorSession_SetRevisionFaultHookForTesting(
+    EditorFaultPointCallback cb, void* userData) {
+    if (!cb) {
+        Engine::Content::SetRevisionFaultHookForTesting({});
+        return;
+    }
+    Engine::Content::SetRevisionFaultHookForTesting(
+        [cb, userData](Engine::Content::RevisionFaultPoint point) {
+            cb(static_cast<int32_t>(point), userData);
+        });
+}
+
+EDITOR_BRIDGE_API void EditorSession_SetContentFaultHookForTesting(
+    EditorFaultPointCallback cb, void* userData) {
+    if (!cb) {
+        Engine::Content::SetContentFaultHookForTesting({});
+        return;
+    }
+    Engine::Content::SetContentFaultHookForTesting(
+        [cb, userData](Engine::Content::ContentFaultPoint point) {
+            cb(static_cast<int32_t>(point), userData);
+        });
+}
+
+EDITOR_BRIDGE_API void EditorSession_SetAtomicFaultHookForTesting(
+    EditorAtomicFaultCallback cb, void* userData) {
+    if (!cb) {
+        Engine::Content::SetAtomicFaultHookForTesting({});
+        return;
+    }
+    Engine::Content::SetAtomicFaultHookForTesting(
+        [cb, userData](Engine::Content::AtomicFaultPoint point,
+                       const std::string& tempPath,
+                       const std::string& targetPath) {
+            return cb(static_cast<int32_t>(point), tempPath.c_str(),
+                      targetPath.c_str(), userData) != 0;
+        });
+}
+
 EDITOR_BRIDGE_API int32_t EditorSession_GetLastError(EditorSessionHandle h,
                                                      char* out,
                                                      int32_t cap) {
@@ -842,6 +901,24 @@ EDITOR_BRIDGE_API int32_t EngineHost_OpenProject(EngineHostHandle h,
     }
     return RuntimeGuard(H(h), result, ENGINE_HOST_STAGE_OPEN_PROJECT, [&]() {
         return H(h)->OpenProject(manifestPath, scenePath, result);
+    });
+}
+
+EDITOR_BRIDGE_API int32_t EngineHost_OpenProjectRooted(EngineHostHandle h,
+                                                       const char* projectRoot,
+                                                       const char* manifestPath,
+                                                       const char* scenePath,
+                                                       RuntimeResult* result) {
+    if (!h || !projectRoot || !manifestPath || !scenePath || !result) {
+        return HostFailure(h,
+                           result,
+                           ENGINE_HOST_STATUS_SESSION_FAILED,
+                           ENGINE_HOST_STAGE_OPEN_PROJECT,
+                           "invalid host, project root or project path");
+    }
+    return RuntimeGuard(H(h), result, ENGINE_HOST_STAGE_OPEN_PROJECT, [&]() {
+        return H(h)->OpenProjectRooted(projectRoot, manifestPath, scenePath,
+                                       result);
     });
 }
 

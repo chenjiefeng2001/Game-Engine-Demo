@@ -20,7 +20,7 @@
  */
 
 #include "Engine/Core/Resources/ResourceGUID.h"
-#include "Engine/Core/Resources/ResourceGUID.h"
+#include "Engine/Core/Content/ProjectPaths.h"
 
 #include <nlohmann/json.hpp>
 
@@ -40,6 +40,19 @@ namespace Engine::Content {
         ResourceGUID guid;
         std::string  path;
         AssetType    type = AssetType::Texture;
+    };
+
+    /// M1-B 严格加载选项。
+    struct ManifestLoadOptions {
+        /// 非空：路径按该工程根校验/规范化，PathKey 使用根的卷能力。
+        const ProjectRoot* root = nullptr;
+        /// root 非空且路径是根外旧绝对路径时，保留为未解析 + 警告（K4.4）；
+        /// 结构性违规（`.`/`..`/UNC/设备前缀/盘符相对）仍整体失败。
+        bool allowLegacyAbsolute = false;
+        /// root 为空时 PathKey 使用的卷能力（调用方显式提供）。
+        CaseSensitivity caseMode = CaseSensitivity::CaseSensitive;
+        /// 非致命保留项的说明（可选）。
+        std::vector<std::string>* warnings = nullptr;
     };
 
     class ContentRegistry {
@@ -72,8 +85,13 @@ namespace Engine::Content {
         }
 
         // ── Phase B: 清单持久化（跨会话身份稳定）──
+        /// 序列化为 Manifest JSON 文本（M1-D revision 候选使用）。
+        std::string SerializeManifest() const;
         bool SaveManifest(const std::string& filePath) const;
-        bool LoadManifest(const std::string& filePath);   // 损坏 → false + 保持空表
+        /// 严格事务加载（M1-B）：完整校验候选后才整体交换；
+        /// 任一条目/字段/身份/路径违规 → false，原表保持不变。
+        bool LoadManifest(const std::string& filePath,
+                          const ManifestLoadOptions& options = {});
 
     private:
         std::unordered_map<std::string, AssetEntry> m_ByGuid;   // key = guid.ToHex()

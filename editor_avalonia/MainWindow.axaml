@@ -1,5 +1,6 @@
 <Window xmlns="https://github.com/avaloniaui"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:auto="using:Avalonia.Automation"
         x:Class="AvaloniaEditor.MainWindow"
         Title="Avalonia Editor — Phase 1 Shell (P1-A/B/C)"
         Width="1100" Height="720">
@@ -172,6 +173,33 @@
               </Grid>
               <Button x:Name="ApplyCameraBtn" Content="Apply Camera" Click="OnApplyCamera" HorizontalAlignment="Left"/>
             </StackPanel>
+
+            <!-- T-1-E：RigidBody Inspector（通用组件通道）-->
+            <TextBlock Text="RigidBody" FontWeight="Bold" Margin="2,10,0,2"/>
+            <StackPanel Orientation="Horizontal" Spacing="6">
+              <Button x:Name="AddRigidBodyBtn" Content="+ RigidBody" Click="OnAddRigidBody"
+                      IsEnabled="{Binding !HasRigidBody}"/>
+              <Button x:Name="RemoveRigidBodyBtn" Content="Remove RigidBody" Click="OnRemoveRigidBody"
+                      IsEnabled="{Binding HasRigidBody}"/>
+            </StackPanel>
+            <StackPanel IsVisible="{Binding HasRigidBody}" Margin="2,6,0,0" Spacing="4">
+              <Grid ColumnDefinitions="Auto,*">
+                <TextBlock Text="Motion Type" VerticalAlignment="Center" Margin="0,0,8,0"/>
+                <ComboBox Grid.Column="1"
+                          ItemsSource="{Binding RigidBodyMotionTypes}"
+                          SelectedItem="{Binding RigidBodyMotionType, Mode=TwoWay}"/>
+              </Grid>
+              <Grid ColumnDefinitions="Auto,*">
+                <TextBlock Text="Linear Damping" VerticalAlignment="Center" Margin="0,0,8,0"/>
+                <TextBox Grid.Column="1" Text="{Binding RigidBodyLinearDamping}"/>
+              </Grid>
+              <Grid ColumnDefinitions="Auto,*">
+                <TextBlock Text="Angular Damping" VerticalAlignment="Center" Margin="0,0,8,0"/>
+                <TextBox Grid.Column="1" Text="{Binding RigidBodyAngularDamping}"/>
+              </Grid>
+              <Button x:Name="ApplyRigidBodyBtn" Content="Apply RigidBody" Click="OnApplyRigidBody"
+                      HorizontalAlignment="Left"/>
+            </StackPanel>
           </StackPanel>
           <TextBlock IsVisible="{Binding !HasSelection}" Text="(select an entity)"
                      Opacity="0.5"/>
@@ -181,7 +209,8 @@
       <!-- 下：Console + Asset Browser Tab -->
       <TabControl x:Name="MainTabs" Grid.Column="2" Grid.ColumnSpan="3" Grid.Row="2">
         <TabItem Header="Console">
-          <ListBox ItemsSource="{Binding ConsoleLines}"/>
+          <ListBox auto:AutomationProperties.AutomationId="ConsoleList"
+                   ItemsSource="{Binding ConsoleLines}"/>
         </TabItem>
         <TabItem Header="Asset Browser">
           <DockPanel>
@@ -190,16 +219,20 @@
                         SelectedItem="{Binding AssetTypeFilter, Mode=TwoWay}"
                         Width="100"/>
               <TextBox Text="{Binding AssetSearchText, Mode=TwoWay}" Watermark="search assets"
+                       auto:AutomationProperties.AutomationId="AssetSearchBox"
                        Width="160"/>
-              <Button x:Name="ImportAssetBtn" Content="Import..." Click="OnImportAsset"/>
+              <Button x:Name="ImportAssetBtn" Content="Import..." Click="OnImportAsset"
+                      auto:AutomationProperties.AutomationId="ImportAssetBtn"/>
               <Button x:Name="RenameAssetBtn" Content="Rename Selected" Click="OnRenameAsset"/>
-              <TextBlock Text="{Binding FilteredAssetCount}" VerticalAlignment="Center" Opacity="0.7"/>
+              <TextBlock Text="{Binding FilteredAssetCount}" VerticalAlignment="Center" Opacity="0.7"
+                         auto:AutomationProperties.AutomationId="AssetCountText"/>
             </StackPanel>
             <StackPanel DockPanel.Dock="Bottom" Orientation="Horizontal" Spacing="6" Margin="4">
               <Button x:Name="AssignSpriteBtn" Content="Assign Sprite to Selected" Click="OnAssignSprite"/>
               <Button x:Name="AssignScriptBtn" Content="Assign Script to Selected" Click="OnAssignScript"/>
             </StackPanel>
             <ListBox x:Name="AssetList"
+                     auto:AutomationProperties.AutomationId="AssetList"
                      ItemsSource="{Binding FilteredAssets}"
                      SelectedItem="{Binding SelectedAsset, Mode=TwoWay}"
                      DoubleTapped="OnAssetDoubleTapped">

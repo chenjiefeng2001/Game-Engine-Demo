@@ -67,6 +67,7 @@ namespace RHI {
         std::unique_ptr<IRHISwapChain> CreateSwapChain(const SwapChainDesc& desc) override;
         void WaitIdle() override;
         const char* GetDeviceName() const override;
+        bool SupportsGpuTimestamps() const override;
 
         /** 获取 GladGLContext 引用 */
         GladGLContext& GetGL() const { return *m_GL; }

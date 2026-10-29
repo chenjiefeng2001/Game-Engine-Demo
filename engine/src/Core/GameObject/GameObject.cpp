@@ -19,6 +19,7 @@ namespace Engine {
     }
 
     GameObject::~GameObject() {
+        m_BeingDestroyed = true;
         // 通知所有组件销毁（含生命周期监听器：先通知再销毁，Adapter 可干净 Unbind）
         for (auto& [hash, comp] : m_Components) {
             (void)hash;

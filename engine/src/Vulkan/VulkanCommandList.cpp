@@ -19,6 +19,7 @@
 
 #include <cstdio>
 #include <cstring>
+#include <vector>
 
 namespace Engine {
 namespace RHI {
@@ -46,6 +47,33 @@ struct VulkanCommandList::Impl {
     VkPipelineStageFlags  dstStageMask{0};
 uint32_t              barrierCount{0};
       bool                renderingActive{false};
+
+      // ── GPU timestamp query pool（T-4）──
+      static constexpr uint32_t kMaxTimestamps = 512;
+      VkQueryPool         timestampPool{VK_NULL_HANDLE};
+      uint32_t            timestampCursor{0};
+      bool                timestampPoolNeedsReset{false};
+      double              timestampPeriodNs{0.0};
+
+      bool EnsureTimestampPool() {
+          if (timestampPool != VK_NULL_HANDLE) return true;
+          if (!device || device->GetVkDevice() == VK_NULL_HANDLE) return false;
+          VkPhysicalDeviceProperties props{};
+          vkGetPhysicalDeviceProperties(device->GetVkPhysicalDevice(), &props);
+          if (props.limits.timestampPeriod <= 0.0f) return false;
+          VkQueryPoolCreateInfo ci{VK_STRUCTURE_TYPE_QUERY_POOL_CREATE_INFO};
+          ci.queryType = VK_QUERY_TYPE_TIMESTAMP;
+          ci.queryCount = kMaxTimestamps;
+          if (vkCreateQueryPool(device->GetVkDevice(), &ci, nullptr,
+                                &timestampPool) != VK_SUCCESS) {
+              timestampPool = VK_NULL_HANDLE;
+              return false;
+          }
+          timestampPeriodNs = props.limits.timestampPeriod;
+          timestampCursor = 0;
+          timestampPoolNeedsReset = true;
+          return true;
+      }
       // 当前渲染作用域的附件。EndRendering 需要它们才能把交换链图像转成
       // PRESENT_SRC_KHR：RHI 接口不区分渲染目标与呈现目标，只有 Vulkan 侧
       // 知道某个 VulkanTexture 是否是 swapchain backbuffer。
@@ -102,7 +130,14 @@ uint32_t              barrierCount{0};
 VulkanCommandList::VulkanCommandList()
     : m_Impl(std::make_unique<Impl>()) {}
 
-VulkanCommandList::~VulkanCommandList() = default;
+VulkanCommandList::~VulkanCommandList() {
+    if (m_Impl && m_Impl->timestampPool != VK_NULL_HANDLE &&
+        m_Impl->device && m_Impl->device->GetVkDevice() != VK_NULL_HANDLE) {
+        vkDestroyQueryPool(m_Impl->device->GetVkDevice(),
+                           m_Impl->timestampPool, nullptr);
+        m_Impl->timestampPool = VK_NULL_HANDLE;
+    }
+}
 
 // ════════════════════════════════════════════════════════════
 // 录制周期
@@ -145,6 +180,14 @@ void VulkanCommandList::Begin() {
 
     m_Impl->isRecording = true;
     m_Impl->barrierCount = 0;
+
+    // T-4：每帧录制开始重置 timestamp 查询池（必须在渲染作用域之外）。
+    if (m_Impl->EnsureTimestampPool()) {
+        vkCmdResetQueryPool(m_Impl->cmdBuffer, m_Impl->timestampPool,
+                            0, Impl::kMaxTimestamps);
+        m_Impl->timestampCursor = 0;
+        m_Impl->timestampPoolNeedsReset = false;
+    }
 }
 
 void VulkanCommandList::End() {
@@ -207,6 +250,8 @@ void VulkanCommandList::Reset() {
     m_Impl->isRecording = false;
     m_Impl->barrierCount = 0;
     m_Impl->renderingActive = false;
+    m_Impl->timestampCursor = 0;
+    m_Impl->timestampPoolNeedsReset = true;
 }
 
 // ════════════════════════════════════════════════════════════
@@ -660,6 +705,56 @@ void VulkanCommandList::SetUnorderedAccess(uint32 slot, IRHIBuffer* buffer) {
         vkCmdBindDescriptorSets(m_Impl->cmdBuffer, VK_PIPELINE_BIND_POINT_COMPUTE,
             m_Impl->currentPipelineLayout, 0, 1, &m_Impl->currentDescriptorSet, 0, nullptr);
     }
+}
+
+// ════════════════════════════════════════════════════════════
+// GPU timestamp（T-4）
+// ════════════════════════════════════════════════════════════
+
+uint32_t VulkanCommandList::WriteTimestamp() {
+    if (!m_Impl->isRecording || m_Impl->cmdBuffer == VK_NULL_HANDLE)
+        return kInvalidTimestamp;
+    if (!m_Impl->EnsureTimestampPool())
+        return kInvalidTimestamp;
+    if (m_Impl->timestampPoolNeedsReset) {
+        vkCmdResetQueryPool(m_Impl->cmdBuffer, m_Impl->timestampPool,
+                            0, Impl::kMaxTimestamps);
+        m_Impl->timestampPoolNeedsReset = false;
+    }
+    if (m_Impl->timestampCursor >= Impl::kMaxTimestamps)
+        return kInvalidTimestamp;
+    const uint32_t index = m_Impl->timestampCursor++;
+    vkCmdWriteTimestamp(m_Impl->cmdBuffer, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT,
+                        m_Impl->timestampPool, index);
+    return index;
+}
+
+bool VulkanCommandList::ResolveTimestampSpan(uint32 beginIdx, uint32 endIdx,
+                                             double& outMs) {
+    if (m_Impl->timestampPool == VK_NULL_HANDLE ||
+        m_Impl->device == nullptr ||
+        beginIdx > endIdx ||
+        endIdx >= m_Impl->timestampCursor)
+        return false;
+
+    const uint32_t count = endIdx - beginIdx + 1;
+    std::vector<uint64_t> values(count, 0);
+    const VkResult result = vkGetQueryPoolResults(
+        m_Impl->device->GetVkDevice(), m_Impl->timestampPool,
+        beginIdx, count, count * sizeof(uint64_t), values.data(),
+        sizeof(uint64_t), VK_QUERY_RESULT_64_BIT | VK_QUERY_RESULT_WAIT_BIT);
+    if (result != VK_SUCCESS)
+        return false;
+    if (values.back() < values.front())
+        return false;
+    outMs = static_cast<double>(values.back() - values.front()) *
+            m_Impl->timestampPeriodNs / 1'000'000.0;
+    return true;
+}
+
+void VulkanCommandList::ResetTimestamps() {
+    m_Impl->timestampCursor = 0;
+    m_Impl->timestampPoolNeedsReset = true;
 }
 
 // ════════════════════════════════════════════════════════════

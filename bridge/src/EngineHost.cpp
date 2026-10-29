@@ -934,10 +934,25 @@ int32_t EngineHost::RejectUnimplemented(int32_t stage, RuntimeResult* result) {
 int32_t EngineHost::OpenProject(const char* manifestPath,
                                  const char* scenePath,
                                  RuntimeResult* result) {
+    return SubmitOpenProject(nullptr, manifestPath, scenePath, result);
+}
+
+int32_t EngineHost::OpenProjectRooted(const char* projectRoot,
+                                      const char* manifestPath,
+                                      const char* scenePath,
+                                      RuntimeResult* result) {
+    return SubmitOpenProject(projectRoot, manifestPath, scenePath, result);
+}
+
+int32_t EngineHost::SubmitOpenProject(const char* projectRoot,
+                                      const char* manifestPath,
+                                      const char* scenePath,
+                                      RuntimeResult* result) {
     if (!result) return -1;
+    const std::string root = projectRoot ? projectRoot : "";
     const std::string manifest = manifestPath ? manifestPath : "";
     const std::string scene = scenePath ? scenePath : "";
-    return Submit([this, manifest, scene, result]() {
+    return Submit([this, root, manifest, scene, result]() {
         if (MakeRuntimeContextCurrent() != 0) {
             FillRejectedResult(result,
                                ENGINE_HOST_STATUS_GL_FAILED,
@@ -953,7 +968,11 @@ int32_t EngineHost::OpenProject(const char* manifestPath,
                                "runtime session is unavailable");
             return -1;
         }
-        if (!m_Session->OpenProject(manifest, scene)) {
+        const bool opened = root.empty()
+                                ? m_Session->OpenProject(manifest, scene)
+                                : m_Session->OpenProjectRooted(root, manifest,
+                                                               scene);
+        if (!opened) {
             const std::string error = m_Session->GetLastError();
             if (m_GraphicsFactory) m_GraphicsFactory->UncurrentPersistentContext();
             FillRejectedResult(result,

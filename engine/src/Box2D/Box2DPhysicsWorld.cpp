@@ -204,6 +204,7 @@ namespace Engine {
         b2BodyDef bd = b2DefaultBodyDef();
         bd.type          = ToB2Type(def.type);
         bd.position      = ToB2(def.position);
+        bd.rotation      = b2MakeRot(def.angle);
         bd.linearDamping = def.linearDamping;
         bd.angularDamping= def.angularDamping;
         bd.isAwake       = def.allowSleep;

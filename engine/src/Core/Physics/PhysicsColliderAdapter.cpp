@@ -1,14 +1,29 @@
 #include "Engine/Core/Physics/PhysicsColliderAdapter.h"
 #include "Engine/Core/GameObject/ColliderComponent.h"
+#include "Engine/Core/GameObject/RigidBodyComponent.h"
 #include "Engine/Core/GameObject/GameObject.h"
 #include "Engine/Core/Physics/IPhysicsBody.h"
 #include "Engine/Core/Physics/IPhysicsWorld.h"
 #include "Engine/Core/Log.h"
 
 #include <algorithm>
+#include <cmath>
 #include <cstring>
 
 namespace Engine {
+
+namespace {
+    constexpr float32 kDegToRad = 0.017453292519943295f;
+
+    BodyType ToBodyType(RigidBodyMotionType type) {
+        switch (type) {
+            case RigidBodyMotionType::Static:    return BodyType::Static;
+            case RigidBodyMotionType::Kinematic: return BodyType::Kinematic;
+            case RigidBodyMotionType::Dynamic:   return BodyType::Dynamic;
+        }
+        return BodyType::Static;
+    }
+}
 
     // ════════════════════════════════════════════
     // World 所有权（D1）
@@ -49,6 +64,41 @@ namespace Engine {
     }
 
     bool PhysicsColliderAdapter::Bind(const ColliderComponent& collider) {
+        return BindInternal(collider, BuildBodyDef(collider), collider.IsEnabled());
+    }
+
+    bool PhysicsColliderAdapter::BindGameObject(const ColliderComponent& collider) {
+        const GameObject* owner = collider.GetOwner();
+        if (!owner) return Bind(collider);
+
+        const auto* rigidBody = dynamic_cast<const RigidBodyComponent*>(
+            owner->GetComponentByName("RigidBody"));
+        const Vec3 position = owner->GetTransform().GetPosition();
+        const float32 angle =
+            owner->GetTransform().GetRotationEuler().z * kDegToRad;
+        const BodyDef def = BuildBodyDef(collider, rigidBody,
+                                         Vec2(position.x, position.y), angle);
+        const bool active =
+            collider.IsEnabled() && (!rigidBody || rigidBody->IsEnabled());
+        return BindInternal(collider, def, active);
+    }
+
+    bool PhysicsColliderAdapter::BindStaticGameObject(
+        const ColliderComponent& collider) {
+        const GameObject* owner = collider.GetOwner();
+        if (!owner) return Bind(collider);
+        const Vec3 position = owner->GetTransform().GetPosition();
+        const float32 angle =
+            owner->GetTransform().GetRotationEuler().z * kDegToRad;
+        BodyDef def = BuildBodyDef(collider);
+        def.position = Vec2(position.x, position.y);
+        def.angle = angle;
+        return BindInternal(collider, def, collider.IsEnabled());
+    }
+
+    bool PhysicsColliderAdapter::BindInternal(const ColliderComponent& collider,
+                                              const BodyDef& def,
+                                              bool active) {
         if (!m_World) {
             Log::Warn("[PhysicsColliderAdapter] Bind('{}') failed: no Physics World bound "
                       "(SetWorld first)", collider.GetComponentTypeName());
@@ -65,7 +115,6 @@ namespace Engine {
             return false;
         }
 
-        const BodyDef def = BuildBodyDef(collider);
         std::shared_ptr<IPhysicsBody> body = m_World->CreateBody(def);
         if (!body) {
             Log::Warn("[PhysicsColliderAdapter] Bind('{}') failed: physics world rejected BodyDef",
@@ -92,8 +141,7 @@ namespace Engine {
             return false;
         }
 
-        // v1 契约（B2-4）：enabled → 即时 SetActive（唯一实时通道）
-        body->SetActive(collider.IsEnabled());
+        body->SetActive(active);
 
         Track(collider);
         m_Bodies[&collider] = std::move(body);
@@ -123,6 +171,12 @@ namespace Engine {
         Bind(collider);
     }
 
+    void PhysicsColliderAdapter::RebuildGameObject(const ColliderComponent& collider) {
+        if (!m_World) return;
+        Unbind(collider);
+        BindGameObject(collider);
+    }
+
     void PhysicsColliderAdapter::Clear() {
         for (auto& [comp, body] : m_Bodies) {
             (void)comp;
@@ -136,7 +190,7 @@ namespace Engine {
         if (!m_World) return;   // 无 World：no-op
         const std::vector<const ColliderComponent*> tracked = m_Tracked;  // 快照（Rebuild 会改动容器）
         for (const ColliderComponent* comp : tracked) {
-            Rebuild(*comp);
+            RebuildGameObject(*comp);
         }
     }
 
@@ -152,8 +206,20 @@ namespace Engine {
                 return;
             }
             // 其余声明式属性（shape/radius/halfX/halfY/isSensor/category/mask）：Destroy/Recreate
-            Rebuild(c);
+            RebuildGameObject(c);
         });
+    }
+
+    void PhysicsColliderAdapter::InstallRigidBodyMutationHook(
+        RigidBodyComponent& rigidBody) {
+        rigidBody.SetMutationHook(
+            [this](RigidBodyComponent& rb, const char* /*prop*/) {
+                GameObject* owner = rb.GetOwner();
+                if (!owner || owner->IsBeingDestroyed()) return;
+                auto* collider = dynamic_cast<ColliderComponent*>(
+                    owner->GetComponentByName("Collider"));
+                if (collider) RebuildGameObject(*collider);
+            });
     }
 
     void PhysicsColliderAdapter::ObserveGameObject(GameObject& go) {
@@ -163,25 +229,52 @@ namespace Engine {
 
         const uint32 listenerId = go.AddComponentLifecycleListener(
             [this](Component& comp, bool attached) {
-                auto* collider = dynamic_cast<ColliderComponent*>(&comp);
-                if (!collider) return;
-                if (attached) {
-                    Track(*collider);          // 无条件受管（世界未就绪时也可晚到恢复）
-                    InstallMutationHook(*collider);
-                    Bind(*collider);           // 无世界 → 干净失败，待 RebuildAll
-                } else {
-                    Unbind(*collider);
-                    collider->SetMutationHook(nullptr);
+                GameObject* owner = comp.GetOwner();
+                if (auto* collider = dynamic_cast<ColliderComponent*>(&comp)) {
+                    if (attached) {
+                        Track(*collider);          // 无条件受管（世界未就绪时也可晚到恢复）
+                        InstallMutationHook(*collider);
+                        BindGameObject(*collider);
+                    } else {
+                        Unbind(*collider);
+                        collider->SetMutationHook(nullptr);
+                    }
+                    return;
+                }
+                if (auto* rigidBody = dynamic_cast<RigidBodyComponent*>(&comp)) {
+                    if (attached) {
+                        InstallRigidBodyMutationHook(*rigidBody);
+                        if (owner && !owner->IsBeingDestroyed()) {
+                            if (auto* collider = dynamic_cast<ColliderComponent*>(
+                                    owner->GetComponentByName("Collider"))) {
+                                RebuildGameObject(*collider);
+                            }
+                        }
+                    } else {
+                        rigidBody->SetMutationHook(nullptr);
+                        if (owner && !owner->IsBeingDestroyed()) {
+                            if (auto* collider = dynamic_cast<ColliderComponent*>(
+                                    owner->GetComponentByName("Collider"))) {
+                                Unbind(*collider);
+                                BindStaticGameObject(*collider);
+                            }
+                        }
+                    }
                 }
             });
         m_Observations.push_back({&go, listenerId});
 
-        // 观察前已挂载的 Collider：立即接管（含变更钩子）
+        // 观察前已挂载的组件：立即接管（含变更钩子）
+        if (auto* comp = go.GetComponentByName("RigidBody")) {
+            if (auto* rigidBody = dynamic_cast<RigidBodyComponent*>(comp)) {
+                InstallRigidBodyMutationHook(*rigidBody);
+            }
+        }
         if (auto* comp = go.GetComponentByName("Collider")) {
             if (auto* collider = dynamic_cast<ColliderComponent*>(comp)) {
                 Track(*collider);
                 InstallMutationHook(*collider);
-                Bind(*collider);
+                BindGameObject(*collider);
             }
         }
     }
@@ -190,6 +283,11 @@ namespace Engine {
         for (auto it = m_Observations.begin(); it != m_Observations.end(); ++it) {
             if (it->go != &go) continue;
             go.RemoveComponentLifecycleListener(it->listenerId);
+            if (auto* comp = go.GetComponentByName("RigidBody")) {
+                if (auto* rigidBody = dynamic_cast<RigidBodyComponent*>(comp)) {
+                    rigidBody->SetMutationHook(nullptr);
+                }
+            }
             // 清理该 GameObject 上全部 Collider 的绑定与变更钩子
             if (auto* comp = go.GetComponentByName("Collider")) {
                 if (auto* collider = dynamic_cast<ColliderComponent*>(comp)) {
@@ -238,6 +336,22 @@ namespace Engine {
 
         // 世界位置属 Transform 所有权（F2-A 裁定），B2/B3 不映射；后续 Gate 接 Transform 同步。
         // （本轮 position 取 BodyDef 默认 {0,0}，角度 0）
+        return def;
+    }
+
+    BodyDef PhysicsColliderAdapter::BuildBodyDef(
+        const ColliderComponent& collider,
+        const RigidBodyComponent* rigidBody,
+        const Vec2& position,
+        float32 angle) {
+        BodyDef def = BuildBodyDef(collider);
+        if (rigidBody) {
+            def.type = ToBodyType(rigidBody->GetMotionType());
+            def.linearDamping = rigidBody->GetLinearDamping();
+            def.angularDamping = rigidBody->GetAngularDamping();
+        }
+        def.position = position;
+        def.angle = angle;
         return def;
     }
 

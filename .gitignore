@@ -126,3 +126,6 @@ artifacts/
 
 src/Nova.Editor.App/bin/
 src/Nova.Editor.App/obj/
+
+# Content v2 M1-D commit pointer/revisions
+.engine-content/

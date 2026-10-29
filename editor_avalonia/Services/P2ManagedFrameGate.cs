@@ -64,7 +64,7 @@ public static class P2ManagedFrameGate
     {
         int expected = EditorBridgeApi.EngineHostExpectedVersion;
         int actual = EditorBridgeApi.EngineHost_GetApiVersion();
-        Check(expected == ((1 << 16) | 5), $"managed expects v1.5, declares v{(expected >> 16)}.{(expected & 0xFFFF)}");
+        Check(expected == ((1 << 16) | 6), $"managed expects v1.6, declares v{(expected >> 16)}.{(expected & 0xFFFF)}");
         Check(actual == expected, $"native reports 0x{actual:X8}, managed expects 0x{expected:X8}");
         Check(host.IsEngineHost, "production backend is EngineHost");
         log($"[P2-M1] version lockstep OK (native=managed=0x{actual:X8} = v{(actual >> 16)}.{(actual & 0xFFFF)})");

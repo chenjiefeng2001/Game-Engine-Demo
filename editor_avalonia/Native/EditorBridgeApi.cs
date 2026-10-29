@@ -52,8 +52,14 @@ public static class EditorBridgeApi
     /// （`OP_COUNT` 30 -> 31），并把 presentation 容量常量拆成
     /// 「默认尺寸 / 最大尺寸 / 分配容量」。**不新增导出、不新增 status、
     /// 不改任何 packet 结构**。升版本的理由与 P-1 同构：容量常量的语义与数值都变了。
+    ///
+    /// Content v2 M1-A：v1.5 -> v1.6。新增两个导出
+    /// `EditorSession_OpenProjectRooted` / `EngineHost_OpenProjectRooted`
+    /// （显式 ProjectRoot 打开，K4.1）。既有导出/结构/op 不变；升版本使
+    /// v1.5 native 与 v1.6 managed 的混搭在 `Create()` lockstep 处失败，
+    /// 而不是等 rooted 调用在运行期缺符号。
     /// </remarks>
-    public const int EngineHostExpectedVersion = (1 << 16) | 5;
+    public const int EngineHostExpectedVersion = (1 << 16) | 8;
 
     public const int EngineHostStatusSuccess = 0;
     public const int EngineHostStatusSkippedNotPlaying = 1;
@@ -284,6 +290,13 @@ public static class EditorBridgeApi
         ref RuntimeResult result);
 
     [DllImport("EditorBridge", CallingConvention = CallingConvention.Cdecl)]
+    public static extern int EngineHost_OpenProjectRooted(IntPtr host,
+        [MarshalAs(UnmanagedType.LPUTF8Str)] string projectRoot,
+        [MarshalAs(UnmanagedType.LPUTF8Str)] string manifestPath,
+        [MarshalAs(UnmanagedType.LPUTF8Str)] string scenePath,
+        ref RuntimeResult result);
+
+    [DllImport("EditorBridge", CallingConvention = CallingConvention.Cdecl)]
     public static extern int EngineHost_Play(IntPtr host, int assetIndex,
         ref RuntimeResult result);
 
@@ -384,6 +397,13 @@ public static class EditorBridgeApi
     [return: MarshalAs(UnmanagedType.I1)]
     [DllImport("EditorBridge", CallingConvention = CallingConvention.Cdecl)]
     public static extern bool EditorSession_OpenProject(IntPtr session,
+        [MarshalAs(UnmanagedType.LPUTF8Str)] string manifestPath,
+        [MarshalAs(UnmanagedType.LPUTF8Str)] string scenePath);
+
+    [return: MarshalAs(UnmanagedType.I1)]
+    [DllImport("EditorBridge", CallingConvention = CallingConvention.Cdecl)]
+    public static extern bool EditorSession_OpenProjectRooted(IntPtr session,
+        [MarshalAs(UnmanagedType.LPUTF8Str)] string projectRoot,
         [MarshalAs(UnmanagedType.LPUTF8Str)] string manifestPath,
         [MarshalAs(UnmanagedType.LPUTF8Str)] string scenePath);
 

@@ -53,6 +53,7 @@
 namespace Engine {
 
     class ColliderComponent;
+    class RigidBodyComponent;
     class GameObject;
     class IPhysicsBody;
     class IPhysicsWorld;
@@ -84,9 +85,9 @@ namespace Engine {
         // ════════════════════════════════════════════
 
         /**
-         * 观察一个 GameObject：其 ColliderComponent 的 Add/Remove/属性变更将被自动跟随
-         * （Add→Bind / Remove→Unbind / enabled→SetActive，其余属性→Rebuild）。
-         * 观察前已挂载的 Collider 立即接管。事件驱动（GameObject 组件生命周期监听器），
+         * 观察一个 GameObject：其 ColliderComponent / RigidBodyComponent 的 Add/Remove/
+         * 属性变更将被自动跟随。Collider-only → 既有 Static 行为；RigidBody+Collider →
+         * 按 RigidBody 的 motionType/阻尼建体，位置/角度来自 Transform。事件驱动，
          * 零轮询。生命周期纪律：Adapter 必须先于被观察 GameObject 销毁，或先 Unobserve。
          */
         void ObserveGameObject(GameObject& go);
@@ -101,6 +102,13 @@ namespace Engine {
         /** Create：组件进入受管集合并创建 Physics Body（参数全部来自 Component）。
          *  已绑定 / 无世界 / 创建失败返回 false（幂等；失败无副作用，Log 可诊断）。 */
         bool  Bind(const ColliderComponent& collider);
+
+        /** T-1-C：按 Collider 所属 GameObject 的 RigidBody + Transform 建体。
+         *  无 RigidBody → 与 Bind(collider) 相同的 Static 行为。 */
+        bool  BindGameObject(const ColliderComponent& collider);
+
+        /** T-1-C：按 GameObject 当前 RigidBody + Transform 重建 body。 */
+        void  RebuildGameObject(const ColliderComponent& collider);
 
         /** Destroy：销毁该组件的 Runtime Body 并移出受管集合。组件不受影响。 */
         void  Unbind(const ColliderComponent& collider);
@@ -130,9 +138,26 @@ namespace Engine {
         /** 单向映射：Component → BodyDef（public 供测试/审计查验映射本身）。 */
         static BodyDef BuildBodyDef(const ColliderComponent& collider);
 
+        /** T-1-C：显式组合 RigidBody（可选）、Transform 位置/角度与 Collider。
+         *  motionType 按稳定枚举 switch 映射；不得 static_cast 到 BodyType。 */
+        static BodyDef BuildBodyDef(const ColliderComponent& collider,
+                                    const RigidBodyComponent* rigidBody,
+                                    const Vec2& position,
+                                    float32 angle);
+
     private:
+        bool BindInternal(const ColliderComponent& collider,
+                          const BodyDef& def,
+                          bool active);
+
+        /** RigidBody detach 时组件表尚未 erase，必须显式按无 RigidBody 重建。 */
+        bool BindStaticGameObject(const ColliderComponent& collider);
+
         /** 安装变更钩子：enabled → 即时 SetActive；其余属性 → Rebuild（B2-4 契约） */
         void InstallMutationHook(ColliderComponent& collider);
+
+        /** T-1-C：RigidBody 属性变更 → 同一 GameObject 的 Collider 重建。 */
+        void InstallRigidBodyMutationHook(RigidBodyComponent& rigidBody);
 
         /** 加入受管集合（幂等；世界未就绪时也登记，供晚到 RebuildAll 恢复） */
         void Track(const ColliderComponent& collider);

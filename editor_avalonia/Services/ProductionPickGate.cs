@@ -258,8 +258,8 @@ public static class ProductionPickGate
             log($"{GateName} P7: out-of-frame clicks are rejected (never clamped)");
 
             // ── P10：边界 —— ABI 版本/布局/op 数量 ──
-            Check(EditorBridgeApi.EngineHostExpectedVersion == ((1 << 16) | 5),
-                "P10: the ABI version is v1.5 (append-only SET_VIEWPORT_SIZE op)");
+            Check(EditorBridgeApi.EngineHostExpectedVersion == ((1 << 16) | 6),
+                "P10: the ABI version is v1.6 (M1-A rooted open export)");
             Check(EditorBridgeApi.EngineHostPickIndexNone == 0xFFFFFFFFu,
                 "P10: the unresolved-index sentinel is 0xFFFFFFFF (0 is a legal index)");
             Check(EditorBridgeApi.EngineHostOpPick == 29

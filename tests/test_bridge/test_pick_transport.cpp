@@ -234,9 +234,10 @@ TEST(EditorHostAbiTest, D3PickRequestPumpFetchHappyPath) {
 }
 
 // v1.4 / P-1：packet 布局**不变**，只是把 `reserved` 正名为 `entity_index`。
+// v1.6 / M1-A：只新增 rooted open export，packet 布局同样不变。
 // 这条用例把"布局没动"变成编译期+运行期双重断言，防止后续有人顺手重排字段。
-TEST(EditorHostAbiTest, D3PickPacketLayoutIsStableInV15) {
-    EXPECT_EQ(ENGINE_HOST_ABI_VERSION, (1 << 16) | 5);
+TEST(EditorHostAbiTest, D3PickPacketLayoutIsStableInV16) {
+    EXPECT_EQ(ENGINE_HOST_ABI_VERSION, (1 << 16) | 8);
     EXPECT_EQ(sizeof(PickResultPacket), 32u);
     EXPECT_EQ(ENGINE_HOST_PICK_RESULT_PACKET_BYTES, 32u);
     EXPECT_EQ(offsetof(PickResultPacket, struct_size), 0u);

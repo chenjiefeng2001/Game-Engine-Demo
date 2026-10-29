@@ -23,6 +23,7 @@
 
 #include <nlohmann/json.hpp>
 
+#include <functional>
 #include <string>
 #include <vector>
 
@@ -80,9 +81,13 @@ namespace Engine::Content {
         std::vector<std::string> warnings;
         std::vector<EntityContentBinding> bindings;   // 与加载出的对象一一对应
     };
+    /// 可选路径解析器：把注册表里的路径解析为可读文件路径。
+    /// 空 = 原样使用（v1 语义）；EditorSession 传入以 ProjectRoot 为锚的解析器。
+    using AssetPathResolver = std::function<std::string(const std::string&)>;
     LoadResult InstantiateScene(const SceneSnapshot& snap, Scene& outScene,
                                 class TextureManager& texMgr,
-                                const ContentRegistry& registry);
+                                const ContentRegistry& registry,
+                                AssetPathResolver resolveAssetPath = {});
 
     // ── 文件 IO ──
     bool SaveSnapshotToFile(const SceneSnapshot& snap, const std::string& path);

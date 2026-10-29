@@ -2,6 +2,7 @@
 #include "Engine/Core/GameObject/Component.h"
 #include "Engine/Core/GameObject/CameraComponent.h"
 #include "Engine/Core/GameObject/ColliderComponent.h"
+#include "Engine/Core/GameObject/RigidBodyComponent.h"
 #include "Engine/Animation/SkinningComponent.h"
 #include "Engine/Core/Log.h"
 
@@ -27,9 +28,10 @@ namespace {
 void EnsureRegistered() {
     if (EnsureFlag()) return;
     EnsureFlag() = true;
-    // 内置契约组件在此收编（F1：Camera；F2：Collider；Animation：Skinning）
+    // 内置契约组件在此收编（F1：Camera；F2：Collider；T-1：RigidBody；Animation：Skinning）
     RegisterCameraComponent();
     RegisterColliderComponent();
+    RegisterRigidBodyComponent();
     SkinningComponent::Register();
 }
 

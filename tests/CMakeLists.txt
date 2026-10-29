@@ -41,6 +41,8 @@ add_executable(test_physics
     test_physics/CPUSimulatorTest.cpp
     test_physics/GPUPhysicsRingTest.cpp
     test_physics/ColliderBindingTest.cpp
+    test_physics/RigidBodyContractTest.cpp
+    test_physics/PhysicsRuntime2DTest.cpp
     main.cpp
 )
 target_link_libraries(test_physics PRIVATE ${COMMON_LIBS})
@@ -61,6 +63,7 @@ add_test(NAME test_job COMMAND test_job)
 # Vulkan 时它只提供一个返回 nullptr 的桩，因此这里无条件列出。
 add_executable(test_renderer
     test_renderer/GL46DeviceTest.cpp
+    test_renderer/GpuTimestampProfilerTest.cpp
     test_renderer/RenderGraphSG6Test.cpp
     test_renderer/GPUSkinningPixelTest.cpp
     test_renderer/SkinningPixelCases.cpp
@@ -93,6 +96,10 @@ add_executable(test_scripting
 )
 target_link_libraries(test_scripting PRIVATE ${COMMON_LIBS})
 add_executable(test_content
+    test_content/ProjectPathTest.cpp
+    test_content/ManifestStrictLoadTest.cpp
+    test_content/RevisionStoreTest.cpp
+    test_content/RigidBodySerializationTest.cpp
     test_content/ContentPipelineTest.cpp
     test_content/Dogfood05Test.cpp
     test_content/Dogfood06Test.cpp
@@ -131,11 +138,26 @@ add_test(NAME test_e2e COMMAND test_e2e)
 # ── AV-005: EditorBridge C-ABI 契约测试（Avalonia 迁移 Phase 0）──
 add_executable(test_bridge
     test_bridge/test_editor_capi.cpp
+    test_bridge/test_project_root.cpp
+    test_bridge/test_rename_script.cpp
+    test_bridge/test_revision_commit.cpp
+    test_bridge/test_import_service.cpp
+    test_bridge/test_m1f_fault_matrix.cpp
 )
-target_link_libraries(test_bridge PRIVATE EditorBridge GTest::gtest_main)# HRC-3 P1：production scene render 的像素证据需要读回 presentation target。
+add_executable(m1f_crash_harness
+    test_bridge/M1FCrashHarness.cpp
+)
+target_link_libraries(m1f_crash_harness PRIVATE EditorBridge)
+add_custom_command(TARGET m1f_crash_harness POST_BUILD
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different
+            $<TARGET_FILE:EditorBridge> $<TARGET_FILE_DIR:m1f_crash_harness>)
+add_dependencies(test_bridge m1f_crash_harness)
+target_compile_definitions(test_bridge PRIVATE
+    M1F_CRASH_HARNESS="$<TARGET_FILE:m1f_crash_harness>")
+target_link_libraries(test_bridge PRIVATE EditorBridge EngineCore GTest::gtest_main)# HRC-3 P1：production scene render 的像素证据需要读回 presentation target。
 # P1 阶段刻意不新增 C 导出（那是 P2 的 additive Fetch op），因此该测试白色盒地
 # 包含 bridge 内部头。这**不改变 C ABI**，只是测试取证通道。
-target_include_directories(test_bridge PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/../bridge/src)
+target_include_directories(test_bridge PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/../bridge/src ${CMAKE_CURRENT_SOURCE_DIR}/../engine/include)
 add_test(NAME test_bridge COMMAND test_bridge)
 set_tests_properties(test_bridge PROPERTIES TIMEOUT 120)
 

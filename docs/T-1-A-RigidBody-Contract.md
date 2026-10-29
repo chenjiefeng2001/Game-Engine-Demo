@@ -1,6 +1,6 @@
 # T-1-A：RigidBody Contract 交付记录
 
-**状态**：`T-1-A — IMPLEMENTATION COMPLETE, AWAITING ADJUDICATION`
+**状态**：`T-1-A — IMPLEMENTATION COMPLETE, ACCEPTED (T-1 CLOSED — SCOPE-BOUND, 2026-10-29)`
 **日期**：2026-10-29
 **授权**：Gate 0 `PASS`，仅授权契约设计、组件注册、最小契约实现与直接相关单元测试。
 **未启动**：T-1-B（序列化/冷启）、T-1-C（物理绑定）、T-1-D（Lua）、T-1-E（Inspector）。

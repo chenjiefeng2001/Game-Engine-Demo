@@ -205,13 +205,13 @@ public static class ViewportSizeGate
                 "V8: exactly one hit is applied on the resized frame");
             log($"{GateName} V8: production pick coordinates verified");
 
-            // 9. v1.4/v1.5 mix is rejected at Create.
-            Check(EditorBridgeApi.EngineHostExpectedVersion == ((1 << 16) | 5),
-                "V9: managed expects ABI v1.5");
+            // 9. v1.5/v1.6 mix is rejected at Create.
+            Check(EditorBridgeApi.EngineHostExpectedVersion == ((1 << 16) | 6),
+                "V9: managed expects ABI v1.6");
             bool threw = false;
-            try { EditorHostService.VerifyEngineHostAbiVersion((1 << 16) | 4); }
+            try { EditorHostService.VerifyEngineHostAbiVersion((1 << 16) | 5); }
             catch (HostOperationException) { threw = true; }
-            Check(threw, "V9: a v1.4 native version is rejected at Create");
+            Check(threw, "V9: a v1.5 native version is rejected at Create");
             log($"{GateName} V9: ABI mix-and-match is rejected");
 
             // 10. Packet header, payload length and capacity are consistent.

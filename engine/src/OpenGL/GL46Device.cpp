@@ -15,6 +15,7 @@
 #include "Engine/Core/RHI/MemoryTypes.h"
 #include "Engine/Core/Log.h"
 #include "GL46ShaderSources.g.h"   // GENERATED — assets/shaders/*.comp.glsl 嵌入（Phase 1 单一真理源）
+#include <GLFW/glfw3.h>
 #include <cstdio>
 #include <cstring>
 #include <sstream>
@@ -260,6 +261,14 @@ std::unique_ptr<IRHISwapChain> GL46Device::CreateSwapChain(const SwapChainDesc&)
 
 void GL46Device::WaitIdle() { if (m_GL && !m_IsStub) m_GL->Finish(); }
 const char* GL46Device::GetDeviceName() const { return m_DeviceName.c_str(); }
+
+bool GL46Device::SupportsGpuTimestamps() const {
+    if (!m_GL || m_IsStub) return false;
+    if (!glfwGetCurrentContext()) return false;
+    GLint bits = 0;
+    m_GL->GetQueryiv(GL_TIMESTAMP, GL_QUERY_COUNTER_BITS, &bits);
+    return bits > 0;
+}
 
 GL46Buffer::~GL46Buffer() {}
 uint64_t GL46Buffer::GetSize() const noexcept { return m_Size; }

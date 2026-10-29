@@ -49,6 +49,7 @@ namespace RHI {
         struct SegmentResult {
             std::string name;
             double gpuMs = 0.0;   ///< 该分段起止时间戳的 GPU 时间差
+            bool   valid = false; ///< 查询是否真正解析成功；false 时 gpuMs 无意义
         };
 
         /**
@@ -60,8 +61,14 @@ namespace RHI {
         virtual bool IsAvailable() const = 0;
     };
 
-    /** 创建后端对应的剖析器实例（当前仅 GL46 实现） */
+    /** 创建后端无关的剖析器实例；GL46/Vulkan 共用。 */
     std::unique_ptr<IGpuTimestampProfiler> CreateGpuTimestampProfiler();
+
+    /**
+     * 后端无关实现：只依赖 IRHICommandList 的 timestamp 接口与
+     * IRHIDevice::SupportsGpuTimestamps()；GL46/Vulkan 共用。
+     */
+    std::unique_ptr<IGpuTimestampProfiler> CreateCommandListGpuTimestampProfiler();
 
 } // namespace RHI
 } // namespace Engine

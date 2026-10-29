@@ -27,6 +27,7 @@ class VulkanDeferredDeletion;
         std::unique_ptr<IRHISwapChain> CreateSwapChain(const SwapChainDesc& desc) override;
         void WaitIdle() override;
         const char* GetDeviceName() const override;
+        bool SupportsGpuTimestamps() const override;
 
         bool Initialize(void* windowHandle, uint32_t width, uint32_t height);
     /**
@@ -115,6 +116,9 @@ void Begin() override;
         void Dispatch(uint32_t groupX, uint32_t groupY, uint32_t groupZ) override;
         void SetUnorderedAccess(uint32 slot, IRHIBuffer* buffer) override;
         CommandListType GetType() const noexcept override;
+        uint32_t WriteTimestamp() override;
+        bool ResolveTimestampSpan(uint32 beginIdx, uint32 endIdx, double& outMs) override;
+        void ResetTimestamps() override;
 
         VkCommandBuffer GetVkCommandBuffer() const noexcept;
         void SetVkCommandBuffer(VkCommandBuffer cmdBuf) noexcept;

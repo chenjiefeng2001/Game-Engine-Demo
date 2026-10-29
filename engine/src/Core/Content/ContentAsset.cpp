@@ -4,8 +4,11 @@
  */
 
 #include "Engine/Core/Content/ContentAsset.h"
+#include "Engine/Core/Content/AtomicFile.h"
+#include "Engine/Core/Content/Utf8Path.h"
 #include "Engine/Core/Log.h"
 
+#include <fstream>
 #include <random>
 
 namespace Engine::Content {
@@ -84,7 +87,7 @@ void ContentRegistry::Unregister(const ResourceGUID& guid) {
     }
 }
 
-bool ContentRegistry::SaveManifest(const std::string& filePath) const {
+std::string ContentRegistry::SerializeManifest() const {
     nlohmann::json j;
     j["version"] = 1;
     j["assets"] = nlohmann::json::array();
@@ -95,43 +98,160 @@ bool ContentRegistry::SaveManifest(const std::string& filePath) const {
             { "type", ToString(e.type) },
         });
     }
-    std::ofstream f(filePath, std::ios::binary | std::ios::trunc);
-    if (!f.is_open()) return false;
-    f << j.dump(2);
-    return f.good();
+    return j.dump(2);
 }
 
-bool ContentRegistry::LoadManifest(const std::string& filePath) {
-    std::ifstream f(filePath, std::ios::binary);
-    if (!f.is_open()) return false;
+bool ContentRegistry::SaveManifest(const std::string& filePath) const {
+    const std::string body = SerializeManifest();
+    const AtomicFileResult written = WriteFileAtomic(filePath, body);
+    if (!written.ok) {
+        s_Log.Error("SaveManifest: cannot write '{}': {} ({})", filePath,
+                    ToString(written.error), written.diagnostic);
+        return false;
+    }
+    return true;
+}
+
+bool ContentRegistry::LoadManifest(const std::string& filePath,
+                                   const ManifestLoadOptions& options) {
+    std::ifstream f(PathFromUtf8(filePath), std::ios::binary);
+    if (!f.is_open()) {
+        s_Log.Error("LoadManifest: cannot open '{}'", filePath);
+        return false;
+    }
 
     nlohmann::json j;
     try {
         f >> j;
     } catch (const std::exception&) {
         s_Log.Error("LoadManifest: corrupted manifest '{}'", filePath);
-        return false;                                   // 保持空表（fail-clean）
+        return false;
     }
 
+    constexpr int64_t kSupportedVersion = 1;
+    if (!j.is_object() || !j.contains("version") ||
+        !(j["version"].is_number_integer() ||
+          j["version"].is_number_unsigned())) {
+        s_Log.Error("LoadManifest: missing/invalid version in '{}'", filePath);
+        return false;
+    }
+    int64_t version = 0;
+    try {
+        version = j["version"].get<int64_t>();
+    } catch (const std::exception&) {
+        s_Log.Error("LoadManifest: unreadable version in '{}'", filePath);
+        return false;
+    }
+    if (version != kSupportedVersion) {
+        s_Log.Error("LoadManifest: unsupported version {} in '{}'", version,
+                    filePath);
+        return false;
+    }
     if (!j.contains("assets") || !j["assets"].is_array()) {
         s_Log.Error("LoadManifest: malformed manifest '{}'", filePath);
         return false;
     }
 
-    Clear();
+    // M1-B：先构造完整候选，任一条目失败即整体失败；成功后才交换。
+    ContentRegistry candidate;
+    std::unordered_map<std::string, std::string> guidOwners;
+    std::unordered_map<std::string, std::string> pathOwners;
+
+    size_t index = 0;
     for (const auto& a : j["assets"]) {
-        if (!a.contains("guid") || !a.contains("path") || !a.contains("type")) continue;
+        const std::string where =
+            "asset #" + std::to_string(index++) + " in '" + filePath + "'";
+        if (!a.is_object() || !a.contains("guid") || !a.contains("path") ||
+            !a.contains("type") || !a["guid"].is_string() ||
+            !a["path"].is_string() || !a["type"].is_string()) {
+            s_Log.Error("LoadManifest: {} missing/invalid required fields",
+                        where);
+            return false;
+        }
+
         const std::string hex = a["guid"].get<std::string>();
-        ResourceGUID guid = ResourceGUID::FromHex(hex);
-        if (guid.IsNull()) continue;
-        AssetEntry e;
-        e.guid = guid;
-        e.path = a["path"].get<std::string>();
-        e.type = (a["type"].get<std::string>() == "Script")
-                     ? AssetType::Script : AssetType::Texture;
-        m_ByGuid[hex] = e;
-        m_ByPath[e.path] = guid;
+        const ResourceGUID guid = ResourceGUID::FromHex(hex);
+        if (guid.IsNull()) {
+            s_Log.Error("LoadManifest: {} has invalid GUID '{}'", where, hex);
+            return false;
+        }
+        const std::string canonicalHex = guid.ToHex();
+        auto guidIt = guidOwners.find(canonicalHex);
+        if (guidIt != guidOwners.end()) {
+            s_Log.Error("LoadManifest: {} duplicates GUID {} (paths '{}' and "
+                        "'{}')",
+                        where, canonicalHex, guidIt->second,
+                        a["path"].get<std::string>());
+            return false;
+        }
+
+        const std::string typeName = a["type"].get<std::string>();
+        AssetType type;
+        if (typeName == "Texture") {
+            type = AssetType::Texture;
+        } else if (typeName == "Script") {
+            type = AssetType::Script;
+        } else {
+            s_Log.Error("LoadManifest: {} has unknown type '{}'", where,
+                        typeName);
+            return false;
+        }
+
+        const std::string authoredPath = a["path"].get<std::string>();
+        std::string canonicalPath;
+        if (options.root) {
+            const PathResolution resolved =
+                options.root->ToCanonicalProjectPath(authoredPath);
+            if (resolved.ok) {
+                canonicalPath = resolved.path;
+            } else if (options.allowLegacyAbsolute &&
+                       resolved.error == PathError::EscapesRoot) {
+                // K4.4 兼容：仅根外旧绝对路径保留为未解析；结构违规不降级。
+                canonicalPath = authoredPath;
+                if (options.warnings) {
+                    options.warnings->push_back(
+                        "asset " + canonicalHex + ": path '" + authoredPath +
+                        "' kept unresolved (" + ToString(resolved.error) +
+                        "); legacy absolute outside project root");
+                }
+            } else {
+                s_Log.Error("LoadManifest: {} path '{}' rejected: {}", where,
+                            authoredPath, ToString(resolved.error));
+                return false;
+            }
+        } else {
+            const PathResolution normalized =
+                NormalizeProjectRelative(authoredPath);
+            if (!normalized.ok) {
+                s_Log.Error("LoadManifest: {} path '{}' rejected: {}", where,
+                            authoredPath, ToString(normalized.error));
+                return false;
+            }
+            canonicalPath = normalized.path;
+        }
+
+        const std::string pathKey =
+            options.root ? options.root->ComparisonKey(canonicalPath)
+                         : PathKey(canonicalPath, options.caseMode);
+        auto pathIt = pathOwners.find(pathKey);
+        if (pathIt != pathOwners.end()) {
+            s_Log.Error("LoadManifest: {} path '{}' collides with '{}' under "
+                        "PathKey",
+                        where, canonicalPath, pathIt->second);
+            return false;
+        }
+
+        if (!candidate.RegisterExplicit(guid, canonicalPath, type)) {
+            s_Log.Error("LoadManifest: {} identity conflict for GUID {}", where,
+                        canonicalHex);
+            return false;
+        }
+
+        guidOwners.emplace(canonicalHex, canonicalPath);
+        pathOwners.emplace(pathKey, canonicalPath);
     }
+
+    *this = std::move(candidate);
     return true;
 }
 
