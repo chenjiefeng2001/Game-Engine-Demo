@@ -114,6 +114,20 @@ add_executable(test_content
 target_link_libraries(test_content PRIVATE ${COMMON_LIBS} GTest::gtest_main)
 add_test(NAME test_content COMMAND test_content)
 
+# dogfood scene/manifest fixtures are gitignored (*.scene, *.manifest.json).
+# A clean checkout must generate them before test_content runs. Reuse the
+# engine's AssetBakery generator (same path CI uses) rather than committing
+# generated JSON or silently skipping the dogfood cases.
+add_dependencies(test_content AssetBakery)
+add_test(NAME content_fixture_setup
+    COMMAND $<TARGET_FILE:AssetBakery> --dogfood-scenes assets/scenes)
+set_tests_properties(content_fixture_setup PROPERTIES
+    FIXTURES_SETUP content_dogfood_fixtures
+    WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}"
+    TIMEOUT 120)
+set_tests_properties(test_content PROPERTIES
+    FIXTURES_REQUIRED content_dogfood_fixtures)
+
 add_test(NAME test_scripting COMMAND test_scripting)
 
 # ── L4: Game Production 契约测试（GP-P1，见 docs/GP-P1-Charter.md §11）──

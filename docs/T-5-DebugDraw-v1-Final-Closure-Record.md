@@ -40,6 +40,14 @@
 
 `test_content` 的 5 个 dogfood 用例因 `assets/scenes/dogfood03/05/06/07.manifest.json` 在 HEAD 中缺失而失败；未发现与 T-5 改动相关。该问题不进入 T-5 v1，另见 `docs/T-5-Content-Dogfood-Manifest-Restoration-Task.md`。没有通过 Skip 或修改测试来伪造全绿。
 
+### 2.1 Content follow-up（T-5 关闭后）
+
+用户随后批准修复 Content fixture。`tests/CMakeLists.txt` 已增加 CTest fixture setup：
+`content_fixture_setup` 调用 `AssetBakery --dogfood-scenes assets/scenes`，`test_content`
+设置 `FIXTURES_REQUIRED`，并依赖 `AssetBakery` target。生成物仍被 `.gitignore` 排除。
+
+验证：`test_content` 107 passed / 1 skipped；全量 CTest Debug/Release 均 **19/19**（19 = 18 个既有 target + fixture setup test）。这修复了关闭时记录的基线资产缺口，但不改变 T-5 v1 的范围裁决，也不把 `test_content` 纳入 T-5 实现验收。
+
 ---
 
 ## 3. D5-11 修订

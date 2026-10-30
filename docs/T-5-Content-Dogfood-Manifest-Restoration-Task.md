@@ -1,8 +1,8 @@
 # Content Test Fixture Restoration — Dogfood Manifests
 
-**状态**：`BACKLOG — OUT OF T-5 SCOPE — NOT AUTHORIZED`
+**状态**：`RESOLVED — CTEST FIXTURE SETUP`
 **日期**：2026-10-31
-**关联裁决**：T-5 分支裁决（`test_content` 基线例外）
+**关联裁决**：T-5 分支裁决（`test_content` 基线例外）；后续用户批准修复
 
 ---
 
@@ -53,3 +53,30 @@ assets/scenes/dogfood07.manifest.json
 - 本任务不属于 T-5 v1，不影响 T-5 按范围封存。
 - 未获授权前不修改 `assets/scenes`、测试代码或 Content Pipeline。
 - 不为了全量 CTest 全绿而回滚当前 T-5 提交。
+
+---
+
+## 5. 修复（2026-10-31）
+
+根因不是测试断言错误：dogfood scene/manifest 由 `AssetBakery --dogfood-scenes` 生成，
+且 `.gitignore` 排除了 `*.scene` / `*.manifest.json`。CI 已在测试前生成 fixture，
+本地 CTest 缺少同等准备步骤。
+
+实现：
+
+- `tests/CMakeLists.txt` 为 `test_content` 增加 CTest fixture setup：
+  - `content_fixture_setup` 调用 `$<TARGET_FILE:AssetBakery> --dogfood-scenes assets/scenes`
+  - `FIXTURES_SETUP content_dogfood_fixtures`
+  - `test_content` 设置 `FIXTURES_REQUIRED content_dogfood_fixtures`
+  - `test_content` 依赖 `AssetBakery` target，保证本地单独构建测试时生成器存在
+- 不提交生成的 `.scene` / `.manifest.json`；它们仍由 `.gitignore` 排除。
+- 不修改 dogfood 测试断言，不增加 Skip。
+
+验证（在删除已生成 fixture 后由 CTest 自动重建）：
+
+| 目标 | Debug | Release |
+|---|---:|---:|
+| `test_content` | 107 passed / 1 skipped | PASS |
+| 全量 CTest（含 fixture setup test） | 19/19 | 19/19 |
+
+全量 CTest 的 19 项包含 `content_fixture_setup` 本身与 18 个既有 target；不是把 5 个 dogfood 用例改成 Skip。
