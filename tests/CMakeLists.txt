@@ -292,6 +292,17 @@ add_executable(test_io
 target_link_libraries(test_io PRIVATE ${COMMON_LIBS})
 add_test(NAME test_io COMMAND test_io)
 
+# ── T-5: Generic DebugDraw CPU/GL gates ──
+# 独立 target，不把 Editor/Bridge/Sandbox 拉入；GL 测试复用
+# OpenGLGraphicsFactory 的隐藏上下文与 OpenGLFramebuffer 的像素回读。
+add_executable(test_debugdraw
+    test_debugdraw/test_debugdraw.cpp
+    main.cpp
+)
+target_link_libraries(test_debugdraw PRIVATE ${COMMON_LIBS} glfw)
+add_test(NAME test_debugdraw COMMAND test_debugdraw)
+set_tests_properties(test_debugdraw PROPERTIES TIMEOUT 180)
+
 # NOTE: this block must stay at the END of the file.
 # get_property(... DIRECTORY PROPERTY TESTS) only returns the tests
 # registered so far. Placed mid-file, later targets (test_animation /

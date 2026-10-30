@@ -29,6 +29,9 @@ file(GLOB ENGINE_SOURCES CONFIGURE_DEPENDS
     src/Platform/glfw/*.cpp
     src/RHI/*.cpp
     src/Rendering/*.cpp
+    src/Rendering/DebugDraw/*.cpp
+    src/Rendering/DebugDraw/OpenGL/*.cpp
+    src/Rendering/DebugDraw/Physics/*.cpp
     src/Scripting/*.cpp
 )
 if(WIN32 AND EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/src/D3D12")
@@ -62,6 +65,9 @@ file(GLOB ENGINE_HEADERS CONFIGURE_DEPENDS
     include/Engine/Box2D/*.h
     include/Engine/Platform/*.h
     include/Engine/Rendering/*.h
+    include/Engine/Rendering/DebugDraw/*.h
+    include/Engine/Rendering/DebugDraw/OpenGL/*.h
+    include/Engine/Rendering/DebugDraw/Physics/*.h
     include/Engine/Scripting/*.h
     include/Engine/Vulkan/*.h
     include/Engine/Jolt/*.h
