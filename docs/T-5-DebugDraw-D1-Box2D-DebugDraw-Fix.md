@@ -84,6 +84,6 @@ D1 之后复跑：`ctest_full_t5_d1_debug.log`、`ctest_full_t5_d1_release.log`�
 
 - 真实 2D 调试绘制现在通过 adapter 走通用 DebugDraw；但栅格化视觉仍只由 `test_debugdraw` 的 FBO 门禁覆盖，sandbox 只有启动冒烟。
 - `Box2DDebugDraw` 的 solid capsule 仍是近似轮廓（两个圆 + 线），不是精确 capsule 填充。
-- Jolt `DrawGeometry` / 碰撞体形状线框仍未修复。
+- Jolt `DrawGeometry` / 碰撞体形状线框已由后续 D3 任务修复，见 `docs/T-5-DebugDraw-D3-Jolt-DrawGeometry-Fix.md`。
 - 未接生产 EngineHost/Bridge/Editor；未做 ASan/TSan/性能基准。
 - D1 改动未提交、未 push；等待用户决定提交范围。

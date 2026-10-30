@@ -77,7 +77,7 @@ UI / grid / editor overlay
 - 物理世界只持有 adapter 裸指针；析构时显式 `SetDebugDraw(nullptr)`，避免 service 销毁后物理世界仍持有悬空指针。
 - 未修改 `Box2DDebugDraw`、`JoltPhysicsWorld`、`JoltDebugRenderer`。
 - 未接 EngineHost/Bridge/生产 Avalonia Editor；未接 RenderGraph/RHI 多后端。
-- 未修复 Jolt `DrawGeometry` 与碰撞体形状线框；RenderTest 的可见内容仍受现有 Jolt DebugRenderer 限制。
+- Gate C 阶段未修复 Jolt `DrawGeometry` 与碰撞体形状线框；后续独立 D3 任务已修复（`docs/T-5-DebugDraw-D3-Jolt-DrawGeometry-Fix.md`）。
 - 2D 真实路径的 `Box2DDebugDraw` transform/flags 缺陷已在独立 D1 任务中修复（`docs/T-5-DebugDraw-D1-Box2D-DebugDraw-Fix.md`）；Gate C 本身只替换渲染后端。
 
 ---

@@ -56,7 +56,7 @@
 2. 未运行 ASan/TSan。
 3. 沙盒只做启动冒烟；没有自动截图/像素验收。真实像素证据来自 `test_debugdraw` FBO 测试。
 4. 2D 真实 Box2D 路径的 `Box2DDebugDraw` transform/flags 既有缺陷已在独立 D1 任务中修复；见 `docs/T-5-DebugDraw-D1-Box2D-DebugDraw-Fix.md`。Gate C 自身仍未做真实栅格化像素验证。
-5. Jolt `DrawGeometry` 仍是空实现；RenderTest 的碰撞体形状线框仍不完整；本阶段未修。
+5. Gate C 阶段 Jolt `DrawGeometry` 仍为空实现；后续独立 D3 任务已修复 `DrawGeometry` 与 TLS `Clear/Flush` 调用链（`docs/T-5-DebugDraw-D3-Jolt-DrawGeometry-Fix.md`）。
 6. Legacy ViewportPanel 回调测试使用隐藏 GL 上下文 + 独立 ImGui context，不覆盖完整编辑器 UI 布局/交互。
 7. 未接生产 EngineHost/Bridge/Avalonia Editor；未加 UI 开关或 ABI。
 8. 未测量性能、未做多显示器/DPI/长稳验证。
@@ -71,7 +71,7 @@
 | EngineHost / Bridge / 生产 Editor 接线 | 未授权、未实施 |
 | RenderGraph / RHI 多后端 | 未授权、未实施 |
 | `Box2DDebugDraw` transform/flags 修复 | 已由独立 D1 任务修复（未包含在 Gate C 提交） |
-| Jolt `DrawGeometry` / 碰撞体形状线框 | 独立任务，未实施 |
+| Jolt `DrawGeometry` / 碰撞体形状线框 | 已由独立 D3 任务修复（未包含在 Gate C 提交） |
 | Git push | 未授权、未执行 |
 | 完整 CTest / ASan / TSan / 性能基准 | 未执行 |
 

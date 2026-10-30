@@ -15,6 +15,10 @@
 #include "DebugDrawGLFixture.h"
 #include "Engine/Box2D/Box2DPhysicsWorld.h"
 #include "Engine/Editor/ViewportPanel.h"
+#ifdef JPH_DEBUG_RENDERER
+#include "Engine/Jolt/JoltPhysicsWorld.h"
+#include "Engine/Rendering/DebugDraw/Physics/PhysicsDebugDrawAdapter3D.h"
+#endif
 #include "Engine/Rendering/DebugDraw/DebugDraw.h"
 #include "Engine/Rendering/DebugDraw/OpenGL/OpenGL46DebugDrawRenderer.h"
 #include "Engine/Rendering/DebugDraw/Physics/PhysicsDebugDrawAdapter2D.h"
@@ -532,6 +536,34 @@ TEST(DebugDrawAdapterTest, Box2DWorldDrawUsesWorldTransformAndFlags) {
     EXPECT_EQ(fixture.fake->lastDepthVertexCount, 0u);
     EXPECT_EQ(fixture.fake->lastXrayVertexCount, 0u);
 }
+
+#ifdef JPH_DEBUG_RENDERER
+TEST(DebugDrawAdapterTest, JoltWorldDrawProducesShapeGeometry) {
+    FakeService fixture;
+    JoltPhysicsWorld world;
+    PhysicsWorldConfig3D config;
+    ASSERT_TRUE(world.Init(config));
+    world.SetDebugDraw(nullptr);
+
+    BodyDef3D bodyDef;
+    bodyDef.type = BodyType3D::Static;
+    bodyDef.position = Vec3(0, 0, 0);
+    bodyDef.shape.type = ShapeType3D::Sphere;
+    bodyDef.shape.sphereRadius = 1.0f;
+    ASSERT_NE(world.CreateBody(bodyDef), nullptr);
+
+    PhysicsDebugDrawAdapter3D adapter(fixture.service);
+    world.SetDebugDraw(&adapter);
+    ASSERT_EQ(fixture.service.BeginFrame(IdentityView(), 0.0f), Status::Ok);
+    world.DebugDraw();
+    ASSERT_EQ(fixture.service.EndFrame(), Status::Ok);
+
+    // AABBs/axes alone are much smaller; the actual sphere geometry must add
+    // a substantial number of line vertices after DrawGeometry is supported.
+    EXPECT_GT(fixture.fake->lastDepthVertexCount, 100u);
+    world.SetDebugDraw(nullptr);
+}
+#endif
 
 // ============================================================
 // OpenGL 4.6 backend

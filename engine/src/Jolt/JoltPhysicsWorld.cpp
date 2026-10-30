@@ -577,12 +577,14 @@ void JoltPhysicsWorld::SetDebugDraw(IPhysicsDebugDraw3D* draw) {
 void JoltPhysicsWorld::DebugDraw() {
     if (!m_DebugDraw) return;
 
-    m_DebugDraw->Clear();
-
 #ifdef JPH_DEBUG_RENDERER
     if (!m_DebugRenderer) {
         m_DebugRenderer = std::make_unique<JoltDebugRenderer>(m_DebugDraw);
     }
+
+    // JoltDebugRenderer owns the TLS line buffers; Clear/Flush must be called
+    // on it, not on the IPhysicsDebugDraw3D adapter (whose Clear/Flush are no-ops).
+    m_DebugRenderer->Clear();
 
     JPH::BodyManager::DrawSettings drawSettings;
     drawSettings.mDrawShape = true;
@@ -591,9 +593,11 @@ void JoltPhysicsWorld::DebugDraw() {
     drawSettings.mDrawCenterOfMassTransform = true;
 
     m_PhysicsSystem.DrawBodies(drawSettings, m_DebugRenderer.get());
-#endif
-
+    m_DebugRenderer->Flush();
+#else
+    m_DebugDraw->Clear();
     m_DebugDraw->Flush();
+#endif
 }
 
 JoltPhysicsWorld::Stats JoltPhysicsWorld::GetStats() const {

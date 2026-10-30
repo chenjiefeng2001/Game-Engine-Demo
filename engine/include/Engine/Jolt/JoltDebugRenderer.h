@@ -10,7 +10,7 @@
 
 #ifdef JPH_DEBUG_RENDERER
 #include <Jolt/Jolt.h>
-#include <Jolt/Renderer/DebugRenderer.h>
+#include <Jolt/Renderer/DebugRendererSimple.h>
 #endif
 
 #include "Engine/Core/Physics/IPhysicsDebugDraw3D.h"
@@ -20,7 +20,7 @@
 namespace Engine {
 
 #ifdef JPH_DEBUG_RENDERER
-class JoltDebugRenderer final : public JPH::DebugRenderer {
+class JoltDebugRenderer final : public JPH::DebugRendererSimple {
 public:
     static constexpr uint32 MAX_THREADS = 16;
 
@@ -30,15 +30,6 @@ public:
     void DrawLine(JPH::RVec3Arg inFrom, JPH::RVec3Arg inTo, JPH::ColorArg inColor) override;
     void DrawTriangle(JPH::RVec3Arg inV0, JPH::RVec3Arg inV1, JPH::RVec3Arg inV2,
                       JPH::ColorArg inColor, JPH::DebugRenderer::ECastShadow inCastShadow = JPH::DebugRenderer::ECastShadow::Off) override;
-    JPH::DebugRenderer::Batch CreateTriangleBatch(const Triangle* inTriangles, int inTriangleCount) override;
-    JPH::DebugRenderer::Batch CreateTriangleBatch(const Vertex* inVertices, int inVertexCount,
-                                                   const uint32* inIndices, int inIndexCount) override;
-    void DrawGeometry(JPH::RMat44Arg inModelMatrix, const JPH::AABox& inWorldSpaceBounds,
-                      float inLODScaleSq, JPH::ColorArg inModelColor,
-                      const JPH::DebugRenderer::GeometryRef& inGeometry,
-                      JPH::DebugRenderer::ECullMode inCullMode = JPH::DebugRenderer::ECullMode::CullBackFace,
-                      JPH::DebugRenderer::ECastShadow inCastShadow = JPH::DebugRenderer::ECastShadow::On,
-                      JPH::DebugRenderer::EDrawMode inDrawMode = JPH::DebugRenderer::EDrawMode::Solid) override;
     void DrawText3D(JPH::RVec3Arg inPosition, const std::string_view& inString,
                     JPH::ColorArg inColor, float inHeight) override;
     void Clear();

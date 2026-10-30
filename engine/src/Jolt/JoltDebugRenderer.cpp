@@ -57,36 +57,6 @@ void JoltDebugRenderer::DrawTriangle(JPH::RVec3Arg inV0, JPH::RVec3Arg inV1, JPH
     buf.lines.push_back({v2, v0, color});
 }
 
-JPH::DebugRenderer::Batch JoltDebugRenderer::CreateTriangleBatch(
-    const Triangle* inTriangles, int inTriangleCount)
-{
-    (void)inTriangles;
-    (void)inTriangleCount;
-    return Batch();
-}
-
-JPH::DebugRenderer::Batch JoltDebugRenderer::CreateTriangleBatch(
-    const Vertex* inVertices, int inVertexCount,
-    const uint32* inIndices, int inIndexCount)
-{
-    (void)inVertices;
-    (void)inVertexCount;
-    (void)inIndices;
-    (void)inIndexCount;
-    return Batch();
-}
-
-void JoltDebugRenderer::DrawGeometry(JPH::RMat44Arg inModelMatrix,
-                                      const JPH::AABox&, float,
-                                      JPH::ColorArg inModelColor,
-                                      const JPH::DebugRenderer::GeometryRef& inGeometry,
-                                      JPH::DebugRenderer::ECullMode, JPH::DebugRenderer::ECastShadow, JPH::DebugRenderer::EDrawMode)
-{
-    if (!m_Draw || !inGeometry) return;
-    (void)inModelMatrix;
-    (void)inModelColor;
-}
-
 void JoltDebugRenderer::DrawText3D(JPH::RVec3Arg inPosition,
                                     const std::string_view& inString,
                                     JPH::ColorArg inColor, float)

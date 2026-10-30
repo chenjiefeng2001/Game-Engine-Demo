@@ -85,7 +85,7 @@ Gate C 新增用例：
 1. 完整 CTest 全量套件；只运行 4 个组合目标。
 2. ASan/TSan。
 3. Gate C 阶段未做真实 Box2D `b2World_Draw` → adapter 像素验证；后续 D1 已修复 `Box2DDebugDraw` transform/flags 并增加真实世界坐标门禁（见 `docs/T-5-DebugDraw-D1-Box2D-DebugDraw-Fix.md`）。
-4. Jolt `DrawGeometry` / 碰撞体形状线框验证；未修复。
+4. Gate C 阶段未验证 Jolt `DrawGeometry` / 碰撞体形状线框；后续独立 D3 任务已修复并加 Debug/Release 真实 Jolt 门禁（`docs/T-5-DebugDraw-D3-Jolt-DrawGeometry-Fix.md`）。
 5. 生产 EngineHost/Bridge/Avalonia Editor 接线与 UI 开关。
 6. 真实 legacy `ViewportPanel` 编辑器 UI 的完整交互；测试只覆盖回调顺序，不覆盖实际 ImGui 编辑器布局。
 7. 多显示器/DPI、性能基准、长时间运行。

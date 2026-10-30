@@ -8,6 +8,7 @@
 **实现记录**：`docs/T-5-DebugDraw-Implementation-Record.md`
 **测试记录**：`docs/T-5-DebugDraw-Test-Record.md`
 **后续 Gate C**：`docs/T-5-DebugDraw-GateC-Contract.md`（Sandbox + Legacy 集成，`T-5 Gate C — PASS — SCOPE-BOUND`，待用户最终验收）
+**后续 D3**：Jolt `DrawGeometry` / TLS Clear-Flush 修复见 `docs/T-5-DebugDraw-D3-Jolt-DrawGeometry-Fix.md`。
 
 > 本记录建议将 T-5 v1 封存为 `CLOSED — SCOPE-BOUND`；最终关闭裁决由用户确认。
 > 本记录不把未执行的验证项包装成通过。

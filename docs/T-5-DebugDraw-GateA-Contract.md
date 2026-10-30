@@ -292,6 +292,12 @@ Gate B 于 2026-10-31 获用户授权；实际实施严格限于以下允许项�
 2. **不把 Jolt 形状绘制视为已有能力。** 该报告假设“JoltDebugRenderer 无需重写”；当前 `JoltDebugRenderer::DrawGeometry` 是空实现，`CreateTriangleBatch` 返回空 batch。Jolt 碰撞体形状线框修复独立立项，不属于 T-5 v1 验收。
 3. **不采用任意线程 TLS 与 RenderGraph Pass 的捆绑方案。** 该报告的 P0/P1 方案把 TLS、duration、RenderGraph Pass 捆绑推进；T-5 v1 冻结为 owner-thread、显式帧生命周期、GL 4.6 单后端，TLS 与 RenderGraph 均不在 v1 范围。
 
+### 6.1 构建配置事实（D3 观察）
+
+2026-10-31 的 D3 修复确认：Jolt 的 `DEBUG_RENDERER_IN_DEBUG_AND_RELEASE` 为 `ON`，`JPH_DEBUG_RENDERER` 通过 Jolt target 传播到 Release（`build/engine/EngineCore.vcxproj` Release 包含该宏）。因此 D5-11 中“Jolt 物理适配保持 Debug-only”的措辞与当前实际构建不一致。
+
+本契约不追溯改写 D5-11；D3 修复按实际构建在 Debug/Release 均可运行，并记录于 `docs/T-5-DebugDraw-D3-Jolt-DrawGeometry-Fix.md`。该配置事实是否升级为契约修订，需用户裁决。
+
 ---
 
 ## 7. 变更控制
