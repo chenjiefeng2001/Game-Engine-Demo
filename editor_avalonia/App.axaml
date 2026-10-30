@@ -1,8 +1,146 @@
 <Application xmlns="https://github.com/avaloniaui"
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
              x:Class="AvaloniaEditor.App"
-             RequestedThemeVariant="Default">
+             RequestedThemeVariant="Dark">
+  <Application.Resources>
+    <SolidColorBrush x:Key="EditorCanvasBrush" Color="#1E1E1E"/>
+    <SolidColorBrush x:Key="PanelSurfaceBrush" Color="#252526"/>
+    <SolidColorBrush x:Key="PanelHeaderBrush" Color="#2D2D30"/>
+    <SolidColorBrush x:Key="BorderSubtleBrush" Color="#3F3F46"/>
+    <SolidColorBrush x:Key="TextPrimaryBrush" Color="#F1F1F1"/>
+    <SolidColorBrush x:Key="TextSecondaryBrush" Color="#B8B8B8"/>
+    <SolidColorBrush x:Key="AccentBrush" Color="#4F9CF9"/>
+    <SolidColorBrush x:Key="AccentHoverBrush" Color="#3D80D4"/>
+    <SolidColorBrush x:Key="AccentPressedBrush" Color="#235A9B"/>
+    <SolidColorBrush x:Key="SelectionBrush" Color="#094771"/>
+    <SolidColorBrush x:Key="WarningBrush" Color="#D7BA7D"/>
+    <SolidColorBrush x:Key="ErrorBrush" Color="#F48771"/>
+    <SolidColorBrush x:Key="DisabledTextBrush" Color="#6F6F6F"/>
+    <SolidColorBrush x:Key="InputSurfaceBrush" Color="#3A3A3D"/>
+    <SolidColorBrush x:Key="StatusBarBrush" Color="#202020"/>
+    <SolidColorBrush x:Key="WhiteBrush" Color="#FFFFFF"/>
+    <SolidColorBrush x:Key="GridSplitterBackground" Color="#3F3F46"/>
+    <SolidColorBrush x:Key="GridSplitterBorderBrush" Color="#3F3F46"/>
+    <SolidColorBrush x:Key="GridSplitterGripperBackground" Color="#6F6F6F"/>
+  </Application.Resources>
+
   <Application.Styles>
     <FluentTheme />
+
+    <Style Selector="Window">
+      <Setter Property="Background" Value="{DynamicResource EditorCanvasBrush}"/>
+      <Setter Property="Foreground" Value="{DynamicResource TextPrimaryBrush}"/>
+    </Style>
+
+    <Style Selector="Menu">
+      <Setter Property="Background" Value="{DynamicResource PanelSurfaceBrush}"/>
+      <Setter Property="Foreground" Value="{DynamicResource TextPrimaryBrush}"/>
+    </Style>
+
+    <Style Selector="Button">
+      <Setter Property="Background" Value="{DynamicResource PanelHeaderBrush}"/>
+      <Setter Property="Foreground" Value="{DynamicResource TextPrimaryBrush}"/>
+      <Setter Property="BorderBrush" Value="{DynamicResource BorderSubtleBrush}"/>
+      <Setter Property="BorderThickness" Value="1"/>
+      <Setter Property="Padding" Value="10,4"/>
+    </Style>
+    <Style Selector="Button:pointerover">
+      <Setter Property="Background" Value="#343438"/>
+      <Setter Property="BorderBrush" Value="{DynamicResource AccentBrush}"/>
+    </Style>
+    <Style Selector="Button:pressed">
+      <Setter Property="Background" Value="{DynamicResource SelectionBrush}"/>
+    </Style>
+    <Style Selector="Button:disabled">
+      <Setter Property="Opacity" Value="0.55"/>
+    </Style>
+    <Style Selector="Button:focus">
+      <Setter Property="BorderBrush" Value="{DynamicResource AccentBrush}"/>
+    </Style>
+    <Style Selector="Button.primary">
+      <Setter Property="Background" Value="{DynamicResource AccentBrush}"/>
+      <Setter Property="Foreground" Value="{DynamicResource WhiteBrush}"/>
+      <Setter Property="BorderBrush" Value="{DynamicResource AccentBrush}"/>
+    </Style>
+    <Style Selector="Button.primary:pointerover">
+      <Setter Property="Background" Value="{DynamicResource AccentHoverBrush}"/>
+    </Style>
+    <Style Selector="Button.primary:pressed">
+      <Setter Property="Background" Value="{DynamicResource AccentPressedBrush}"/>
+    </Style>
+    <Style Selector="Button.danger">
+      <Setter Property="Foreground" Value="{DynamicResource ErrorBrush}"/>
+      <Setter Property="BorderBrush" Value="#7A3B34"/>
+    </Style>
+    <Style Selector="Button.gizmo">
+      <Setter Property="Padding" Value="0"/>
+      <Setter Property="FontFamily" Value="Segoe UI Symbol"/>
+      <Setter Property="FontSize" Value="16"/>
+    </Style>
+
+    <Style Selector="TextBox">
+      <Setter Property="Background" Value="{DynamicResource InputSurfaceBrush}"/>
+      <Setter Property="Foreground" Value="{DynamicResource TextPrimaryBrush}"/>
+      <Setter Property="BorderBrush" Value="{DynamicResource BorderSubtleBrush}"/>
+    </Style>
+    <Style Selector="TextBox:focus">
+      <Setter Property="BorderBrush" Value="{DynamicResource AccentBrush}"/>
+    </Style>
+
+    <Style Selector="GridSplitter">
+      <Setter Property="Background" Value="{DynamicResource BorderSubtleBrush}"/>
+    </Style>
+
+    <Style Selector="ComboBox">
+      <Setter Property="Background" Value="{DynamicResource InputSurfaceBrush}"/>
+      <Setter Property="Foreground" Value="{DynamicResource TextPrimaryBrush}"/>
+      <Setter Property="BorderBrush" Value="{DynamicResource BorderSubtleBrush}"/>
+    </Style>
+
+    <Style Selector="ListBox">
+      <Setter Property="Background" Value="{DynamicResource PanelSurfaceBrush}"/>
+      <Setter Property="Foreground" Value="{DynamicResource TextPrimaryBrush}"/>
+      <Setter Property="BorderBrush" Value="{DynamicResource BorderSubtleBrush}"/>
+    </Style>
+    <Style Selector="ListBoxItem">
+      <Setter Property="Background" Value="Transparent"/>
+      <Setter Property="Foreground" Value="{DynamicResource TextPrimaryBrush}"/>
+    </Style>
+    <Style Selector="ListBoxItem:selected">
+      <Setter Property="Background" Value="{DynamicResource SelectionBrush}"/>
+      <Setter Property="Foreground" Value="{DynamicResource TextPrimaryBrush}"/>
+    </Style>
+    <Style Selector="ListBoxItem:selected /template/ ContentPresenter">
+      <Setter Property="Background" Value="{DynamicResource SelectionBrush}"/>
+      <Setter Property="Foreground" Value="{DynamicResource TextPrimaryBrush}"/>
+    </Style>
+    <Style Selector="ListBoxItem:pointerover">
+      <Setter Property="Background" Value="{DynamicResource PanelHeaderBrush}"/>
+    </Style>
+    <Style Selector="ListBoxItem:pointerover /template/ ContentPresenter">
+      <Setter Property="Background" Value="{DynamicResource PanelHeaderBrush}"/>
+    </Style>
+    <Style Selector="ListBox.console ListBoxItem">
+      <Setter Property="Padding" Value="8,2"/>
+      <Setter Property="MinHeight" Value="22"/>
+      <Setter Property="FontFamily" Value="Consolas, Courier New"/>
+      <Setter Property="FontSize" Value="12"/>
+    </Style>
+
+    <Style Selector="TabControl">
+      <Setter Property="Background" Value="{DynamicResource PanelSurfaceBrush}"/>
+      <Setter Property="Foreground" Value="{DynamicResource TextPrimaryBrush}"/>
+    </Style>
+    <Style Selector="TabItem">
+      <Setter Property="Background" Value="{DynamicResource PanelSurfaceBrush}"/>
+      <Setter Property="Foreground" Value="{DynamicResource TextSecondaryBrush}"/>
+    </Style>
+    <Style Selector="TabItem:pointerover">
+      <Setter Property="Foreground" Value="{DynamicResource TextPrimaryBrush}"/>
+    </Style>
+    <Style Selector="TabItem:selected">
+      <Setter Property="Background" Value="{DynamicResource PanelHeaderBrush}"/>
+      <Setter Property="Foreground" Value="{DynamicResource TextPrimaryBrush}"/>
+    </Style>
   </Application.Styles>
 </Application>

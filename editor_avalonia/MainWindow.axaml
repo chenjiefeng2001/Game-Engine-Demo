@@ -3,7 +3,9 @@
         xmlns:auto="using:Avalonia.Automation"
         x:Class="AvaloniaEditor.MainWindow"
         Title="Avalonia Editor — Phase 1 Shell (P1-A/B/C)"
-        Width="1100" Height="720">
+        Width="1100" Height="720" MinWidth="900" MinHeight="600"
+        Background="{DynamicResource EditorCanvasBrush}"
+        Foreground="{DynamicResource TextPrimaryBrush}">
 
   <DockPanel>
     <!-- Menu -->
@@ -15,36 +17,78 @@
       </MenuItem>
     </Menu>
 
-    <!-- Toolbar (transport + P3-D Play/Reload/Stop Runtime) -->
-    <StackPanel DockPanel.Dock="Top" Orientation="Horizontal" Spacing="6" Margin="6,4">
-      <Button x:Name="OpenProjectBtn" Content="Open" Click="OnOpenProject"/>
-      <Button x:Name="SaveProjectBtn" Content="Save" Click="OnSaveProject"/>
-      <Button x:Name="ToolbarCreateEntityBtn" Content="+ Entity" Click="OnCreateEntity"/>
-      <Button x:Name="PlayBtn" Content="Play" Click="OnPlay"/>
-      <Button x:Name="ReloadBtn" Content="Reload Script" Click="OnReloadScript"
-              IsEnabled="{Binding IsRunning}"/>
-      <Button x:Name="StopBtn" Content="Stop" Click="OnStop"
-              IsEnabled="{Binding IsRunning}"/>
-      <TextBlock Text="[P3-D] Save → Play → Edit → Reload (保留 _PERSIST) → Stop"
-                 VerticalAlignment="Center" Opacity="0.55" Margin="12,0,0,0"/>
+    <!-- Toolbar：全局 / 编辑 / 运行三组；运行态由 badge 表达 -->
+    <StackPanel DockPanel.Dock="Top" Orientation="Horizontal" Spacing="8" Margin="8,6"
+                Background="{DynamicResource PanelSurfaceBrush}">
+      <StackPanel x:Name="ToolbarGlobalGroup" Orientation="Horizontal" Spacing="4">
+        <Button x:Name="OpenProjectBtn" Content="Open" Click="OnOpenProject"
+                ToolTip.Tip="Open a project"/>
+        <Button x:Name="SaveProjectBtn" Content="Save" Click="OnSaveProject"
+                ToolTip.Tip="Save the current project"/>
+      </StackPanel>
+
+      <Border Width="1" Height="24" Background="{DynamicResource BorderSubtleBrush}" Margin="4,0"/>
+
+      <StackPanel x:Name="ToolbarEditGroup" Orientation="Horizontal" Spacing="4">
+        <Button x:Name="ToolbarCreateEntityBtn" Content="+ Entity" Click="OnCreateEntity"
+                auto:AutomationProperties.AutomationId="ToolbarCreateEntityBtn"
+                ToolTip.Tip="Create an entity"/>
+      </StackPanel>
+
+      <Border Width="1" Height="24" Background="{DynamicResource BorderSubtleBrush}" Margin="4,0"/>
+
+      <StackPanel x:Name="ToolbarTransportGroup" Orientation="Horizontal" Spacing="4">
+        <Button x:Name="PlayBtn" Content="Play" Click="OnPlay" Classes="primary"
+                ToolTip.Tip="Play / Stop"/>
+        <Button x:Name="ReloadBtn" Content="Reload Script" Click="OnReloadScript"
+                IsEnabled="{Binding IsRunning}"
+                ToolTip.Tip="Reload the active script"/>
+        <Button x:Name="StopBtn" Content="Stop" Click="OnStop"
+                IsEnabled="{Binding IsRunning}"
+                ToolTip.Tip="Stop the runtime"/>
+      </StackPanel>
+
+      <Border x:Name="RunningBadge" IsVisible="{Binding IsRunning}"
+              Background="{DynamicResource AccentBrush}" CornerRadius="3" Padding="8,3" Margin="4,0,0,0"
+              VerticalAlignment="Center">
+        <TextBlock Text="PLAYING" Foreground="{DynamicResource WhiteBrush}" FontSize="11" FontWeight="SemiBold"/>
+      </Border>
     </StackPanel>
 
     <!-- StatusBar -->
-    <Border DockPanel.Dock="Bottom" Background="#22000000" Padding="8,4">
+    <Border x:Name="StatusBarSurface" DockPanel.Dock="Bottom"
+            Background="{DynamicResource StatusBarBrush}" Padding="8,4">
       <StackPanel Orientation="Horizontal" Spacing="10">
-        <TextBlock x:Name="StatusBar" Text="no project loaded"/>
-        <TextBlock x:Name="DirtyBadge" Text="● DIRTY" Foreground="#FFD060"
+        <TextBlock x:Name="StatusBar" Text="no project loaded"
+                   Foreground="{DynamicResource TextSecondaryBrush}"/>
+        <TextBlock x:Name="RunningStatusBadge" Text="● RUNNING" Foreground="{DynamicResource AccentBrush}"
+                   IsVisible="{Binding IsRunning}" FontWeight="SemiBold" VerticalAlignment="Center"/>
+        <TextBlock x:Name="DirtyBadge" Text="● DIRTY" Foreground="{DynamicResource WarningBrush}"
                    IsVisible="False" FontWeight="Bold" VerticalAlignment="Center"/>
       </StackPanel>
     </Border>
 
     <!-- 四区 Shell：左 Hierarchy / 中 Viewport / 右 Inspector / 下 Console+Assets -->
-    <Grid ColumnDefinitions="240,8,*,8,280" RowDefinitions="*,8,220" Margin="4">
+    <Grid x:Name="MainGrid" Margin="4">
+      <Grid.ColumnDefinitions>
+        <ColumnDefinition Width="240" MinWidth="200"/>
+        <ColumnDefinition Width="8"/>
+        <ColumnDefinition Width="*" MinWidth="320"/>
+        <ColumnDefinition Width="8"/>
+        <ColumnDefinition Width="280" MinWidth="240"/>
+      </Grid.ColumnDefinitions>
+      <Grid.RowDefinitions>
+        <RowDefinition Height="*" MinHeight="240"/>
+        <RowDefinition Height="8"/>
+        <RowDefinition Height="220" MinHeight="140" MaxHeight="360"/>
+      </Grid.RowDefinitions>
 
       <!-- 左：Hierarchy（P2-C2：Rename/Delete/Create 回路）-->
-      <Border Grid.Column="0" Grid.RowSpan="3" BorderBrush="#33FFFFFF" BorderThickness="1" Padding="4">
+      <Border Grid.Column="0" Grid.RowSpan="3"
+              Background="{DynamicResource PanelSurfaceBrush}"
+              BorderBrush="{DynamicResource BorderSubtleBrush}" BorderThickness="1" Padding="8">
         <DockPanel>
-          <TextBlock DockPanel.Dock="Top" Text="Hierarchy" FontWeight="Bold" Margin="2,2,0,6"/>
+          <TextBlock DockPanel.Dock="Top" Text="Hierarchy" FontWeight="Bold" Margin="4,2,0,8"/>
           <StackPanel DockPanel.Dock="Bottom" Spacing="4" Margin="0,6,0,0">
             <TextBox x:Name="SearchBox" Text="{Binding SearchText, Mode=TwoWay}"
                      Watermark="search entities..."/>
@@ -54,31 +98,41 @@
               <Button Grid.Column="1" x:Name="RenameEntityBtn" Content="Rename" Click="OnRenameEntity"/>
             </Grid>
             <StackPanel Orientation="Horizontal" Spacing="4">
-              <Button x:Name="DeleteEntityBtn" Content="Delete" Click="OnDeleteEntity"/>
+              <Button x:Name="DeleteEntityBtn" Content="Delete" Click="OnDeleteEntity"
+                      Classes="danger"/>
               <Button x:Name="HierarchyCreateEntityBtn" Content="+ Entity" Click="OnCreateEntity"/>
             </StackPanel>
           </StackPanel>
-          <ListBox x:Name="HierarchyList"
-                   ItemsSource="{Binding FilteredEntities}"
-                   SelectedItem="{Binding SelectedEntity, Mode=OneWay}"
-                   SelectionChanged="OnHierarchySelectionChanged">
-            <ListBox.ItemTemplate>
-              <DataTemplate><TextBlock Text="{Binding Name}"/></DataTemplate>
-            </ListBox.ItemTemplate>
-          </ListBox>
+          <Grid>
+            <ListBox x:Name="HierarchyList"
+                     ItemsSource="{Binding FilteredEntities}"
+                     SelectedItem="{Binding SelectedEntity, Mode=OneWay}"
+                     SelectionChanged="OnHierarchySelectionChanged">
+              <ListBox.ItemTemplate>
+                <DataTemplate><TextBlock Text="{Binding Name}"/></DataTemplate>
+              </ListBox.ItemTemplate>
+            </ListBox>
+            <TextBlock x:Name="HierarchyEmptyState" Text="(no entities)"
+                       Foreground="{DynamicResource TextSecondaryBrush}"
+                       HorizontalAlignment="Center" VerticalAlignment="Center"
+                       IsHitTestVisible="False"
+                       IsVisible="{Binding !HasEntities}"/>
+          </Grid>
         </DockPanel>
       </Border>
 
       <!-- 中：Viewport + Gizmo 工具栏 -->
-      <Grid Grid.Column="2" Grid.RowSpan="3">
-        <Border BorderBrush="#33FFFFFF" BorderThickness="1" Background="#11000000">
+      <Grid x:Name="ViewportHost" Grid.Column="2" Grid.Row="0">
+        <Border BorderBrush="{DynamicResource BorderSubtleBrush}" BorderThickness="1"
+                Background="{DynamicResource EditorCanvasBrush}">
           <!-- Viewport 占位：实际纹理互操作需要 NativeControlHost 或自定义渲染 -->
           <!-- Phase 7-A：纹理显示（FBO → Avalonia Image） -->
           <!-- Phase 7-B：输入转发（Pointer/Keyboard → Bridge ABI） -->
           <!-- Phase 7-C：Gizmo 工具栏 -->
           <Grid>
             <!-- 视口内容区 -->
-            <Border Background="#1E1E1E" x:Name="ViewportBorder"
+            <Border Background="{DynamicResource EditorCanvasBrush}" x:Name="ViewportBorder"
+                    ClipToBounds="True"
                     PointerPressed="OnViewportPointerPressed"
                     PointerReleased="OnViewportPointerReleased"
                     PointerMoved="OnViewportPointerMoved"
@@ -93,7 +147,7 @@
                      因此 `e.GetPosition(ViewportImage)` 直接就是 canonical 像素坐标。
                      改回默认 Stretch 对齐会让该前提失效（ViewModel 的 mapper 会 fail-closed）。 -->
                 <Image x:Name="ViewportImage" Stretch="None"
-                       HorizontalAlignment="Left" VerticalAlignment="Top"/>
+                       HorizontalAlignment="Center" VerticalAlignment="Center"/>
                 <!-- 占位文本（无纹理时显示） -->
                 <TextBlock Text="VIEWPORT (Phase 7)" HorizontalAlignment="Center"
                            VerticalAlignment="Center" Opacity="0.4" FontSize="20"
@@ -104,16 +158,21 @@
             <!-- Gizmo 工具栏（右上角叠加） -->
             <StackPanel Orientation="Horizontal" Spacing="4" Margin="8"
                         HorizontalAlignment="Right" VerticalAlignment="Top">
-              <Button Content="Q" Width="28" Height="28" ToolTip.Tip="Select (Q)"
+              <Button x:Name="GizmoSelectBtn" Content="⌖" Classes="gizmo"
+                      Width="28" Height="28" ToolTip.Tip="Select (Q)"
                       Click="OnGizmoSelect"/>
-              <Button Content="W" Width="28" Height="28" ToolTip.Tip="Translate (W)"
+              <Button x:Name="GizmoTranslateBtn" Content="✥" Classes="gizmo"
+                      Width="28" Height="28" ToolTip.Tip="Translate (W)"
                       Click="OnGizmoTranslate"/>
-              <Button Content="E" Width="28" Height="28" ToolTip.Tip="Rotate (E)"
+              <Button x:Name="GizmoRotateBtn" Content="⟳" Classes="gizmo"
+                      Width="28" Height="28" ToolTip.Tip="Rotate (E)"
                       Click="OnGizmoRotate"/>
-              <Button Content="R" Width="28" Height="28" ToolTip.Tip="Scale (R)"
+              <Button x:Name="GizmoScaleBtn" Content="⤢" Classes="gizmo"
+                      Width="28" Height="28" ToolTip.Tip="Scale (R)"
                       Click="OnGizmoScale"/>
-              <Separator Width="1" Background="#44FFFFFF" Margin="4,0"/>
-              <Button Content="G" Width="28" Height="28" ToolTip.Tip="Toggle Grid (G)"
+              <Separator Width="1" Background="{DynamicResource BorderSubtleBrush}" Margin="4,0"/>
+              <Button x:Name="GizmoGridBtn" Content="▦" Classes="gizmo"
+                      Width="28" Height="28" ToolTip.Tip="Toggle Grid (G)"
                       Click="OnToggleGrid"/>
             </StackPanel>
 
@@ -126,9 +185,16 @@
       </Grid>
 
       <!-- 右：Inspector -->
-      <Border Grid.Column="4" Grid.RowSpan="3" BorderBrush="#33FFFFFF" BorderThickness="1" Padding="6">
+      <Border x:Name="InspectorPanel" Grid.Column="4" Grid.Row="0"
+              Background="{DynamicResource PanelSurfaceBrush}"
+              BorderBrush="{DynamicResource BorderSubtleBrush}" BorderThickness="1" Padding="8">
         <DockPanel>
-          <TextBlock DockPanel.Dock="Top" Text="Inspector" FontWeight="Bold" Margin="2,2,0,6"/>
+          <TextBlock DockPanel.Dock="Top" Text="Inspector" FontWeight="Bold" Margin="4,2,0,8"/>
+          <ScrollViewer x:Name="InspectorScroll"
+                        auto:AutomationProperties.AutomationId="InspectorScroll"
+                        VerticalScrollBarVisibility="Auto"
+                        HorizontalScrollBarVisibility="Disabled">
+            <StackPanel>
           <StackPanel IsVisible="{Binding HasSelection}">
             <TextBlock Text="{Binding SelectedName}" FontWeight="SemiBold" Margin="2,0,0,6"/>
             <TextBlock Text="Sprite" Opacity="0.8" Margin="2,4,0,0"/>
@@ -147,14 +213,14 @@
             <Button x:Name="ApplyTransformBtn" Content="Apply Transform" Click="OnApplyTransform" HorizontalAlignment="Left"/>
 
             <!-- F1 (Component Contract)：Camera Inspector（反射元数据驱动）-->
-            <TextBlock Text="Camera" FontWeight="Bold" Margin="2,10,0,2"/>
+            <TextBlock Text="Camera" FontWeight="Bold" Margin="4,12,0,4"/>
             <StackPanel Orientation="Horizontal" Spacing="6">
               <Button x:Name="AddCameraBtn" Content="+ Camera" Click="OnAddCamera"
                       IsEnabled="{Binding !HasCamera}"/>
               <Button x:Name="RemoveCameraBtn" Content="Remove Camera" Click="OnRemoveCamera"
-                      IsEnabled="{Binding HasCamera}"/>
+                      Classes="danger" IsEnabled="{Binding HasCamera}"/>
             </StackPanel>
-            <StackPanel IsVisible="{Binding HasCamera}" Margin="2,6,0,0" Spacing="4">
+            <StackPanel IsVisible="{Binding HasCamera}" Margin="4,8,0,0" Spacing="8">
               <Grid ColumnDefinitions="Auto,*">
                 <TextBlock Text="Enabled" VerticalAlignment="Center" Margin="0,0,8,0"/>
                 <TextBox Grid.Column="1" Text="{Binding CameraEnabled}"/>
@@ -175,14 +241,14 @@
             </StackPanel>
 
             <!-- T-1-E：RigidBody Inspector（通用组件通道）-->
-            <TextBlock Text="RigidBody" FontWeight="Bold" Margin="2,10,0,2"/>
+            <TextBlock Text="RigidBody" FontWeight="Bold" Margin="4,12,0,4"/>
             <StackPanel Orientation="Horizontal" Spacing="6">
               <Button x:Name="AddRigidBodyBtn" Content="+ RigidBody" Click="OnAddRigidBody"
                       IsEnabled="{Binding !HasRigidBody}"/>
               <Button x:Name="RemoveRigidBodyBtn" Content="Remove RigidBody" Click="OnRemoveRigidBody"
-                      IsEnabled="{Binding HasRigidBody}"/>
+                      Classes="danger" IsEnabled="{Binding HasRigidBody}"/>
             </StackPanel>
-            <StackPanel IsVisible="{Binding HasRigidBody}" Margin="2,6,0,0" Spacing="4">
+            <StackPanel IsVisible="{Binding HasRigidBody}" Margin="4,8,0,0" Spacing="8">
               <Grid ColumnDefinitions="Auto,*">
                 <TextBlock Text="Motion Type" VerticalAlignment="Center" Margin="0,0,8,0"/>
                 <ComboBox Grid.Column="1"
@@ -203,18 +269,51 @@
           </StackPanel>
           <TextBlock IsVisible="{Binding !HasSelection}" Text="(select an entity)"
                      Opacity="0.5"/>
+            </StackPanel>
+          </ScrollViewer>
         </DockPanel>
       </Border>
 
       <!-- 下：Console + Asset Browser Tab -->
-      <TabControl x:Name="MainTabs" Grid.Column="2" Grid.ColumnSpan="3" Grid.Row="2">
+      <TabControl x:Name="MainTabs" Grid.Column="2" Grid.ColumnSpan="3" Grid.Row="2"
+                  Background="{DynamicResource PanelSurfaceBrush}"
+                  Foreground="{DynamicResource TextPrimaryBrush}">
         <TabItem Header="Console">
-          <ListBox auto:AutomationProperties.AutomationId="ConsoleList"
-                   ItemsSource="{Binding ConsoleLines}"/>
+          <Border x:Name="ConsoleTabSurface"
+                  Background="{DynamicResource PanelSurfaceBrush}">
+          <DockPanel>
+            <StackPanel DockPanel.Dock="Top" Orientation="Horizontal" Spacing="8" Margin="8,4">
+              <TextBox x:Name="ConsoleFilterBox"
+                       Text="{Binding ConsoleFilter, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
+                       Watermark="filter console"
+                       Background="{DynamicResource InputSurfaceBrush}"
+                       Foreground="{DynamicResource TextPrimaryBrush}"
+                       auto:AutomationProperties.AutomationId="ConsoleFilterBox"
+                       Width="220"/>
+              <Button x:Name="ConsoleClearBtn" Content="Clear"
+                      Background="{DynamicResource InputSurfaceBrush}"
+                      Foreground="{DynamicResource TextPrimaryBrush}"
+                      auto:AutomationProperties.AutomationId="ConsoleClearBtn"
+                      Click="OnClearConsole"/>
+            </StackPanel>
+            <Grid>
+              <ListBox x:Name="ConsoleList" Classes="console"
+                       auto:AutomationProperties.AutomationId="ConsoleList"
+                       ItemsSource="{Binding ConsoleView}"/>
+              <TextBlock x:Name="ConsoleEmptyState" Text="(console is empty)"
+                         Foreground="{DynamicResource TextSecondaryBrush}"
+                         HorizontalAlignment="Center" VerticalAlignment="Center"
+                         IsHitTestVisible="False"
+                         IsVisible="{Binding !HasConsoleLines}"/>
+            </Grid>
+          </DockPanel>
+          </Border>
         </TabItem>
         <TabItem Header="Asset Browser">
+          <Border x:Name="AssetTabSurface"
+                  Background="{DynamicResource PanelSurfaceBrush}">
           <DockPanel>
-            <StackPanel DockPanel.Dock="Top" Orientation="Horizontal" Spacing="6" Margin="4">
+            <StackPanel DockPanel.Dock="Top" Orientation="Horizontal" Spacing="8" Margin="8,4">
               <ComboBox ItemsSource="{Binding AssetTypeOptions}"
                         SelectedItem="{Binding AssetTypeFilter, Mode=TwoWay}"
                         Width="100"/>
@@ -227,46 +326,59 @@
               <TextBlock Text="{Binding FilteredAssetCount}" VerticalAlignment="Center" Opacity="0.7"
                          auto:AutomationProperties.AutomationId="AssetCountText"/>
             </StackPanel>
-            <StackPanel DockPanel.Dock="Bottom" Orientation="Horizontal" Spacing="6" Margin="4">
+            <StackPanel DockPanel.Dock="Bottom" Orientation="Horizontal" Spacing="8" Margin="8,4">
               <Button x:Name="AssignSpriteBtn" Content="Assign Sprite to Selected" Click="OnAssignSprite"/>
               <Button x:Name="AssignScriptBtn" Content="Assign Script to Selected" Click="OnAssignScript"/>
             </StackPanel>
-            <ListBox x:Name="AssetList"
-                     auto:AutomationProperties.AutomationId="AssetList"
-                     ItemsSource="{Binding FilteredAssets}"
-                     SelectedItem="{Binding SelectedAsset, Mode=TwoWay}"
-                     DoubleTapped="OnAssetDoubleTapped">
-              <ListBox.ItemTemplate>
-                <DataTemplate>
-                  <StackPanel Orientation="Horizontal" Spacing="6">
-                    <TextBlock Text="{Binding TypeName}" Width="64" Opacity="0.7"/>
-                    <TextBlock Text="{Binding Path}" Width="200" TextTrimming="CharacterEllipsis"/>
-                    <TextBlock Text="{Binding Guid}" FontFamily="Consolas, Courier New"
-                               FontSize="10" Opacity="0.5" TextTrimming="CharacterEllipsis"/>
-                  </StackPanel>
-                </DataTemplate>
-              </ListBox.ItemTemplate>
-            </ListBox>
+            <Grid>
+              <ListBox x:Name="AssetList"
+                       auto:AutomationProperties.AutomationId="AssetList"
+                       ItemsSource="{Binding FilteredAssets}"
+                       SelectedItem="{Binding SelectedAsset, Mode=TwoWay}"
+                       DoubleTapped="OnAssetDoubleTapped">
+                <ListBox.ItemTemplate>
+                  <DataTemplate>
+                    <StackPanel Orientation="Horizontal" Spacing="6">
+                      <TextBlock Text="{Binding TypeName}" Width="64" Opacity="0.7"/>
+                      <TextBlock Text="{Binding Path}" Width="200" TextTrimming="CharacterEllipsis"/>
+                      <TextBlock Text="{Binding Guid}" FontFamily="Consolas, Courier New"
+                                 FontSize="10" Opacity="0.5" TextTrimming="CharacterEllipsis"/>
+                    </StackPanel>
+                  </DataTemplate>
+                </ListBox.ItemTemplate>
+              </ListBox>
+              <TextBlock x:Name="AssetEmptyState" Text="(no assets)"
+                         Foreground="{DynamicResource TextSecondaryBrush}"
+                         HorizontalAlignment="Center" VerticalAlignment="Center"
+                         IsHitTestVisible="False"
+                         IsVisible="{Binding !HasAssets}"/>
+            </Grid>
           </DockPanel>
+          </Border>
         </TabItem>
         <TabItem Header="Script Editor">
           <!-- D1 空态：无选中脚本时显示说明而非空白编辑框 -->
+          <Border x:Name="ScriptTabSurface"
+                  Background="{DynamicResource PanelSurfaceBrush}">
           <Panel>
             <StackPanel IsVisible="{Binding !HasScriptOpen}" VerticalAlignment="Center"
                         HorizontalAlignment="Center" Spacing="8">
-              <TextBlock Text="(no script open)" FontWeight="Bold"
+              <TextBlock x:Name="ScriptEmptyTitle" Text="(no script open)" FontWeight="Bold"
+                         Foreground="{DynamicResource TextPrimaryBrush}"
                          HorizontalAlignment="Center" Opacity="0.7"/>
-              <TextBlock Text="Double-click a .lua asset in the Asset Browser to open it."
-                         Opacity="0.5" HorizontalAlignment="Center"/>
+              <TextBlock x:Name="ScriptEmptyHint"
+                         Text="Double-click a .lua asset in the Asset Browser to open it."
+                         Foreground="{DynamicResource TextSecondaryBrush}"
+                         Opacity="0.8" HorizontalAlignment="Center"/>
             </StackPanel>
             <DockPanel IsVisible="{Binding HasScriptOpen}">
               <StackPanel DockPanel.Dock="Top" Orientation="Horizontal" Spacing="8" Margin="0,0,0,4">
                 <TextBlock Text="{Binding ScriptTitle}" VerticalAlignment="Center" FontWeight="SemiBold"/>
-                <TextBlock Text="(edited)" Foreground="#FFD060" IsVisible="{Binding ScriptDirty}"
-                           VerticalAlignment="Center"/>
+                <TextBlock Text="(edited)" Foreground="{DynamicResource WarningBrush}"
+                           IsVisible="{Binding ScriptDirty}" VerticalAlignment="Center"/>
                 <Button x:Name="SaveScriptBtn" Content="Save Script" Click="OnSaveScript" HorizontalAlignment="Left"/>
-                <TextBlock Text="{Binding ScriptError}" Foreground="#FF8070" VerticalAlignment="Center"
-                           TextWrapping="Wrap" MaxWidth="380"/>
+                <TextBlock Text="{Binding ScriptError}" Foreground="{DynamicResource ErrorBrush}"
+                           VerticalAlignment="Center" TextWrapping="Wrap" MaxWidth="380"/>
               </StackPanel>
               <TextBox Text="{Binding ScriptText, Mode=TwoWay}"
                        AcceptsReturn="True" AcceptsTab="True"
@@ -276,8 +388,29 @@
                        ScrollViewer.VerticalScrollBarVisibility="Auto"/>
             </DockPanel>
           </Panel>
+          </Border>
         </TabItem>
       </TabControl>
+
+      <!-- P1-A：可拖动分区（不改变各面板的最小尺寸约束） -->
+      <GridSplitter x:Name="HierarchySplitter"
+                    Grid.Column="1" Grid.RowSpan="3"
+                    auto:AutomationProperties.AutomationId="HierarchySplitter"
+                    ResizeDirection="Columns"
+                    Background="{DynamicResource BorderSubtleBrush}" Opacity="0.2"
+                    HorizontalAlignment="Stretch" VerticalAlignment="Stretch"/>
+      <GridSplitter x:Name="InspectorSplitter"
+                    Grid.Column="3" Grid.Row="0"
+                    auto:AutomationProperties.AutomationId="InspectorSplitter"
+                    ResizeDirection="Columns"
+                    Background="{DynamicResource BorderSubtleBrush}" Opacity="0.2"
+                    HorizontalAlignment="Stretch" VerticalAlignment="Stretch"/>
+      <GridSplitter x:Name="ConsoleSplitter"
+                    Grid.Column="2" Grid.ColumnSpan="3" Grid.Row="1"
+                    auto:AutomationProperties.AutomationId="ConsoleSplitter"
+                    ResizeDirection="Rows"
+                    Background="{DynamicResource BorderSubtleBrush}" Opacity="0.2"
+                    HorizontalAlignment="Stretch" VerticalAlignment="Stretch"/>
     </Grid>
   </DockPanel>
 </Window>

@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.Diagnostics;
 using System.Runtime.InteropServices;
 using System.Text;
@@ -170,6 +171,193 @@ internal interface IEditorOps
 public readonly record struct HostFrameProof(
     ulong OperationId, ulong FrameId, int Status, int Stage,
     float RawDtSeconds, float EffectiveDtSeconds);
+
+/// <summary>
+/// T-6-A/D-5：一次 OpenProject 尝试的最终归属。NativeCommitted 以
+/// <c>EV_PROJECT_LOADED</c> 为准，而不是以调用返回码为准。
+/// </summary>
+public sealed record OpenProjectOutcome(
+    long AttemptId,
+    long CandidateGeneration,
+    long ActiveGeneration,
+    bool NativeCommitted,
+    bool CallSucceeded,
+    bool ProtocolViolated,
+    int Status,
+    int Stage,
+    string Diagnostic)
+{
+    public bool PartialFailure => NativeCommitted && !CallSucceeded;
+}
+
+/// <summary>
+/// T-6-A/D-5：打开意图代次的纯状态机。所有状态转换都在同一把锁内完成，
+/// 事件在 native 回调到达时取得归属，而不是在 Dispatcher 执行时再读取当前代次。
+/// </summary>
+internal sealed class OpenAttemptTracker
+{
+    private readonly object _gate = new();
+    private readonly List<PendingEvent> _pending = new();
+    private long _activeGeneration;
+    private long _nextAttemptId;
+    private Attempt? _active;
+    private int _unexpectedProjectLoaded;
+    private int _duplicateProjectLoaded;
+    private int _abortedPendingEvents;
+
+    public OpenAttemptTracker(long initialGeneration) => _activeGeneration = initialGeneration;
+
+    public long ActiveGeneration
+    {
+        get { lock (_gate) return _activeGeneration; }
+    }
+
+    public int UnexpectedProjectLoadedCount
+    {
+        get { lock (_gate) return _unexpectedProjectLoaded; }
+    }
+
+    public int DuplicateProjectLoadedCount
+    {
+        get { lock (_gate) return _duplicateProjectLoaded; }
+    }
+
+    public int AbortedPendingEventCount
+    {
+        get { lock (_gate) return _abortedPendingEvents; }
+    }
+
+    public bool IsActive(Attempt attempt)
+    {
+        lock (_gate) return ReferenceEquals(_active, attempt);
+    }
+
+    public Attempt Begin()
+    {
+        lock (_gate)
+        {
+            if (_active is not null)
+                throw new InvalidOperationException("an open attempt is already active");
+            var attempt = new Attempt(++_nextAttemptId, _activeGeneration + 1);
+            _active = attempt;
+            return attempt;
+        }
+    }
+
+    public Admission Admit(int eventType, string payload)
+    {
+        lock (_gate)
+        {
+            var attempt = _active;
+            if (attempt is null)
+            {
+                if (eventType == AvaloniaEditor.Native.EditorBridgeApi.EvProjectLoaded)
+                    _unexpectedProjectLoaded++;
+                return Admission.Deliver(_activeGeneration);
+            }
+
+            if (eventType == AvaloniaEditor.Native.EditorBridgeApi.EvProjectLoaded)
+            {
+                if (attempt.NativeCommitted) _duplicateProjectLoaded++;
+                attempt.MarkCommitted();
+                var pending = new PendingEvent(attempt.Id, attempt.CandidateGeneration, eventType, payload);
+                _pending.Add(pending);
+                return Admission.Queue(pending);
+            }
+
+            if (attempt.NativeCommitted)
+            {
+                var pending = new PendingEvent(attempt.Id, attempt.CandidateGeneration, eventType, payload);
+                _pending.Add(pending);
+                return Admission.Queue(pending);
+            }
+
+            return Admission.Deliver(_activeGeneration);
+        }
+    }
+
+    public Resolution Resolve(Attempt attempt, bool callSucceeded)
+    {
+        lock (_gate)
+        {
+            if (!ReferenceEquals(_active, attempt))
+                throw new InvalidOperationException("open attempt is not active");
+
+            _active = null;
+            bool committed = attempt.NativeCommitted;
+            bool protocolViolated = callSucceeded && !committed;
+            var pending = _pending.ToArray();
+            _pending.Clear();
+
+            if (committed)
+                _activeGeneration = attempt.CandidateGeneration;
+
+            int dropped = 0;
+            if (!committed)
+            {
+                dropped = pending.Length;
+                _abortedPendingEvents += dropped;
+            }
+
+            return new Resolution(
+                attempt,
+                committed,
+                protocolViolated,
+                committed ? pending : Array.Empty<PendingEvent>(),
+                _activeGeneration,
+                dropped);
+        }
+    }
+
+    public TeardownResult BeginTeardown()
+    {
+        lock (_gate)
+        {
+            int dropped = _pending.Count;
+            _pending.Clear();
+            _abortedPendingEvents += dropped;
+            _active = null;
+            _activeGeneration++;
+            return new TeardownResult(_activeGeneration, dropped);
+        }
+    }
+
+    internal sealed class Attempt
+    {
+        private int _nativeCommitted;
+
+        public Attempt(long id, long candidateGeneration)
+        {
+            Id = id;
+            CandidateGeneration = candidateGeneration;
+        }
+
+        public long Id { get; }
+        public long CandidateGeneration { get; }
+        public bool NativeCommitted => Volatile.Read(ref _nativeCommitted) != 0;
+
+        internal void MarkCommitted() => Interlocked.Exchange(ref _nativeCommitted, 1);
+    }
+
+    internal readonly record struct PendingEvent(
+        long AttemptId, long Generation, int EventType, string Payload);
+
+    internal readonly record struct Admission(bool IsQueued, long Generation, PendingEvent Event)
+    {
+        public static Admission Deliver(long generation) => new(false, generation, default);
+        public static Admission Queue(PendingEvent pending) => new(true, pending.Generation, pending);
+    }
+
+    internal readonly record struct Resolution(
+        Attempt Attempt,
+        bool Committed,
+        bool ProtocolViolated,
+        IReadOnlyList<PendingEvent> PendingEvents,
+        long ActiveGeneration,
+        int DroppedPending);
+
+    internal readonly record struct TeardownResult(long ActiveGeneration, int DroppedPending);
+}
 
 public sealed class EditorHostService : IDisposable
 {
@@ -350,6 +538,9 @@ public sealed class EditorHostService : IDisposable
     /// <summary>最近一次 pump 侧 native failure（无故障时为 null），纯诊断、只读。</summary>
     public HostOperationException? LastRuntimeFailure { get; private set; }
 
+    /// <summary>T-6-A/D-5：最近一次 OpenProject 尝试的 native 提交状态。</summary>
+    public OpenProjectOutcome? LastOpenOutcome { get; private set; }
+
     // ── 生命周期 ────────────────────────────────────────────
 
     /// <summary>
@@ -386,16 +577,25 @@ public sealed class EditorHostService : IDisposable
         if (State == HostRuntimeState.Faulted)
             throw new HostRuntimeUnavailableException(
                 "host runtime is faulted; terminal Dispose is required before reopening a project");
-        // F2-04：OpenProject 保留"隐含 bootstrap"的调用时机，但实现收敛到唯一命名操作。
-        EnsureRuntime();
-        var opened = open(Ops());
-        IsOpen = opened;
-        if (opened)
+        LastOpenOutcome = null;
+        _engineHost?.ClearLastOpenOutcome();
+        try
         {
-            State = HostRuntimeState.Ready;
-            if (IsEngineHost) _engineHost!.BeginRuntime();
+            // F2-04：OpenProject 保留"隐含 bootstrap"的调用时机，但实现收敛到唯一命名操作。
+            EnsureRuntime();
+            var opened = open(Ops());
+            IsOpen = opened;
+            if (opened)
+            {
+                State = HostRuntimeState.Ready;
+                if (IsEngineHost) _engineHost!.BeginRuntime();
+            }
+            return opened;
         }
-        return opened;
+        finally
+        {
+            LastOpenOutcome = _engineHost?.LastOpenOutcome;
+        }
     }
 
     public void CloseProject()
@@ -631,7 +831,7 @@ internal sealed class EngineHostChannel : IEditorOps, IDisposable
     private long _pumpFailures;
     private double _lastPumpDeltaSeconds;
     private bool _pumpActive;
-    private long _generation = 1;
+    private readonly OpenAttemptTracker _openAttempts = new(1);
     private int _droppedLateEvents;
     private int _acceptedEvents;
     private int _suppressEvents;
@@ -650,12 +850,17 @@ internal sealed class EngineHostChannel : IEditorOps, IDisposable
     private int _frameBufferAllocations;
 
     public bool IsCreated => _host != IntPtr.Zero;
-    public long Generation => Interlocked.Read(ref _generation);
+    public long Generation => _openAttempts.ActiveGeneration;
     public long PumpInvocations => Interlocked.Read(ref _pumpInvocations);
     public long PumpFailures => Interlocked.Read(ref _pumpFailures);
     public double LastPumpDeltaSeconds => _lastPumpDeltaSeconds;
     public int DroppedLateEventCount => Volatile.Read(ref _droppedLateEvents);
     public int AcceptedEventCount => Volatile.Read(ref _acceptedEvents);
+    public OpenProjectOutcome? LastOpenOutcome { get; private set; }
+    internal void ClearLastOpenOutcome() => LastOpenOutcome = null;
+    internal int AbortedPendingEventCount => _openAttempts.AbortedPendingEventCount;
+    internal int UnexpectedProjectLoadedCount => _openAttempts.UnexpectedProjectLoadedCount;
+    internal int DuplicateProjectLoadedCount => _openAttempts.DuplicateProjectLoadedCount;
     public (int accepted, int executed, int failed) PendingEditCounts => _pendingCounts;
     public bool LastPendingEditExecutedWithContextCurrent => _lastEditExecutedWithContextCurrent;
 
@@ -839,7 +1044,14 @@ internal sealed class EngineHostChannel : IEditorOps, IDisposable
     // ── native event → UI thread marshal + managed generation guard ──
 
     private void OnNativeEvent(int eventType, ulong nativeGeneration, string payload, IntPtr userData)
-        => MarshalEvent(Interlocked.Read(ref _generation), eventType, payload ?? string.Empty);
+    {
+        string text = payload ?? string.Empty;
+        // T-6-A/D-5：归属在回调到达时判定；候选代次事件先暂存，
+        // 由 OpenProject 的 Commit/Abort 定案后再放行或丢弃。
+        var admission = _openAttempts.Admit(eventType, text);
+        if (admission.IsQueued) return;
+        MarshalEvent(admission.Generation, eventType, text);
+    }
 
     /// <summary>
     /// A7-C04：native runtime thread → UI thread marshal，并在 UI 侧校验 managed generation。
@@ -852,7 +1064,7 @@ internal sealed class EngineHostChannel : IEditorOps, IDisposable
         if (Volatile.Read(ref _suppressEvents) != 0) return;
         Dispatcher.UIThread.Post(() =>
         {
-            if (capturedGeneration != Interlocked.Read(ref _generation))
+            if (capturedGeneration != _openAttempts.ActiveGeneration)
             {
                 Interlocked.Increment(ref _droppedLateEvents);
                 return;
@@ -866,15 +1078,15 @@ internal sealed class EngineHostChannel : IEditorOps, IDisposable
     private void BeginTeardown()
     {
         Interlocked.Exchange(ref _suppressEvents, 1);
-        BumpGeneration();
+        var teardown = _openAttempts.BeginTeardown();
+        if (teardown.DroppedPending > 0)
+            Interlocked.Add(ref _droppedLateEvents, teardown.DroppedPending);
     }
 
     private void RaiseEvent(int eventType, string payload)
         => NativeEventHook?.Invoke(eventType, payload);
 
     internal Action<int, string>? NativeEventHook;
-
-    private void BumpGeneration() => Interlocked.Increment(ref _generation);
 
     public void CloseProject(bool faulted = false)
     {
@@ -958,21 +1170,125 @@ internal sealed class EngineHostChannel : IEditorOps, IDisposable
     }
 
     public bool OpenProject(string manifestPath, string scenePath)
-    {
-        var result = default(EditorBridgeApi.RuntimeResult);
-        int code = EditorBridgeApi.EngineHost_OpenProject(_host, manifestPath, scenePath, ref result);
-        if (code != 0) throw Failure("open project", result);
-        BumpGeneration();
-        return true;
-    }
+        => OpenProjectAttempt("open project", () =>
+        {
+            var result = default(EditorBridgeApi.RuntimeResult);
+            int code = EditorBridgeApi.EngineHost_OpenProject(_host, manifestPath, scenePath, ref result);
+            return (code, result);
+        });
 
     public bool OpenProjectRooted(string projectRoot, string manifestPath, string scenePath)
+        => OpenProjectAttempt("open project (rooted)", () =>
+        {
+            var result = default(EditorBridgeApi.RuntimeResult);
+            int code = EditorBridgeApi.EngineHost_OpenProjectRooted(
+                _host, projectRoot, manifestPath, scenePath, ref result);
+            return (code, result);
+        });
+
+    /// <summary>
+    /// T-6-A/D-5：两阶段打开。候选代次由 Begin 建立，以 <c>EV_PROJECT_LOADED</c>
+    /// 作为 native 提交证据；调用返回码只决定“是否报告失败”，不决定代次归属。
+    /// </summary>
+    private bool OpenProjectAttempt(string operation,
+        Func<(int code, EditorBridgeApi.RuntimeResult result)> call)
     {
-        var result = default(EditorBridgeApi.RuntimeResult);
-        int code = EditorBridgeApi.EngineHost_OpenProjectRooted(_host, projectRoot, manifestPath, scenePath, ref result);
-        if (code != 0) throw Failure("open project (rooted)", result);
-        BumpGeneration();
-        return true;
+        LastOpenOutcome = null;
+        OpenAttemptTracker.Attempt attempt;
+        try
+        {
+            attempt = _openAttempts.Begin();
+        }
+        catch (InvalidOperationException ex)
+        {
+            var failure = new HostOperationException(operation,
+                EditorBridgeApi.EngineHostStatusInvalidState,
+                EditorBridgeApi.EngineHostStageOpenProject,
+                "open attempt rejected: " + ex.Message);
+            long generation = _openAttempts.ActiveGeneration;
+            LastOpenOutcome = new OpenProjectOutcome(0, generation, generation,
+                false, false, false, failure.Status, failure.Stage, failure.Diagnostic);
+            throw failure;
+        }
+
+        try
+        {
+            var (code, result) = call();
+            if (code != 0) throw Failure(operation, result);
+
+            var resolution = _openAttempts.Resolve(attempt, callSucceeded: true);
+            if (resolution.ProtocolViolated)
+            {
+                var failure = new HostOperationException(operation,
+                    EditorBridgeApi.EngineHostStatusSessionFailed,
+                    EditorBridgeApi.EngineHostStageOpenProject,
+                    "protocol violation: native open succeeded without EV_PROJECT_LOADED");
+                LastOpenOutcome = Outcome(attempt, resolution, callSucceeded: true, failure);
+                ApplyResolution(resolution);
+                throw failure;
+            }
+
+            LastOpenOutcome = Outcome(attempt, resolution, callSucceeded: true, null);
+            ApplyResolution(resolution);
+            return true;
+        }
+        catch (HostOperationException ex)
+        {
+            if (_openAttempts.IsActive(attempt))
+            {
+                var resolution = _openAttempts.Resolve(attempt, callSucceeded: false);
+                LastOpenOutcome = Outcome(attempt, resolution, callSucceeded: false, ex);
+                ApplyResolution(resolution);
+            }
+            throw;
+        }
+        catch
+        {
+            if (_openAttempts.IsActive(attempt))
+            {
+                var resolution = _openAttempts.Resolve(attempt, callSucceeded: false);
+                LastOpenOutcome = new OpenProjectOutcome(
+                    attempt.Id,
+                    attempt.CandidateGeneration,
+                    resolution.ActiveGeneration,
+                    resolution.Committed,
+                    false,
+                    false,
+                    EditorBridgeApi.EngineHostStatusInitFailed,
+                    EditorBridgeApi.EngineHostStageOpenProject,
+                    "unexpected managed failure during open");
+                ApplyResolution(resolution);
+            }
+            throw;
+        }
+    }
+
+    private static OpenProjectOutcome Outcome(
+        OpenAttemptTracker.Attempt attempt,
+        OpenAttemptTracker.Resolution resolution,
+        bool callSucceeded,
+        HostOperationException? failure)
+        => new(
+            attempt.Id,
+            attempt.CandidateGeneration,
+            resolution.ActiveGeneration,
+            resolution.Committed,
+            callSucceeded,
+            resolution.ProtocolViolated,
+            failure?.Status ?? EditorBridgeApi.EngineHostStatusSuccess,
+            failure?.Stage ?? EditorBridgeApi.EngineHostStageSession,
+            failure?.Diagnostic ?? string.Empty);
+
+    private void ApplyResolution(OpenAttemptTracker.Resolution resolution)
+    {
+        // native 工程切换已提交：从这一刻起事件属于新工程，teardown 抑制必须解除，
+        // 否则 reopen 的 EV_PROJECT_LOADED 会被 CloseProject 留下的 suppress 吞掉。
+        if (resolution.Committed)
+            Interlocked.Exchange(ref _suppressEvents, 0);
+        if (resolution.DroppedPending > 0)
+            Interlocked.Add(ref _droppedLateEvents, resolution.DroppedPending);
+        foreach (var pending in resolution.PendingEvents)
+            MarshalEvent(pending.Generation, pending.EventType, pending.Payload);
     }
 
     public bool SaveProject() => Dispatch(EditorBridgeApi.EngineHostOpSaveProject) == 0;

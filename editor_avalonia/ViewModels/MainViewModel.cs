@@ -34,6 +34,26 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
     public ObservableCollection<AssetVm> Assets { get; } = new();
     public ObservableCollection<string> ConsoleLines { get; } = new();
 
+    // T-6-A/D-2/D-4：原始缓存有上限；UI 绑定的是过滤后的派生视图。
+    internal const int ConsoleCapacity = 10_000;
+    public ObservableCollection<string> ConsoleView { get; } = new();
+    private string _consoleFilter = string.Empty;
+    public string ConsoleFilter
+    {
+        get => _consoleFilter;
+        set
+        {
+            string normalized = (value ?? string.Empty).Trim();
+            if (!Set(ref _consoleFilter, normalized)) return;
+            RebuildConsoleView();
+        }
+    }
+    internal int ConsoleTrimmedCount { get; private set; }
+
+    public bool HasEntities => Entities.Count > 0;
+    public bool HasAssets => Assets.Count > 0;
+    public bool HasConsoleLines => ConsoleLines.Count > 0;
+
     private EntityVm? _selectedEntity;
     public EntityVm? SelectedEntity
     {
@@ -641,6 +661,8 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
         SelectedAsset = null;
         RebuildFilteredEntities();
         RebuildFilteredAssets();
+        Raise(nameof(HasEntities));
+        Raise(nameof(HasAssets));
         HasCamera = false;
         HasRigidBody = false;
         IsRunning = false;
@@ -651,20 +673,31 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
 
     // ── 会话生命周期（P1-B）────────────────────────────────
     public bool OpenProject(string manifestPath, string scenePath)
-        => OpenProjectCore("open project",
+        => OpenProjectCore("open project", manifestPath,
                            () => _host.OpenProject(manifestPath, scenePath));
 
     /// <summary>M1-A：显式 ProjectRoot 打开（不依赖进程 CWD）。</summary>
     public bool OpenProjectRooted(string projectRoot, string manifestPath, string scenePath)
-        => OpenProjectCore("open project (rooted)",
+        => OpenProjectCore("open project (rooted)", manifestPath,
                            () => _host.OpenProjectRooted(projectRoot, manifestPath, scenePath));
 
-    private bool OpenProjectCore(string operation, Func<bool> open)
+    private bool OpenProjectCore(string operation, string manifestPath, Func<bool> open)
     {
         // A2/F2-05：bootstrap / open 的 native typed failure 在此转成可观测状态，
         // 绝不让异常逃进 XAML handler（否则会被反射派发包成 TargetInvocationException 并丢失诊断）。
         if (!TryHost(operation, open, out bool opened))
         {
+            // D-5：native 工程切换已提交但整个调用失败（GL 初始化）时，
+            // 边界反映实际状态，不伪装成完全成功，也不回退代次。
+            var outcome = _host.LastOpenOutcome;
+            if (outcome is { NativeCommitted: true })
+            {
+                string reason = outcome.Status == AvaloniaEditor.Native.EditorBridgeApi.EngineHostStatusGlFailed
+                                || outcome.Stage == AvaloniaEditor.Native.EditorBridgeApi.EngineHostStageGlContext
+                    ? "GL initialization failed"
+                    : "open failed after native commit";
+                LogToConsole($"[project] active: {manifestPath} — {reason}");
+            }
             ReconcileWithHostState("open failed");   // A3/D1：消除"旧集合 + host 已关闭"分叉
             return false;
         }
@@ -675,6 +708,7 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
             ReconcileWithHostState("open rejected");
             return false;
         }
+        LogToConsole($"[project] opened: {manifestPath}");
         // E3 负路径：契约内缺失 GUID 资产的非致命告警（实体保留）入 Console
         var warns = _host.GetWarnings();
         if (warns.Length > 0)
@@ -1535,6 +1569,8 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
         // 因此这里先重建列表（意图待解析时不保留旧选择），再在最终列表上解析。
         RebuildFilteredEntities(preserveSelection: _pendingSelectionIndex is null);
         RebuildFilteredAssets();     // P3-C：资产过滤视图同步
+        Raise(nameof(HasEntities));
+        Raise(nameof(HasAssets));
 
         if (_pendingSelectionIndex is not null)
         {
@@ -1660,9 +1696,51 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
         Raise(nameof(StatusText));
     }
 
-    internal void LogToConsole(string line)
+    internal void LogToConsole(string text)
     {
-        ConsoleLines.Add($"[{DateTime.Now:HH:mm:ss.fff}] {line}");
+        string line = $"[{DateTime.Now:HH:mm:ss.fff}] {text}";
+        ConsoleLines.Add(line);
+
+        if (ConsoleLines.Count > ConsoleCapacity)
+        {
+            int overflow = ConsoleLines.Count - ConsoleCapacity;
+            for (int i = 0; i < overflow; i++)
+            {
+                string removed = ConsoleLines[0];
+                ConsoleLines.RemoveAt(0);
+                ConsoleView.Remove(removed);
+                ConsoleTrimmedCount++;
+            }
+        }
+
+        if (ConsoleMatches(line)) ConsoleView.Add(line);
+        Raise(nameof(HasConsoleLines));
+    }
+
+    /// <summary>T-6-A/D-2：清空展示缓存；不触碰 host、工程数据或过滤条件。</summary>
+    public void ClearConsole()
+    {
+        ConsoleLines.Clear();
+        ConsoleView.Clear();
+        ConsoleTrimmedCount = 0;
+        Raise(nameof(HasConsoleLines));
+    }
+
+    private void RebuildConsoleView()
+    {
+        ConsoleView.Clear();
+        foreach (string line in ConsoleLines)
+            if (ConsoleMatches(line)) ConsoleView.Add(line);
+    }
+
+    private bool ConsoleMatches(string line)
+        => _consoleFilter.Length == 0
+           || ConsoleMessage(line).Contains(_consoleFilter, StringComparison.OrdinalIgnoreCase);
+
+    private static string ConsoleMessage(string line)
+    {
+        int idx = line.IndexOf("] ", StringComparison.Ordinal);
+        return idx >= 0 && idx + 2 < line.Length ? line[(idx + 2)..] : line;
     }
 
     /// GG1 用：按名选择实体（模拟 Hierarchy 点击的数据路径）

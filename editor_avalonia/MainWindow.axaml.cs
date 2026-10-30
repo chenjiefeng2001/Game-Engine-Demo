@@ -232,6 +232,75 @@ public partial class MainWindow : Window
             };
         }
 
+        // UI-H2 P2：空态、Console 密度与 Gizmo 图标门禁。
+        if (Environment.CommandLine.Contains("--uih2p2"))
+            Opened += async (_, _) =>
+            {
+                int code = await UiH2P2Gate.RunAsync(this, _host, Vm, Log);
+                Log($"uih2p2 exit={code}");
+                Environment.Exit(code);
+            };
+
+        // UI-H2 P1-C：全局 Dark 基线与表面统一门禁。
+        if (Environment.CommandLine.Contains("--uih2p1c"))
+            Opened += async (_, _) =>
+            {
+                int code = await UiH2P1CGate.RunAsync(this, _host, Vm, Log);
+                Log($"uih2p1c exit={code}");
+                Environment.Exit(code);
+            };
+
+        // UI-H2 P1-B：工具栏分组与状态统一门禁。
+        if (Environment.CommandLine.Contains("--uih2p1b"))
+            Opened += async (_, _) =>
+            {
+                int code = await UiH2P1BGate.RunAsync(this, _host, Vm, Log);
+                Log($"uih2p1b exit={code}");
+                Environment.Exit(code);
+            };
+
+        // UI-H2 P1-A：自适应布局与 Viewport 居中门禁。
+        if (Environment.CommandLine.Contains("--uih2p1a"))
+            Opened += async (_, _) =>
+            {
+                int code = await UiH2P1AGate.RunAsync(this, _host, Vm, Log);
+                Log($"uih2p1a exit={code}");
+                Environment.Exit(code);
+            };
+
+        // UI-H2-A：P0 布局/可读性/Inspector 可达性门禁。
+        if (Environment.CommandLine.Contains("--uih2a"))
+            Opened += async (_, _) =>
+            {
+                int code = await UiH2AGate.RunAsync(this, _host, Vm, Log);
+                Log($"uih2a exit={code}");
+                Environment.Exit(code);
+            };
+
+        // T-6-A：Console 真实窗口门禁（D-5 状态表、容量、清空、过滤、边界行）。
+        if (Environment.CommandLine.Contains("--t6console"))
+            Opened += async (_, _) =>
+            {
+                int code = await T6ConsoleGate.RunAsync(this, _host, Vm, Log);
+                Log($"t6console exit={code}");
+                Environment.Exit(code);
+            };
+
+        // T-6-A：UIA 测试宿主，只打开 scratch 工程；过滤/清空必须由真实控件驱动。
+        if (Environment.CommandLine.Contains(T6ConsoleHostBootstrap.Flag))
+        {
+            var t6Root = T6ConsoleHostBootstrap.FindRoot(Environment.GetCommandLineArgs());
+            Opened += (_, _) =>
+            {
+                int code = T6ConsoleHostBootstrap.Run(this, Vm, Log, t6Root);
+                if (code != 0)
+                {
+                    Log($"t6ui-host exit={code}");
+                    Environment.Exit(code);
+                }
+            };
+        }
+
         // 阶段 A/A2：F-2 bootstrap trigger contract 证据。
         // 场景由进程启动时已存在的 EDITOR_BRIDGE_FAIL_* 注入决定（每个注入需独立进程）。
         if (Environment.CommandLine.Contains("--boot"))
@@ -395,6 +464,9 @@ public partial class MainWindow : Window
         Vm.SaveProject();
         SyncStatusBar();
     }
+
+    private void OnClearConsole(object? sender, RoutedEventArgs e)
+        => Vm.ClearConsole();
 
     private void OnCreateEntity(object? sender, RoutedEventArgs e)
     {
