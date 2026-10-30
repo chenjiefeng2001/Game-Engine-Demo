@@ -78,7 +78,7 @@ UI / grid / editor overlay
 - 未修改 `Box2DDebugDraw`、`JoltPhysicsWorld`、`JoltDebugRenderer`。
 - 未接 EngineHost/Bridge/生产 Avalonia Editor；未接 RenderGraph/RHI 多后端。
 - 未修复 Jolt `DrawGeometry` 与碰撞体形状线框；RenderTest 的可见内容仍受现有 Jolt DebugRenderer 限制。
-- 2D 真实路径仍受 `Box2DDebugDraw` 既有 transform/flags 缺陷影响；Gate C 只替换渲染后端，不修该缺陷。
+- 2D 真实路径的 `Box2DDebugDraw` transform/flags 缺陷已在独立 D1 任务中修复（`docs/T-5-DebugDraw-D1-Box2D-DebugDraw-Fix.md`）；Gate C 本身只替换渲染后端。
 
 ---
 

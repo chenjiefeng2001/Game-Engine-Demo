@@ -20,10 +20,13 @@ namespace Engine {
         draw.DrawTransformFcn   = &DrawTransformImpl;
         draw.DrawPointFcn       = &DrawPointImpl;
 
-        draw.drawShapes  = true;
-        draw.drawJoints  = true;
-        draw.drawBounds  = false;
-        draw.drawMass    = false;
+        // 尊重 IPhysicsDebugDraw 的 flags；旧实现硬编码 shapes/joints，
+        // 导致 SetFlags() 在真实 Box2D 路径上完全无效。
+        const uint32 flags = target.GetFlags();
+        draw.drawShapes  = (flags & DebugDraw_Shape) != 0;
+        draw.drawJoints  = (flags & DebugDraw_Joint) != 0;
+        draw.drawBounds  = (flags & DebugDraw_AABB) != 0;
+        draw.drawMass    = (flags & DebugDraw_COM) != 0;
 
         return draw;
     }
@@ -74,7 +77,7 @@ namespace Engine {
         Vec2 buffer[maxVerts];
         int32 count = vertexCount < maxVerts ? vertexCount : maxVerts;
         for (int32 i = 0; i < count; ++i) {
-            buffer[i] = FromB2(vertices[i]);
+            buffer[i] = FromB2(b2TransformWorldPoint(transform, vertices[i]));
         }
         target->DrawSolidPolygon(buffer, count, FromB2Color(color));
     }
@@ -91,7 +94,9 @@ namespace Engine {
         auto* target = static_cast<IPhysicsDebugDraw*>(context);
         if (!target) return;
 
-        target->DrawSolidCircle(FromB2(center), radius,
+        // Box2D 传入的 center 是局部坐标；先折进世界变换再交给通用接口。
+        const b2Vec2 worldCenter = b2TransformWorldPoint(transform, center);
+        target->DrawSolidCircle(FromB2(worldCenter), radius,
                                 Vec2(1.0f, 0.0f), FromB2Color(color));
     }
 

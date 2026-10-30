@@ -13,6 +13,7 @@
 #include <imgui.h>
 
 #include "DebugDrawGLFixture.h"
+#include "Engine/Box2D/Box2DPhysicsWorld.h"
 #include "Engine/Editor/ViewportPanel.h"
 #include "Engine/Rendering/DebugDraw/DebugDraw.h"
 #include "Engine/Rendering/DebugDraw/OpenGL/OpenGL46DebugDrawRenderer.h"
@@ -476,6 +477,60 @@ TEST(DebugDrawAdapterTest, ThreeDimensionalAdapterForwardsLinePrimitives) {
     ASSERT_EQ(adapter.GetLastStatus(), Status::Ok);
     ASSERT_EQ(fixture.service.EndFrame(), Status::Ok);
     EXPECT_EQ(fixture.fake->lastDepthVertexCount, 286u);
+}
+
+TEST(DebugDrawAdapterTest, Box2DWorldDrawUsesWorldTransformAndFlags) {
+    FakeService fixture;
+    Box2DPhysicsWorld world;
+    PhysicsDebugDrawAdapter2D adapter(fixture.service);
+    world.SetDebugDraw(&adapter);
+
+    BodyDef bodyDef;
+    bodyDef.type = BodyType::Static;
+    bodyDef.position = Vec2(5.0f, 2.0f);
+    bodyDef.shape.type = ShapeType::Box;
+    bodyDef.shape.boxSize = Vec2(1.0f, 1.0f);
+    ASSERT_NE(world.CreateBody(bodyDef), nullptr);
+
+    BodyDef circleDef;
+    circleDef.type = BodyType::Static;
+    circleDef.position = Vec2(-5.0f, 2.0f);
+    circleDef.shape.type = ShapeType::Circle;
+    circleDef.shape.circleRadius = 1.0f;
+    ASSERT_NE(world.CreateBody(circleDef), nullptr);
+
+    adapter.SetFlags(DebugDraw_Shape | DebugDraw_Joint);
+    ASSERT_EQ(fixture.service.BeginFrame(IdentityView(), 0.0f), Status::Ok);
+    world.DebugDraw();
+    ASSERT_EQ(fixture.service.EndFrame(), Status::Ok);
+    ASSERT_FALSE(fixture.fake->depthVertices.empty());
+
+    bool foundBodyWorldPosition = false;
+    for (const Vertex& vertex : fixture.fake->depthVertices) {
+        if (vertex.position.x >= 3.5f && vertex.position.x <= 6.5f &&
+            vertex.position.y >= 0.5f && vertex.position.y <= 3.5f) {
+            foundBodyWorldPosition = true;
+            break;
+        }
+    }
+    EXPECT_TRUE(foundBodyWorldPosition);
+
+    bool foundCircleWorldPosition = false;
+    for (const Vertex& vertex : fixture.fake->depthVertices) {
+        if (vertex.position.x >= -6.5f && vertex.position.x <= -3.5f &&
+            vertex.position.y >= 0.5f && vertex.position.y <= 3.5f) {
+            foundCircleWorldPosition = true;
+            break;
+        }
+    }
+    EXPECT_TRUE(foundCircleWorldPosition);
+
+    adapter.SetFlags(DebugDraw_None);
+    ASSERT_EQ(fixture.service.BeginFrame(IdentityView(), 0.0f), Status::Ok);
+    world.DebugDraw();
+    ASSERT_EQ(fixture.service.EndFrame(), Status::Ok);
+    EXPECT_EQ(fixture.fake->lastDepthVertexCount, 0u);
+    EXPECT_EQ(fixture.fake->lastXrayVertexCount, 0u);
 }
 
 // ============================================================
