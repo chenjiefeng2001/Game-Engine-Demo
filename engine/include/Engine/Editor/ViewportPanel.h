@@ -65,6 +65,10 @@ namespace Engine {
         // ── 渲染注入器回调 (3-param: viewProj, camPos, isPicking) ──
         using SceneRenderCallback = std::function<void(const float* viewProj, const float* camPos, bool isPicking)>;
         void SetSceneRenderCallback(SceneRenderCallback cb) { m_SceneRenderCallback = std::move(cb); }
+        // Optional legacy-editor debug submission hook. Invoked after scene + grid,
+        // before FBO unbind. The callback owns the DebugDraw Begin/collect/End sequence.
+        using DebugRenderCallback = std::function<void(const float* viewProj, const float* cameraPos)>;
+        void SetDebugRenderCallback(DebugRenderCallback cb) { m_DebugRenderCallback = std::move(cb); }
         using PickCallback = std::function<void(float, float, int32)>;
         void SetPickCallback(PickCallback cb) { m_PickCallback = std::move(cb); }
         using SceneCreateCallback = std::function<void(const std::string&)>;
@@ -134,6 +138,7 @@ namespace Engine {
 
         ResizeCallback      m_ResizeCallback;
         SceneRenderCallback m_SceneRenderCallback;
+        DebugRenderCallback m_DebugRenderCallback;
         PickCallback        m_PickCallback;
         SceneCreateCallback m_SceneCreateCallback;
         SceneDeleteCallback m_SceneDeleteCallback;

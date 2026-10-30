@@ -26,10 +26,16 @@
 #include <Engine/Core/Physics/IPhysicsBody.h>
 #include <Engine/Core/Physics/IJoint.h>
 #include <Engine/Core/GameObject/GameObject.h>
-#include <Engine/OpenGL/OpenGLPhysicsDebugDraw.h>
+#include <Engine/Rendering/DebugDraw/DebugDraw.h>
 #include <memory>
 
 namespace Engine {
+
+namespace Rendering {
+namespace DebugDraw {
+class PhysicsDebugDrawAdapter2D;
+}
+}
 
     class PhysicsTestApp {
     public:
@@ -64,7 +70,8 @@ namespace Engine {
         bool  m_MouseDown = false;
 
         // ── 调试绘制 ──
-        std::unique_ptr<OpenGLPhysicsDebugDraw> m_DebugDraw;
+        Rendering::DebugDraw::DebugDraw m_DebugDraw;
+        std::unique_ptr<Rendering::DebugDraw::PhysicsDebugDrawAdapter2D> m_DebugAdapter;
         bool  m_DebugDrawEnabled = true;
 
         // ── FPS ──

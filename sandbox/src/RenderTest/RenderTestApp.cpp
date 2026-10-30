@@ -5,6 +5,8 @@
 
 #include "RenderTestApp.h"
 #include <Engine/OpenGL/OpenGLGraphicsFactory.h>
+#include <Engine/Rendering/DebugDraw/OpenGL/OpenGL46DebugDrawRenderer.h>
+#include <Engine/Rendering/DebugDraw/Physics/PhysicsDebugDrawAdapter3D.h>
 #include <GLFW/glfw3.h>
 #include <glm/glm.hpp>
 #include <glm/gtc/type_ptr.hpp>
@@ -98,6 +100,9 @@ RenderTestApp::RenderTestApp(IGraphicsFactory& factory)
     : m_Factory(factory), m_PerfWindow() {}
 
 RenderTestApp::~RenderTestApp() {
+    if (m_PhysicsWorld) m_PhysicsWorld->SetDebugDraw(nullptr);
+    m_PhysicsDebugAdapter.reset();
+    (void)m_DebugDraw.Shutdown();
     if (m_UIInitialized) { UIManager::Shutdown(); m_UIInitialized = false; }
 }
 
@@ -217,11 +222,20 @@ void RenderTestApp::InitPhysics() {
     groundDef.restitution = 0.05f;
     m_PhysicsWorld->CreateBody(groundDef);
 
-    // 调试绘制
+    // 调试绘制：Gate C 使用通用 DebugDraw 服务 + 3D 物理适配器。
     auto* ctx = m_Window->GetContext();
     if (auto* oglCtx = dynamic_cast<OpenGLContext*>(ctx)) {
-        m_PhysicsDebugDraw = std::make_unique<OpenGLPhysicsDebugDraw3D>(oglCtx->GetGL());
-        m_PhysicsWorld->SetDebugDraw(m_PhysicsDebugDraw.get());
+        auto renderer = std::make_unique<Rendering::DebugDraw::OpenGL46DebugDrawRenderer>(
+            oglCtx->GetGL());
+        const auto status = m_DebugDraw.Initialize(std::move(renderer));
+        if (status == Rendering::DebugDraw::Status::Ok) {
+            m_PhysicsDebugAdapter =
+                std::make_unique<Rendering::DebugDraw::PhysicsDebugDrawAdapter3D>(m_DebugDraw);
+            m_PhysicsWorld->SetDebugDraw(m_PhysicsDebugAdapter.get());
+        } else {
+            ENGINE_LOG_ERROR("RenderTest", "DebugDraw initialize failed: {}",
+                             Rendering::DebugDraw::StatusToString(status));
+        }
     }
 }
 
@@ -358,13 +372,6 @@ void RenderTestApp::Run() {
                 }
             }
 
-            // 调试绘制：清除并准备绘制碰撞形状
-            if (m_ShowCollisionShapes && m_PhysicsDebugDraw) {
-                m_PhysicsDebugDraw->Clear();
-                m_PhysicsWorld->DebugDraw();
-                m_PhysicsDebugDraw->Flush();
-            }
-
             m_PhysicsWorld->Step(1.0f/60.0f, 1);
         }
 
@@ -435,9 +442,8 @@ void RenderTestApp::Run() {
             if (m_ShowAxis) DrawOriginAxis();
         }
 
-        // ── 碰撞形状调试：需设置 ViewProjection 矩阵 ──
-        // ── 碰撞形状调试：设置 VP 矩阵 ──
-        if (m_ShowCollisionShapes && m_PhysicsWorld && m_PhysicsDebugDraw) {
+        // ── 碰撞形状调试：Gate C 在场景渲染之后收集并提交 ──
+        if (m_ShowCollisionShapes && m_PhysicsWorld && m_PhysicsDebugAdapter) {
             Mat4 vp;
             const Mat4& proj = m_Camera->GetProjectionMatrix();
             const Mat4& view = m_Camera->GetViewMatrix();
@@ -448,8 +454,21 @@ void RenderTestApp::Run() {
                         sum += proj.data[row + k*4] * view.data[k + col*4];
                     vp.data[row + col*4] = sum;
                 }
-            m_PhysicsDebugDraw->SetViewProjection(vp.Data());
-            // 物理更新中已调用了 Clear/DebugDraw/Flush，这里不重复调用
+
+            Rendering::DebugDraw::View debugView;
+            debugView.viewProjection = vp;
+            const auto beginStatus = m_DebugDraw.BeginFrame(debugView, dt);
+            if (beginStatus == Rendering::DebugDraw::Status::Ok) {
+                m_PhysicsWorld->DebugDraw();
+                const auto endStatus = m_DebugDraw.EndFrame();
+                if (endStatus != Rendering::DebugDraw::Status::Ok) {
+                    ENGINE_LOG_ERROR("RenderTest", "DebugDraw end frame failed: {}",
+                                     Rendering::DebugDraw::StatusToString(endStatus));
+                }
+            } else {
+                ENGINE_LOG_ERROR("RenderTest", "DebugDraw begin frame failed: {}",
+                                 Rendering::DebugDraw::StatusToString(beginStatus));
+            }
         }
 
         if (passIdx_Aux >= 0) ctx->EndGPUPass(passIdx_Aux);

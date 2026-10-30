@@ -10,8 +10,10 @@
 #include <glm/glm.hpp>
 #include <glm/gtc/matrix_transform.hpp>
 #include <glm/gtc/type_ptr.hpp>
+#include <imgui.h>
 
 #include "DebugDrawGLFixture.h"
+#include "Engine/Editor/ViewportPanel.h"
 #include "Engine/Rendering/DebugDraw/DebugDraw.h"
 #include "Engine/Rendering/DebugDraw/OpenGL/OpenGL46DebugDrawRenderer.h"
 #include "Engine/Rendering/DebugDraw/Physics/PhysicsDebugDrawAdapter2D.h"
@@ -568,6 +570,31 @@ TEST(DebugDrawGLTest, LineAndAllPrimitivesProducePixels) {
     EXPECT_GT(CountRed(ReadFbo(fixture)), 0);
 }
 
+TEST(DebugDrawGLTest, CollectionBeforeSceneClearRendersAfterClear) {
+    DebugDrawGLFixture fixture;
+    ASSERT_TRUE(fixture.Setup()) << fixture.FailStep();
+
+    GLService glService(fixture);
+    ASSERT_EQ(glService.InitializeStatus(), Status::Ok);
+    DebugDraw& service = glService.Service();
+    View view;
+    view.viewProjection = OrthoViewProjection();
+
+    fixture.Fbo().Bind();
+    ASSERT_EQ(service.BeginFrame(view, 0.0f), Status::Ok);
+    ASSERT_EQ(service.Line(Vec3(-0.8f, 0.0f, 0.0f),
+                           Vec3(0.8f, 0.0f, 0.0f),
+                           Vec4(1, 0, 0, 1)), Status::Ok);
+
+    // 模拟场景 pass 在收集之后 ClearColor；若 DebugDraw 是立即提交，线会被抹掉。
+    fixture.GL().ClearColor(0.0f, 0.0f, 0.05f, 1.0f);
+    fixture.GL().ClearDepth(1.0);
+    fixture.GL().Clear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+
+    ASSERT_EQ(service.EndFrame(), Status::Ok);
+    EXPECT_GT(CountRed(ReadFbo(fixture)), 0);
+}
+
 TEST(DebugDrawGLTest, DepthAndXRayBatchesDiffer) {
     DebugDrawGLFixture fixture;
     ASSERT_TRUE(fixture.Setup()) << fixture.FailStep();
@@ -595,6 +622,41 @@ TEST(DebugDrawGLTest, DepthAndXRayBatchesDiffer) {
     EXPECT_GT(CountRed(ReadFbo(fixture)), 0);
 
     fixture.GL().ClearDepth(1.0);
+}
+
+TEST(DebugDrawGLTest, ViewportPanelDebugCallbackRunsAfterScene) {
+    DebugDrawGLFixture fixture;
+    ASSERT_TRUE(fixture.Setup()) << fixture.FailStep();
+
+    ImGui::CreateContext();
+    ImGui::GetIO().DisplaySize = ImVec2(64.0f, 64.0f);
+
+    {
+        ViewportPanel panel("T5Viewport");
+        panel.SetGLContext(&fixture.GL());
+        panel.InitResources(&fixture.Factory(),
+                            "assets/shaders/vertex.glsl",
+                            "assets/shaders/fragment.glsl");
+
+        std::vector<int> order;
+        panel.SetSceneRenderCallback(
+            [&](const float* viewProj, const float*, bool isPicking) {
+                ASSERT_NE(viewProj, nullptr);
+                EXPECT_FALSE(isPicking);
+                order.push_back(0);
+            });
+        panel.SetDebugRenderCallback(
+            [&](const float* viewProj, const float* cameraPos) {
+                EXPECT_NE(viewProj, nullptr);
+                EXPECT_NE(cameraPos, nullptr);
+                order.push_back(1);
+            });
+
+        panel.OnUpdate(0.016f, false);
+        EXPECT_EQ(order, std::vector<int>({0, 1}));
+    }
+
+    ImGui::DestroyContext();
 }
 
 TEST(DebugDrawGLTest, GLStateIsRestored) {

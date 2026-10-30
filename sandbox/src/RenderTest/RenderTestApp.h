@@ -24,7 +24,7 @@
 #include <Engine/Core/Physics/IPhysicsBody3D.h>
 #include <Engine/Core/Physics/PhysicsDefs3D.h>
 #include <Engine/Jolt/JoltPhysicsWorld.h>
-#include <Engine/OpenGL/OpenGLPhysicsDebugDraw3D.h>
+#include <Engine/Rendering/DebugDraw/DebugDraw.h>
 #include <Engine/OpenGL/OpenGLContext.h>
 #include <imgui.h>
 
@@ -32,6 +32,12 @@
 #include <vector>
 
 namespace Engine {
+
+namespace Rendering {
+namespace DebugDraw {
+class PhysicsDebugDrawAdapter3D;
+}
+}
 
 // ── 真实场景物体类型 ──
 enum class SceneObjectType : uint8 {
@@ -76,7 +82,8 @@ private:
 
     // ── 3D 物理（Jolt Physics） ──
     std::unique_ptr<JoltPhysicsWorld> m_PhysicsWorld;
-    std::unique_ptr<OpenGLPhysicsDebugDraw3D> m_PhysicsDebugDraw;
+    Rendering::DebugDraw::DebugDraw m_DebugDraw;
+    std::unique_ptr<Rendering::DebugDraw::PhysicsDebugDrawAdapter3D> m_PhysicsDebugAdapter;
     bool m_ShowCollisionShapes = false;
     float m_PhysicsAccumulator = 0.0f;
     static constexpr float kGravity = -30.0f;

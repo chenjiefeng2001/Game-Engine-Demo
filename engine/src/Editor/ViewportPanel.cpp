@@ -213,6 +213,10 @@ void ViewportPanel::Render3DScene() {
       m_Overlay.DrawGrid(m_GL, glm::value_ptr(vp), &cp.x, m_Config);
       m_GL->Disable(GL_BLEND);
     }
+
+    if (m_DebugRenderCallback) {
+      m_DebugRenderCallback(glm::value_ptr(vp), &cp.x);
+    }
   }
 
   // ── 解绑 FBO ──

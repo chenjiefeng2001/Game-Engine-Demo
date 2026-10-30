@@ -5,6 +5,7 @@
 **基线**：HEAD `74ad0999b35b1783ea9e58667966d3e84917dea8`，分支 `avalonia`
 **Gate A 引用**：后续裁决已冻结于 `docs/T-5-DebugDraw-GateA-Contract.md`（2026-10-31，`T-5 Gate A — PASS — ARCHITECTURE CONTRACT FROZEN — SCOPE-BOUND`）。本扫描仍保持只读快照语义；如与契约冲突，以 Gate A 契约为准。
 **Gate B 引用**：实施与定向验证已完成，状态 `T-5 Gate B — PASS — SCOPE-BOUND`；证据与限制见 `docs/T-5-DebugDraw-GateB-Closure-Record.md`。本扫描不因 Gate B 实施而改写 Gate 0 历史结论。
+**Gate C 引用**：Sandbox + Legacy 集成已完成，状态 `T-5 Gate C — PASS — SCOPE-BOUND`（待最终验收）；见 `docs/T-5-DebugDraw-GateC-Closure-Record.md`。
 
 **方法**：只读源码、测试、CMake 与已存文档；未修改源码、未构建、未运行测试、未启动图形/音频设备、未执行 Git 写入、未触碰子模块。
 

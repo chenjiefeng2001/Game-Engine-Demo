@@ -4,6 +4,10 @@
 #include <Engine/Core/IWindow.h>
 #include <Engine/OpenGL/OpenGLContext.h>
 #include <Engine/Box2D/Box2DPhysicsWorld.h>
+#include <Engine/Rendering/DebugDraw/OpenGL/OpenGL46DebugDrawRenderer.h>
+#include <Engine/Rendering/DebugDraw/Physics/PhysicsDebugDrawAdapter2D.h>
+#include <Engine/Core/Log.h>
+#include <cstring>
 #include <Engine/Core/GameObject/SpriteComponent.h>
 #include <Engine/Core/Physics/PhysicsComponent.h>
 #include <GLFW/glfw3.h>
@@ -239,9 +243,18 @@ namespace Engine {
         {
             auto* context = m_Window->GetContext();
             auto& glContext = static_cast<OpenGLContext*>(context)->GetGL();
-            m_DebugDraw = std::make_unique<OpenGLPhysicsDebugDraw>(glContext);
-            m_DebugDraw->SetFlags(DebugDraw_Shape | DebugDraw_Joint | DebugDraw_COM);
-            m_PhysicsWorld->SetDebugDraw(m_DebugDraw.get());
+            auto renderer = std::make_unique<Rendering::DebugDraw::OpenGL46DebugDrawRenderer>(
+                glContext);
+            const auto status = m_DebugDraw.Initialize(std::move(renderer));
+            if (status == Rendering::DebugDraw::Status::Ok) {
+                m_DebugAdapter =
+                    std::make_unique<Rendering::DebugDraw::PhysicsDebugDrawAdapter2D>(m_DebugDraw);
+                m_DebugAdapter->SetFlags(DebugDraw_Shape | DebugDraw_Joint | DebugDraw_COM);
+                m_PhysicsWorld->SetDebugDraw(m_DebugAdapter.get());
+            } else {
+                ENGINE_LOG_ERROR("PhysicsTest", "DebugDraw initialize failed: {}",
+                                 Rendering::DebugDraw::StatusToString(status));
+            }
         }
 
         std::cout << "==========================================" << std::endl;
@@ -264,6 +277,9 @@ namespace Engine {
     // ============================================================
 
     PhysicsTestApp::~PhysicsTestApp() {
+        if (m_PhysicsWorld) m_PhysicsWorld->SetDebugDraw(nullptr);
+        m_DebugAdapter.reset();
+        (void)m_DebugDraw.Shutdown();
         // PhysicsComponent 通过 shared_ptr 持有物理世界引用，
         // 自动管理生命周期，无需手动 reset。
     }
@@ -321,32 +337,35 @@ namespace Engine {
 
             if (WasKeyPressed(window, GLFW_KEY_F1, f1)) {
                 m_DebugDrawEnabled = !m_DebugDrawEnabled;
-                m_PhysicsWorld->SetDebugDraw(m_DebugDrawEnabled ? m_DebugDraw.get() : nullptr);
+                m_PhysicsWorld->SetDebugDraw(
+                    m_DebugDrawEnabled ? m_DebugAdapter.get() : nullptr);
                 std::cout << (m_DebugDrawEnabled ? "[Debug] 开启" : "[Debug] 关闭") << std::endl;
             }
-            if (WasKeyPressed(window, GLFW_KEY_F2, f2)) {
-                uint32 flags = m_DebugDraw->GetFlags();
-                flags ^= DebugDraw_Shape;
-                m_DebugDraw->SetFlags(flags);
-                std::cout << "[Debug] 形状: " << ((flags & DebugDraw_Shape) ? "ON" : "OFF") << std::endl;
-            }
-            if (WasKeyPressed(window, GLFW_KEY_F3, f3)) {
-                uint32 flags = m_DebugDraw->GetFlags();
-                flags ^= DebugDraw_Joint;
-                m_DebugDraw->SetFlags(flags);
-                std::cout << "[Debug] 关节: " << ((flags & DebugDraw_Joint) ? "ON" : "OFF") << std::endl;
-            }
-            if (WasKeyPressed(window, GLFW_KEY_F4, f4)) {
-                uint32 flags = m_DebugDraw->GetFlags();
-                flags ^= DebugDraw_AABB;
-                m_DebugDraw->SetFlags(flags);
-                std::cout << "[Debug] AABB: " << ((flags & DebugDraw_AABB) ? "ON" : "OFF") << std::endl;
-            }
-            if (WasKeyPressed(window, GLFW_KEY_F5, f5)) {
-                uint32 flags = m_DebugDraw->GetFlags();
-                flags ^= DebugDraw_COM;
-                m_DebugDraw->SetFlags(flags);
-                std::cout << "[Debug] 质心: " << ((flags & DebugDraw_COM) ? "ON" : "OFF") << std::endl;
+            if (m_DebugAdapter) {
+                if (WasKeyPressed(window, GLFW_KEY_F2, f2)) {
+                    uint32 flags = m_DebugAdapter->GetFlags();
+                    flags ^= DebugDraw_Shape;
+                    m_DebugAdapter->SetFlags(flags);
+                    std::cout << "[Debug] 形状: " << ((flags & DebugDraw_Shape) ? "ON" : "OFF") << std::endl;
+                }
+                if (WasKeyPressed(window, GLFW_KEY_F3, f3)) {
+                    uint32 flags = m_DebugAdapter->GetFlags();
+                    flags ^= DebugDraw_Joint;
+                    m_DebugAdapter->SetFlags(flags);
+                    std::cout << "[Debug] 关节: " << ((flags & DebugDraw_Joint) ? "ON" : "OFF") << std::endl;
+                }
+                if (WasKeyPressed(window, GLFW_KEY_F4, f4)) {
+                    uint32 flags = m_DebugAdapter->GetFlags();
+                    flags ^= DebugDraw_AABB;
+                    m_DebugAdapter->SetFlags(flags);
+                    std::cout << "[Debug] AABB: " << ((flags & DebugDraw_AABB) ? "ON" : "OFF") << std::endl;
+                }
+                if (WasKeyPressed(window, GLFW_KEY_F5, f5)) {
+                    uint32 flags = m_DebugAdapter->GetFlags();
+                    flags ^= DebugDraw_COM;
+                    m_DebugAdapter->SetFlags(flags);
+                    std::cout << "[Debug] 质心: " << ((flags & DebugDraw_COM) ? "ON" : "OFF") << std::endl;
+                }
             }
         }
 
@@ -443,10 +462,24 @@ namespace Engine {
 
         m_SpriteBatch->End();
 
-        // ── 调试绘制（叠加在精灵之上） ──
-        if (m_DebugDrawEnabled && m_DebugDraw) {
-            m_DebugDraw->SetViewProjection(m_Camera.GetViewProjectionMatrixPtr());
-            m_PhysicsWorld->DebugDraw();
+        // ── 调试绘制（叠加在精灵之上；EndFrame 负责实际提交） ──
+        if (m_DebugDrawEnabled && m_DebugAdapter && m_PhysicsWorld) {
+            Rendering::DebugDraw::View debugView;
+            std::memcpy(debugView.viewProjection.data,
+                        m_Camera.GetViewProjectionMatrixPtr(),
+                        sizeof(debugView.viewProjection.data));
+            const auto beginStatus = m_DebugDraw.BeginFrame(debugView, 0.0f);
+            if (beginStatus == Rendering::DebugDraw::Status::Ok) {
+                m_PhysicsWorld->DebugDraw();
+                const auto endStatus = m_DebugDraw.EndFrame();
+                if (endStatus != Rendering::DebugDraw::Status::Ok) {
+                    ENGINE_LOG_ERROR("PhysicsTest", "DebugDraw end frame failed: {}",
+                                     Rendering::DebugDraw::StatusToString(endStatus));
+                }
+            } else {
+                ENGINE_LOG_ERROR("PhysicsTest", "DebugDraw begin frame failed: {}",
+                                 Rendering::DebugDraw::StatusToString(beginStatus));
+            }
         }
     }
 
