@@ -1,11 +1,13 @@
 # T-5 Generic DebugDraw — Gate C Closure Record
 
-**状态**：`T-5 Gate C — PASS — SCOPE-BOUND`（待用户最终验收）
+**状态**：`T-5 Gate C — PASS — SCOPE-BOUND / CLOSED`（用户 2026-10-31 裁决；最终关闭记录见 `docs/T-5-DebugDraw-v1-Final-Closure-Record.md`）
 **日期**：2026-10-31
 **基线**：`74ad0999b35b1783ea9e58667966d3e84917dea8`，分支 `avalonia`
 **契约**：`docs/T-5-DebugDraw-GateC-Contract.md`
 **实现**：`docs/T-5-DebugDraw-GateC-Implementation-Record.md`
 **测试**：`docs/T-5-DebugDraw-GateC-Test-Record.md`
+**D5-11 修订**：`docs/T-5-DebugDraw-D5-11-Release-Semantics-Amendment.md`
+**最终关闭**：`docs/T-5-DebugDraw-v1-Final-Closure-Record.md`
 
 > Gate C 限定为 Sandbox + Legacy 集成。生产 EngineHost/Bridge/Editor 接线、Jolt 形状提取和 Box2D 缺陷修复仍是独立任务。
 
@@ -81,7 +83,7 @@
 
 ```text
 T-5 Gate C — PASS — SCOPE-BOUND
-T-5 v1 Sandbox + Legacy Integration — CLOSED — SCOPE-BOUND（待用户最终确认）
+T-5 v1 — PASS — SCOPE-BOUND / CLOSED（见 `docs/T-5-DebugDraw-v1-Final-Closure-Record.md`）
 ```
 
 不建议将 Gate C 表述为：

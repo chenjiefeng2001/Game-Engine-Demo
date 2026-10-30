@@ -69,7 +69,7 @@ Gate A 的 D5-11 曾写“Jolt 物理适配保持 Debug-only”。实际构建�
 - `JPH_DEBUG_RENDERER` 通过 Jolt target 传播到 `EngineCore` 的 Release 构建（`build/engine/EngineCore.vcxproj` Release 包含该宏）；
 - `test_debugdraw` 的 Release 也运行并通过 Jolt 形状门禁（22 tests，不是仅 Debug）。
 
-本次修复没有改变 Jolt 的构建选项；这是对既有配置的事实记录。D5-11 的“Debug-only”措辞与当前构建不一致，需由用户决定是否修订契约；在此之前不把该观察包装成“已冻结条款”。
+本次修复没有改变 Jolt 的构建选项；这是对既有配置的事实记录。用户 2026-10-31 已批准 D5-11 修订：通用服务在 Debug/Release 均可用；Jolt 适配由 `JPH_DEBUG_RENDERER` 配置决定，当前项目两配置均启用。修订全文见 `docs/T-5-DebugDraw-D5-11-Release-Semantics-Amendment.md`。
 
 ---
 
@@ -79,4 +79,4 @@ Gate A 的 D5-11 曾写“Jolt 物理适配保持 Debug-only”。实际构建�
 - `DebugRendererSimple` 的 solid 模式通过 `DrawTriangle` 走线框；T-5 本身不提供实体填充。
 - 未设置 camera position，Jolt LOD 使用首个 LOD；当前调试形状未做距离 LOD 选择。
 - 未接生产 EngineHost/Bridge/Editor；未做 ASan/TSan、真实沙盒视觉、性能基准。
-- D3 改动未提交、未 push；D1 已提交为 `454f136`。
+- D3 已提交为 `88e9477`；未 push。最终 T-5 状态见 `docs/T-5-DebugDraw-v1-Final-Closure-Record.md`。

@@ -4,9 +4,9 @@
 **日期**：2026-10-31
 **基线**：HEAD `74ad0999b35b1783ea9e58667966d3e84917dea8`，分支 `avalonia`
 **Gate B**：`AUTHORIZED`（2026-10-31 用户授权；实施结果见下方记录）
-**实施状态**：`T-5 Gate B — PASS — SCOPE-BOUND`（待用户最终验收）
+**实施状态**：`T-5 v1 — PASS — SCOPE-BOUND / CLOSED`（2026-10-31 用户裁决；见 `docs/T-5-DebugDraw-v1-Final-Closure-Record.md`）
 **Gate A 冻结轮次**：未修改源码、未构建、未运行测试、未执行 Git 写入。
-**本契约条款未改变**；后续实施、测试与残余限制以关闭记录为准。
+**本契约条款除 D5-11 修订外未改变**；D5-11R 见 `docs/T-5-DebugDraw-D5-11-Release-Semantics-Amendment.md`，其余实施、测试与残余限制以最终关闭记录为准。
 
 **输入**：
 
@@ -17,6 +17,8 @@
 - `docs/T-5-DebugDraw-Implementation-Record.md`（实现记录）
 - `docs/T-5-DebugDraw-Test-Record.md`（测试记录）
 - `docs/T-5-DebugDraw-GateB-Closure-Record.md`（关闭记录）
+- `docs/T-5-DebugDraw-D5-11-Release-Semantics-Amendment.md`（D5-11 修订）
+- `docs/T-5-DebugDraw-v1-Final-Closure-Record.md`（最终关闭记录）
 
 **证据边界**：
 
@@ -40,7 +42,7 @@
 | **D5-8** | OpenGL 4.6 only | v1 只支持 GL 4.6。其他后端及不符合版本条件的上下文明确返回 Unsupported，不静默降级。 |
 | **D5-9** | 直接渲染阶段 | 3D 场景绘制完成后、UI 绘制之前执行；不接 RenderGraph，不在 `ClearColor` 之前绘制。 |
 | **D5-10** | 物理适配器 | 保留 `IPhysicsDebugDraw` / `IPhysicsDebugDraw3D`；增加适配层，不改原接口。 |
-| **D5-11** | 通用服务全配置 | 通用 DebugDraw 在 Debug/Release 均可用；Jolt 物理适配保持 Debug-only，不得在 Release 假称提供物理线框能力。 |
+| **D5-11** | 通用服务全配置 | 通用 DebugDraw 在 Debug/Release 均可用；Jolt 物理适配保持 Debug-only，不得在 Release 假称提供物理线框能力。**（2026-10-31 修订：见 `docs/T-5-DebugDraw-D5-11-Release-Semantics-Amendment.md`；原文本保留，D5-11R 改为由 `JPH_DEBUG_RENDERER` 配置决定，当前项目 Debug/Release 均可用。）** |
 | **D5-12** | 显式 Initialize/Shutdown | 初始化必须有当前且符合要求的 GL 上下文；Shutdown 幂等；上下文重建必须显式 Shutdown/Initialize。 |
 | **D5-13** | 失败必须可观测 | API 返回状态；重要失败记录日志。不能用静默跳过伪装成功。 |
 | **D5-14** | 完整测试门禁 | CPU 单测、GL 像素测试、GL 状态隔离、生命周期、预算和线程测试。 |
@@ -296,7 +298,7 @@ Gate B 于 2026-10-31 获用户授权；实际实施严格限于以下允许项�
 
 2026-10-31 的 D3 修复确认：Jolt 的 `DEBUG_RENDERER_IN_DEBUG_AND_RELEASE` 为 `ON`，`JPH_DEBUG_RENDERER` 通过 Jolt target 传播到 Release（`build/engine/EngineCore.vcxproj` Release 包含该宏）。因此 D5-11 中“Jolt 物理适配保持 Debug-only”的措辞与当前实际构建不一致。
 
-本契约不追溯改写 D5-11；D3 修复按实际构建在 Debug/Release 均可运行，并记录于 `docs/T-5-DebugDraw-D3-Jolt-DrawGeometry-Fix.md`。该配置事实是否升级为契约修订，需用户裁决。
+用户 2026-10-31 已批准 D5-11 修订：通用服务在 Debug/Release 均可用；Jolt 适配由 `JPH_DEBUG_RENDERER` 配置决定，当前项目两配置均启用。原 D5-11 文本保留在上表；修订全文与边界见 `docs/T-5-DebugDraw-D5-11-Release-Semantics-Amendment.md`。D3 修复按实际构建在 Debug/Release 均可运行，记录于 `docs/T-5-DebugDraw-D3-Jolt-DrawGeometry-Fix.md`。
 
 ---
 
