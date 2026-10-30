@@ -2,57 +2,76 @@
 
 /**
  * @file OpenALAudioSource.h
- * @brief OpenAL 音源实现
+ * @brief OpenAL source wrapper for Stack 2 (T-7-A runtime semantics).
  *
- * 实现 IAudioSource 接口，封装 alGenSources / alSourcei 等操作。
+ * All AL calls are checked against the owner thread, engine state and the
+ * wrapper's engine generation before reaching the backend.
  */
 
 #include "Engine/Core/Audio/IAudioSource.h"
+#include <atomic>
+#include <cstdint>
 #include <memory>
 
 namespace Engine {
 
+    class AudioEngineRuntime;
+
     class OpenALAudioSource : public IAudioSource {
     public:
-        OpenALAudioSource();
+        OpenALAudioSource(std::weak_ptr<AudioEngineRuntime> runtime,
+                          uint32 sourceID,
+                          uint64 generation);
         ~OpenALAudioSource() override;
 
         // ── IAudioSource ──
-        void Play(std::shared_ptr<IAudioBuffer> buffer) override;
-        void Stop() override;
-        void Pause() override;
-        void Resume() override;
+        AudioStatus Play(std::shared_ptr<IAudioBuffer> buffer) override;
+        AudioStatus Stop() override;
+        AudioStatus Pause() override;
+        AudioStatus Resume() override;
 
         PlayState GetState() const override;
         bool IsPlaying() const override;
+        AudioStatus GetLastStatus() const override;
 
-        void SetPosition(const Vec3& position) override;
+        AudioStatus SetPosition(const Vec3& position) override;
         Vec3 GetPosition() const override;
-        void SetVelocity(const Vec3& velocity) override;
+        AudioStatus SetVelocity(const Vec3& velocity) override;
         Vec3 GetVelocity() const override;
 
-        void SetVolume(float32 gain) override;
+        AudioStatus SetVolume(float32 gain) override;
         float32 GetVolume() const override;
-        void SetPitch(float32 pitch) override;
+        AudioStatus SetPitch(float32 pitch) override;
         float32 GetPitch() const override;
-        void SetLooping(bool loop) override;
+        AudioStatus SetLooping(bool loop) override;
         bool IsLooping() const override;
 
-        void SetAttenuation(AttenuationMode mode,
-                            float32 minDistance = 1.0f,
-                            float32 maxDistance = FLT_MAX) override;
+        AudioStatus SetAttenuation(AttenuationMode mode,
+                                   float32 minDistance = 1.0f,
+                                   float32 maxDistance = FLT_MAX) override;
 
         float32 GetPlaybackPosition() const override;
-        void   SetPlaybackPosition(float32 seconds) override;
+        AudioStatus SetPlaybackPosition(float32 seconds) override;
 
-        uint32 GetNativeHandle() const override { return m_SourceID; }
+        void Invalidate() override;
+        bool IsOwnedBy(const void* runtime) const override;
+        uint32 GetNativeHandle() const override;
 
     private:
-        uint32 m_SourceID = 0;
+        AudioStatus CheckReady(const std::shared_ptr<AudioEngineRuntime>& runtime) const;
+        AudioStatus Fail(AudioStatus status) const;
+
+        std::weak_ptr<AudioEngineRuntime> m_Runtime;
+        std::atomic<uint32> m_SourceID{0};
+        std::atomic<uint32> m_BoundBufferID{0};
+        uint64 m_Generation = 0;
         std::shared_ptr<IAudioBuffer> m_Buffer;
+        std::atomic<bool> m_Valid{true};
+        mutable std::atomic<AudioStatus> m_LastStatus{AudioStatus::Ok};
+
         float32 m_Volume = 1.0f;
-        float32 m_Pitch  = 1.0f;
-        bool    m_Looping = false;
+        float32 m_Pitch = 1.0f;
+        bool m_Looping = false;
     };
 
 } // namespace Engine

@@ -49,36 +49,47 @@ float32 Len3(const Vec3& v) { return std::sqrt(Dot3(v, v)); }
 class FakeAudioEngine : public IAudioEngine {
 public:
     bool Init() override { m_Initialized = true; return true; }
-    void Shutdown() override { m_Initialized = false; }
+    AudioStatus Shutdown() override {
+        m_Initialized = false;
+        return AudioStatus::Ok;
+    }
     bool IsInitialized() const override { return m_Initialized; }
+    AudioEngineState GetState() const override {
+        return m_Initialized ? AudioEngineState::Ready : AudioEngineState::Uninitialized;
+    }
+    AudioStatus GetLastStatus() const override { return AudioStatus::Ok; }
 
     std::shared_ptr<IAudioBuffer> CreateBuffer(const void*, int32,
                                                const AudioClipInfo&) override {
         return nullptr;
     }
+    AudioStatus DestroyBuffer(IAudioBuffer*) override { return AudioStatus::Ok; }
     std::shared_ptr<IAudioSource> CreateSource() override { return nullptr; }
-    void DestroySource(IAudioSource*) override {}
+    AudioStatus DestroySource(IAudioSource*) override { return AudioStatus::Ok; }
 
-    void SetListenerPosition(const Vec3& p) override {
+    AudioStatus SetListenerPosition(const Vec3& p) override {
         m_Position = p;
         ++positionCalls;
+        return AudioStatus::Ok;
     }
     Vec3 GetListenerPosition() const override { return m_Position; }
 
-    void SetListenerOrientation(const Vec3& f, const Vec3& u) override {
+    AudioStatus SetListenerOrientation(const Vec3& f, const Vec3& u) override {
         m_Forward = f;
         m_Up = u;
         ++orientationCalls;
+        return AudioStatus::Ok;
     }
-    void SetListenerVolume(float32 g) override {
+    AudioStatus SetListenerVolume(float32 g) override {
         m_Volume = g;
         ++volumeCalls;
+        return AudioStatus::Ok;
     }
 
-    void SetMasterVolume(float32) override {}
+    AudioStatus SetMasterVolume(float32) override { return AudioStatus::Ok; }
     float32 GetMasterVolume() const override { return 1.0f; }
-    void SetDistanceModel(AttenuationMode) override {}
-    void Update() override {}
+    AudioStatus SetDistanceModel(AttenuationMode) override { return AudioStatus::Ok; }
+    AudioStatus Update() override { return AudioStatus::Ok; }
     void* GetNativeDevice() const override { return nullptr; }
     void* GetNativeContext() const override { return nullptr; }
 

@@ -1,81 +1,129 @@
 #include "Engine/OpenAL/OpenALAudioBuffer.h"
-#include "Engine/Core/Log.h"
 
-namespace {
-    Engine::Logger s_Log("OpenAL");
-}
+#include "OpenALAudioState.h"
 
-// OpenAL 头文件
-#include <AL/al.h>
-#include <AL/alc.h>
-
-// 与 AudioClip::Release() 采用同一安全语义：context 不存在时不调用
-// alDeleteBuffers。IAudioBuffer 由 shared_ptr 持有，析构发生在最后一个
-// owner 消失时，此时 context 可能已被销毁；无 context 下的
-// alDeleteBuffers 是未定义行为。
-static bool HasALContext()
-{
-    return alcGetCurrentContext() != nullptr;
-}
+#include <cmath>
 
 namespace Engine {
 
-    OpenALAudioBuffer::OpenALAudioBuffer() {
-        alGenBuffers(1, &m_BufferID);
-        if (alGetError() != AL_NO_ERROR) {
-            s_Log.Error("Failed to generate buffer");
-            m_BufferID = 0;
-        }
+    OpenALAudioBuffer::OpenALAudioBuffer(
+        std::weak_ptr<AudioEngineRuntime> runtime,
+        uint32 bufferID,
+        uint64 generation)
+        : m_Runtime(std::move(runtime))
+        , m_BufferID(bufferID)
+        , m_Generation(generation) {
     }
 
     OpenALAudioBuffer::~OpenALAudioBuffer() {
-        if (!m_BufferID) return;
+        const bool wasValid = m_Valid.exchange(false);
+        if (!wasValid) return;
 
-        if (HasALContext()) {
-            alDeleteBuffers(1, &m_BufferID);
-        } else {
-            s_Log.Trace(
-                "Skipping OpenAL buffer delete - no context");
+        if (auto runtime = m_Runtime.lock()) {
+            if (runtime->phase.load(std::memory_order_acquire) ==
+                    AudioEngineState::Ready &&
+                m_Generation ==
+                    runtime->generation.load(std::memory_order_acquire)) {
+                runtime->EnqueueBufferRelease(
+                    m_BufferID.load(std::memory_order_acquire), m_Generation);
+            }
         }
-        m_BufferID = 0;
+        m_BufferID.store(0, std::memory_order_release);
     }
 
-    void OpenALAudioBuffer::Load(const void* pcmData, int32 dataSize,
-                                  const AudioClipInfo& info) {
-        if (!m_BufferID || !pcmData || dataSize <= 0) return;
+    AudioStatus OpenALAudioBuffer::Fail(AudioStatus status) const {
+        m_LastStatus.store(status, std::memory_order_release);
+        return status;
+    }
+
+    AudioStatus OpenALAudioBuffer::CheckReady(
+        const std::shared_ptr<AudioEngineRuntime>& runtime) const {
+        if (!runtime) return Fail(AudioStatus::NotInitialized);
+        if (m_Generation != runtime->generation.load(std::memory_order_acquire)) {
+            return Fail(AudioStatus::NotInitialized);
+        }
+        if (!m_Valid.load(std::memory_order_acquire)) {
+            return Fail(AudioStatus::NotFound);
+        }
+        const auto status = runtime->CheckOwnerReady();
+        return status == AudioStatus::Ok ? status : Fail(status);
+    }
+
+    AudioStatus OpenALAudioBuffer::Load(const void* pcmData, int32 dataSize,
+                                        const AudioClipInfo& info) {
+        auto runtime = m_Runtime.lock();
+        auto status = CheckReady(runtime);
+        if (status != AudioStatus::Ok) return status;
+        if (m_Loaded.load(std::memory_order_acquire)) {
+            return Fail(AudioStatus::InvalidState);
+        }
+        if (!pcmData || dataSize <= 0 || info.sampleRate <= 0) {
+            return Fail(AudioStatus::InvalidArgument);
+        }
+
+        if (!runtime->backend->BufferData(
+                m_BufferID.load(std::memory_order_acquire),
+                info.format, pcmData, dataSize, info.sampleRate)) {
+            return Fail(runtime->ReportBackendFailure());
+        }
+
+        const int32 bytesPerSample =
+            (info.format == AudioFormat::Mono16 ||
+             info.format == AudioFormat::Stereo16) ? 2 : 1;
+        const int32 channels =
+            (info.format == AudioFormat::Mono8 ||
+             info.format == AudioFormat::Mono16) ? 1 : 2;
+        const int32 totalSamples = dataSize / bytesPerSample;
 
         m_Info = info;
-
-        // 确定 OpenAL 格式
-        ALenum format = AL_NONE;
-        switch (info.format) {
-            case AudioFormat::Mono8:    format = AL_FORMAT_MONO8;   break;
-            case AudioFormat::Mono16:   format = AL_FORMAT_MONO16;  break;
-            case AudioFormat::Stereo8:  format = AL_FORMAT_STEREO8; break;
-            case AudioFormat::Stereo16: format = AL_FORMAT_STEREO16;break;
+        m_Info.dataSize = dataSize;
+        m_Info.duration = static_cast<float32>(totalSamples) /
+                          (static_cast<float32>(info.sampleRate) * channels);
+        if (!std::isfinite(m_Info.duration)) {
+            m_Info.duration = 0.0f;
         }
+        m_Loaded.store(true, std::memory_order_release);
+        m_LastStatus.store(AudioStatus::Ok, std::memory_order_release);
+        return AudioStatus::Ok;
+    }
 
-        if (format == AL_NONE) {
-            s_Log.Error("Unsupported audio format");
-            return;
+    AudioClipInfo OpenALAudioBuffer::GetInfo() const {
+        return m_Info;
+    }
+
+    int32 OpenALAudioBuffer::GetDataSize() const {
+        return m_Info.dataSize;
+    }
+
+    AudioStatus OpenALAudioBuffer::GetLastStatus() const {
+        return m_LastStatus.load(std::memory_order_acquire);
+    }
+
+    void OpenALAudioBuffer::Invalidate() {
+        m_Valid.store(false, std::memory_order_release);
+        m_Loaded.store(false, std::memory_order_release);
+        m_BufferID.store(0, std::memory_order_release);
+        m_LastStatus.store(AudioStatus::NotFound, std::memory_order_release);
+    }
+
+    bool OpenALAudioBuffer::IsOwnedBy(const void* runtime) const {
+        auto owner = m_Runtime.lock();
+        return owner && runtime == owner.get();
+    }
+
+    uint32 OpenALAudioBuffer::GetNativeHandle() const {
+        if (!m_Valid.load(std::memory_order_acquire) ||
+            !m_Loaded.load(std::memory_order_acquire)) {
+            return 0;
         }
-
-        alBufferData(m_BufferID, format, pcmData, dataSize, info.sampleRate);
-
-        ALenum err = alGetError();
-        if (err != AL_NO_ERROR) {
-            s_Log.Error("Failed to buffer data (error: {})", err);
-            return;
+        auto runtime = m_Runtime.lock();
+        if (!runtime) return 0;
+        if (runtime->phase.load(std::memory_order_acquire) !=
+                AudioEngineState::Ready ||
+            m_Generation != runtime->generation.load(std::memory_order_acquire)) {
+            return 0;
         }
-
-        // 计算时长
-        int32 bytesPerSample = (info.format == AudioFormat::Mono16 || 
-                                info.format == AudioFormat::Stereo16) ? 2 : 1;
-        int32 channels = (info.format == AudioFormat::Mono8 || 
-                          info.format == AudioFormat::Mono16) ? 1 : 2;
-        int32 totalSamples = dataSize / bytesPerSample;
-        m_Info.duration = static_cast<float32>(totalSamples) / 
-                          (info.sampleRate * channels);
+        return m_BufferID.load(std::memory_order_acquire);
     }
 
 } // namespace Engine

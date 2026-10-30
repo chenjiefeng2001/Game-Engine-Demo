@@ -15,6 +15,30 @@
 namespace Engine {
 
 // ============================================================
+// 音频调用结果与 Engine 状态（T-7-A）
+// ============================================================
+enum class AudioStatus : uint8 {
+    Ok = 0,
+    NotInitialized,
+    WrongThread,
+    InvalidState,
+    ShuttingDown,
+    DeviceLost,
+    BackendError,
+    InvalidArgument,
+    NotFound,
+    Unsupported,
+};
+
+enum class AudioEngineState : uint8 {
+    Uninitialized = 0,
+    Ready,
+    Failed,
+    ShuttingDown,
+    Shutdown,
+};
+
+// ============================================================
 // 音频格式
 // ============================================================
 enum class AudioFormat : uint8 {

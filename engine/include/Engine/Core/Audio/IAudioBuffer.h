@@ -24,9 +24,10 @@ namespace Engine {
          * @param pcmData  PCM 数据指针
          * @param dataSize PCM 数据大小（字节）
          * @param info     音频格式信息
+         * @return 明确状态；失败不得留下伪有效 buffer
          */
-        virtual void Load(const void* pcmData, int32 dataSize,
-                          const AudioClipInfo& info) = 0;
+        virtual AudioStatus Load(const void* pcmData, int32 dataSize,
+                                 const AudioClipInfo& info) = 0;
 
         /// 获取音频信息
         virtual AudioClipInfo GetInfo() const = 0;
@@ -34,7 +35,14 @@ namespace Engine {
         /// 获取 PCM 数据大小（字节）
         virtual int32 GetDataSize() const = 0;
 
-        /// 获取原生 OpenAL buffer 句柄（仅实现层使用）
+        virtual AudioStatus GetLastStatus() const = 0;
+
+        /// 使 wrapper 失效；不得调用 AL
+        virtual void Invalidate() = 0;
+        /// 是否由指定 engine runtime 创建（内部身份校验；不暴露 Bridge ABI）
+        virtual bool IsOwnedBy(const void* runtime) const = 0;
+
+        /// 获取原生 OpenAL buffer 句柄（仅实现层使用；失效时为 0）
         virtual uint32 GetNativeHandle() const = 0;
     };
 
