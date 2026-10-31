@@ -1,9 +1,10 @@
 # F2-S1 — Collider Serialization Evidence & Closure
 
-**状态**：`F2-S1 — GATE B PASS — CLOSURE PROPOSED — SCOPE-BOUND`
+**状态**：`F2-S1 — CLOSED — SCOPE-BOUND`
 **日期**：2026-10-31
-**基线**：HEAD `c1f7933` + Gate B 工作区变更（未 commit）
-**契约**：`docs/F2-S1-GateA-Contract.md`（`PASS — FROZEN`）
+**最终关闭**：2026-10-31 用户确认 F2-S1 整体关闭
+**基线**：HEAD `c1f7933` + Gate B 工作区变更；Gate B 实现提交 `4f4b955`
+**契约**：`docs/F2-S1-GateA-Contract.md`（`PASS — FROZEN — CLOSED`）
 **测试记录**：`docs/F2-S1-GateB-Test-Record.md`
 **裁决**：用户 2026-10-31 确认 Gate A 全部四项裁决点；Gate B 仅授权测试/文档。
 
@@ -11,8 +12,8 @@
 
 ## 0. 停点声明
 
-F2-S1 的候选范围已完成证据收集与测试补强。本记录是**关闭提案**：所有 Gate 条件已满足，
-但最终状态仍待用户确认。若确认，F2-S1 转为 `CLOSED — SCOPE-BOUND`。
+F2-S1 的候选范围已完成证据收集与测试补强。所有 Gate 条件已满足，用户于
+2026-10-31 确认整体关闭，F2-S1 状态为 `CLOSED — SCOPE-BOUND`。
 
 本记录不改变 T-1、T-2、T-4、T-5、T-6、T-7、UI-H、F2-C 或 P1 的任何状态。
 
@@ -226,8 +227,8 @@ F2-S1 是 Collider Serialization 的独立交付键，不是 F2-C 的延续，�
 | B5-5a 注释更正与 EF-F2B-007/Evidence-Baseline 勘误登记 | PASS（基线计数未改，已登记） |
 | Managed/生产路径排除事实已写明 | PASS |
 
-**结论**：F2-S1 达到关闭条件。建议状态转为 `F2-S1 — CLOSED — SCOPE-BOUND`；
-本记录等待用户最终确认。关闭 F2-S1 不代表 T-1、F2-C、P1 或其他阶段关闭。
+**结论**：F2-S1 于 2026-10-31 关闭为 `F2-S1 — CLOSED — SCOPE-BOUND`。
+关闭 F2-S1 不代表 T-1、F2-C、P1 或其他阶段关闭。
 
 ---
 
