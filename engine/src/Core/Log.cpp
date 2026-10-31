@@ -12,6 +12,7 @@
  */
 
 #include "Engine/Core/Log.h"
+#include "Engine/Core/LogRing.h"
 #include "Engine/ConsoleLog.h"
 #include <spdlog/spdlog.h>
 #include <spdlog/sinks/stdout_color_sinks.h>
@@ -20,6 +21,7 @@
 #include <spdlog/async.h>
 #include <spdlog/common.h>
 #include <spdlog/details/thread_pool.h>
+#include <algorithm>
 #include <memory>
 #include <mutex>
 #include <vector>
@@ -153,6 +155,62 @@ private:
 };
 
 // ============================================================
+// LogRingSink — T-6-B：把结构化日志写入进程级 LogRing
+//
+// 线程安全：base_sink<std::mutex> 串行化 sink_it_；
+// 写入路径只复制字段入 ring，不调用 managed/UI、不阻塞。
+// ============================================================
+
+class LogRingSink final : public spdlog::sinks::base_sink<std::mutex> {
+public:
+    explicit LogRingSink(std::shared_ptr<LogRing> ring)
+        : m_Ring(std::move(ring)) {}
+
+protected:
+    void sink_it_(const spdlog::details::log_msg& msg) override {
+        if (!m_Ring) return;
+
+        const int64_t timestampUtcUs =
+            std::chrono::duration_cast<std::chrono::microseconds>(
+                msg.time.time_since_epoch()).count();
+
+        const std::string_view category =
+            msg.logger_name.size() == 0
+                ? std::string_view{}
+                : std::string_view(msg.logger_name.data(), msg.logger_name.size());
+
+        std::string source;
+        if (msg.source.filename != nullptr && msg.source.filename[0] != '\0') {
+            source = fmt::format("{}:{}", msg.source.filename, msg.source.line);
+        }
+
+        const std::string_view message =
+            msg.payload.size() == 0
+                ? std::string_view{}
+                : std::string_view(msg.payload.data(), msg.payload.size());
+
+        m_Ring->Push(MapLevel(msg.level), timestampUtcUs, category, source,
+                     message);
+    }
+
+    void flush_() override {}
+
+private:
+    static uint8_t MapLevel(spdlog::level::level_enum level) {
+        switch (level) {
+            case spdlog::level::trace: return 0;
+            case spdlog::level::debug: return 1;
+            case spdlog::level::info:  return 2;
+            case spdlog::level::warn:  return 3;
+            case spdlog::level::err:   return 4;
+            default:                   return 5;
+        }
+    }
+
+    std::shared_ptr<LogRing> m_Ring;
+};
+
+// ============================================================
 // （GP1-DX S4a）ConsoleLogSink 已移除 —— 日志单缓冲收敛：
 // ConsolePanel 经 PanelBridgeSink 自行订阅 spdlog，此处不再转发
 // ============================================================
@@ -164,6 +222,8 @@ private:
 bool Log::s_Initialized = false;
 std::shared_ptr<spdlog::logger> Log::s_DefaultLogger = nullptr;
 std::shared_ptr<MemoryHistorySink> Log::s_MemorySink = nullptr;
+std::shared_ptr<LogRing> Log::s_LogRing = nullptr;
+std::shared_ptr<LogRingSink> Log::s_LogRingSink = nullptr;
 static std::mutex s_LoggerMutex;
 
 // ============================================================
@@ -183,6 +243,13 @@ void Log::Init(const std::string& filePath, Level consoleLevel, Level fileLevel)
         s_MemorySink = std::make_shared<MemoryHistorySink>();
         s_MemorySink->set_level(spdlog::level::trace);
 
+        // ── 2b. T-6-B：创建进程级 LogRing 与 sink ──
+        // 必须先于第一条日志（"Log system initialized"）安装，
+        // 否则 bootstrap 日志不能被 T-6-B 捕获（契约 A-2）。
+        s_LogRing = std::make_shared<LogRing>();
+        s_LogRingSink = std::make_shared<LogRingSink>(s_LogRing);
+        s_LogRingSink->set_level(spdlog::level::trace);
+
         // ── 3. 创建控制台 sink（带颜色） ──
         auto consoleSink = std::make_shared<spdlog::sinks::stdout_color_sink_mt>();
         consoleSink->set_level(static_cast<spdlog::level::level_enum>(consoleLevel));
@@ -198,7 +265,7 @@ void Log::Init(const std::string& filePath, Level consoleLevel, Level fileLevel)
         // 使用 async_factory 让所有日志通过线程池异步写入
         // （GP1-DX S4a：ImGui 控制台 sink 已移除，ConsolePanel 自行订阅）
         std::vector<spdlog::sink_ptr> sinks = {
-            consoleSink, fileSink, s_MemorySink
+            consoleSink, fileSink, s_MemorySink, s_LogRingSink
         };
 
         s_DefaultLogger = std::make_shared<spdlog::logger>(
@@ -214,6 +281,16 @@ void Log::Init(const std::string& filePath, Level consoleLevel, Level fileLevel)
 
         // 注册为 spdlog 默认 logger
         spdlog::set_default_logger(s_DefaultLogger);
+
+        // T-6-B：补齐 LogRing 安装前已创建的 logger（apply_all），
+        // 不能只挂 default logger；已含该 sink 的 logger 不重复添加。
+        spdlog::apply_all([](const std::shared_ptr<spdlog::logger>& logger) {
+            auto& loggerSinks = logger->sinks();
+            if (std::find(loggerSinks.begin(), loggerSinks.end(),
+                          Log::s_LogRingSink) == loggerSinks.end()) {
+                loggerSinks.push_back(Log::s_LogRingSink);
+            }
+        });
 
         s_Initialized = true;
 
@@ -236,6 +313,9 @@ void Log::Shutdown() {
     s_DefaultLogger.reset();
     s_MemorySink.reset();
     spdlog::shutdown();
+    // T-6-B：ring 可随 Shutdown 停止/清空；host 不持有 sink 指针，无 UAF。
+    s_LogRingSink.reset();
+    s_LogRing.reset();
     s_Initialized = false;
 }
 
@@ -335,6 +415,10 @@ void Log::ForceFlushAndDump(const std::string& dumpPath) {
 
 std::shared_ptr<MemoryHistorySink> Log::GetMemoryHistorySink() {
     return s_MemorySink;
+}
+
+std::shared_ptr<LogRing> Log::GetLogRing() {
+    return s_LogRing;
 }
 
 } // namespace Engine

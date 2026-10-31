@@ -57,6 +57,12 @@ class Logger;
 // ============================================================
 class MemoryHistorySink;
 
+// ============================================================
+// T-6-B：进程级日志环形缓冲区与其 spdlog Sink 的前向声明
+// ============================================================
+class LogRing;
+class LogRingSink;
+
 class Log {
 public:
     // ── 日志级别（映射到 spdlog 级别） ──
@@ -223,10 +229,20 @@ public:
     static std::shared_ptr<spdlog::logger> GetDefaultLogger();
     static std::shared_ptr<MemoryHistorySink> GetMemoryHistorySink();
 
+    /**
+     * @brief T-6-B：获取进程级日志环形缓冲区
+     *
+     * 由 Log::Init 创建；EngineHost 通过它读取日志（EngineHost_PollEngineLogs）。
+     * Log::Init 之前返回 nullptr；EngineHost 不创建/销毁该对象。
+     */
+    static std::shared_ptr<LogRing> GetLogRing();
+
 private:
     static bool s_Initialized;
     static std::shared_ptr<spdlog::logger> s_DefaultLogger;
     static std::shared_ptr<MemoryHistorySink> s_MemorySink;
+    static std::shared_ptr<LogRing> s_LogRing;
+    static std::shared_ptr<LogRingSink> s_LogRingSink;
 };
 
 // ============================================================
