@@ -1634,6 +1634,16 @@ TEST_F(EditorBridgeTest, F2ColliderSaveLoadColdRestart) {
                                                  "category", "8"), 0);
     EXPECT_EQ(EditorSession_SetComponentProperty(m_Session, idx, "Collider",
                                                  "mask", "31"), 0);
+    EXPECT_EQ(EditorSession_SetComponentProperty(m_Session, idx, "Collider",
+                                                 "enabled", "false"), 0);
+
+    const int32_t circleIdx = EditorSession_CreateEntity(m_Session, "ColCircle");
+    ASSERT_GE(circleIdx, 0);
+    EXPECT_EQ(EditorSession_AddComponent(m_Session, circleIdx, "Collider"), 0);
+    EXPECT_EQ(EditorSession_SetComponentProperty(m_Session, circleIdx, "Collider",
+                                                 "shape", "Circle"), 0);
+    EXPECT_EQ(EditorSession_SetComponentProperty(m_Session, circleIdx, "Collider",
+                                                 "radius", "2.25"), 0);
     EXPECT_EQ(EditorSession_SaveProject(m_Session), 1);
 
     // 落盘证据：场景 JSON 含 components[] 中 Collider 及其参数
@@ -1647,6 +1657,8 @@ TEST_F(EditorBridgeTest, F2ColliderSaveLoadColdRestart) {
         EXPECT_NE(text.find("\"shape\": \"Box\""), std::string::npos);
         EXPECT_NE(text.find("\"halfX\": 4"), std::string::npos);
         EXPECT_NE(text.find("\"category\": 8"), std::string::npos);
+        EXPECT_NE(text.find("\"enabled\": false"), std::string::npos);
+        EXPECT_NE(text.find("\"radius\": 2.25"), std::string::npos);
     }
 
     // 冷重启等价：重新 OpenProject → Deserialize → Attach 还原
@@ -1678,6 +1690,21 @@ TEST_F(EditorBridgeTest, F2ColliderSaveLoadColdRestart) {
                                                  "mask", v, sizeof(v)),
               static_cast<int32_t>(std::strlen("31")));
     EXPECT_STREQ(v, "31");
+    EXPECT_EQ(EditorSession_GetComponentProperty(m_Session, reloadIdx, "Collider",
+                                                 "enabled", v, sizeof(v)),
+              static_cast<int32_t>(std::strlen("false")));
+    EXPECT_STREQ(v, "false");
+
+    const int32_t reloadCircleIdx = FindEntityIndexByName(m_Session, "ColCircle");
+    ASSERT_GE(reloadCircleIdx, 0);
+    EXPECT_EQ(EditorSession_HasComponent(m_Session, reloadCircleIdx, "Collider"), 1);
+    EXPECT_EQ(EditorSession_GetComponentProperty(m_Session, reloadCircleIdx, "Collider",
+                                                 "shape", v, sizeof(v)),
+              static_cast<int32_t>(std::strlen("Circle")));
+    EXPECT_STREQ(v, "Circle");
+    EXPECT_GT(EditorSession_GetComponentProperty(m_Session, reloadCircleIdx, "Collider",
+                                                 "radius", v, sizeof(v)), 0);
+    EXPECT_NEAR(std::stof(v), 2.25f, 1e-6f);
 
     (void)oldcwd;
     std::filesystem::current_path(oldcwd);

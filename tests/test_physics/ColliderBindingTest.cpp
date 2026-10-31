@@ -1218,7 +1218,8 @@ TEST(F2ColliderPhysics, ColdRestart_Negative_NoCollider_UnknownType_CorruptData)
         EXPECT_EQ(sceneB->GetObjects()[0]->GetComponentByName("Collider"), nullptr);
     }
 
-    // ③ 组件数据损坏（radius 变成字符串）：Deserialize 拒绝 → 默认值 + 实体存活 + 可绑定
+    // ③ 组件数据损坏（radius 变成字符串）：宽容语义忽略该字段 → 默认值 + 实体存活 + 可绑定
+    //    注意：Deserialize 返回 true，不产生 DataBad；这是 F2-S1 冻结的已知限制。
     {
         Scene sceneA;
         auto* c = b5::AddColliderToScene(sceneA, "corrupt");

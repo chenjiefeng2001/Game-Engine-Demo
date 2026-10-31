@@ -100,6 +100,7 @@ add_executable(test_content
     test_content/ManifestStrictLoadTest.cpp
     test_content/RevisionStoreTest.cpp
     test_content/RigidBodySerializationTest.cpp
+    test_content/ColliderSerializationTest.cpp
     test_content/ContentPipelineTest.cpp
     test_content/Dogfood05Test.cpp
     test_content/Dogfood06Test.cpp
