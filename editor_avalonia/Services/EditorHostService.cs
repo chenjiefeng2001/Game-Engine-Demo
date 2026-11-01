@@ -443,6 +443,16 @@ public sealed class EditorHostService : IDisposable
     /// </summary>
     public long PumpInvocations => _engineHost?.PumpInvocations ?? 0;
 
+    // T-6-B B4：引擎日志 poll
+    public event Action<IReadOnlyList<EditorBridgeApi.EngineLogRecordV1>, EditorBridgeApi.EngineLogPollStatsV1>? EngineLogsPolled
+    {
+        add { if (_engineHost is not null) _engineHost.EngineLogsPolled += value; }
+        remove { if (_engineHost is not null) _engineHost.EngineLogsPolled -= value; }
+    }
+
+    public void StartEngineLogPoll() => _engineHost?.StartLogPoll();
+    public void StopEngineLogPoll() => _engineHost?.StopLogPoll();
+
     /// <summary>累计失败的 pump 调用次数（native 未推进帧）。</summary>
     public long PumpFailures => _engineHost?.PumpFailures ?? 0;
 
@@ -830,6 +840,12 @@ internal sealed class EngineHostChannel : IEditorOps, IDisposable
     private long _pumpInvocations;
     private long _pumpFailures;
     private double _lastPumpDeltaSeconds;
+
+    // T-6-B B4：50 ms 引擎日志 poll timer（与 runtime pump 完全隔离）
+    private DispatcherTimer? _logTimer;
+    private ulong _logCursor;
+    private bool _logActive;
+    private readonly object _logLock = new();
     private bool _pumpActive;
     private readonly OpenAttemptTracker _openAttempts = new(1);
     private int _droppedLateEvents;
@@ -852,6 +868,10 @@ internal sealed class EngineHostChannel : IEditorOps, IDisposable
     public bool IsCreated => _host != IntPtr.Zero;
     public long Generation => _openAttempts.ActiveGeneration;
     public long PumpInvocations => Interlocked.Read(ref _pumpInvocations);
+
+    // T-6-B B4：引擎日志 poll 事件（UI 线程触发）
+    public event Action<IReadOnlyList<EditorBridgeApi.EngineLogRecordV1>, EditorBridgeApi.EngineLogPollStatsV1>? EngineLogsPolled;
+    public ulong LogCursor => _logCursor;
     public long PumpFailures => Interlocked.Read(ref _pumpFailures);
     public double LastPumpDeltaSeconds => _lastPumpDeltaSeconds;
     public int DroppedLateEventCount => Volatile.Read(ref _droppedLateEvents);
@@ -910,6 +930,7 @@ internal sealed class EngineHostChannel : IEditorOps, IDisposable
                     EditorBridgeApi.EngineHostStageBootstrap,
                     "EngineHost_SetEventCallback failed");
             _host = host;
+            StartLogPoll();
         }
         catch
         {
@@ -1112,12 +1133,91 @@ internal sealed class EngineHostChannel : IEditorOps, IDisposable
         _lastPumpSeconds = 0.0;
     }
 
+    // T-6-B B4：50 ms 引擎日志 poll（与 runtime pump 完全隔离）
+    public void StartLogPoll()
+    {
+        lock (_logLock)
+        {
+            if (_logTimer is not null) return;
+            _logCursor = 0;
+            _logActive = true;
+            var timer = new DispatcherTimer(DispatcherPriority.Normal)
+            {
+                Interval = TimeSpan.FromMilliseconds(50),
+            };
+            timer.Tick += (_, _) => PollEngineLogsOnce();
+            _logTimer = timer;
+            timer.Start();
+        }
+    }
+
+    public void StopLogPoll()
+    {
+        lock (_logLock)
+        {
+            _logActive = false;
+            if (_logTimer is null) return;
+            _logTimer.Stop();
+            _logTimer = null;
+        }
+    }
+
+    private void PollEngineLogsOnce()
+    {
+        if (!_logActive || _host == IntPtr.Zero) return;
+        try
+        {
+            var stats = default(EditorBridgeApi.EngineLogPollStatsV1);
+            var result = default(EditorBridgeApi.RuntimeResult);
+            var buffer = new byte[EditorBridgeApi.EngineLogPollBufferBytes];
+            int count = EditorBridgeApi.EngineHost_PollEngineLogs(
+                _host, _logCursor, buffer, buffer.Length, ref stats, ref result);
+            if (count < 0) return;
+            if (count == 0)
+            {
+                _logCursor = stats.NextSequence == 0 ? _logCursor : stats.NextSequence;
+                return;
+            }
+
+            var records = new EditorBridgeApi.EngineLogRecordV1[count];
+            int recSize = EditorBridgeApi.EngineLogRecordBytes;
+            for (int i = 0; i < count; i++)
+            {
+                int off = i * recSize;
+                // 手动反序列化（Pack=8，自然对齐，与 Marshal.PtrToStructure 一致）
+                records[i] = MarshalPtrToRecord(buffer, off);
+            }
+            _logCursor = stats.NextSequence;
+            EngineLogsPolled?.Invoke(records, stats);
+        }
+        catch
+        {
+            // poll 失败不破坏 UI；下次 tick 重试
+        }
+    }
+
+    private static EditorBridgeApi.EngineLogRecordV1 MarshalPtrToRecord(byte[] buffer, int offset)
+    {
+        // 使用 Marshal 从非托管内存块反序列化，保证与 P/Invoke 布局一致
+        var handle = GCHandle.Alloc(buffer, GCHandleType.Pinned);
+        try
+        {
+            IntPtr ptr = handle.AddrOfPinnedObject() + offset;
+            return Marshal.PtrToStructure<EditorBridgeApi.EngineLogRecordV1>(ptr);
+        }
+        finally
+        {
+            handle.Free();
+        }
+    }
+
     public void Dispose()
     {
         if (_disposed) return;
         _disposed = true;
         BeginTeardown();
         StopPump();
+        StopLogPoll();
         if (_host == IntPtr.Zero) return;
         var host = _host;
         EditorBridgeApi.EngineHost_SetEventCallback(host, null, IntPtr.Zero);

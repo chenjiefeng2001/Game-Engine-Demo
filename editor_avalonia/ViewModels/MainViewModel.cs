@@ -1,5 +1,7 @@
 using System;
+using System.Collections.Generic;
 using System.Collections.ObjectModel;
+using System.Text;
 using System.ComponentModel;
 using System.Linq;
 using System.Runtime.CompilerServices;
@@ -49,6 +51,7 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
         }
     }
     internal int ConsoleTrimmedCount { get; private set; }
+    internal long EngineLogDroppedCount { get; private set; }
 
     public bool HasEntities => Entities.Count > 0;
     public bool HasAssets => Assets.Count > 0;
@@ -612,8 +615,10 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
     {
         _host = host ?? throw new ArgumentNullException(nameof(host));
         _host.NativeEvent += OnNativeEvent;
-        // A2/F2-05：pump/runtime 侧 typed failure 必须成为可观测 UI 状态。
+        // A2/F2-05：pump/runtime �� typed failure �����Ϊ�ɹ۲� UI ״̬��
         _host.RuntimeFaulted += OnRuntimeFaulted;
+        // T-6-B B4：引擎日志 poll 回调
+        _host.EngineLogsPolled += OnEngineLogsPolled;
     }
 
     // ── A3/D1：Host 状态 → UI 投影的唯一对齐入口 ──────────────────
@@ -1696,9 +1701,100 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
         Raise(nameof(StatusText));
     }
 
+    // T-6-B B4：引擎日志 poll 回调 → ConsoleLines
+    private void OnEngineLogsPolled(
+        IReadOnlyList<EditorBridgeApi.EngineLogRecordV1> records,
+        EditorBridgeApi.EngineLogPollStatsV1 stats)
+    {
+        // 更新 dropped 计数
+        long prev = EngineLogDroppedCount;
+        if (stats.DroppedTotal > (ulong)prev)
+        {
+            EngineLogDroppedCount = (long)stats.DroppedTotal;
+            Raise(nameof(EngineLogDroppedCount));
+        }
+
+        foreach (var rec in records)
+        {
+            string level = rec.Level switch
+            {
+                0 => "TRACE",
+                1 => "DEBUG",
+                2 => "INFO",
+                3 => "WARN",
+                4 => "ERROR",
+                _ => "CRITICAL",
+            };
+            // 字段按 length 截取（null 终止保护）
+            string category = ReadFixedString(rec.Category, rec.CategoryLength);
+            string source = ReadFixedString(rec.Source, rec.SourceLength);
+            string message = ReadFixedString(rec.Message, rec.MessageLength);
+
+            // source:line
+            string srcTag = string.IsNullOrEmpty(source) ? "" : $" ({source})";
+
+            var sb = new StringBuilder();
+            sb.Append('[');
+            sb.Append(FormatTimestamp(rec.TimestampUtcUs));
+            sb.Append("] [");
+            sb.Append(level);
+            sb.Append("] [");
+            sb.Append(category);
+            sb.Append("] ");
+            sb.Append(message);
+            sb.Append(srcTag);
+
+            // flags → [truncated]
+            var flags = new List<string>();
+            if ((rec.Flags & EditorBridgeApi.EngineLogFlagCategoryTruncated) != 0)
+                flags.Add("category");
+            if ((rec.Flags & EditorBridgeApi.EngineLogFlagSourceTruncated) != 0)
+                flags.Add("source");
+            if ((rec.Flags & EditorBridgeApi.EngineLogFlagMessageTruncated) != 0)
+                flags.Add("message");
+            if (flags.Count > 0)
+            {
+                sb.Append(" [truncated: ");
+                sb.Append(string.Join(",", flags));
+                sb.Append(']');
+            }
+
+            AppendConsoleLine(sb.ToString());
+        }
+    }
+
+    private static string ReadFixedString(byte[] field, ushort length)
+    {
+        if (field is null || length == 0) return string.Empty;
+        int n = Math.Min(length, field.Length);
+        // 以 null 终止保护
+        int end = Array.IndexOf(field, (byte)0, 0, n);
+        if (end >= 0) n = end;
+        return System.Text.Encoding.UTF8.GetString(field, 0, n);
+    }
+
+    private static string FormatTimestamp(long utcUs)
+    {
+        try
+        {
+            var dt = DateTimeOffset.FromUnixTimeMilliseconds(utcUs / 1000).UtcDateTime;
+            return dt.ToString("HH:mm:ss.fff");
+        }
+        catch
+        {
+            return utcUs.ToString();
+        }
+    }
+
     internal void LogToConsole(string text)
     {
         string line = $"[{DateTime.Now:HH:mm:ss.fff}] {text}";
+        AppendConsoleLine(line);
+    }
+
+    // T-6-B B4：直接追加已格式化的行（引擎日志已含时间戳，避免双重时间戳）
+    internal void AppendConsoleLine(string line)
+    {
         ConsoleLines.Add(line);
 
         if (ConsoleLines.Count > ConsoleCapacity)
