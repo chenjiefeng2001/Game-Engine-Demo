@@ -12,6 +12,8 @@
 // P1 阶段**刻意不新增 C 导出**（那是 P2 的 additive Fetch op），因此这里白色盒地
 // 包含 bridge 内部头，只为 native contract test 取证。managed 侧通道留给 P2。
 #include "EngineHost.h"
+#include "Engine/Core/Log.h"
+#include "Engine/Core/LogRing.h"
 
 #include <cstddef>
 #include <cstdlib>
@@ -714,6 +716,185 @@ TEST(EngineHostAbiTest, LogPollValidationAndBootstrapSmoke) {
                                         static_cast<int32_t>(buffer.size()),
                                         &stats, &result), -1);
     EXPECT_EQ(result.status, ENGINE_HOST_STATUS_INVALID_STATE);
+}
+
+// ================================================================
+// T-6-B B3：EngineHost poll / bootstrap / 生命周期
+// ================================================================
+
+TEST(EngineHostAbiTest, B3CursorAndBatch) {
+    RuntimeResult result = {};
+    EngineLogPollStatsV1 stats = {};
+    std::vector<uint8_t> buffer(ENGINE_HOST_LOG_POLL_BUFFER_BYTES, 0);
+
+    ASSERT_EQ(EditorBridge_RegisterMainThread(), 1);
+    EngineHostHandle host = EngineHost_Create(&result);
+    ASSERT_NE(host, nullptr);
+
+    // 1) 第一次 poll（afterSequence=0）取回 bootstrap 日志
+    int32_t count = EngineHost_PollEngineLogs(
+        host, 0, buffer.data(), static_cast<int32_t>(buffer.size()), &stats, &result);
+    ASSERT_GE(count, 0);
+    EXPECT_LE(count, 32);
+    EXPECT_EQ(result.status, ENGINE_HOST_STATUS_SUCCESS);
+    uint64_t cursor = stats.newestSequence;
+    uint64_t oldest0 = stats.oldestSequence;
+    EXPECT_GE(oldest0, 1u);
+
+    // 2) afterSequence 推进：全部消费
+    uint64_t seq = 0;
+    int total = 0;
+    do {
+        int32_t n = EngineHost_PollEngineLogs(
+            host, seq, buffer.data(), static_cast<int32_t>(buffer.size()), &stats, &result);
+        ASSERT_GE(n, 0);
+        EXPECT_EQ(result.status, ENGINE_HOST_STATUS_SUCCESS);
+        if (n == 0) break;
+        const auto* recs = reinterpret_cast<const EngineLogRecordV1*>(buffer.data());
+        for (int i = 1; i < n; ++i) EXPECT_LT(recs[i - 1].sequence, recs[i].sequence);
+        seq = stats.newestSequence;
+        total += n;
+        EXPECT_LE(n, 32);
+    } while (stats.recordCount == 32);
+    EXPECT_GE(total, 1);
+
+    // 3) 全部消费后：空队列返回 0 + SUCCESS
+    int32_t empty = EngineHost_PollEngineLogs(
+        host, cursor, buffer.data(), static_cast<int32_t>(buffer.size()), &stats, &result);
+    EXPECT_EQ(empty, 0);
+    EXPECT_EQ(result.status, ENGINE_HOST_STATUS_SUCCESS);
+    EXPECT_EQ(stats.recordCount, 0u);
+    EXPECT_EQ(stats.nextSequence, cursor);
+
+    // 4) afterSequence 推进 1 条：cursor 前进
+    //    （ring 中至少有 bootstrap 日志；取 oldest 之前的 0 应返回全部）
+    int32_t nAll = EngineHost_PollEngineLogs(
+        host, 0, buffer.data(), static_cast<int32_t>(buffer.size()), &stats, &result);
+    EXPECT_GE(nAll, 0);
+    EXPECT_EQ(result.status, ENGINE_HOST_STATUS_SUCCESS);
+
+    EngineHost_Destroy(host);
+}
+
+TEST(EngineHostAbiTest, B3Concurrency) {
+    RuntimeResult result = {};
+    EngineLogPollStatsV1 stats = {};
+    std::vector<uint8_t> buffer(ENGINE_HOST_LOG_POLL_BUFFER_BYTES, 0);
+
+    ASSERT_EQ(EditorBridge_RegisterMainThread(), 1);
+    EngineHostHandle host = EngineHost_Create(&result);
+    ASSERT_NE(host, nullptr);
+
+    std::atomic<bool> stop{false};
+    // poll-only 并发：验证 PollEngineLogs 在多线程下不崩溃/数据竞争
+    std::vector<std::thread> pollers;
+    for (int t = 0; t < 4; ++t) {
+        pollers.emplace_back([&]() {
+            EngineLogPollStatsV1 s = {};
+            RuntimeResult r = {};
+            std::vector<uint8_t> buf(ENGINE_HOST_LOG_POLL_BUFFER_BYTES, 0);
+            for (int i = 0; i < 25 && !stop.load(); ++i) {
+                int32_t n = EngineHost_PollEngineLogs(
+                    host, 0, buf.data(), static_cast<int32_t>(buf.size()), &s, &r);
+                EXPECT_GE(n, 0);
+                EXPECT_LE(n, 32);
+                std::this_thread::sleep_for(std::chrono::milliseconds(1));
+            }
+        });
+    }
+    // 主线程也 poll
+    for (int i = 0; i < 25; ++i) {
+        int32_t n = EngineHost_PollEngineLogs(
+            host, 0, buffer.data(), static_cast<int32_t>(buffer.size()), &stats, &result);
+        EXPECT_GE(n, 0);
+        EXPECT_LE(n, 32);
+        std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    }
+    stop.store(true);
+    for (auto& th : pollers) th.join();
+
+    EngineHost_Destroy(host);
+}
+
+TEST(EngineHostAbiTest, B3ProjectLifecycleDoesNotBreakPoll) {
+    RuntimeResult result = {};
+    EngineLogPollStatsV1 stats = {};
+    std::vector<uint8_t> buffer(ENGINE_HOST_LOG_POLL_BUFFER_BYTES, 0);
+
+    ASSERT_EQ(EditorBridge_RegisterMainThread(), 1);
+    EngineHostHandle host = EngineHost_Create(&result);
+    ASSERT_NE(host, nullptr);
+
+    // 不打开工程也能 poll
+    int32_t n0 = EngineHost_PollEngineLogs(
+        host, 0, buffer.data(), static_cast<int32_t>(buffer.size()), &stats, &result);
+    EXPECT_GE(n0, 0);
+    EXPECT_EQ(result.status, ENGINE_HOST_STATUS_SUCCESS);
+
+    // 打开工程
+    RuntimeResult r2 = {};
+    EXPECT_EQ(EngineHost_OpenProject(host, "assets/gp01/manifest.json",
+                                    "assets/gp01/Main.scene", &r2), 0);
+    // poll 仍然成功
+    int32_t n1 = EngineHost_PollEngineLogs(
+        host, 0, buffer.data(), static_cast<int32_t>(buffer.size()), &stats, &result);
+    EXPECT_GE(n1, 0);
+    EXPECT_EQ(result.status, ENGINE_HOST_STATUS_SUCCESS);
+
+    // 关闭工程
+    RuntimeResult r3 = {};
+    EngineHost_CloseProject(host, &r3);
+    int32_t n2 = EngineHost_PollEngineLogs(
+        host, 0, buffer.data(), static_cast<int32_t>(buffer.size()), &stats, &result);
+    EXPECT_GE(n2, 0);
+    EXPECT_EQ(result.status, ENGINE_HOST_STATUS_SUCCESS);
+
+    EngineHost_Destroy(host);
+}
+
+TEST(EngineHostAbiTest, B3DestroyRejectsPoll) {
+    RuntimeResult result = {};
+    EngineLogPollStatsV1 stats = {};
+    std::vector<uint8_t> buffer(ENGINE_HOST_LOG_POLL_BUFFER_BYTES, 0);
+
+    ASSERT_EQ(EditorBridge_RegisterMainThread(), 1);
+    EngineHostHandle host = EngineHost_Create(&result);
+    ASSERT_NE(host, nullptr);
+
+    // poll 成功
+    int32_t n = EngineHost_PollEngineLogs(
+        host, 0, buffer.data(), static_cast<int32_t>(buffer.size()), &stats, &result);
+    EXPECT_GE(n, 0);
+    EXPECT_EQ(result.status, ENGINE_HOST_STATUS_SUCCESS);
+
+    EngineHost_Destroy(host);
+
+    // 销毁后：注册表拒绝，不访问已释放内存
+    result = {};
+    EXPECT_EQ(EngineHost_PollEngineLogs(host, 0, buffer.data(),
+                                        static_cast<int32_t>(buffer.size()),
+                                        &stats, &result), -1);
+    EXPECT_EQ(result.status, ENGINE_HOST_STATUS_INVALID_STATE);
+}
+
+TEST(EngineHostAbiTest, B3PreInitBoundary) {
+    // A-2：EngineHost 创建后 bootstrap 日志可读；创建前不保证 ring 存在
+    RuntimeResult result = {};
+    EngineLogPollStatsV1 stats = {};
+    std::vector<uint8_t> buffer(ENGINE_HOST_LOG_POLL_BUFFER_BYTES, 0);
+
+    ASSERT_EQ(EditorBridge_RegisterMainThread(), 1);
+    EngineHostHandle host = EngineHost_Create(&result);
+    ASSERT_NE(host, nullptr);
+
+    int32_t n = EngineHost_PollEngineLogs(
+        host, 0, buffer.data(), static_cast<int32_t>(buffer.size()), &stats, &result);
+    EXPECT_GE(n, 0);
+    EXPECT_EQ(result.status, ENGINE_HOST_STATUS_SUCCESS);
+    // bootstrap 日志至少 1 条（Log::Init 之后）
+    EXPECT_GE(stats.newestSequence, 1u);
+
+    EngineHost_Destroy(host);
 }
 
 TEST_F(EditorBridgeTest, OpenProjectRoundTrip) {
