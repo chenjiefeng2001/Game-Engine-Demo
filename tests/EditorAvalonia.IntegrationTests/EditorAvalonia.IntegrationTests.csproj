@@ -12,6 +12,12 @@
     <FrameworkReference Include="Microsoft.WindowsDesktop.App" />
   </ItemGroup>
   <ItemGroup>
+    <!-- T-6-B B2：把生产 P/Invoke 镜像（单一来源）编译进测试，用于
+         Marshal.SizeOf/OffsetOf 布局断言；不新增生产引用，不复制结构体定义。 -->
+    <Compile Include="..\..\editor_avalonia\Native\EditorBridgeApi.cs"
+             Link="Native\EditorBridgeApi.cs" />
+  </ItemGroup>
+  <ItemGroup>
     <PackageReference Include="Microsoft.NET.Test.Sdk" Version="17.10.0-preview-24080-01" />
     <PackageReference Include="MSTest.TestAdapter" Version="3.1.1" />
     <PackageReference Include="MSTest.TestFramework" Version="3.1.1" />

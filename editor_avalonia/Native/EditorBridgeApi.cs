@@ -58,8 +58,14 @@ public static class EditorBridgeApi
     /// （显式 ProjectRoot 打开，K4.1）。既有导出/结构/op 不变；升版本使
     /// v1.5 native 与 v1.6 managed 的混搭在 `Create()` lockstep 处失败，
     /// 而不是等 rooted 调用在运行期缺符号。
+    ///
+    /// T-6-B：v1.8 -> v1.9。新增导出 `EngineHost_PollEngineLogs` 与两个
+    /// 自然对齐 POD（`EngineLogRecordV1` 2392B / `EngineLogPollStatsV1` 40B）。
+    /// 既有导出、`EV_*`、op、status、`RuntimeResult`（仍 76B）全部不变。
+    /// 升版本使 v1.8/v1.9 混搭在 `Create()` lockstep 处失败，而不是让
+    /// managed 用错误布局解释 native 输出。
     /// </remarks>
-    public const int EngineHostExpectedVersion = (1 << 16) | 8;
+    public const int EngineHostExpectedVersion = (1 << 16) | 9;
 
     public const int EngineHostStatusSuccess = 0;
     public const int EngineHostStatusSkippedNotPlaying = 1;
@@ -195,6 +201,76 @@ public static class EditorBridgeApi
     public static int FramePacketBytesFor(int width, int height)
         => EngineHostFramePacketHeaderBytes + width * height * 4;
 
+    // ── T-6-B：Engine 日志通道（ABI v1.9，自然对齐）──
+    /// <summary>message 2048B / category 64B / source 256B，UTF-8 字符边界截断。</summary>
+    public const int EngineLogCategoryBytes = 64;
+    public const int EngineLogSourceBytes = 256;
+    public const int EngineLogMessageBytes = 2048;
+    /// <summary>EngineLogRecordV1 定长 2392B（自然对齐，非 Pack=1）。</summary>
+    public const int EngineLogRecordBytes = 2392;
+    /// <summary>单次 poll 最多 32 条。</summary>
+    public const int EngineLogPollBatch = 32;
+    /// <summary>poll 缓冲最小容量 = 32 * 2392 = 76544 字节。</summary>
+    public const int EngineLogPollBufferBytes = EngineLogRecordBytes * EngineLogPollBatch;
+
+    /// <summary>EngineLogRecordV1.flags 位；其他位 v1 保留，必须为 0。</summary>
+    public const byte EngineLogFlagCategoryTruncated = 0x01;
+    public const byte EngineLogFlagSourceTruncated = 0x02;
+    public const byte EngineLogFlagMessageTruncated = 0x04;
+
+    /// <summary>
+    /// T-6-B：单条 Engine 日志记录（镜像 native <c>EngineLogRecordV1</c>）。
+    ///
+    /// native 侧**不使用** <c>#pragma pack(1)</c>，因此镜像使用自然对齐
+    /// （<c>Pack = 8</c>，与默认平台对齐一致）；布局权威证据是
+    /// <c>Marshal.SizeOf</c> / <c>Marshal.OffsetOf</c> 的运行时实测值，
+    /// 由 T6BLoggingAbiTests / native static_assert 双侧冻结：
+    /// size=2392，offset(sequence)=0、timestampUtcUs=8、level=16、flags=17、
+    /// categoryLength=18、sourceLength=20、messageLength=22、
+    /// category=24、source=88、message=344。
+    /// </summary>
+    [StructLayout(LayoutKind.Sequential, Pack = 8)]
+    public struct EngineLogRecordV1
+    {
+        /// <summary>从 1 起单调递增；0 仅作 poll 的 afterSequence sentinel。</summary>
+        public ulong Sequence;
+        /// <summary>源端 Unix epoch UTC 微秒。</summary>
+        public long TimestampUtcUs;
+        /// <summary>0 Trace .. 5 Critical。</summary>
+        public byte Level;
+        /// <summary>EngineLogFlag* 位。</summary>
+        public byte Flags;
+        public ushort CategoryLength;
+        public ushort SourceLength;
+        public ushort MessageLength;
+        [MarshalAs(UnmanagedType.ByValArray, SizeConst = EngineLogCategoryBytes)]
+        public byte[] Category;
+        [MarshalAs(UnmanagedType.ByValArray, SizeConst = EngineLogSourceBytes)]
+        public byte[] Source;
+        [MarshalAs(UnmanagedType.ByValArray, SizeConst = EngineLogMessageBytes)]
+        public byte[] Message;
+    }
+
+    /// <summary>
+    /// T-6-B：<c>EngineHost_PollEngineLogs</c> 输出统计（镜像 native
+    /// <c>EngineLogPollStatsV1</c>）。size=40，offset 0/4/8/16/24/32。
+    /// </summary>
+    [StructLayout(LayoutKind.Sequential, Pack = 8)]
+    public struct EngineLogPollStatsV1
+    {
+        /// <summary>native 填写 sizeof(EngineLogPollStatsV1)；managed 必须校验 == 40。</summary>
+        public uint StructSize;
+        /// <summary>本次写入的记录数（0..32）。</summary>
+        public uint RecordCount;
+        /// <summary>本次返回最后一条的 sequence；无记录时回显 afterSequence。</summary>
+        public ulong NextSequence;
+        /// <summary>进程生命周期累计丢弃数；poll 不清零。</summary>
+        public ulong DroppedTotal;
+        /// <summary>ring 当前最旧可读 sequence；空 ring 为 0。</summary>
+        public ulong OldestSequence;
+        /// <summary>ring 当前最新 sequence；空 ring 为 0。</summary>
+        public ulong NewestSequence;
+    }
 
     [StructLayout(LayoutKind.Sequential, Pack = 1)]
     public struct RuntimeResult
@@ -387,6 +463,16 @@ public static class EditorBridgeApi
     public static extern int EngineHost_GetPendingEditProofState(IntPtr host,
         out int accepted, out int executed, out int failed,
         out int lastExecutedWithContextCurrent, out ulong lastExecutedFrameId);
+
+    /// <summary>
+    /// T-6-B（ABI v1.9）：批量读取 Engine 日志。
+    /// 返回本次写入的记录数（0..32）；0 = 当前无记录（不是错误）；&lt; 0 = 错误。
+    /// <paramref name="outBuffer"/> 必须至少 76544 字节且 8 字节对齐。
+    /// </summary>
+    [DllImport("EditorBridge", CallingConvention = CallingConvention.Cdecl)]
+    public static extern int EngineHost_PollEngineLogs(IntPtr host,
+        ulong afterSequence, [Out] byte[] outBuffer, int capacity,
+        ref EngineLogPollStatsV1 stats, ref RuntimeResult result);
 
     [DllImport("EditorBridge", CallingConvention = CallingConvention.Cdecl)]
     public static extern IntPtr EditorSession_Create();

@@ -17,6 +17,7 @@
 #include <new>
 #include <stdexcept>
 #include <thread>
+#include <unordered_set>
 #include <Engine/Scripting/LuaEngine.h>  // required: unique_ptr<LuaEngine> destructor in EditorSession
 
 using editor_bridge::EditorSession;
@@ -27,6 +28,30 @@ static EditorSession* S(EditorSessionHandle h) {
 
 static editor_bridge::EngineHost* H(EngineHostHandle h) {
     return static_cast<editor_bridge::EngineHost*>(h);
+}
+
+// T-6-B：存活 host 注册表。
+//
+// 既有导出只做 null 检查，悬垂句柄是调用方契约；T-6-B 的
+// EngineHost_PollEngineLogs 明确要求"host 已销毁时返回错误、不得访问已释放
+// 内存"，因此该导出额外经过注册表校验。注册/注销与 Create/Destroy 同线程，
+// 校验与调用之间的窗口由"Dispose 先停 timer 再 Destroy"（managed 侧）排除。
+static std::mutex s_LiveHostMutex;
+static std::unordered_set<EngineHostHandle> s_LiveHosts;
+
+static void RegisterLiveHost(EngineHostHandle h) {
+    std::lock_guard<std::mutex> lock(s_LiveHostMutex);
+    s_LiveHosts.insert(h);
+}
+
+static void UnregisterLiveHost(EngineHostHandle h) {
+    std::lock_guard<std::mutex> lock(s_LiveHostMutex);
+    s_LiveHosts.erase(h);
+}
+
+static bool IsLiveHost(EngineHostHandle h) {
+    std::lock_guard<std::mutex> lock(s_LiveHostMutex);
+    return s_LiveHosts.find(h) != s_LiveHosts.end();
 }
 
 static std::mutex s_MainThreadMutex;
@@ -871,6 +896,7 @@ EDITOR_BRIDGE_API EngineHostHandle EngineHost_Create(RuntimeResult* result) {
             delete host;
             return nullptr;
         }
+        RegisterLiveHost(host);
         return host;
     } catch (const std::exception& exception) {
         delete host;
@@ -1009,6 +1035,7 @@ EDITOR_BRIDGE_API void EngineHost_Destroy(EngineHostHandle h) {
         std::fprintf(stderr, "EngineHost_Destroy called on invalid thread\n");
         std::terminate();
     }
+    UnregisterLiveHost(h);
     delete host;
 }
 
@@ -1219,5 +1246,43 @@ EDITOR_BRIDGE_API int32_t EngineHost_GetPendingEditProofState(
                                               failed,
                                               lastExecutedWithContextCurrent,
                                               lastExecutedFrameId);
+    });
+}
+
+// ════════════════════════════════════════════════════════════════
+// T-6-B：Engine 日志轮询（ABI v1.9）
+// ════════════════════════════════════════════════════════════════
+
+EDITOR_BRIDGE_API int32_t EngineHost_PollEngineLogs(
+    EngineHostHandle h,
+    uint64_t afterSequence,
+    uint8_t* outBuffer,
+    int32_t capacity,
+    EngineLogPollStatsV1* stats,
+    RuntimeResult* result) {
+    if (!result) return -1;
+    // 悬垂句柄绝不能进入 H(h)；只做注册表校验，不触碰已释放对象。
+    if (!h || !IsLiveHost(h)) {
+        return RuntimeFailure(result,
+                              ENGINE_HOST_STATUS_INVALID_STATE,
+                              ENGINE_HOST_STAGE_BOOTSTRAP,
+                              "host handle is null or already destroyed");
+    }
+    if (!outBuffer || !stats) {
+        return RuntimeFailure(result,
+                              ENGINE_HOST_STATUS_INVALID_STATE,
+                              ENGINE_HOST_STAGE_BOOTSTRAP,
+                              "log poll requires outBuffer and stats");
+    }
+    if (capacity < ENGINE_HOST_LOG_POLL_BUFFER_BYTES) {
+        return RuntimeFailure(result,
+                              ENGINE_HOST_STATUS_INVALID_STATE,
+                              ENGINE_HOST_STAGE_BOOTSTRAP,
+                              "log poll buffer capacity must be at least "
+                              "ENGINE_HOST_LOG_POLL_BUFFER_BYTES (32 * 2392)");
+    }
+    return RuntimeGuard(H(h), result, ENGINE_HOST_STAGE_BOOTSTRAP, [&]() {
+        return H(h)->PollEngineLogs(afterSequence, outBuffer, capacity, stats,
+                                    result);
     });
 }

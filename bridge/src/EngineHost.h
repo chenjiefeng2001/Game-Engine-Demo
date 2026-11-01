@@ -109,6 +109,13 @@ public:
                                      int32_t* failed,
                                      int32_t* lastExecutedWithContextCurrent,
                                      uint64_t* lastExecutedFrameId) const;
+    /// T-6-B：从进程级 LogRing 批量读取 Engine 日志（ABI v1.9）。
+    /// 返回写入的记录数（0..32）；< 0 表示错误。不经过 runtime command queue。
+    int32_t PollEngineLogs(uint64_t afterSequence,
+                           uint8_t* outBuffer,
+                           int32_t capacity,
+                           EngineLogPollStatsV1* stats,
+                           RuntimeResult* result);
     bool IsOwnerThread() const;
     bool IsCreationThread() const;
     int32_t RecordFailure(RuntimeResult* result,

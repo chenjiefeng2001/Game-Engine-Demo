@@ -102,6 +102,45 @@ TEST(EngineHostAbiTest, ResultLayout) {
     EXPECT_EQ(offsetof(RuntimeResult, raw_dt_seconds), 68u);
 }
 
+TEST(EngineHostAbiTest, LogRecordLayoutIsFrozen) {
+    // T-6-B A-10：自然对齐、2392B，不得 pack(1)。
+    EXPECT_EQ(sizeof(EngineLogRecordV1), 2392u);
+    EXPECT_EQ(alignof(EngineLogRecordV1), 8u);
+    EXPECT_EQ(offsetof(EngineLogRecordV1, sequence), 0u);
+    EXPECT_EQ(offsetof(EngineLogRecordV1, timestampUtcUs), 8u);
+    EXPECT_EQ(offsetof(EngineLogRecordV1, level), 16u);
+    EXPECT_EQ(offsetof(EngineLogRecordV1, flags), 17u);
+    EXPECT_EQ(offsetof(EngineLogRecordV1, categoryLength), 18u);
+    EXPECT_EQ(offsetof(EngineLogRecordV1, sourceLength), 20u);
+    EXPECT_EQ(offsetof(EngineLogRecordV1, messageLength), 22u);
+    EXPECT_EQ(offsetof(EngineLogRecordV1, category), 24u);
+    EXPECT_EQ(offsetof(EngineLogRecordV1, source), 88u);
+    EXPECT_EQ(offsetof(EngineLogRecordV1, message), 344u);
+    EXPECT_EQ(ENGINE_HOST_LOG_RECORD_BYTES, 2392u);
+    EXPECT_EQ(ENGINE_HOST_LOG_POLL_BUFFER_BYTES, 76544u);
+    EXPECT_EQ(ENGINE_HOST_LOG_FLAG_CATEGORY_TRUNCATED, 0x01u);
+    EXPECT_EQ(ENGINE_HOST_LOG_FLAG_SOURCE_TRUNCATED, 0x02u);
+    EXPECT_EQ(ENGINE_HOST_LOG_FLAG_MESSAGE_TRUNCATED, 0x04u);
+}
+
+TEST(EngineHostAbiTest, LogPollStatsLayoutIsFrozen) {
+    EXPECT_EQ(sizeof(EngineLogPollStatsV1), 40u);
+    EXPECT_EQ(alignof(EngineLogPollStatsV1), 8u);
+    EXPECT_EQ(offsetof(EngineLogPollStatsV1, structSize), 0u);
+    EXPECT_EQ(offsetof(EngineLogPollStatsV1, recordCount), 4u);
+    EXPECT_EQ(offsetof(EngineLogPollStatsV1, nextSequence), 8u);
+    EXPECT_EQ(offsetof(EngineLogPollStatsV1, droppedTotal), 16u);
+    EXPECT_EQ(offsetof(EngineLogPollStatsV1, oldestSequence), 24u);
+    EXPECT_EQ(offsetof(EngineLogPollStatsV1, newestSequence), 32u);
+}
+
+TEST(EngineHostAbiTest, T6BIncrementKeepsFrozenSurfaces) {
+    // T-6-B 只做 additive：EV_COUNT / RuntimeResult 不变。
+    EXPECT_EQ(EV_COUNT, 14);
+    EXPECT_EQ(sizeof(RuntimeResult), 76u);
+    EXPECT_EQ(ENGINE_HOST_ABI_VERSION, (1 << 16) | 9);
+}
+
 TEST(EngineHostAbiTest, SkeletonLifecycle) {
     RuntimeResult result = {};
     EXPECT_EQ(EditorBridge_RegisterMainThread(), 1);
@@ -607,6 +646,74 @@ TEST(EngineHostAbiTest, NullContracts) {
     EXPECT_EQ(result.status, ENGINE_HOST_STATUS_INVALID_STATE);
     EXPECT_EQ(EngineHost_Shutdown(nullptr, nullptr), -1);
     EngineHost_Destroy(nullptr);
+}
+
+TEST(EngineHostAbiTest, LogPollValidationAndBootstrapSmoke) {
+    RuntimeResult result = {};
+    EngineLogPollStatsV1 stats = {};
+    std::vector<uint8_t> buffer(ENGINE_HOST_LOG_POLL_BUFFER_BYTES, 0);
+
+    // null / 悬垂句柄：返回错误且不得触碰 host
+    EXPECT_EQ(EngineHost_PollEngineLogs(nullptr, 0, buffer.data(),
+                                        static_cast<int32_t>(buffer.size()),
+                                        &stats, &result), -1);
+    EXPECT_EQ(result.status, ENGINE_HOST_STATUS_INVALID_STATE);
+    EXPECT_EQ(EngineHost_PollEngineLogs(nullptr, 0, buffer.data(),
+                                        static_cast<int32_t>(buffer.size()),
+                                        &stats, nullptr), -1);
+
+    ASSERT_EQ(EditorBridge_RegisterMainThread(), 1);
+    EngineHostHandle host = EngineHost_Create(&result);
+    ASSERT_NE(host, nullptr);
+
+    // 参数校验：outBuffer / stats / capacity
+    EXPECT_EQ(EngineHost_PollEngineLogs(host, 0, nullptr,
+                                        static_cast<int32_t>(buffer.size()),
+                                        &stats, &result), -1);
+    EXPECT_EQ(EngineHost_PollEngineLogs(host, 0, buffer.data(),
+                                        static_cast<int32_t>(buffer.size()),
+                                        nullptr, &result), -1);
+    EXPECT_EQ(EngineHost_PollEngineLogs(
+                  host, 0, buffer.data(),
+                  ENGINE_HOST_LOG_POLL_BUFFER_BYTES - 1, &stats, &result), -1);
+    EXPECT_EQ(result.status, ENGINE_HOST_STATUS_INVALID_STATE);
+
+    // 正常 poll：返回值 = 记录数（0..32）；stats/result 契约
+    const int32_t count = EngineHost_PollEngineLogs(
+        host, 0, buffer.data(), static_cast<int32_t>(buffer.size()), &stats,
+        &result);
+    ASSERT_GE(count, 0);
+    EXPECT_LE(count, 32);
+    EXPECT_EQ(result.status, ENGINE_HOST_STATUS_SUCCESS);
+    EXPECT_EQ(stats.structSize, sizeof(EngineLogPollStatsV1));
+    EXPECT_EQ(stats.recordCount, static_cast<uint32_t>(count));
+    // EngineHost 初始化 Application，Log::Init 的 bootstrap 日志必然存在
+    EXPECT_GE(stats.newestSequence, 1u);
+    EXPECT_GE(stats.oldestSequence, 1u);
+    if (count > 0) {
+        const auto* records =
+            reinterpret_cast<const EngineLogRecordV1*>(buffer.data());
+        EXPECT_EQ(records[0].sequence, stats.oldestSequence);
+        EXPECT_EQ(records[count - 1].sequence, stats.nextSequence);
+    }
+
+    // afterSequence == newest：空队列成功返回 0，且回显 cursor
+    const uint64_t newest = stats.newestSequence;
+    const int32_t empty = EngineHost_PollEngineLogs(
+        host, newest, buffer.data(), static_cast<int32_t>(buffer.size()), &stats,
+        &result);
+    EXPECT_EQ(empty, 0);
+    EXPECT_EQ(result.status, ENGINE_HOST_STATUS_SUCCESS);
+    EXPECT_EQ(stats.nextSequence, newest);
+
+    EngineHost_Destroy(host);
+
+    // 销毁后：注册表拒绝，不访问已释放内存
+    result = {};
+    EXPECT_EQ(EngineHost_PollEngineLogs(host, 0, buffer.data(),
+                                        static_cast<int32_t>(buffer.size()),
+                                        &stats, &result), -1);
+    EXPECT_EQ(result.status, ENGINE_HOST_STATUS_INVALID_STATE);
 }
 
 TEST_F(EditorBridgeTest, OpenProjectRoundTrip) {
@@ -2115,8 +2222,10 @@ TEST_F(EditorBridgeTest, T1FEndToEndPhysicsSaveReopenPlayStopReplay) {
         // v1.5 加 SET_VIEWPORT_SIZE 并把容量常量拆成"默认/最大"；
         // v1.6（M1-A）追加 RootedOpen 导出；
         // v1.7（M1-E）追加 EditorSession_ReattachAsset 导出；
-        // 均不新增 op、不改结构体与既有取值。始终 append-only。
-        EXPECT_EQ(ENGINE_HOST_ABI_VERSION, (1 << 16) | 8);
+        // v1.8（M1-F）追加测试专用故障注入钩子；
+        // v1.9（T-6-B）追加 EngineHost_PollEngineLogs 与自然对齐日志 POD；
+        // 均不新增 op、不改既有结构体与取值。始终 append-only。
+        EXPECT_EQ(ENGINE_HOST_ABI_VERSION, (1 << 16) | 9);
         EXPECT_EQ(ENGINE_HOST_OP_GET_PRESENTATION_FRAME, 28);
         EXPECT_EQ(ENGINE_HOST_OP_PICK, 29);
         EXPECT_EQ(ENGINE_HOST_OP_SET_VIEWPORT_SIZE, 30);

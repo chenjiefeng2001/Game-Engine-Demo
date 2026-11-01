@@ -4,6 +4,8 @@
 #include "Engine/OpenGL/OpenGLFramebuffer.h"
 #include "Engine/OpenGL/OpenGLGraphicsFactory.h"
 #include "Engine/Core/JobSystem.h"
+#include "Engine/Core/Log.h"
+#include "Engine/Core/LogRing.h"
 #include "Engine/Core/Resources/FileWatcher.h"
 #include "Engine/Core/Resources/ResourceManager.h"
 #include "Engine/Core/Scene/SceneManager.h"
@@ -2930,6 +2932,74 @@ int32_t EngineHost::GetPendingEditProofState(int32_t* accepted,
     *lastExecutedWithContextCurrent = m_PendingEditLastContextCurrent.load();
     *lastExecutedFrameId = m_PendingEditLastFrameId.load();
     return 0;
+}
+
+int32_t EngineHost::PollEngineLogs(uint64_t afterSequence,
+                                   uint8_t* outBuffer,
+                                   int32_t capacity,
+                                   EngineLogPollStatsV1* stats,
+                                   RuntimeResult* result) {
+    if (!result || !outBuffer || !stats) {
+        return RecordFailure(result,
+                             ENGINE_HOST_STATUS_INVALID_STATE,
+                             ENGINE_HOST_STAGE_BOOTSTRAP,
+                             "log poll requires result, outBuffer and stats");
+    }
+    if (capacity < ENGINE_HOST_LOG_POLL_BUFFER_BYTES) {
+        return RecordFailure(result,
+                             ENGINE_HOST_STATUS_INVALID_STATE,
+                             ENGINE_HOST_STAGE_BOOTSTRAP,
+                             "log poll buffer capacity must be at least "
+                             "ENGINE_HOST_LOG_POLL_BUFFER_BYTES (32 * 2392)");
+    }
+
+    // Shutdown 之后停止所有后续 poll；faulted / disposed 同样拒绝。
+    const int32_t state = m_State.load();
+    if (m_ShutdownComplete.load() ||
+        state == ENGINE_HOST_STATE_DISPOSED ||
+        state == ENGINE_HOST_STATE_FAULTED) {
+        return RecordFailure(result,
+                             ENGINE_HOST_STATUS_INVALID_STATE,
+                             ENGINE_HOST_STAGE_SHUTDOWN,
+                             "engine log poll is stopped (host not running)");
+    }
+
+    // LogRing 由 Log::Init 创建，EngineHost 不创建/销毁它。
+    std::shared_ptr<Engine::LogRing> ring = Engine::Log::GetLogRing();
+    if (!ring) {
+        return RecordFailure(result,
+                             ENGINE_HOST_STATUS_INVALID_STATE,
+                             ENGINE_HOST_STAGE_BOOTSTRAP,
+                             "engine log ring is not initialized");
+    }
+
+    static_assert(sizeof(Engine::EngineLogRecord) == sizeof(EngineLogRecordV1),
+                  "T-6-B: engine ring record must mirror EngineLogRecordV1");
+    static_assert(alignof(Engine::EngineLogRecord) == alignof(EngineLogRecordV1),
+                  "T-6-B: engine ring record alignment must match ABI");
+
+    Engine::LogRing::PollStats ringStats;
+    auto* records = reinterpret_cast<Engine::EngineLogRecord*>(outBuffer);
+    const size_t maxRecords =
+        static_cast<size_t>(capacity) / ENGINE_HOST_LOG_RECORD_BYTES;
+    const size_t count =
+        ring->Poll(afterSequence, records, maxRecords, ringStats);
+
+    std::memset(stats, 0, sizeof(*stats));
+    stats->structSize = static_cast<uint32_t>(sizeof(EngineLogPollStatsV1));
+    stats->recordCount = static_cast<uint32_t>(count);
+    stats->nextSequence = ringStats.nextSequence;
+    stats->droppedTotal = ringStats.droppedTotal;
+    stats->oldestSequence = ringStats.oldestSequence;
+    stats->newestSequence = ringStats.newestSequence;
+
+    SetResult(result,
+              ENGINE_HOST_STATUS_SUCCESS,
+              ENGINE_HOST_STAGE_BOOTSTRAP,
+              0,
+              nullptr,
+              m_State.load());
+    return static_cast<int32_t>(count);
 }
 
 }

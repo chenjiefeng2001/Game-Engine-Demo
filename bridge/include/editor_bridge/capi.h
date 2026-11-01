@@ -14,6 +14,7 @@
  *       返回 -1 表示错误，>=0 表示实际长度（含截断）。
  */
 
+#include <stddef.h>
 #include <stdint.h>
 
 #if defined(__cplusplus)
@@ -435,7 +436,14 @@ typedef int32_t EngineHostStage;
 /// （显式缺失 GUID reattach）。既有导出、结构、op、status 不变。
 /// v1.7 -> v1.8（M1-F）：新增**测试专用**故障注入钩子导出；生产默认空，
 /// 不改变正常路径语义。既有导出、结构、op、status 不变。
-#define ENGINE_HOST_ABI_VERSION ((1 << 16) | 8)
+///
+/// v1.8 -> v1.9（T-6-B）：新增导出 `EngineHost_PollEngineLogs` 与两个
+/// **自然对齐** POD（`EngineLogRecordV1` 2392B / `EngineLogPollStatsV1` 40B）。
+/// 既有导出、`EV_*`、op 空间、status 取值、`RuntimeResult`（仍 76B）全部不变。
+/// 为什么必须升版本：新增导出是 additive，但 managed 日志轮询会直接按新结构
+/// 布局解释 native 输出；v1.8 native + v1.9 managed 混搭若不升版本，只会在
+/// 首次 poll 时才以错误布局暴露。升版本让 lockstep 在 `Create()` 处失败。
+#define ENGINE_HOST_ABI_VERSION ((1 << 16) | 9)
 
 /// HRC-3 P1（D4 已后置 ⇒ v1 目标尺寸固定）：production presentation target 的尺寸。
 /// 单一来源，供 P1 的 presentation FBO、P2 的 Fetch 静态容量、P3 的 gate 断言共用。
@@ -680,6 +688,88 @@ typedef struct RuntimeResult {
 
 #pragma pack(pop)
 
+// ════════════════════════════════════════════════════════════════
+// T-6-B：Engine 日志通道（ABI v1.9）
+//
+// 独立于 `EV_*` 事件与 `EngineHost_Fetch` op 空间：日志只走
+// `EngineHost_PollEngineLogs`。记录使用**自然对齐**（8 字节），
+// **不得**使用 `#pragma pack(1)`；布局由下方 static_assert 冻结。
+// ════════════════════════════════════════════════════════════════
+
+#define ENGINE_HOST_LOG_CATEGORY_BYTES 64
+#define ENGINE_HOST_LOG_SOURCE_BYTES 256
+#define ENGINE_HOST_LOG_MESSAGE_BYTES 2048
+#define ENGINE_HOST_LOG_RECORD_BYTES 2392
+#define ENGINE_HOST_LOG_POLL_BATCH 32
+#define ENGINE_HOST_LOG_POLL_BUFFER_BYTES \
+    (ENGINE_HOST_LOG_RECORD_BYTES * ENGINE_HOST_LOG_POLL_BATCH)
+
+/// `EngineLogRecordV1.flags` 位；其他位 v1 保留，必须为 0。
+#define ENGINE_HOST_LOG_FLAG_CATEGORY_TRUNCATED 0x01u
+#define ENGINE_HOST_LOG_FLAG_SOURCE_TRUNCATED 0x02u
+#define ENGINE_HOST_LOG_FLAG_MESSAGE_TRUNCATED 0x04u
+
+/// 单条 Engine 日志记录（自然对齐，UTF-8）。
+///
+/// - `sequence` 从 1 开始单调递增，是消费顺序的**权威标识**；0 只作
+///   `afterSequence` sentinel，不作为记录序号；
+/// - 长度字段是**实际有效字节数**，不含 NUL；未使用空间填零，不要求 NUL；
+/// - 超长字段在 UTF-8 codepoint 边界截断并在 `flags` 置位。
+typedef struct EngineLogRecordV1 {
+    uint64_t sequence;       ///< offset 0
+    int64_t  timestampUtcUs; ///< offset 8；源端 Unix epoch UTC 微秒
+    uint8_t  level;          ///< offset 16；0 Trace .. 5 Critical
+    uint8_t  flags;          ///< offset 17；ENGINE_HOST_LOG_FLAG_*
+    uint16_t categoryLength; ///< offset 18
+    uint16_t sourceLength;   ///< offset 20
+    uint16_t messageLength;  ///< offset 22
+    char     category[ENGINE_HOST_LOG_CATEGORY_BYTES]; ///< offset 24
+    char     source[ENGINE_HOST_LOG_SOURCE_BYTES];     ///< offset 88
+    char     message[ENGINE_HOST_LOG_MESSAGE_BYTES];   ///< offset 344
+} EngineLogRecordV1;         ///< size 2392, alignof 8
+
+/// `EngineHost_PollEngineLogs` 的输出统计（自然对齐）。
+///
+/// - `structSize` 由 native 填写 `sizeof(EngineLogPollStatsV1)`，managed 必须校验；
+/// - `nextSequence` 为本次返回最后一条的 sequence；无记录时回显 `afterSequence`；
+/// - `oldestSequence` / `newestSequence` 为 ring 当前可读范围；空 ring 均为 0；
+/// - `droppedTotal` 为进程生命周期累计值，poll 不清零。
+typedef struct EngineLogPollStatsV1 {
+    uint32_t structSize;      ///< offset 0
+    uint32_t recordCount;     ///< offset 4；本次 0..32
+    uint64_t nextSequence;    ///< offset 8
+    uint64_t droppedTotal;    ///< offset 16
+    uint64_t oldestSequence;  ///< offset 24
+    uint64_t newestSequence;  ///< offset 32
+} EngineLogPollStatsV1;       ///< size 40, alignof 8
+
+#if defined(__cplusplus)
+static_assert(sizeof(EngineLogRecordV1) == ENGINE_HOST_LOG_RECORD_BYTES,
+              "T-6-B A-10: EngineLogRecordV1 must be 2392B");
+static_assert(alignof(EngineLogRecordV1) == 8,
+              "T-6-B A-10: EngineLogRecordV1 must use natural 8-byte alignment");
+static_assert(offsetof(EngineLogRecordV1, sequence) == 0, "frozen offset");
+static_assert(offsetof(EngineLogRecordV1, timestampUtcUs) == 8, "frozen offset");
+static_assert(offsetof(EngineLogRecordV1, level) == 16, "frozen offset");
+static_assert(offsetof(EngineLogRecordV1, flags) == 17, "frozen offset");
+static_assert(offsetof(EngineLogRecordV1, categoryLength) == 18, "frozen offset");
+static_assert(offsetof(EngineLogRecordV1, sourceLength) == 20, "frozen offset");
+static_assert(offsetof(EngineLogRecordV1, messageLength) == 22, "frozen offset");
+static_assert(offsetof(EngineLogRecordV1, category) == 24, "frozen offset");
+static_assert(offsetof(EngineLogRecordV1, source) == 88, "frozen offset");
+static_assert(offsetof(EngineLogRecordV1, message) == 344, "frozen offset");
+
+static_assert(sizeof(EngineLogPollStatsV1) == 40,
+              "T-6-B A-10: EngineLogPollStatsV1 must be 40B");
+static_assert(alignof(EngineLogPollStatsV1) == 8, "natural 8-byte alignment");
+static_assert(offsetof(EngineLogPollStatsV1, structSize) == 0, "frozen offset");
+static_assert(offsetof(EngineLogPollStatsV1, recordCount) == 4, "frozen offset");
+static_assert(offsetof(EngineLogPollStatsV1, nextSequence) == 8, "frozen offset");
+static_assert(offsetof(EngineLogPollStatsV1, droppedTotal) == 16, "frozen offset");
+static_assert(offsetof(EngineLogPollStatsV1, oldestSequence) == 24, "frozen offset");
+static_assert(offsetof(EngineLogPollStatsV1, newestSequence) == 32, "frozen offset");
+#endif
+
 typedef void (*EngineHostEventCallback)(int32_t eventType,
                                         uint64_t generation,
                                         const char* payload,
@@ -801,3 +891,30 @@ EDITOR_BRIDGE_API int32_t EngineHost_GetPendingEditProofState(
     int32_t* failed,
     int32_t* lastExecutedWithContextCurrent,
     uint64_t* lastExecutedFrameId);
+
+// ════════════════════════════════════════════════════════════════
+// T-6-B：Engine 日志轮询（ABI v1.9，独立导出；不新增 Fetch op）
+// ════════════════════════════════════════════════════════════════
+
+/// 从进程级 LogRing 批量读取 Engine 日志。
+///
+/// 语义（契约 A-7/A-8/A-10）：
+///   - `afterSequence == 0`：从 ring 当前最旧可读记录开始；否则只返回
+///     `sequence > afterSequence` 的记录；
+///   - `afterSequence` 早于 `oldestSequence` 时从最旧可读记录开始，缺口通过
+///     `stats.droppedTotal` / `stats.oldestSequence` 暴露，不伪造缺失行；
+///   - `capacity` 必须 >= `ENGINE_HOST_LOG_POLL_BUFFER_BYTES`（32 * 2392），
+///     不足返回错误；`outBuffer` 按 `EngineLogRecordV1[32]` 解释（需 8 字节对齐）；
+///   - **返回值 = 本次写入的记录数（0..32）**，0 表示当前无记录、不是错误；
+///     `< 0` 表示参数/句柄/状态错误（此时 `result.status != SUCCESS`）；
+///   - `stats` 与 `result` 必填；成功时 `result.status = ENGINE_HOST_STATUS_SUCCESS`；
+///   - 不经过 runtime command queue，不调用 `PumpOneFrame`，不改变 generation，
+///     不要求工程已打开；
+///   - host 未创建/已销毁/已 Shutdown 时返回错误，不得访问已释放内存。
+EDITOR_BRIDGE_API int32_t EngineHost_PollEngineLogs(
+    EngineHostHandle h,
+    uint64_t afterSequence,
+    uint8_t* outBuffer,
+    int32_t capacity,
+    EngineLogPollStatsV1* stats,
+    RuntimeResult* result);
