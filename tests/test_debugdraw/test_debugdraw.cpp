@@ -18,6 +18,7 @@
 #ifdef JPH_DEBUG_RENDERER
 #include "Engine/Jolt/JoltPhysicsWorld.h"
 #include "Engine/Core/Physics/IPhysicsDebugDraw3D.h"
+#include "Engine/Core/Physics/IPhysicsDebugDraw3D.h"
 #include "Engine/Rendering/DebugDraw/Physics/PhysicsDebugDrawAdapter3D.h"
 #endif
 #include "Engine/Rendering/DebugDraw/DebugDraw.h"
@@ -878,6 +879,52 @@ TEST(DebugDrawGLTest, GLStateIsRestored) {
 TEST(P5F3_Sanity, AlwaysPasses) {
     SUCCEED();
 }
+
+#ifdef JPH_DEBUG_RENDERER
+// P5-F3-G: Verify Jolt invokes DrawTriangle (solid fill) with dual DrawBodies
+struct CountingDebugDraw3D : public ::Engine::IPhysicsDebugDraw3D {
+    int lineCount = 0;
+    int triangleSolidCount = 0;
+    int triangleWireCount = 0;
+    void DrawLine(const ::Engine::Vec3&, const ::Engine::Vec3&, const ::Engine::Vec4&) override { ++lineCount; }
+    void DrawTriangle(const ::Engine::Vec3&, const ::Engine::Vec3&, const ::Engine::Vec3&, const ::Engine::Vec4&, bool wireframe) override {
+        if (wireframe) ++triangleWireCount;
+        else ++triangleSolidCount;
+    }
+    void DrawSphere(const ::Engine::Vec3&, float, const ::Engine::Vec4&, int32) override {}
+    void DrawBox(const ::Engine::Vec3&, const ::Engine::Vec3&, const ::Engine::Vec4&, bool) override {}
+    void DrawCapsule(const ::Engine::Vec3&, float, float, const ::Engine::Vec4&, bool) override {}
+    void DrawCylinder(const ::Engine::Vec3&, float, float, const ::Engine::Vec4&, bool) override {}
+    void DrawText3D(const ::Engine::Vec3&, const char*, const ::Engine::Vec4&) override {}
+    void DrawAxes(const ::Engine::Mat4&, float) override {}
+    void Clear() override {}
+    void Flush() override {}
+};
+
+TEST(DebugDrawAdapterTest, JoltDualDrawBodiesInvokesSolidFill) {
+    ::Engine::JoltPhysicsWorld world;
+    ::Engine::PhysicsWorldConfig3D config;
+    ASSERT_TRUE(world.Init(config));
+
+    ::Engine::BodyDef3D bodyDef;
+    bodyDef.type = ::Engine::BodyType3D::Static;
+    bodyDef.position = ::Engine::Vec3(0, 0, 0);
+    bodyDef.shape.type = ::Engine::ShapeType3D::Box;
+    bodyDef.shape.boxHalfExtents = ::Engine::Vec3(1.0f, 1.0f, 1.0f);
+    ASSERT_NE(world.CreateBody(bodyDef), nullptr);
+
+    CountingDebugDraw3D counter;
+    world.SetDebugDraw(&counter);
+    world.DebugDraw();
+
+    EXPECT_GT(counter.triangleSolidCount, 0)
+        << "Jolt did not invoke DrawTriangle (solid fill)";
+    EXPECT_GT(counter.lineCount, 0)
+        << "Jolt did not invoke DrawLine (wireframe edges)";
+
+    world.SetDebugDraw(nullptr);
+}
+#endif // JPH_DEBUG_RENDERER
 
 } // namespace Test
 } // namespace DebugDraw
