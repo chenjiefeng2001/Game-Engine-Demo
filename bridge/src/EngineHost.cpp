@@ -1329,11 +1329,25 @@ int32_t EngineHost::PumpOneFrame(float requestedDtSeconds, RuntimeResult* result
                 }
             }
 
-            const bool rendered = m_Application->RenderProductionFrame(
+            {
+                std::lock_guard<std::mutex> lock(m_Mutex);
+                m_Application->SetProductionCameraInput(m_ProductionCameraInput);
+                m_ProductionCameraInput.mouseDeltaX = 0.0f;
+                m_ProductionCameraInput.mouseDeltaY = 0.0f;
+                m_ProductionCameraInput.mouseWheel = 0.0f;
+                m_ProductionCameraInputPending = false;
+            }
+            const bool rendered2D = m_Application->RenderProductionFrame(
                 *m_RenderContext,
                 *m_Session->GetEditScene(),
                 m_PresentationFbo->GetWidth(),
                 m_PresentationFbo->GetHeight());
+            const bool rendered3D = m_Application->RenderProduction3DFrame(
+                *m_RenderContext,
+                *m_Session->GetEditScene(),
+                m_PresentationFbo->GetWidth(),
+                m_PresentationFbo->GetHeight());
+            const bool rendered = rendered2D || rendered3D;
             m_PresentationFbo->Unbind();
             if (!rendered) {
                 RequestEmergencyStop();
@@ -1344,7 +1358,9 @@ int32_t EngineHost::PumpOneFrame(float requestedDtSeconds, RuntimeResult* result
                                    "production scene render produced no renderable frame");
                 return -1;
             }
-            m_LastProductionRenderableCount = m_Application->LastProductionRenderableCount();
+            m_LastProductionRenderableCount =
+                m_Application->LastProductionRenderableCount() +
+                m_Application->LastProduction3DRenderableCount();
         }
 
         // ── HRC-3 D3：本帧 pick 的第二阶段 ──
@@ -2194,6 +2210,9 @@ int32_t EngineHost::Dispatch(int32_t op,
       if (op == ENGINE_HOST_OP_SET_VIEWPORT_SIZE) {
           return EnqueueViewportResize(floatArg, result);
       }
+      if (op == ENGINE_HOST_OP_SET_CAMERA_INPUT) {
+          return EnqueueCameraInput(floatArg, result);
+      }
       if (RequiresGraphicsContext(op)) {
         // HRC-3 D3：pick 走专用入口，capacity=1 的 busy 判定必须发生在入队**之前**。
         if (op == ENGINE_HOST_OP_PICK) {
@@ -2587,6 +2606,59 @@ uint32_t EngineHost::ResolveSceneIndexForEntityId(uint32_t entityId) noexcept {
     // FindByID 命中但遍历未命中：只可能来自并发修改（场景在两次读取之间变化）。
     // fail-closed，绝不退化成"就用 0"。
     return ENGINE_HOST_PICK_INDEX_NONE;
+}
+
+void EngineHost::SetProductionDebugDrawCallback(
+    Engine::Application::ProductionDebugDrawCallback cb) {
+    std::lock_guard<std::mutex> lock(m_Mutex);
+    if (m_Application) {
+        m_Application->SetProductionDebugDrawCallback(std::move(cb));
+    }
+}
+
+int32_t EngineHost::EnqueueCameraInput(const float* values, RuntimeResult* result) {
+    auto reject = [&](const char* diagnostic) -> int32_t {
+        if (result) {
+            FillRejectedResult(result, ENGINE_HOST_STATUS_INVALID_STATE,
+                               ENGINE_HOST_STAGE_EDIT, diagnostic);
+        }
+        return -1;
+    };
+    if (!values) {
+        return reject("set camera input requires floatArg");
+    }
+    Engine::EditorCameraInput input{};
+    input.mouseDeltaX = values[0];
+    input.mouseDeltaY = values[1];
+    input.mouseWheel = values[2];
+    input.rightDown = values[3] != 0.0f;
+    input.middleDown = values[4] != 0.0f;
+    input.leftDown = values[5] != 0.0f;
+    input.altHeld = values[6] != 0.0f;
+    input.shiftHeld = values[7] != 0.0f;
+    input.keyW = values[8] != 0.0f;
+    input.keyS = values[9] != 0.0f;
+    input.keyA = values[10] != 0.0f;
+    input.keyD = values[11] != 0.0f;
+    input.keyE = values[12] != 0.0f;
+    input.keyQ = values[13] != 0.0f;
+    input.keyUp = values[14] != 0.0f;
+    input.keyDown = values[15] != 0.0f;
+    input.keyLeft = values[16] != 0.0f;
+    input.keyRight = values[17] != 0.0f;
+    input.deltaTime = values[18];
+    if (input.deltaTime <= 0.0f) input.deltaTime = 0.016f;
+
+    {
+        std::lock_guard<std::mutex> lock(m_Mutex);
+        m_ProductionCameraInput = input;
+        m_ProductionCameraInputPending = true;
+    }
+    if (result) {
+        SetResult(result, ENGINE_HOST_STATUS_SUCCESS, ENGINE_HOST_STAGE_EDIT, 0,
+                  nullptr, m_State.load());
+    }
+    return 0;
 }
 
 int32_t EngineHost::EnqueueViewportResize(const float* widthHeight,

@@ -46,6 +46,7 @@ public partial class MainWindow : Window
     // 必须忽略，否则会把刚发布的帧尺寸重新登记成控件裁剪后的尺寸（反馈回路）。
     private ulong _lastSeenDisplayedFrameId;
     private double _lastControlWidth;
+    private Avalonia.Point _lastPointerPos;
     private double _lastControlHeight;
     private bool _hasLastControlSize;
 
@@ -804,6 +805,19 @@ public partial class MainWindow : Window
         // D-C3：点击 viewport 即取得键盘焦点（否则 KeyDown 永远不会被派发到这里）。
         ViewportBorder?.Focus();
 
+        if (_host.Backend == HostBackend.EngineHost)
+        {
+            var props = e.GetCurrentPoint(ViewportBorder).Properties;
+            _host.SetCameraModifiers(e.KeyModifiers.HasFlag(KeyModifiers.Alt),
+                                    e.KeyModifiers.HasFlag(KeyModifiers.Shift));
+            if (props.IsLeftButtonPressed) _host.CameraButton(0, true);
+            if (props.IsRightButtonPressed) _host.CameraButton(1, true);
+            if (props.IsMiddleButtonPressed) _host.CameraButton(2, true);
+            _lastPointerPos = e.GetPosition(ViewportBorder);
+            e.Handled = true;
+            return;
+        }
+
         // D-A2 修正：legacy 的鼠标转发用 viewport 局部坐标（legacy 自己的契约），
         // 与 pick 的 canonical 像素坐标**是两件事**，不得混用。
         if (AcceptLegacyViewportCapability())
@@ -846,8 +860,15 @@ public partial class MainWindow : Window
         if (_host.Backend != HostBackend.EngineHost) return;   // legacy 是禁止路径
 
         var bounds = ViewportImage?.Bounds ?? default;
-        int width = (int)Math.Round(bounds.Width);
-        int height = (int)Math.Round(bounds.Height);
+        double scaling = 1.0;
+        if (ViewportImage is not null)
+        {
+            var topLevel = TopLevel.GetTopLevel(ViewportImage);
+            if (topLevel is not null) scaling = topLevel.RenderScaling;
+        }
+        if (scaling <= 0) scaling = 1.0;
+        int width = (int)Math.Round(bounds.Width * scaling);
+        int height = (int)Math.Round(bounds.Height * scaling);
         if (width <= 0 || height <= 0) return;   // 还没布局好：不登记
 
         // 帧尺寸变化连带的布局变化：忽略，避免反馈回路。
@@ -1054,6 +1075,18 @@ public partial class MainWindow : Window
     private void OnViewportPointerReleased(object? sender, Avalonia.Input.PointerReleasedEventArgs e)
     {
         if (!AcceptViewportPointer()) return;
+        if (_host.Backend == HostBackend.EngineHost)
+        {
+            var pt = e.GetCurrentPoint(ViewportBorder);
+            if (pt.Properties.PointerUpdateKind == Avalonia.Input.PointerUpdateKind.LeftButtonReleased)
+                _host.CameraButton(0, false);
+            if (pt.Properties.PointerUpdateKind == Avalonia.Input.PointerUpdateKind.RightButtonReleased)
+                _host.CameraButton(1, false);
+            if (pt.Properties.PointerUpdateKind == Avalonia.Input.PointerUpdateKind.MiddleButtonReleased)
+                _host.CameraButton(2, false);
+            e.Handled = true;
+            return;
+        }
         if (!AcceptLegacyViewportCapability()) return;
         var props = e.GetCurrentPoint(ViewportBorder).Properties;
         int button = props.IsLeftButtonPressed ? 0 :
@@ -1069,6 +1102,18 @@ public partial class MainWindow : Window
     private void OnViewportPointerMoved(object? sender, Avalonia.Input.PointerEventArgs e)
     {
         if (!AcceptViewportPointer()) return;
+        if (_host.Backend == HostBackend.EngineHost)
+        {
+            var p = e.GetPosition(ViewportBorder);
+            var dx = (float)(p.X - _lastPointerPos.X);
+            var dy = (float)(p.Y - _lastPointerPos.Y);
+            _lastPointerPos = p;
+            _host.SetCameraModifiers(e.KeyModifiers.HasFlag(KeyModifiers.Alt),
+                                    e.KeyModifiers.HasFlag(KeyModifiers.Shift));
+            _host.CameraPointerMoved(dx, dy);
+            e.Handled = true;
+            return;
+        }
         if (!AcceptLegacyViewportCapability()) return;
         var pos = e.GetPosition(ViewportBorder);
         Vm.ViewportMouseMove((float)pos.X, (float)pos.Y);
@@ -1078,6 +1123,12 @@ public partial class MainWindow : Window
     private void OnViewportPointerWheelChanged(object? sender, Avalonia.Input.PointerWheelEventArgs e)
     {
         if (!AcceptViewportPointer()) return;
+        if (_host.Backend == HostBackend.EngineHost)
+        {
+            _host.CameraWheel((float)e.Delta.Y);
+            e.Handled = true;
+            return;
+        }
         if (!AcceptLegacyViewportCapability()) return;
         float delta = (float)e.Delta.Y;
         Vm.ViewportScroll(delta);
@@ -1087,6 +1138,14 @@ public partial class MainWindow : Window
     private void OnViewportKeyDown(object? sender, Avalonia.Input.KeyEventArgs e)
     {
         if (!AcceptViewportKeyboard()) return;
+        if (_host.Backend == HostBackend.EngineHost)
+        {
+            _host.SetCameraModifiers(e.KeyModifiers.HasFlag(KeyModifiers.Alt),
+                                    e.KeyModifiers.HasFlag(KeyModifiers.Shift));
+            _host.CameraKey(e.Key, true);
+            e.Handled = true;
+            return;
+        }
         if (!AcceptLegacyViewportCapability()) return;
         Vm.ViewportKeyDown((int)e.Key);
         e.Handled = true;
@@ -1095,6 +1154,14 @@ public partial class MainWindow : Window
     private void OnViewportKeyUp(object? sender, Avalonia.Input.KeyEventArgs e)
     {
         if (!AcceptViewportKeyboard()) return;
+        if (_host.Backend == HostBackend.EngineHost)
+        {
+            _host.SetCameraModifiers(e.KeyModifiers.HasFlag(KeyModifiers.Alt),
+                                    e.KeyModifiers.HasFlag(KeyModifiers.Shift));
+            _host.CameraKey(e.Key, false);
+            e.Handled = true;
+            return;
+        }
         if (!AcceptLegacyViewportCapability()) return;
         Vm.ViewportKeyUp((int)e.Key);
         e.Handled = true;

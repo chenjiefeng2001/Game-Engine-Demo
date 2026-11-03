@@ -146,7 +146,8 @@ public static class EditorBridgeApi
     public const int EngineHostOpPick = 29;
     /// <summary>Slice E：设置 presentation viewport 尺寸（只登记，下一帧生效）。</summary>
     public const int EngineHostOpSetViewportSize = 30;
-    public const int EngineHostOpCount = 31;
+    public const int EngineHostOpSetCameraInput = 31;
+    public const int EngineHostOpCount = 32;
 
     // ── HRC-3 D3：PickResultPacket 静态容量（编译期常量）──
     /// <summary>packet 定长 32B。pick 只需一个像素 readback，不把 ID 表面搬过 ABI。</summary>

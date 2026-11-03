@@ -720,6 +720,26 @@ public sealed class EditorHostService : IDisposable
         if (IsEngineHost) return _engineHost!.SetViewportSize(width, height);
         return LegacyOnly(ops => { ops.SetViewportSize(width, height); return true; });
     }
+    public void CameraPointerMoved(float dx, float dy)
+    {
+        if (IsEngineHost) _engineHost?.CameraPointerMoved(dx, dy);
+    }
+    public void CameraWheel(float delta)
+    {
+        if (IsEngineHost) _engineHost?.CameraWheel(delta);
+    }
+    public void CameraButton(int button, bool pressed)
+    {
+        if (IsEngineHost) _engineHost?.CameraButton(button, pressed);
+    }
+    public void CameraKey(Avalonia.Input.Key key, bool down)
+    {
+        if (IsEngineHost) _engineHost?.CameraKey(key, down);
+    }
+    public void SetCameraModifiers(bool alt, bool shift)
+    {
+        if (IsEngineHost) _engineHost?.SetCameraModifiers(alt, shift);
+    }
     public void ViewportTick(float dt) => LegacyOnly(ops => ops.ViewportTick(dt));
     public void SetViewportCameraPosition(float x, float y, float z) => LegacyOnly(ops => ops.SetViewportCameraPosition(x, y, z));
     public (float x, float y, float z) GetViewportCameraPosition() => LegacyOnly(ops => ops.GetViewportCameraPosition());
@@ -840,6 +860,13 @@ internal sealed class EngineHostChannel : IEditorOps, IDisposable
     private long _pumpInvocations;
     private long _pumpFailures;
     private double _lastPumpDeltaSeconds;
+
+    // P4-B C4: production camera input state
+    private readonly object _cameraInputLock = new();
+    private float _camDx, _camDy, _camWheel;
+    private bool _camRight, _camMiddle, _camLeft, _camAlt, _camShift;
+    private bool _camW, _camS, _camA, _camD, _camE, _camQ;
+    private bool _camUp, _camDown, _camLeftKey, _camRightKey;
 
     // T-6-B B4：50 ms 引擎日志 poll timer（与 runtime pump 完全隔离）
     private DispatcherTimer? _logTimer;
@@ -976,6 +1003,11 @@ internal sealed class EngineHostChannel : IEditorOps, IDisposable
         _lastPumpSeconds = elapsed;
         _lastPumpDeltaSeconds = dt;
         Interlocked.Increment(ref _pumpInvocations);
+
+        var cameraInput = BuildCameraInput();
+        var ciResult = default(EditorBridgeApi.RuntimeResult);
+        EditorBridgeApi.EngineHost_Dispatch(_host, EditorBridgeApi.EngineHostOpSetCameraInput,
+            0, 0, null, null, null, cameraInput, ref ciResult);
 
         var result = default(EditorBridgeApi.RuntimeResult);
         int code = EditorBridgeApi.EngineHost_PumpOneFrame(_host, (float)dt, ref result);
@@ -1501,6 +1533,82 @@ internal sealed class EngineHostChannel : IEditorOps, IDisposable
             EditorBridgeApi.EngineHostOpSetViewportSize, 0, 0, null, null, null,
             new[] { (float)width, (float)height }, ref result);
         return code == 0 && result.Status == EditorBridgeApi.EngineHostStatusSuccess;
+    }
+
+    public void CameraPointerMoved(float dx, float dy)
+    {
+        lock (_cameraInputLock) { _camDx += dx; _camDy += dy; }
+    }
+
+    public void CameraWheel(float delta)
+    {
+        lock (_cameraInputLock) { _camWheel += delta; }
+    }
+
+    public void CameraButton(int button, bool pressed)
+    {
+        lock (_cameraInputLock)
+        {
+            if (button == 1) _camRight = pressed;
+            else if (button == 2) _camMiddle = pressed;
+            else if (button == 0) _camLeft = pressed;
+        }
+    }
+
+    public void CameraKey(Avalonia.Input.Key key, bool down)
+    {
+        lock (_cameraInputLock)
+        {
+            switch (key)
+            {
+                case Avalonia.Input.Key.W: _camW = down; break;
+                case Avalonia.Input.Key.S: _camS = down; break;
+                case Avalonia.Input.Key.A: _camA = down; break;
+                case Avalonia.Input.Key.D: _camD = down; break;
+                case Avalonia.Input.Key.E: _camE = down; break;
+                case Avalonia.Input.Key.Q: _camQ = down; break;
+                case Avalonia.Input.Key.Up: _camUp = down; break;
+                case Avalonia.Input.Key.Down: _camDown = down; break;
+                case Avalonia.Input.Key.Left: _camLeftKey = down; break;
+                case Avalonia.Input.Key.Right: _camRightKey = down; break;
+            }
+        }
+    }
+
+    public void SetCameraModifiers(bool alt, bool shift)
+    {
+        lock (_cameraInputLock) { _camAlt = alt; _camShift = shift; }
+    }
+
+    public float[] BuildCameraInput()
+    {
+        lock (_cameraInputLock)
+        {
+            var arr = new float[19];
+            arr[0] = _camDx;
+            arr[1] = _camDy;
+            arr[2] = _camWheel;
+            arr[3] = _camRight ? 1f : 0f;
+            arr[4] = _camMiddle ? 1f : 0f;
+            arr[5] = _camLeft ? 1f : 0f;
+            arr[6] = _camAlt ? 1f : 0f;
+            arr[7] = _camShift ? 1f : 0f;
+            arr[8] = _camW ? 1f : 0f;
+            arr[9] = _camS ? 1f : 0f;
+            arr[10] = _camA ? 1f : 0f;
+            arr[11] = _camD ? 1f : 0f;
+            arr[12] = _camE ? 1f : 0f;
+            arr[13] = _camQ ? 1f : 0f;
+            arr[14] = _camUp ? 1f : 0f;
+            arr[15] = _camDown ? 1f : 0f;
+            arr[16] = _camLeftKey ? 1f : 0f;
+            arr[17] = _camRightKey ? 1f : 0f;
+            arr[18] = 0.016f;
+            _camDx = 0f;
+            _camDy = 0f;
+            _camWheel = 0f;
+            return arr;
+        }
     }
 
     /// capacity=1：第二个请求返回 <see cref="PickRequestResult.Busy"/>，

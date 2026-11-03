@@ -1,6 +1,8 @@
 #pragma once
 
 #include "editor_bridge/capi.h"
+#include "Engine/Application.h"
+#include "Engine/Editor/EditorCameraInput.h"
 
 #include <atomic>
 #include <chrono>
@@ -131,7 +133,11 @@ public:
     ENGINE_HOST_P1_TEST_SEAM int32_t PresentationTargetWidth() const;
     ENGINE_HOST_P1_TEST_SEAM int32_t PresentationTargetHeight() const;
     /// 上一次 production render 绘制的 renderable 数量（0 = 没有真实内容 / 未渲染）。
-    uint32_t LastProductionRenderableCount() const { return m_LastProductionRenderableCount.load(); }
+    uint32_t LastProductionRenderableCount() const {
+        return m_LastProductionRenderableCount.load();
+    }
+    ENGINE_HOST_P1_TEST_SEAM void SetProductionDebugDrawCallback(
+        Engine::Application::ProductionDebugDrawCallback cb);
     /// 读回 presentation target 的像素（RGBA8，行优先，左下角起 —— GL 布局）。
     /// GL 访问必须发生在 runtime 线程且 context current，因此走既有命令队列。
     /// 返回写入的字节数；失败返回 0。
@@ -284,6 +290,7 @@ private:
     /// Slice E：登记 viewport 尺寸请求（只登记，不做任何 GL 调用）。
     /// 校验失败时写入结构化拒绝并返回 -1；成功返回 0 且 `status = SUCCESS`。
     int32_t EnqueueViewportResize(const float* widthHeight, RuntimeResult* result);
+    int32_t EnqueueCameraInput(const float* values, RuntimeResult* result);
     /// Slice E：在 `PumpOneFrame` 的 current-context 窗口内应用最新尺寸。
     ///
     /// 返回值：
@@ -326,6 +333,10 @@ private:
     /// HRC-3 P1：production presentation target（与上面的 64×64 探针 FBO 相互独立）。
     std::unique_ptr<Engine::OpenGLFramebuffer> m_PresentationFbo;
     std::atomic<uint32_t> m_LastProductionRenderableCount{0};
+
+    // P4-B C4: production camera external input (managed -> native)
+    Engine::EditorCameraInput m_ProductionCameraInput{};
+    bool m_ProductionCameraInputPending = false;
     std::unique_ptr<EditorSession> m_Session;
 
     mutable std::mutex m_Mutex;

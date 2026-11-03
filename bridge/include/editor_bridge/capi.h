@@ -577,7 +577,8 @@ ENGINE_HOST_OP_PICK = 29,
 ///   - 零尺寸 / 超限 / 非有限值一律**拒绝**（不 clamp、不截断），
 ///     保持当前 FBO 尺寸不变并记录诊断。
 ENGINE_HOST_OP_SET_VIEWPORT_SIZE = 30,
-ENGINE_HOST_OP_COUNT = 31
+ENGINE_HOST_OP_SET_CAMERA_INPUT = 31,
+ENGINE_HOST_OP_COUNT = 32
 };
 
 /// HRC-3 P2：presentation frame packet 的静态容量常量（编译期，非 ABI 结构）。

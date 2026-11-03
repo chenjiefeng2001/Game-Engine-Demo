@@ -226,3 +226,44 @@ UI：Console Tab 增加真实 `ConsoleFilterBox` / `ConsoleClearBtn`，列表绑
 | UIA 测试 | `tests/EditorAvalonia.IntegrationTests/T6ConsoleUITests.cs` |
 | 冻结契约 | `docs/T-6-Console-GateA-Contract.md` |
 | Gate 0 扫描 | `docs/T-6-Console-Gate0-Scan.md` |
+
+---
+
+## 9. T-6 Overall 最终关闭章节 (P1, 2026-11-01)
+
+### 9.1 T-6 整体最终状态
+
+**T-6 — COMPLETE — CLOSED — SCOPE-BOUND**
+
+T-6-A（Managed Console）与 T-6-B（Engine Logging）均已关闭。T-6 的合同验收标准（A-1..A-12，来自 T-6-A 与 T-6-B 两份合同）全部满足。
+
+### 9.2 T-6-A 历史状态保留
+
+T-6-A 原始状态 PARTIALLY COMPLETE (T-6-B DEFERRED) 保留在本记录的历史部分（§1-§8），不覆盖。T-6-B 已于 2026-11-01 关闭（docs/T-6-B-Console-Logging-GateB6-Closure.md）。
+
+### 9.3 接受的 KNOWN UNVERIFIED
+
+| 项 | 来源 | 状态 |
+|---|---|---|
+| 真实 GL 丢失 → Console | T-6-A T6-A-13 | KNOWN UNVERIFIED |
+| 协议违反 native 验证 | T-6-A T6-A-14 | KNOWN UNVERIFIED |
+| 10k 行 Console UIA 验证 | T-6-A T6-A-01 | KNOWN UNVERIFIED |
+| Partial failure host 状态 | T-6-A T6-A-13b | KNOWN UNVERIFIED |
+| UI automation Inconclusive treated as PASS | T-6-A §4.8 | KNOWN UNVERIFIED |
+
+### 9.4 合同外功能（不阻塞关闭）
+
+Console 搜索、日志导出、Filter 持久化、Channel 过滤、EV/Engine 自动去重、Auto-scroll 暂停控制。这些不在合同验收范围内，属于 T-6 扩展方向。
+
+### 9.5 关闭依据
+
+- T-6-A：本记录（PASS — SCOPE-BOUND）
+- T-6-B：docs/T-6-B-Console-Logging-GateB6-Closure.md（COMPLETE — ALL GATES PASSED）
+- 全量回归：native 207/207 + managed 4/4 + UIA 1/1（Debug/Release）
+- ABI v1.9 冻结，EV_COUNT=14、RuntimeResult=76B 不变
+- 审计：docs/T-6-Overall-Completion-Audit.md（已更新为 CLOSED）
+
+### 9.6 引用
+
+- docs/T-6-Overall-Completion-Audit.md — T-6 Overall 完成审计（已更新为 COMPLETE — CLOSED — SCOPE-BOUND）
+- docs/Project-Integration-Delivery-Baseline.md — P0 基线审计

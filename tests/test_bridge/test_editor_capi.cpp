@@ -8,6 +8,8 @@
 
 #include <gtest/gtest.h>
 #include "editor_bridge/capi.h"
+#include "Engine/Application.h"
+#include "Engine/Rendering/DebugDraw/DebugDraw.h"
 // HRC-3 P1：production render 的像素证据需要读回 presentation target。
 // P1 阶段**刻意不新增 C 导出**（那是 P2 的 additive Fetch op），因此这里白色盒地
 // 包含 bridge 内部头，只为 native contract test 取证。managed 侧通道留给 P2。
@@ -2410,7 +2412,8 @@ TEST_F(EditorBridgeTest, T1FEndToEndPhysicsSaveReopenPlayStopReplay) {
         EXPECT_EQ(ENGINE_HOST_OP_GET_PRESENTATION_FRAME, 28);
         EXPECT_EQ(ENGINE_HOST_OP_PICK, 29);
         EXPECT_EQ(ENGINE_HOST_OP_SET_VIEWPORT_SIZE, 30);
-        EXPECT_EQ(ENGINE_HOST_OP_COUNT, 31);
+        EXPECT_EQ(ENGINE_HOST_OP_SET_CAMERA_INPUT, 31);
+        EXPECT_EQ(ENGINE_HOST_OP_COUNT, 32);
         // 既有 op 编号一个都不能动
         EXPECT_EQ(ENGINE_HOST_OP_GET_ENTITY_POSITION, 27);
         EXPECT_EQ(ENGINE_HOST_OP_ASSIGN_SPRITE, 26);
@@ -2574,3 +2577,41 @@ TEST_F(EditorBridgeTest, T1FEndToEndPhysicsSaveReopenPlayStopReplay) {
     }
 
 } // namespace
+
+
+TEST(EngineHostAbiTest, P4BC54ProductionDebugDrawFrame) {
+    ASSERT_EQ(EditorBridge_RegisterMainThread(), 1);
+    auto result = RuntimeResult{};
+    EngineHostHandle handle = EngineHost_Create(&result);
+    ASSERT_NE(handle, nullptr);
+    auto* host = static_cast<editor_bridge::EngineHost*>(handle);
+
+    ASSERT_EQ(EngineHost_OpenProject(handle,
+                                     "assets/gp01/manifest.json",
+                                     "assets/gp01/Main.scene",
+                                     &result), 0);
+
+    host->SetProductionDebugDrawCallback(
+        [](Engine::Rendering::DebugDraw::DebugDraw& dd) {
+            dd.Line(Engine::Vec3{-1.0f, 0.0f, 0.0f},
+                    Engine::Vec3{1.0f, 0.0f, 0.0f},
+                    Engine::Vec4{1.0f, 0.0f, 0.0f, 1.0f}, 0.0f, false);
+        });
+
+    ASSERT_EQ(EngineHost_PumpOneFrame(handle, 0.016f, &result), 0);
+
+    std::vector<uint8_t> packet(ENGINE_HOST_FRAME_PACKET_BYTES, 0xCD);
+    const int32_t rc = EngineHost_Fetch(handle, ENGINE_HOST_OP_GET_PRESENTATION_FRAME,
+                                        0, nullptr, nullptr, nullptr,
+                                        packet.data(),
+                                        static_cast<int32_t>(packet.size()), &result);
+    ASSERT_GT(rc, 0);
+
+    bool sawRed = false;
+    for (size_t i = 0; i + 3 < packet.size(); i += 4) {
+        if (packet[i] > 128 && packet[i+1] < 64 && packet[i+2] < 64) { sawRed = true; break; }
+    }
+    EXPECT_TRUE(sawRed) << "DebugDraw primitive not visible in production frame";
+
+    EngineHost_Destroy(handle);
+}
