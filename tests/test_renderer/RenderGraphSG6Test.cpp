@@ -598,3 +598,113 @@ TEST_F(RenderGraphSG6, P4E3M2F_FboBindingAfterExecute) {
     gl.DeleteProgram(prog);
     gl.DeleteFramebuffers(1,&fbo); gl.DeleteTextures(1,&tex);
 }
+
+TEST_F(RenderGraphSG6, P5F2_RenderGraphBenchmark) {
+    if (!g_ctx.window) GTEST_SKIP();
+    auto& gl = m_Device->GetGL();
+
+    // ── Setup offscreen FBO + shader + triangle ──
+    GLuint tex = 0, fbo = 0;
+    gl.GenTextures(1, &tex);
+    gl.BindTexture(GL_TEXTURE_2D, tex);
+    gl.TexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, 64, 64, 0, GL_RGBA, GL_UNSIGNED_BYTE, nullptr);
+    gl.GenFramebuffers(1, &fbo);
+    gl.BindFramebuffer(GL_FRAMEBUFFER, fbo);
+    gl.FramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, tex, 0);
+    ASSERT_EQ(gl.CheckFramebufferStatus(GL_FRAMEBUFFER), GL_FRAMEBUFFER_COMPLETE);
+    gl.BindFramebuffer(GL_FRAMEBUFFER, 0);
+
+    const char* vs = "#version 460 core\nlayout(location=0) in vec2 p; void main(){ gl_Position=vec4(p,0,1); }";
+    const char* fs = "#version 460 core\nout vec4 c; void main(){ c=vec4(1,0,0,1); }";
+    auto comp = [&](GLenum t, const char* s) {
+        GLuint sh = gl.CreateShader(t); gl.ShaderSource(sh, 1, &s, nullptr); gl.CompileShader(sh); return sh;
+    };
+    GLuint v = comp(GL_VERTEX_SHADER, vs), f = comp(GL_FRAGMENT_SHADER, fs);
+    GLuint prog = gl.CreateProgram(); gl.AttachShader(prog, v); gl.AttachShader(prog, f); gl.LinkProgram(prog);
+    gl.DeleteShader(v); gl.DeleteShader(f);
+
+    float tri[] = { -1.0f, -1.0f, 3.0f, -1.0f, -1.0f, 3.0f };
+    GLuint vao = 0, vbo = 0;
+    gl.GenVertexArrays(1, &vao); gl.GenBuffers(1, &vbo);
+    gl.BindVertexArray(vao); gl.BindBuffer(GL_ARRAY_BUFFER, vbo);
+    gl.BufferData(GL_ARRAY_BUFFER, sizeof(tri), tri, GL_STATIC_DRAW);
+    gl.EnableVertexAttribArray(0); gl.VertexAttribPointer(0, 2, GL_FLOAT, GL_FALSE, 0, nullptr);
+    gl.BindVertexArray(0);
+
+    // ── Direct Renderer baseline ──
+    const int kWarmup = 50;
+    const int kSamples = 200;
+    std::vector<double> directTimes, graphTimes;
+
+    for (int i = 0; i < kWarmup + kSamples; ++i) {
+        auto t0 = std::chrono::steady_clock::now();
+        gl.BindFramebuffer(GL_FRAMEBUFFER, fbo);
+        gl.Viewport(0, 0, 64, 64);
+        gl.ClearColor(0, 0, 0, 1); gl.Clear(GL_COLOR_BUFFER_BIT);
+        gl.UseProgram(prog); gl.BindVertexArray(vao); gl.DrawArrays(GL_TRIANGLES, 0, 3); gl.BindVertexArray(0); gl.UseProgram(0);
+        gl.BindFramebuffer(GL_FRAMEBUFFER, 0);
+        gl.Finish();
+        double ms = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count();
+        if (i >= kWarmup) directTimes.push_back(ms);
+    }
+
+    // ── RenderGraph steady-state (pre-compiled, repeated Execute) ──
+    Rendering::RenderGraph graph;
+    TransientHeap heap; heap.Initialize(*m_Device);
+    StringID sColor = StringID::Runtime("bench.Color");
+    graph.AddPass("Draw", [&](RenderPassBuilder& b) {
+        b.ImportTexture(sColor, nullptr, static_cast<uintptr_t>(fbo));
+        b.WriteTexture(sColor);
+    }, [&](IRHICommandList&) {
+        gl.BindFramebuffer(GL_FRAMEBUFFER, fbo);
+        gl.Viewport(0, 0, 64, 64);
+        gl.ClearColor(0, 0, 0, 1); gl.Clear(GL_COLOR_BUFFER_BIT);
+        gl.UseProgram(prog); gl.BindVertexArray(vao); gl.DrawArrays(GL_TRIANGLES, 0, 3); gl.BindVertexArray(0); gl.UseProgram(0);
+        gl.BindFramebuffer(GL_FRAMEBUFFER, 0);
+    });
+    ASSERT_TRUE(graph.Compile(heap));
+
+    auto* q = m_Device->GetQueue(QueueType::Graphics);
+    for (int i = 0; i < kWarmup + kSamples; ++i) {
+        auto t0 = std::chrono::steady_clock::now();
+        bool ok = graph.Execute(*m_Device, *q);
+        m_Device->WaitIdle();
+        double ms = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count();
+        if (i >= kWarmup) graphTimes.push_back(ms);
+        ASSERT_TRUE(ok);
+    }
+
+    // ── Statistics ──
+    auto stats = [](std::vector<double>& v) {
+        std::sort(v.begin(), v.end());
+        double sum = 0; for (double d : v) sum += d;
+        double mean = sum / v.size();
+        double p50 = v[v.size() / 2];
+        double p95 = v[static_cast<size_t>(v.size() * 0.95)];
+        double p99 = v[static_cast<size_t>(v.size() * 0.99)];
+        double minv = v.front(), maxv = v.back();
+        return std::make_tuple(mean, p50, p95, p99, minv, maxv);
+    };
+
+    auto [dMean, dP50, dP95, dP99, dMin, dMax] = stats(directTimes);
+    auto [gMean, gP50, gP95, gP99, gMin, gMax] = stats(graphTimes);
+
+    std::printf("\n    === P5-F2 Benchmark (n=%d, warmup=%d) ===\n", kSamples, kWarmup);
+    std::printf("    Direct:  mean=%.4f ms  p50=%.4f  p95=%.4f  p99=%.4f  min=%.4f  max=%.4f\n",
+                dMean, dP50, dP95, dP99, dMin, dMax);
+    std::printf("    Graph:   mean=%.4f ms  p50=%.4f  p95=%.4f  p99=%.4f  min=%.4f  max=%.4f\n",
+                gMean, gP50, gP95, gP99, gMin, gMax);
+    std::printf("    Overhead: mean=%.2fx  p50=%.2fx  p95=%.2fx\n",
+                gMean / dMean, gP50 / dP50, gP95 / dP95);
+    std::printf("    Pass count: 1 (both)  |  Resource count: 1 (Graph only)\n");
+
+    // Cleanup
+    gl.DeleteVertexArrays(1, &vao); gl.DeleteBuffers(1, &vbo);
+    gl.DeleteProgram(prog);
+    gl.DeleteFramebuffers(1, &fbo); gl.DeleteTextures(1, &tex);
+
+    // Basic sanity: both paths completed without crash
+    EXPECT_FALSE(directTimes.empty());
+    EXPECT_FALSE(graphTimes.empty());
+}
+
