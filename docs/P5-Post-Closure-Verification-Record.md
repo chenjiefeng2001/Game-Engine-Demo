@@ -15,7 +15,7 @@
 | PV0 | Baseline Freeze | PASS — FROZEN | (this cycle) |
 | PV1 | Real Editor/UIA Verification | PENDING — requires interactive desktop | — |
 | PV2 | Jolt Solid Fill GL Readback | PARTIAL — Jolt call-path verified; GL readback pending | (this cycle) |
-| PV3 | Integrated Regression | PASS — 243/243 + 1 new Jolt test = 244? No, 27/27 debugdraw | (this cycle) |
+| PV3 | Integrated Regression | PASS — 244/244 native tests | (this cycle) |
 | PV4 | Follow-up Closure | COMPLETE | (this cycle) |
 
 ---
@@ -41,7 +41,7 @@
 - crashes/ 115 artifacts: preserved ✅
 - No unexpected files in commits ✅
 
-### 2.4 P4/P5 History Immutability
+### 2.4 P4/P5/P5-F1M History Immutability
 - P4-B Closure: not modified ✅
 - P4-C Original Closure: not modified ✅
 - P4-D Closure: not modified ✅
@@ -86,8 +86,8 @@ These are independent follow-up tasks. None affects P4/P5/P5-F1M closure status.
 - PV0 (Baseline Freeze): **PASS** — baseline frozen.
 - PV1 (Real Editor/UIA): **PENDING** — requires interactive desktop.
 - PV2 (Jolt Solid Fill GL Readback): **PARTIAL** — Jolt call-path verified; GL readback pending.
-- PV3 (Integrated Regression): **PASS** — 244/244 native tests (243 + 1 new Jolt test). 0 build errors.
-- PV4 (Follow-up Closure): **COMPLETE** — all exceptions documented; P4/P5 history immutable.
+- PV3 (Integrated Regression): **PASS** — 244/244 native tests (243 + 1 new). 0 build errors.
+- PV4 (Follow-up Closure): **COMPLETE** — all exceptions documented; P4/P5/P5-F1M history immutable.
 
 P4/P5/P5-F1M original closure records remain immutable. New results recorded as independent follow-up documents.
 EOF

@@ -14,7 +14,7 @@ Test: `DebugDrawAdapterTest.JoltDualDrawBodiesInvokesSolidFill`
 
 - Sets up JoltPhysicsWorld with a Static Box collider.
 - Uses a counting mock `IPhysicsDebugDraw3D` tracking `DrawLine` and `DrawTriangle(wireframe)`.
-- Calls `world.DebugDraw()` with dual DrawBodies (wireframe + solid fill).
+- Calls `world.DebugDraw()` with the dual DrawBodies configuration (wireframe pass + solid fill pass).
 - **Result**: `triangleSolidCount > 0` — Jolt invoked `DrawTriangle(wireframe=false)` (solid fill). **PASS**.
 - `lineCount > 0` — Jolt invoked `DrawLine` (wireframe edges). **PASS**.
 
