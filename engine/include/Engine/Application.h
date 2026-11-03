@@ -42,6 +42,16 @@ class IGraphicsFactory;
 class OrthographicCamera;
 class SceneRenderer;
 class MeshRenderer;
+
+namespace Rendering {
+class RenderGraph;
+class TransientHeap;
+}
+
+namespace RHI {
+class IRHIDevice;
+class IRHICommandQueue;
+}
 class Scene;
 class ConsolePanel;
 
@@ -119,6 +129,17 @@ public:
   void SetProductionDebugDrawCallback(ProductionDebugDrawCallback cb) {
     m_ProductionDebugDrawCallback = std::move(cb);
   }
+
+  // P4-E Gate B: RenderGraph production path opt-in flag.
+  // Default false: Direct Renderer path is used.
+  void SetProductionUseRenderGraph(bool v) { m_ProductionUseRenderGraph = v; }
+  bool ProductionUseRenderGraph() const { return m_ProductionUseRenderGraph; }
+
+  // P4-E Gate B: presentation render-target FBO id, set by EngineHost each frame.
+  void SetProductionRenderTargetFbo(uint32_t fboId) {
+    m_ProductionRenderTargetFbo = fboId;
+  }
+  uint32_t ProductionRenderTargetFbo() const { return m_ProductionRenderTargetFbo; }
 
   /// HRC-3 D3：production pick pass 开关（默认**关闭**）
   ///
@@ -328,6 +349,14 @@ private:
   std::shared_ptr<class Shader> m_Production3DShader;
   bool m_Production3DRenderReady = false;
   uint32_t m_Production3DRenderableCount = 0;
+
+  // P4-E Gate B: RenderGraph production path
+  bool m_ProductionUseRenderGraph = false;
+  uint32_t m_ProductionRenderTargetFbo = 0;
+  std::unique_ptr<Rendering::RenderGraph> m_ProductionRenderGraph;
+  std::unique_ptr<RHI::IRHIDevice> m_ProductionRenderGraphDevice;
+  RHI::IRHICommandQueue* m_ProductionRenderGraphQueue = nullptr;
+  std::unique_ptr<Rendering::TransientHeap> m_ProductionTransientHeap;
 
   // ── HRC-3 D3：production pick pass 资源 ──
   // 遵循 D3 Step 2 冻结的 U1/U3：R32I attachment 1 + 专用 pick shader。

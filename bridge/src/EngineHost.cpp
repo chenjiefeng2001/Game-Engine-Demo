@@ -1342,6 +1342,8 @@ int32_t EngineHost::PumpOneFrame(float requestedDtSeconds, RuntimeResult* result
                 *m_Session->GetEditScene(),
                 m_PresentationFbo->GetWidth(),
                 m_PresentationFbo->GetHeight());
+            m_Application->SetProductionRenderTargetFbo(
+                m_PresentationFbo->GetFramebufferID());
             const bool rendered3D = m_Application->RenderProduction3DFrame(
                 *m_RenderContext,
                 *m_Session->GetEditScene(),

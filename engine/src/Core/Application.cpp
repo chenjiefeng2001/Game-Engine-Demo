@@ -34,8 +34,12 @@
 #include "Engine/Core/GameObject/GameObject.h"
 #include "Engine/Core/RHI/SceneRenderer.h"
 #include "Engine/Core/RHI/MeshRenderer.h"
+#include "Engine/Core/RHI/IRHIDevice.h"
 #include "Engine/Rendering/DebugDraw/DebugDraw.h"
 #include "Engine/Rendering/DebugDraw/OpenGL/OpenGL46DebugDrawRenderer.h"
+#include "Engine/Rendering/RenderGraph.h"
+#include "Engine/Core/RHI/GL46AZDODevice.h"
+#include "Engine/Rendering/TransientHeap.h"
 #include "Engine/Core/Renderer/PerspectiveCamera.h"
 #include "Engine/Core/GameObject/MeshComponent.h"
 #include "Engine/Core/RHI/RenderQueue.h"
@@ -905,6 +909,22 @@ bool Application::InitProduction3DRenderResources(IRenderContext &context) {
   }
 
   m_Production3DRenderReady = true;
+
+  // P4-E Gate B: create GL46 device + queue + transient heap for RenderGraph.
+  // Created lazily here (headless path already guarantees m_GL is valid).
+  if (m_GL && !m_ProductionRenderGraphDevice) {
+    auto glDevice = std::make_unique<Engine::RHI::GL46Device>();
+    if (glDevice->InitializeWithGLContext(m_GL, 800, 600)) {
+      m_ProductionRenderGraphQueue =
+          glDevice->GetQueue(Engine::RHI::QueueType::Graphics);
+      m_ProductionRenderGraphDevice = std::move(glDevice);
+    }
+    m_ProductionTransientHeap = std::make_unique<Engine::Rendering::TransientHeap>();
+    if (m_ProductionRenderGraphDevice) {
+      m_ProductionTransientHeap->Initialize(*m_ProductionRenderGraphDevice);
+    }
+  }
+
   return true;
 }
 
@@ -971,14 +991,71 @@ bool Application::RenderProduction3DFrame(IRenderContext &context, Scene &scene,
     return true;
   }
 
-  // ???? 3. ???
-  if (m_GL) {
-    m_GL->Enable(GL_DEPTH_TEST);
-    m_GL->DepthFunc(GL_LESS);
+  // P4-E Gate B: RenderGraph production path vs Direct Renderer.
+  // Default: Direct Renderer (unchanged behavior).
+  bool usedRenderGraph = false;
+  if (m_ProductionUseRenderGraph && m_ProductionRenderTargetFbo != 0 &&
+      m_ProductionRenderGraphDevice && m_ProductionRenderGraphQueue) {
+    // ── RenderGraph path ──
+    if (!m_ProductionRenderGraph) {
+      m_ProductionRenderGraph = std::make_unique<Rendering::RenderGraph>();
+    }
+    m_ProductionRenderGraph->Reset();
+
+    if (!m_ProductionTransientHeap) {
+      m_ProductionTransientHeap = std::make_unique<Rendering::TransientHeap>();
+      m_ProductionTransientHeap->Initialize(*m_ProductionRenderGraphDevice);
+    }
+
+    StringID sPresentation = StringID::Runtime("production.Presentation");
+    m_ProductionRenderGraph->AddPass("DrawMesh",
+        [&](Rendering::RenderPassBuilder& b) {
+          b.ImportTexture(sPresentation, nullptr, m_ProductionRenderTargetFbo);
+          b.WriteTexture(sPresentation);
+          b.SetViewport(0.0f, 0.0f,
+              static_cast<float>(targetWidth), static_cast<float>(targetHeight));
+        },
+        [&](Engine::RHI::IRHICommandList&) {
+          // RenderGraph binds the presentation FBO before this pass.
+          // MeshRenderer issues raw GL draw calls into the bound FBO.
+          if (m_GL) {
+            m_GL->Enable(GL_DEPTH_TEST);
+            m_GL->DepthFunc(GL_LESS);
+          }
+          m_Production3DMeshRenderer->SetCameraMatrices(viewMat, projMat,
+              m_Production3DCamera->GetPosition());
+          m_Production3DMeshRenderer->Render(meshObjects);
+        });
+
+    if (m_ProductionRenderGraph->Compile(*m_ProductionTransientHeap)) {
+      bool executed = m_ProductionRenderGraph->Execute(
+          *m_ProductionRenderGraphDevice, *m_ProductionRenderGraphQueue);
+      if (!executed) {
+        Log::Error("[P4-E B1] RenderGraph Execute failed");
+        m_Production3DRenderableCount = 0;
+        return false;
+      }
+      usedRenderGraph = true;
+      // Execute restored default FBO (binding 0). Rebind presentation FBO
+      // so DebugDraw can draw into it; EngineHost will Unbind afterwards.
+      if (m_GL) {
+        m_GL->BindFramebuffer(GL_FRAMEBUFFER, m_ProductionRenderTargetFbo);
+      }
+    } else {
+      Log::Error("[P4-E B1] RenderGraph compile failed, using Direct Renderer");
+    }
   }
-  m_Production3DMeshRenderer->SetCameraMatrices(viewMat, projMat,
-      m_Production3DCamera->GetPosition());
-  m_Production3DMeshRenderer->Render(meshObjects);
+
+  if (!usedRenderGraph) {
+    // Direct Renderer path (unchanged behavior)
+    if (m_GL) {
+      m_GL->Enable(GL_DEPTH_TEST);
+      m_GL->DepthFunc(GL_LESS);
+    }
+    m_Production3DMeshRenderer->SetCameraMatrices(viewMat, projMat,
+        m_Production3DCamera->GetPosition());
+    m_Production3DMeshRenderer->Render(meshObjects);
+  }
 
   // C5-1: DebugDraw EndFrame after scene geometry
   if (m_ProductionDebugDrawReady && m_ProductionDebugDraw) {
