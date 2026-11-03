@@ -151,6 +151,15 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
     /// </summary>
     public bool IsOpen => _host.IsOpen && _host.State == HostRuntimeState.Ready;
 
+    // P5-F1M: Renderer path selection
+    public bool UseRenderGraph => _host.ProductionUseRenderGraph;
+
+    public void SetRendererPath(bool useRenderGraph)
+    {
+        _host.SetProductionUseRenderGraph(useRenderGraph);
+        Raise(nameof(UseRenderGraph));
+    }
+
     /// <summary>A3/D1：Host 状态与本地投影最近一次对齐的原因（gate evidence）。</summary>
     public string LastReconcileReason { get; private set; } = "(none)";
 

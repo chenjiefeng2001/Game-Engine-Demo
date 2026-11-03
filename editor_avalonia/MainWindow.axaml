@@ -33,6 +33,15 @@
         <Button x:Name="ToolbarCreateEntityBtn" Content="+ Entity" Click="OnCreateEntity"
                 auto:AutomationProperties.AutomationId="ToolbarCreateEntityBtn"
                 ToolTip.Tip="Create an entity"/>
+        <ComboBox x:Name="RendererPathSelector" Width="120" SelectedIndex="0"
+                  SelectionChanged="OnRendererPathChanged"
+                  auto:AutomationProperties.AutomationId="ViewportRendererPathSelector">
+          <ComboBoxItem Content="Direct" Tag="0"/>
+          <ComboBoxItem Content="RenderGraph" Tag="1"/>
+        </ComboBox>
+        <TextBlock x:Name="RendererPathStatus" Text="Direct" VerticalAlignment="Center"
+                   FontSize="11" Foreground="{DynamicResource TextSecondaryBrush}"
+                   auto:AutomationProperties.AutomationId="RendererPathStatus"/>
       </StackPanel>
 
       <Border Width="1" Height="24" Background="{DynamicResource BorderSubtleBrush}" Margin="4,0"/>

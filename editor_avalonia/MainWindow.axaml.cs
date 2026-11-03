@@ -481,6 +481,28 @@ public partial class MainWindow : Window
         });
     }
 
+    private void OnRendererPathChanged(object? sender, Avalonia.Controls.SelectionChangedEventArgs e)
+    {
+        GuardedUiAction("OnRendererPathChanged", () =>
+        {
+            if (sender is Avalonia.Controls.ComboBox cb && cb.SelectedItem is Avalonia.Controls.ComboBoxItem item)
+            {
+                var tag = item.Tag?.ToString();
+                bool useRenderGraph = tag == "1";
+                Vm.SetRendererPath(useRenderGraph);
+                SyncRendererPathStatus();
+            }
+        });
+    }
+
+    private void SyncRendererPathStatus()
+    {
+        if (RendererPathStatus is not null && Vm is not null)
+        {
+            RendererPathStatus.Text = Vm.UseRenderGraph ? "RenderGraph" : "Direct";
+        }
+    }
+
     private void OnApplyTransform(object? sender, RoutedEventArgs e)
     {
         Vm.ApplyInspectorPosition();
