@@ -52,9 +52,9 @@ void JoltDebugRenderer::DrawTriangle(JPH::RVec3Arg inV0, JPH::RVec3Arg inV1, JPH
     PerThreadBuffer& buf = m_ThreadBuffers[idx];
     Vec4 color = ToVec4(inColor);
     Vec3 v0 = ToVec3FromRVec(inV0), v1 = ToVec3FromRVec(inV1), v2 = ToVec3FromRVec(inV2);
-    buf.lines.push_back({v0, v1, color});
-    buf.lines.push_back({v1, v2, color});
-    buf.lines.push_back({v2, v0, color});
+    // Store the solid triangle (wireframe=false fill) instead of decomposing into
+    // 3 edge lines. The collider wireframe continues to flow through DrawLine.
+    buf.triangles.push_back({v0, v1, v2, color});
 }
 
 void JoltDebugRenderer::DrawText3D(JPH::RVec3Arg inPosition,
@@ -89,6 +89,11 @@ void JoltDebugRenderer::Flush() {
     for (const auto& buf : m_ThreadBuffers) {
         for (const auto& line : buf.lines) {
             m_Draw->DrawLine(line.from, line.to, line.color);
+        }
+        for (const auto& tri : buf.triangles) {
+            // Solid fill: wireframe=false. Wireframe collider edges flow through
+            // DrawLine above and are unaffected.
+            m_Draw->DrawTriangle(tri.v0, tri.v1, tri.v2, tri.color, false);
         }
     }
 }

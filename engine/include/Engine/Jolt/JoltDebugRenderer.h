@@ -38,7 +38,8 @@ public:
 
 private:
     struct Line { Vec3 from, to; Vec4 color; };
-    struct PerThreadBuffer { std::vector<Line> lines; };
+    struct Triangle { Vec3 v0, v1, v2; Vec4 color; };
+    struct PerThreadBuffer { std::vector<Line> lines; std::vector<Triangle> triangles; };
     static Vec4 ToVec4(JPH::ColorArg color);
     static Vec3 ToVec3(JPH::Vec3Arg v);
     static Vec3 ToVec3FromRVec(JPH::RVec3Arg v);

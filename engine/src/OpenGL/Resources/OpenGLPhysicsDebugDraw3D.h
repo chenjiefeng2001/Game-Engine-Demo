@@ -34,7 +34,9 @@ public:
 
 private:
     struct LineVertex { Vec3 pos; Vec4 color; };
+    struct TriangleVertex { Vec3 pos; Vec4 color; };
     void SubmitLines();
+    void SubmitTriangles();
 
     GladGLContext& m_GL;
 
@@ -45,6 +47,7 @@ private:
     float32 m_ViewProj[16];
 
     std::vector<LineVertex> m_Lines;
+    std::vector<TriangleVertex> m_Triangles;
 };
 
 } // namespace Engine

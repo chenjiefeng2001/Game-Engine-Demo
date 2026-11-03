@@ -53,6 +53,7 @@ OpenGLPhysicsDebugDraw3D::OpenGLPhysicsDebugDraw3D(GladGLContext& gl)
     m_GL.GenVertexArrays(1, &m_VAO);
     m_GL.GenBuffers(1, &m_VBO);
     m_Lines.reserve(4096);
+    m_Triangles.reserve(4096);
 }
 
 OpenGLPhysicsDebugDraw3D::~OpenGLPhysicsDebugDraw3D() {
@@ -63,6 +64,7 @@ OpenGLPhysicsDebugDraw3D::~OpenGLPhysicsDebugDraw3D() {
 
 void OpenGLPhysicsDebugDraw3D::Clear() {
     m_Lines.clear();
+    m_Triangles.clear();
 }
 
 void OpenGLPhysicsDebugDraw3D::SubmitLines() {
@@ -86,6 +88,29 @@ void OpenGLPhysicsDebugDraw3D::SubmitLines() {
     m_GL.UseProgram(0);
 }
 
+void OpenGLPhysicsDebugDraw3D::SubmitTriangles() {
+    if (m_Triangles.empty()) return;
+    m_GL.UseProgram(m_ShaderID);
+    m_GL.UniformMatrix4fv(m_UniformVP, 1, GL_FALSE, m_ViewProj);
+
+    m_GL.BindVertexArray(m_VAO);
+    m_GL.BindBuffer(GL_ARRAY_BUFFER, m_VBO);
+    m_GL.BufferData(GL_ARRAY_BUFFER, m_Triangles.size() * sizeof(TriangleVertex), m_Triangles.data(), GL_DYNAMIC_DRAW);
+
+    m_GL.EnableVertexAttribArray(0);
+    m_GL.VertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, sizeof(TriangleVertex), (void*)offsetof(TriangleVertex, pos));
+    m_GL.EnableVertexAttribArray(1);
+    m_GL.VertexAttribPointer(1, 4, GL_FLOAT, GL_FALSE, sizeof(TriangleVertex), (void*)offsetof(TriangleVertex, color));
+
+    m_GL.Enable(GL_BLEND);
+    m_GL.BlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+    m_GL.Enable(GL_DEPTH_TEST);
+    m_GL.DepthFunc(GL_LESS);
+    m_GL.DrawArrays(GL_TRIANGLES, 0, (GLsizei)m_Triangles.size());
+    m_GL.BindVertexArray(0);
+    m_GL.UseProgram(0);
+}
+
 void OpenGLPhysicsDebugDraw3D::DrawLine(const Vec3& from, const Vec3& to, const Vec4& color) {
     m_Lines.push_back({from, color});
     m_Lines.push_back({to, color});
@@ -96,6 +121,11 @@ void OpenGLPhysicsDebugDraw3D::DrawTriangle(const Vec3& v0, const Vec3& v1, cons
         DrawLine(v0, v1, color);
         DrawLine(v1, v2, color);
         DrawLine(v2, v0, color);
+    } else {
+        // Solid fill: store the 3 triangle vertices for GL_TRIANGLES submission.
+        m_Triangles.push_back({v0, color});
+        m_Triangles.push_back({v1, color});
+        m_Triangles.push_back({v2, color});
     }
 }
 
@@ -197,6 +227,7 @@ void OpenGLPhysicsDebugDraw3D::DrawAxes(const Mat4& transform, float length) {
 
 void OpenGLPhysicsDebugDraw3D::Flush() {
     SubmitLines();
+    SubmitTriangles();
 }
 
 } // namespace Engine
