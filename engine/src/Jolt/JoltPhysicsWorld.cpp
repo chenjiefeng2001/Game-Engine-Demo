@@ -594,13 +594,25 @@ void JoltPhysicsWorld::DebugDraw() {
     m_DebugRenderer->Clear();
     m_DebugRenderer->SetCameraPos(m_DebugCameraPos);
 
-    JPH::BodyManager::DrawSettings drawSettings;
-    drawSettings.mDrawShape = true;
-    drawSettings.mDrawShapeWireframe = true;
-    drawSettings.mDrawBoundingBox = true;
-    drawSettings.mDrawCenterOfMassTransform = true;
-
-    m_PhysicsSystem.DrawBodies(drawSettings, m_DebugRenderer.get());
+    // Wireframe edges: preserve existing collider wireframe behavior.
+    {
+        JPH::BodyManager::DrawSettings wireSettings;
+        wireSettings.mDrawShape = true;
+        wireSettings.mDrawShapeWireframe = true;
+        wireSettings.mDrawBoundingBox = true;
+        wireSettings.mDrawCenterOfMassTransform = true;
+        m_PhysicsSystem.DrawBodies(wireSettings, m_DebugRenderer.get());
+    }
+    // Solid fill: enable Jolt to invoke DrawTriangle (solid faces).
+    // Dual call ensures both wireframe edges and solid fill are rendered.
+    {
+        JPH::BodyManager::DrawSettings solidSettings;
+        solidSettings.mDrawShape = true;
+        solidSettings.mDrawShapeWireframe = false;
+        solidSettings.mDrawBoundingBox = false;
+        solidSettings.mDrawCenterOfMassTransform = false;
+        m_PhysicsSystem.DrawBodies(solidSettings, m_DebugRenderer.get());
+    }
     m_DebugRenderer->Flush();
 #else
     m_DebugDraw->Clear();
