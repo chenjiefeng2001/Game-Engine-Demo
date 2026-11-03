@@ -2,6 +2,7 @@
 
 #include "Engine/Core/Physics/IPhysicsDebugDraw3D.h"
 #include <glad/gl.h>
+#include <cstring>
 #include <vector>
 
 namespace Engine {
