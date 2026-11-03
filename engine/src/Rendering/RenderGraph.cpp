@@ -10,6 +10,7 @@
 #include "Engine/Core/Log.h"
 #include <sstream>
 #include <queue>
+#include <functional>
 #include <algorithm>
 #include <cstring>
 #include <thread>
@@ -82,6 +83,26 @@ namespace Engine { namespace Rendering {
 
     void RenderPassBuilder::ReadTexture(StringID name) { m_Pass.reads.push_back(name); }
     void RenderPassBuilder::WriteTexture(StringID name) { m_Pass.writes.push_back(name); }
+    void RenderPassBuilder::ImportTexture(StringID name, ::Engine::RHI::IRHITexture* texture,
+                                          uintptr_t renderTargetFbo) {
+        m_Pass.reads.push_back(name);
+        RGResource res;
+        res.name = name;
+        res.type = RGResource::Texture;
+        res.rhiTexture = texture;
+        res.isTransient = false;
+        res.renderTargetFbo = renderTargetFbo;
+        m_Resources[name.Value()] = res;
+    }
+    void RenderPassBuilder::ImportBuffer(StringID name, ::Engine::RHI::IRHIBuffer* buffer) {
+        m_Pass.reads.push_back(name);
+        RGResource res;
+        res.name = name;
+        res.type = RGResource::Buffer;
+        res.rhiBuffer = buffer;
+        res.isTransient = false;
+        m_Resources[name.Value()] = res;
+    }
 
     void RenderPassBuilder::ReadIndirectArgs(StringID name) {
         // 注册为 reads + indirectReads，确保 Barrier 生成时识别
@@ -99,6 +120,8 @@ namespace Engine { namespace Rendering {
     void RenderGraph::AddPass(const std::string& name,
         std::function<void(RenderPassBuilder&)> setup,
         std::function<void(RHI::IRHICommandList&)> execute) {
+        m_Compiled = false;
+        m_ExecutionOrder.clear();
         RenderPass pass;
         pass.name = name;
         pass.execute = std::move(execute);
@@ -116,6 +139,8 @@ namespace Engine { namespace Rendering {
                            const RHI::RenderPacket&)> drawPacket,
         uint32_t numSlices)
     {
+        m_Compiled = false;
+        m_ExecutionOrder.clear();
         RenderPass pass;
         pass.name = name;
         pass.passType = Type_Scene;
@@ -131,27 +156,60 @@ namespace Engine { namespace Rendering {
     // ── 编译步骤 ──
 
     void RenderGraph::DeriveDependencies() {
-        std::unordered_map<uint64_t, uint32_t> lastWriter;
+        std::unordered_map<uint64_t, std::vector<uint32_t>> writers;
+        std::unordered_map<uint64_t, std::vector<uint32_t>> readers;
         for (uint32_t passIdx = 0; passIdx < m_Passes.size(); ++passIdx) {
-            auto& pass = m_Passes[passIdx];
-            for (auto& readName : pass.reads) {
-                auto it = lastWriter.find(readName.Value());
-                if (it != lastWriter.end() && it->second != passIdx) {
-                    if (std::find(pass.dependencies.begin(), pass.dependencies.end(), it->second)
-                        == pass.dependencies.end()) {
-                        pass.dependencies.push_back(it->second);
-                    }
+            for (auto& readName : m_Passes[passIdx].reads) {
+                auto& vec = readers[readName.Value()];
+                if (std::find(vec.begin(), vec.end(), passIdx) == vec.end()) vec.push_back(passIdx);
+            }
+            for (auto& writeName : m_Passes[passIdx].writes) {
+                auto& vec = writers[writeName.Value()];
+                if (std::find(vec.begin(), vec.end(), passIdx) == vec.end()) vec.push_back(passIdx);
+            }
+        }
+        auto isReader = [&](uint64_t res, uint32_t p) {
+            auto it = readers.find(res);
+            return it != readers.end() && std::find(it->second.begin(), it->second.end(), p) != it->second.end();
+        };
+        auto isWriter = [&](uint64_t res, uint32_t p) {
+            auto it = writers.find(res);
+            return it != writers.end() && std::find(it->second.begin(), it->second.end(), p) != it->second.end();
+        };
+        auto addDep = [&](uint32_t from, uint32_t to) {
+            if (from == to) return;
+            auto& deps = m_Passes[from].dependencies;
+            if (std::find(deps.begin(), deps.end(), to) == deps.end()) deps.push_back(to);
+        };
+        for (uint64_t res : [&](){ std::vector<uint64_t> v; for (auto& kv : writers) v.push_back(kv.first); for (auto& kv : readers) if (std::find(v.begin(),v.end(),kv.first)==v.end()) v.push_back(kv.first); return v; }()) {
+            auto wit = writers.find(res);
+            auto rit = readers.find(res);
+            std::vector<uint32_t> wlist = (wit != writers.end()) ? wit->second : std::vector<uint32_t>{};
+            std::vector<uint32_t> rlist = (rit != readers.end()) ? rit->second : std::vector<uint32_t>{};
+            for (uint32_t r : rlist) {
+                if (isWriter(res, r)) continue;
+                for (uint32_t w : wlist) {
+                    if (w < r) addDep(r, w);
                 }
             }
-            for (auto& writeName : pass.writes) {
-                auto it = lastWriter.find(writeName.Value());
-                if (it != lastWriter.end() && it->second != passIdx) {
-                    if (std::find(pass.dependencies.begin(), pass.dependencies.end(), it->second)
-                        == pass.dependencies.end()) {
-                        pass.dependencies.push_back(it->second);
-                    }
+            for (uint32_t r : rlist) {
+                if (!isWriter(res, r)) continue;
+                for (uint32_t w : wlist) {
+                    if (w > r) addDep(r, w);
                 }
-                lastWriter[writeName.Value()] = passIdx;
+            }
+            for (uint32_t w : wlist) {
+                if (isReader(res, w)) continue;
+                for (uint32_t w2 : wlist) {
+                    if (w2 < w && !isReader(res, w2)) addDep(w, w2);
+                }
+            }
+            for (uint32_t w : wlist) {
+                if (isReader(res, w)) continue;
+                for (uint32_t r : rlist) {
+                    if (isWriter(res, r)) continue;
+                    if (r < w) addDep(w, r);
+                }
             }
         }
     }
@@ -161,12 +219,12 @@ namespace Engine { namespace Rendering {
         std::vector<uint32_t> remainingDeps(passCount, 0);
         for (uint32_t i = 0; i < passCount; ++i)
             remainingDeps[i] = static_cast<uint32_t>(m_Passes[i].dependencies.size());
-        std::queue<uint32_t> q;
+        std::priority_queue<uint32_t, std::vector<uint32_t>, std::greater<uint32_t>> q;
         for (uint32_t i = 0; i < passCount; ++i)
             if (remainingDeps[i] == 0) { q.push(i); m_Passes[i].layer = 0; }
         uint32_t visitCount = 0;
         while (!q.empty()) {
-            uint32_t u = q.front(); q.pop();
+            uint32_t u = q.top(); q.pop();
             m_Passes[u].topologicalOrder = visitCount++;
             for (uint32_t v = 0; v < passCount; ++v) {
                 for (uint32_t dep : m_Passes[v].dependencies) {
@@ -237,12 +295,14 @@ namespace Engine { namespace Rendering {
     void RenderGraph::GenerateBarriers() {
         m_Barriers.clear();
         if (m_Passes.empty()) return;
-        for (auto& [key, res] : m_Resources) {
-            (void)key;
+        for (const auto& kv : m_Resources) {
+            (void)kv.first;
+            auto& res = const_cast<RGResource&>(kv.second);
             res.currentState = res.initialState;
         }
-        for (auto& [key, res] : m_Resources) {
-            (void)key;
+        for (const auto& kv : m_Resources) {
+            (void)kv.first;
+            auto& res = const_cast<RGResource&>(kv.second);
             if (res.firstUse == UINT32_MAX) continue;
             RHI::ResourceState previousState = res.initialState;
             for (uint32_t passIdx = res.firstUse; passIdx <= res.lastUse; ++passIdx) {
@@ -250,14 +310,14 @@ namespace Engine { namespace Rendering {
                 auto& pass = m_Passes[passIdx];
                 RHI::ResourceState requiredState = DeriveRequiredState(pass, res);
                 if (requiredState != previousState &&
-                    previousState != RHI::ResourceState::Undefined) {
+                    previousState != RHI::ResourceState::Undefined &&
+                    ((res.type == RGResource::Buffer && (res.rhiBuffer != nullptr || !res.isTransient)) ||
+                     (res.type == RGResource::Texture && (res.rhiTexture != nullptr || !res.isTransient)))) {
                     Barrier barrier;
                     barrier.passIndex = passIdx;
                     barrier.desc.type = RHI::ResourceBarrierDesc::Type::Transition;
-                    barrier.desc.buffer = (res.type == RGResource::Buffer) ?
-                        reinterpret_cast<RHI::IRHIBuffer*>(static_cast<uintptr_t>(res.name.Value())) : nullptr;
-                    barrier.desc.texture = (res.type == RGResource::Texture) ?
-                        reinterpret_cast<RHI::IRHITexture*>(static_cast<uintptr_t>(res.name.Value())) : nullptr;
+                    barrier.desc.buffer = (res.type == RGResource::Buffer) ? res.rhiBuffer : nullptr;
+                    barrier.desc.texture = (res.type == RGResource::Texture) ? res.rhiTexture : nullptr;
                     barrier.desc.stateBefore = previousState;
                     barrier.desc.stateAfter = requiredState;
                     m_Barriers.push_back(barrier);
@@ -275,8 +335,9 @@ namespace Engine { namespace Rendering {
             p.topologicalOrder = UINT32_MAX;
             p.layer = 0;
         }
-        for (auto& [key, res] : m_Resources) {
-            (void)key;
+        for (const auto& kv : m_Resources) {
+            (void)kv.first;
+            auto& res = const_cast<RGResource&>(kv.second);
             res.firstUse = UINT32_MAX; res.lastUse = 0;
             res.currentState = res.initialState;
             res.transientIndex = -1;
@@ -288,8 +349,9 @@ namespace Engine { namespace Rendering {
         }
         ComputeResourceLifetimes();
         transientHeap.Reset();
-        for (auto& [key, res] : m_Resources) {
-            (void)key;
+        for (const auto& kv : m_Resources) {
+            (void)kv.first;
+            auto& res = const_cast<RGResource&>(kv.second);
             if (res.isTransient && res.firstUse != UINT32_MAX) {
                 TransientAllocRequest req;
                 req.size = res.width * res.height * RHI::FormatSize(res.format);
@@ -307,7 +369,23 @@ namespace Engine { namespace Rendering {
             s_Log.Error("RenderGraph::Compile: transient heap allocation failed");
             return false;
         }
+        for (const auto& kv : m_Resources) {
+            (void)kv.first;
+            auto& res = const_cast<RGResource&>(kv.second);
+            if (res.isTransient && res.transientIndex != -1 &&
+                res.transientIndex < transientHeap.GetRequestCount()) {
+                auto alloc = transientHeap.GetAllocation(res.transientIndex);
+                if (alloc.valid && res.type == RGResource::Buffer) res.rhiBuffer = alloc.buffer;
+            }
+        }
         GenerateBarriers();
+        m_ExecutionOrder.clear();
+        for (uint32_t i = 0; i < m_Passes.size(); ++i) {
+            for (uint32_t j = 0; j < m_Passes.size(); ++j) {
+                if (m_Passes[j].topologicalOrder == i) { m_ExecutionOrder.push_back(j); break; }
+            }
+        }
+        m_CompileCount++;
         m_Compiled = true;
         return true;
     }
@@ -332,25 +410,34 @@ namespace Engine { namespace Rendering {
 
     // ── Execute 单线程 ──
 
-    void RenderGraph::Execute(RHI::IRHIDevice& device,
+    bool RenderGraph::Execute(RHI::IRHIDevice& device,
                                RHI::IRHICommandQueue& queue)
     {
-        if (!m_Compiled) { s_Log.Error("RenderGraph::Execute: not compiled"); return; }
+        if (!m_Compiled) { s_Log.Error("RenderGraph::Execute: not compiled"); return false; }
 
         auto cmdList = device.CreateCommandList(RHI::CommandListType::Direct);
-        if (!cmdList) { s_Log.Error("RenderGraph::Execute: failed to create command list"); return; }
+        if (!cmdList) { s_Log.Error("RenderGraph::Execute: failed to create command list"); return false; }
 
         auto* profiler = g_GpuTimestampProfiler;
         const bool profile = profiler && profiler->IsAvailable();
         if (profile) profiler->BeginFrame();
 
         cmdList->Begin();
-        for (uint32_t passIdx = 0; passIdx < m_Passes.size(); ++passIdx) {
+        for (size_t __i = 0; __i < (m_ExecutionOrder.empty() ? m_Passes.size() : m_ExecutionOrder.size()); ++__i) {
+            const uint32_t passIdx = m_ExecutionOrder.empty() ? static_cast<uint32_t>(__i) : m_ExecutionOrder[__i];
             auto& pass = m_Passes[passIdx];
             for (const auto& barrier : m_Barriers)
                 if (barrier.passIndex == passIdx)
                     cmdList->ResourceBarrier(1, &barrier.desc);
             InjectViewportAndScissor(*cmdList, pass);
+
+            for (auto& writeName : pass.writes) {
+                auto it = m_Resources.find(writeName.Value());
+                if (it != m_Resources.end() && it->second.renderTargetFbo != 0) {
+                    cmdList->BindNativeFramebuffer(it->second.renderTargetFbo);
+                    break;
+                }
+            }
 
             const uint32_t segment = profile
                 ? profiler->BeginSegment(*cmdList,
@@ -370,17 +457,16 @@ namespace Engine { namespace Rendering {
 
         RHI::IRHICommandList* submitLists[] = { cmdList.get() };
         queue.ExecuteCommandLists(1, submitLists);
-        s_Log.Info("RenderGraph::Execute: {} passes, {} barriers",
-                   m_Passes.size(), m_Barriers.size());
+        return true;
     }
 
     // ── ExecuteParallel 多线程 ──
 
-    void RenderGraph::ExecuteParallel(RHI::IRHIDevice& device,
+    bool RenderGraph::ExecuteParallel(RHI::IRHIDevice& device,
                                        RHI::IRHICommandQueue& queue,
                                        JobSystem& js)
     {
-        if (!m_Compiled) { s_Log.Error("RenderGraph::ExecuteParallel: not compiled"); return; }
+        if (!m_Compiled) { s_Log.Error("RenderGraph::ExecuteParallel: not compiled"); return false; }
 
         bool hasScenePass = false;
         for (auto& p : m_Passes)
@@ -399,7 +485,8 @@ namespace Engine { namespace Rendering {
                 layerCmdLists[layer] = device.CreateCommandList(RHI::CommandListType::Direct);
                 if (layerCmdLists[layer]) layerCmdLists[layer]->Begin();
             }
-            for (uint32_t passIdx = 0; passIdx < m_Passes.size(); ++passIdx) {
+            for (size_t __i = 0; __i < (m_ExecutionOrder.empty() ? m_Passes.size() : m_ExecutionOrder.size()); ++__i) {
+                const uint32_t passIdx = m_ExecutionOrder.empty() ? static_cast<uint32_t>(__i) : m_ExecutionOrder[__i];
                 const auto& p = m_Passes[passIdx];
                 for (const auto& barrier : m_Barriers)
                     if (barrier.passIndex == passIdx && layerCmdLists[p.layer])
@@ -408,6 +495,13 @@ namespace Engine { namespace Rendering {
                     ? profiler->BeginSegment(*layerCmdLists[p.layer],
                           p.name.empty() ? "pass" : p.name.c_str())
                     : UINT32_MAX;
+                for (auto& writeName : p.writes) {
+                    auto it = m_Resources.find(writeName.Value());
+                    if (it != m_Resources.end() && it->second.renderTargetFbo != 0) {
+                        layerCmdLists[p.layer]->BindNativeFramebuffer(it->second.renderTargetFbo);
+                        break;
+                    }
+                }
                 if (p.execute && layerCmdLists[p.layer])
                     p.execute(*layerCmdLists[p.layer]);
                 if (profile && segment != UINT32_MAX && layerCmdLists[p.layer])
@@ -421,7 +515,7 @@ namespace Engine { namespace Rendering {
                     queue.ExecuteCommandLists(1, submitLists);
                 }
             }
-            return;
+            return true;
         }
 
         // ScenePass 多线程分片录制
@@ -493,9 +587,7 @@ namespace Engine { namespace Rendering {
             RHI::IRHICommandList* list = slice.cmdList.get();
             queue.ExecuteCommandLists(1, &list);
         }
-
-        s_Log.Info("RenderGraph::ExecuteParallel: {} passes, {} slices",
-                   m_Passes.size(), slices.size());
+        return true;
     }
 
     // ── DumpGraph ──
@@ -512,8 +604,9 @@ namespace Engine { namespace Rendering {
         for (uint32_t i = 0; i < m_Passes.size(); ++i)
             for (uint32_t dep : m_Passes[i].dependencies)
                 oss << "  N" << dep << " -> N" << i << ";\n";
-        for (const auto& [key, res] : m_Resources) {
-            (void)key;
+        for (const auto& kv : m_Resources) {
+            (void)kv.first;
+            const auto& res = kv.second;
             oss << "  R_" << res.name.Value()
                 << " [shape=box,label=\"Resource(" << res.name.Value()
                 << ")\\n(Life: " << res.firstUse << "-" << res.lastUse

@@ -131,6 +131,14 @@ namespace RHI {
         /** 关闭渲染作用域。与 BeginRendering 成对。 */
         virtual void EndRendering() {}
 
+        /**
+         * @brief 绑定原生帧缓冲（后端特定句柄，OpenGL 为 GLuint FBO）
+         *
+         * 默认空操作：仅 OpenGL 等即时模式后端覆盖，用于在 RenderGraph
+         * 执行 Pass 前绑定目标 FBO，确保绘制命令进入正确的离屏缓冲。
+         */
+        virtual void BindNativeFramebuffer(uintptr_t /*nativeHandle*/) {}
+
         // ── 管线状态 ──
 
         /**

@@ -46,6 +46,11 @@ namespace Engine { namespace Rendering {
 
         // 瞬态分配索引（-1 = 外部资源）
         int32_t   transientIndex = -1;
+        ::Engine::RHI::IRHIBuffer*  rhiBuffer  = nullptr;
+        ::Engine::RHI::IRHITexture* rhiTexture = nullptr;
+
+        // 所属原生帧缓冲句柄（0 = 无绑定，由调用方通过 ImportTexture 指定）
+        uintptr_t renderTargetFbo = 0;
 
         // 是否为帧内瞬态资源
         bool      isTransient = false;
@@ -123,6 +128,13 @@ namespace Engine { namespace Rendering {
                           bool isTransient = true);
         void ReadTexture(StringID name);
         void WriteTexture(StringID name);
+        void ReadWriteTexture(StringID name);
+        void ReadBuffer(StringID name);
+        void WriteBuffer(StringID name);
+        void ReadWriteBuffer(StringID name);
+        void ImportTexture(StringID name, ::Engine::RHI::IRHITexture* texture,
+                           uintptr_t renderTargetFbo = 0);
+        void ImportBuffer(StringID name, ::Engine::RHI::IRHIBuffer* buffer);
         void ReadIndirectArgs(StringID name);
         void SetViewport(float x, float y, float w, float h);
         RenderPass& GetPass() noexcept { return m_Pass; }
@@ -174,19 +186,29 @@ namespace Engine { namespace Rendering {
             m_Passes.clear();
             m_Resources.clear();
             m_Barriers.clear();
+            m_ExecutionOrder.clear();
         }
 
         /** @brief 是否已编译 */
         bool IsCompiled() const noexcept { return m_Compiled; }
+        const std::vector<uint32_t>& GetExecutionOrder() const noexcept { return m_ExecutionOrder; }
+        const std::vector<Barrier>& GetBarriers() const noexcept { return m_Barriers; }
+        bool TryGetResource(StringID name, RGResource& out) const noexcept {
+            auto it = m_Resources.find(name.Value());
+            if (it == m_Resources.end()) return false;
+            out = it->second;
+            return true;
+        }
+        uint32_t GetCompileCount() const noexcept { return m_CompileCount; }
 
         // ── 执行 ──
 
         /** @brief 单线程执行 */
-        void Execute(::Engine::RHI::IRHIDevice& device,
+        bool Execute(::Engine::RHI::IRHIDevice& device,
                      ::Engine::RHI::IRHICommandQueue& queue);
 
         /** @brief 多线程并行执行（使用 JobSystem） */
-        void ExecuteParallel(::Engine::RHI::IRHIDevice& device,
+        bool ExecuteParallel(::Engine::RHI::IRHIDevice& device,
                              ::Engine::RHI::IRHICommandQueue& queue,
                              JobSystem& js);
 
@@ -214,6 +236,8 @@ namespace Engine { namespace Rendering {
         std::vector<RenderPass> m_Passes;
         std::unordered_map<uint64_t, RGResource> m_Resources;
         std::vector<Barrier> m_Barriers;
+        std::vector<uint32_t> m_ExecutionOrder;
+        uint32_t m_CompileCount = 0;
     };
 
 }} // namespace Engine::Rendering

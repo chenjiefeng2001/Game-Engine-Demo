@@ -76,11 +76,13 @@ void GL46CommandList::Begin() {
 }
 
 void GL46CommandList::End() {
-    if (m_GL) m_GL->MemoryBarrier(GL_ALL_BARRIER_BITS);
+    if (m_GL) {
+        m_GL->MemoryBarrier(GL_ALL_BARRIER_BITS);
+        m_GL->BindFramebuffer(GL_FRAMEBUFFER, 0);
+    }
     m_Impl->isRecording = false;
     m_Impl->pendingUniforms.clear();
 }
-
 void GL46CommandList::Reset() {
     m_Impl->currentComputePSO = nullptr;
     for (auto& s : m_Impl->ssbo) s = {};
@@ -108,6 +110,12 @@ void GL46CommandList::Draw(uint32, uint32) {}
 void GL46CommandList::DrawIndexedIndirect(IRHIBuffer*, uint32) {}
 void GL46CommandList::SetViewport(const Viewport&) {}
 void GL46CommandList::SetScissorRect(const Rect&) {}
+
+void GL46CommandList::BindNativeFramebuffer(uintptr_t nativeHandle) {
+    if (m_GL) {
+        m_GL->BindFramebuffer(GL_FRAMEBUFFER, static_cast<GLuint>(nativeHandle));
+    }
+}
 
 void GL46CommandList::ResourceBarrier(uint32 count, const ResourceBarrierDesc* barriers) {
     if (!m_Impl->isRecording || !m_GL) return;

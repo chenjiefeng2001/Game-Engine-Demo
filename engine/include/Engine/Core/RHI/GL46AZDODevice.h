@@ -154,6 +154,7 @@ namespace RHI {
         void SetViewport(const Viewport& vp) override;
         void SetScissorRect(const Rect& rect) override;
         void ResourceBarrier(uint32 count, const ResourceBarrierDesc* barriers) override;
+        void BindNativeFramebuffer(uintptr_t nativeHandle) override;
         void SetConstantBuffer(uint32 set, uint32 binding, IRHIBuffer* buffer, uint64_t offset, uint64_t size) override;
         void SetShaderResource(uint32 set, uint32 binding, IRHITexture* texture) override;
         void Dispatch(uint32_t groupX, uint32_t groupY, uint32_t groupZ) override;

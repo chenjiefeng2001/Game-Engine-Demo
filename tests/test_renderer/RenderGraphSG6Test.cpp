@@ -70,6 +70,8 @@ namespace {
             gl.DeleteShader(cs); return 0; }
         GLuint prog = gl.CreateProgram();
         gl.AttachShader(prog, cs); gl.LinkProgram(prog);
+    { GLint _ls=0; gl.GetProgramiv(prog,GL_LINK_STATUS,&_ls); std::printf("linkStatus=%d\\n", _ls); }
+    std::printf("linked\n");
         GLint lok = 0; gl.GetProgramiv(prog, GL_LINK_STATUS, &lok);
         gl.DeleteShader(cs);
         return lok ? prog : 0;
@@ -137,7 +139,6 @@ TEST_F(RenderGraphSG6, SG6_Core_OutOfOrderDeclarationAndDataChain) {
     gl.NamedBufferSubData(static_cast<GL46Buffer*>(outBuf.get())->GetGLHandle(),
                           0, kElems * sizeof(float), zeros.data());
 
-    // ── 构图：故意【消费方在前】──
     Rendering::RenderGraph graph;
     TransientHeap heap;
     heap.Initialize(*m_Device);
@@ -195,6 +196,7 @@ TEST_F(RenderGraphSG6, SG6_Core_OutOfOrderDeclarationAndDataChain) {
     auto* queue = m_Device->GetQueue(QueueType::Graphics);
     ASSERT_NE(queue, nullptr);
     graph.Execute(*m_Device, *queue);
+    std::printf("beforeWaitIdle\n");
     m_Device->WaitIdle();
 
     // ── 回读判定 ──
@@ -209,6 +211,8 @@ TEST_F(RenderGraphSG6, SG6_Core_OutOfOrderDeclarationAndDataChain) {
     std::printf("    [Q2] out-of-order declaration → data chain %s\n",
                 chainOK ? "CORRECT" : "BROKEN");
 
+
+    EXPECT_TRUE(chainOK);
     // ── DumpGraph ──
     const std::string dot = graph.DumpGraph();
     std::printf("    [DBG] DOT length=%zu contains P1=%d P2=%d P3=%d\n",
@@ -294,6 +298,7 @@ TEST_F(RenderGraphSG6, SG6_InOrderDeclaration_CorrectChain) {
 
     auto* queue = m_Device->GetQueue(QueueType::Graphics);
     graph.Execute(*m_Device, *queue);
+    std::printf("beforeWaitIdle\n");
     m_Device->WaitIdle();
 
     std::vector<float> result(kElems, 0.f);
@@ -357,4 +362,239 @@ TEST_F(RenderGraphSG6, SG5_PerfOverhead_Measured) {
 
     std::printf("    [Q5] direct=%.3f ms total | rendergraph=%.3f ms total | overhead=%.2fx (%.3f ms/iter)\n",
                 baseMs, rgMs, rgMs / baseMs, (rgMs - baseMs) / kIters);
+}
+
+TEST_F(RenderGraphSG6, P4E3_OffscreenClearPilot) {
+    if (!g_ctx.window) GTEST_SKIP();
+    auto& gl = m_Device->GetGL();
+    // Create offscreen color texture + FBO
+    GLuint tex = 0, fbo = 0;
+    gl.GenTextures(1, &tex);
+    gl.BindTexture(GL_TEXTURE_2D, tex);
+    gl.TexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, 8, 8, 0, GL_RGBA, GL_UNSIGNED_BYTE, nullptr);
+    gl.GenFramebuffers(1, &fbo);
+    gl.BindFramebuffer(GL_FRAMEBUFFER, fbo);
+    gl.FramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, tex, 0);
+    ASSERT_EQ(gl.CheckFramebufferStatus(GL_FRAMEBUFFER), GL_FRAMEBUFFER_COMPLETE);
+    gl.BindFramebuffer(GL_FRAMEBUFFER, 0);
+
+    RHI::IRHITexture* imported = nullptr; // placeholder: no IRHITexture wrapper in this pilot
+    Rendering::RenderGraph graph;
+    TransientHeap heap; heap.Initialize(*m_Device);
+    StringID sColor = StringID::Runtime("pilot.Color");
+    graph.AddPass("Clear", [&](RenderPassBuilder& b){ b.ImportTexture(sColor, imported); b.WriteTexture(sColor); },
+        [&](IRHICommandList&){ gl.BindFramebuffer(GL_FRAMEBUFFER, fbo); gl.ClearColor(0.25f,0.5f,0.75f,1.0f); gl.Clear(GL_COLOR_BUFFER_BIT); gl.BindFramebuffer(GL_FRAMEBUFFER, 0); });
+    // imported handle is null
+    ASSERT_TRUE(graph.Compile(heap));
+    auto* q = m_Device->GetQueue(QueueType::Graphics);
+    EXPECT_TRUE(graph.Execute(*m_Device, *q));
+    m_Device->WaitIdle();
+
+    // Read back
+    gl.BindFramebuffer(GL_FRAMEBUFFER, fbo);
+    std::vector<unsigned char> pixels(8*8*4);
+    gl.ReadPixels(0,0,8,8,GL_RGBA,GL_UNSIGNED_BYTE,pixels.data());
+    gl.BindFramebuffer(GL_FRAMEBUFFER,0);
+    EXPECT_GT(pixels[0], 50);
+    gl.DeleteFramebuffers(1,&fbo);
+    gl.DeleteTextures(1,&tex);
+}
+TEST_F(RenderGraphSG6, P4E3M2D_Diagnostic) {
+    if (!g_ctx.window) GTEST_SKIP();
+    auto& gl = m_Device->GetGL();
+    GLuint tex=0,fbo=0; gl.GenTextures(1,&tex); gl.BindTexture(GL_TEXTURE_2D,tex);
+    gl.TexImage2D(GL_TEXTURE_2D,0,GL_RGBA8,8,8,0,GL_RGBA,GL_UNSIGNED_BYTE,nullptr);
+    gl.GenFramebuffers(1,&fbo); gl.BindFramebuffer(GL_FRAMEBUFFER,fbo);
+    gl.FramebufferTexture2D(GL_FRAMEBUFFER,GL_COLOR_ATTACHMENT0,GL_TEXTURE_2D,tex,0);
+    ASSERT_EQ(gl.CheckFramebufferStatus(GL_FRAMEBUFFER),GL_FRAMEBUFFER_COMPLETE);
+    gl.BindFramebuffer(GL_FRAMEBUFFER,0);
+
+    const char* vs="#version 460 core\nlayout(location=0) in vec2 p; void main(){ gl_Position=vec4(p,0,1); }";
+    const char* fs="#version 460 core\nout vec4 c; void main(){ c=vec4(1,0,0,1); }";
+    auto comp=[&](GLenum t,const char* s){ GLuint sh=gl.CreateShader(t); gl.ShaderSource(sh,1,&s,nullptr); gl.CompileShader(sh); return sh; };
+    GLuint v=comp(GL_VERTEX_SHADER,vs), f=comp(GL_FRAGMENT_SHADER,fs);
+    GLuint prog=gl.CreateProgram(); gl.AttachShader(prog,v); gl.AttachShader(prog,f); gl.LinkProgram(prog);
+    gl.DeleteShader(v); gl.DeleteShader(f);
+
+    float tri[] = {-1.0f,-1.0f, 3.0f,-1.0f, -1.0f,3.0f};
+    GLuint vao=0,vbo=0; gl.GenVertexArrays(1,&vao); gl.GenBuffers(1,&vbo);
+    gl.BindVertexArray(vao); gl.BindBuffer(GL_ARRAY_BUFFER,vbo);
+    gl.BufferData(GL_ARRAY_BUFFER,sizeof(tri),tri,GL_STATIC_DRAW);
+    gl.EnableVertexAttribArray(0); gl.VertexAttribPointer(0,2,GL_FLOAT,GL_FALSE,0,nullptr);
+    gl.BindVertexArray(0);
+
+    Rendering::RenderGraph graph;
+    TransientHeap heap; heap.Initialize(*m_Device);
+    StringID sColor = StringID::Runtime("diag.Color");
+    graph.AddPass("Draw", [&](RenderPassBuilder& b){ b.ImportTexture(sColor,nullptr); b.WriteTexture(sColor); },
+        [&](IRHICommandList&){
+            gl.BindFramebuffer(GL_FRAMEBUFFER, fbo);
+            gl.Viewport(0,0,8,8);
+            gl.ClearColor(0,0,0,1); gl.Clear(GL_COLOR_BUFFER_BIT);
+            gl.UseProgram(prog); gl.BindVertexArray(vao); gl.DrawArrays(GL_TRIANGLES,0,3); gl.BindVertexArray(0); gl.UseProgram(0);
+            unsigned char p[4]; gl.ReadPixels(0,0,1,1,GL_RGBA,GL_UNSIGNED_BYTE,p);
+            EXPECT_EQ(p[0], 255);
+            gl.BindFramebuffer(GL_FRAMEBUFFER, 0);
+        });
+    ASSERT_TRUE(graph.Compile(heap));
+    auto* q = m_Device->GetQueue(QueueType::Graphics);
+    EXPECT_TRUE(graph.Execute(*m_Device, *q));
+    m_Device->WaitIdle();
+
+    gl.DeleteVertexArrays(1,&vao); gl.DeleteBuffers(1,&vbo);
+    gl.DeleteProgram(prog);
+    gl.DeleteFramebuffers(1,&fbo); gl.DeleteTextures(1,&tex);
+}
+
+TEST_F(RenderGraphSG6, P4E3M2_OffscreenMeshDrawPilot) {
+    if (!g_ctx.window) GTEST_SKIP();
+    auto& gl = m_Device->GetGL();
+
+    // ── 1. 创建离屏 Color Texture + Depth Renderbuffer + FBO ──
+    GLuint tex = 0, depthRb = 0, fbo = 0;
+    gl.GenTextures(1, &tex);
+    gl.BindTexture(GL_TEXTURE_2D, tex);
+    gl.TexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, 8, 8, 0, GL_RGBA, GL_UNSIGNED_BYTE, nullptr);
+    gl.GenRenderbuffers(1, &depthRb);
+    gl.BindRenderbuffer(GL_RENDERBUFFER, depthRb);
+    gl.RenderbufferStorage(GL_RENDERBUFFER, GL_DEPTH24_STENCIL8, 8, 8);
+    gl.GenFramebuffers(1, &fbo);
+    gl.BindFramebuffer(GL_FRAMEBUFFER, fbo);
+    gl.FramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, tex, 0);
+    gl.FramebufferRenderbuffer(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, GL_RENDERBUFFER, depthRb);
+    ASSERT_EQ(gl.CheckFramebufferStatus(GL_FRAMEBUFFER), GL_FRAMEBUFFER_COMPLETE);
+    gl.BindFramebuffer(GL_FRAMEBUFFER, 0);
+
+    // ── 2. 简单着色器：输出红色 ──
+    const char* vs = "#version 460 core\nlayout(location=0) in vec2 p; void main(){ gl_Position=vec4(p,0,1); }";
+    const char* fs = "#version 460 core\nout vec4 c; void main(){ c=vec4(1,0,0,1); }";
+    auto comp = [&](GLenum t, const char* s) {
+        GLuint sh = gl.CreateShader(t);
+        gl.ShaderSource(sh, 1, &s, nullptr);
+        gl.CompileShader(sh);
+        return sh;
+    };
+    GLuint v = comp(GL_VERTEX_SHADER, vs);
+    GLuint f = comp(GL_FRAGMENT_SHADER, fs);
+    GLuint prog = gl.CreateProgram();
+    gl.AttachShader(prog, v);
+    gl.AttachShader(prog, f);
+    gl.LinkProgram(prog);
+    gl.DeleteShader(v);
+    gl.DeleteShader(f);
+
+    // ── 3. 三角形顶点数据 ──
+    float tri[] = { -1.0f, -1.0f, 3.0f, -1.0f, -1.0f, 3.0f };
+    GLuint vao = 0, vbo = 0;
+    gl.GenVertexArrays(1, &vao);
+    gl.GenBuffers(1, &vbo);
+    gl.BindVertexArray(vao);
+    gl.BindBuffer(GL_ARRAY_BUFFER, vbo);
+    gl.BufferData(GL_ARRAY_BUFFER, sizeof(tri), tri, GL_STATIC_DRAW);
+    gl.EnableVertexAttribArray(0);
+    gl.VertexAttribPointer(0, 2, GL_FLOAT, GL_FALSE, 0, nullptr);
+    gl.BindVertexArray(0);
+
+    // ── 4. RenderGraph：Import 带 FBO 句柄的 Color Texture ──
+    Rendering::RenderGraph graph;
+    TransientHeap heap;
+    heap.Initialize(*m_Device);
+    StringID sColor = StringID::Runtime("pilotMesh.Color");
+    graph.AddPass("DrawMesh",
+        [&](RenderPassBuilder& b) {
+            b.ImportTexture(sColor, nullptr, static_cast<uintptr_t>(fbo));
+            b.WriteTexture(sColor);
+        },
+        [&](IRHICommandList&) {
+            // RenderGraph 已在 Pass 前绑定 FBO；此处只需清空 + 绘制
+            gl.Viewport(0, 0, 8, 8);
+            gl.ClearColor(0.0f, 0.0f, 0.0f, 1.0f);
+            gl.Clear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+            gl.UseProgram(prog);
+            gl.BindVertexArray(vao);
+            gl.DrawArrays(GL_TRIANGLES, 0, 3);
+            gl.BindVertexArray(0);
+            gl.UseProgram(0);
+            // 不手动解绑 FBO，由 GL46CommandList::End 在 Execute 后恢复为 0
+        });
+    ASSERT_TRUE(graph.Compile(heap));
+
+    // ── 5. 执行 ──
+    auto* q = m_Device->GetQueue(QueueType::Graphics);
+    EXPECT_TRUE(graph.Execute(*m_Device, *q));
+    m_Device->WaitIdle();
+
+    // ── 6. 绑定目标 FBO 并读回像素 ──
+    gl.BindFramebuffer(GL_FRAMEBUFFER, fbo);
+    unsigned char p[4];
+    gl.ReadPixels(0, 0, 1, 1, GL_RGBA, GL_UNSIGNED_BYTE, p);
+    std::printf("pilotMesh postExecute=%d %d %d\n", p[0], p[1], p[2]);
+    EXPECT_EQ(p[0], 255);
+    EXPECT_EQ(p[1], 0);
+    EXPECT_EQ(p[2], 0);
+    gl.BindFramebuffer(GL_FRAMEBUFFER, 0);
+
+    // ── 7. 验证 Execute 后 FBO 绑定已恢复为 0 ──
+    GLint boundFbo = 0;
+    gl.GetIntegerv(GL_FRAMEBUFFER_BINDING, &boundFbo);
+    EXPECT_EQ(boundFbo, 0);
+
+    // ── 8. 清理 ──
+    gl.DeleteVertexArrays(1, &vao);
+    gl.DeleteBuffers(1, &vbo);
+    gl.DeleteProgram(prog);
+    gl.DeleteFramebuffers(1, &fbo);
+    gl.DeleteRenderbuffers(1, &depthRb);
+    gl.DeleteTextures(1, &tex);
+}
+TEST_F(RenderGraphSG6, P4E3M2F_FboBindingAfterExecute) {
+    if (!g_ctx.window) GTEST_SKIP();
+    auto& gl = m_Device->GetGL();
+    GLuint tex=0,fbo=0; gl.GenTextures(1,&tex); gl.BindTexture(GL_TEXTURE_2D,tex);
+    gl.TexImage2D(GL_TEXTURE_2D,0,GL_RGBA8,8,8,0,GL_RGBA,GL_UNSIGNED_BYTE,nullptr);
+    gl.GenFramebuffers(1,&fbo); gl.BindFramebuffer(GL_FRAMEBUFFER,fbo);
+    gl.FramebufferTexture2D(GL_FRAMEBUFFER,GL_COLOR_ATTACHMENT0,GL_TEXTURE_2D,tex,0);
+    ASSERT_EQ(gl.CheckFramebufferStatus(GL_FRAMEBUFFER),GL_FRAMEBUFFER_COMPLETE);
+    gl.BindFramebuffer(GL_FRAMEBUFFER,0);
+
+    const char* vs="#version 460 core\nlayout(location=0) in vec2 p; void main(){ gl_Position=vec4(p,0,1); }";
+    const char* fs="#version 460 core\nout vec4 c; void main(){ c=vec4(1,0,0,1); }";
+    auto comp=[&](GLenum t,const char* s){ GLuint sh=gl.CreateShader(t); gl.ShaderSource(sh,1,&s,nullptr); gl.CompileShader(sh); return sh; };
+    GLuint v=comp(GL_VERTEX_SHADER,vs), f=comp(GL_FRAGMENT_SHADER,fs);
+    GLuint prog=gl.CreateProgram(); gl.AttachShader(prog,v); gl.AttachShader(prog,f); gl.LinkProgram(prog);
+    gl.DeleteShader(v); gl.DeleteShader(f);
+
+    float tri[] = {-1.0f,-1.0f, 3.0f,-1.0f, -1.0f,3.0f};
+    GLuint vao=0,vbo=0; gl.GenVertexArrays(1,&vao); gl.GenBuffers(1,&vbo);
+    gl.BindVertexArray(vao); gl.BindBuffer(GL_ARRAY_BUFFER,vbo);
+    gl.BufferData(GL_ARRAY_BUFFER,sizeof(tri),tri,GL_STATIC_DRAW);
+    gl.EnableVertexAttribArray(0); gl.VertexAttribPointer(0,2,GL_FLOAT,GL_FALSE,0,nullptr);
+    gl.BindVertexArray(0);
+
+    Rendering::RenderGraph graph;
+    TransientHeap heap; heap.Initialize(*m_Device);
+    StringID sColor = StringID::Runtime("fbo.Color");
+    graph.AddPass("Draw", [&](RenderPassBuilder& b){ b.ImportTexture(sColor,nullptr); b.WriteTexture(sColor); },
+        [&](IRHICommandList&){
+            gl.BindFramebuffer(GL_FRAMEBUFFER, fbo);
+            gl.Viewport(0,0,8,8);
+            gl.ClearColor(0,0,0,1); gl.Clear(GL_COLOR_BUFFER_BIT);
+            gl.UseProgram(prog); gl.BindVertexArray(vao); gl.DrawArrays(GL_TRIANGLES,0,3); gl.BindVertexArray(0); gl.UseProgram(0);
+            gl.BindFramebuffer(GL_FRAMEBUFFER, 0);
+        });
+    ASSERT_TRUE(graph.Compile(heap));
+    auto* q = m_Device->GetQueue(QueueType::Graphics);
+    EXPECT_TRUE(graph.Execute(*m_Device, *q));
+    m_Device->WaitIdle();
+
+    // Explicitly bind target FBO and read back
+    gl.BindFramebuffer(GL_FRAMEBUFFER, fbo);
+    unsigned char p[4]; gl.ReadPixels(0,0,1,1,GL_RGBA,GL_UNSIGNED_BYTE,p);
+    std::printf("postExecute=%d %d %d\n", p[0], p[1], p[2]);
+    EXPECT_EQ(p[0], 255);
+    gl.BindFramebuffer(GL_FRAMEBUFFER, 0);
+
+    gl.DeleteVertexArrays(1,&vao); gl.DeleteBuffers(1,&vbo);
+    gl.DeleteProgram(prog);
+    gl.DeleteFramebuffers(1,&fbo); gl.DeleteTextures(1,&tex);
 }
