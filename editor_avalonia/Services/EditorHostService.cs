@@ -452,6 +452,8 @@ public sealed class EditorHostService : IDisposable
 
     public void StartEngineLogPoll() => _engineHost?.StartLogPoll();
     public void StopEngineLogPoll() => _engineHost?.StopLogPoll();
+    public void SetProductionUseRenderGraph(bool enabled) => _engineHost?.SetProductionUseRenderGraph(enabled);
+    public bool ProductionUseRenderGraph => _engineHost?.ProductionUseRenderGraph ?? false;
 
     /// <summary>累计失败的 pump 调用次数（native 未推进帧）。</summary>
     public long PumpFailures => _engineHost?.PumpFailures ?? 0;
@@ -893,6 +895,12 @@ internal sealed class EngineHostChannel : IEditorOps, IDisposable
     private int _frameBufferAllocations;
 
     public bool IsCreated => _host != IntPtr.Zero;
+    public void SetProductionUseRenderGraph(bool enabled) {
+        if (_host != IntPtr.Zero)
+            EditorBridgeApi.EngineHost_SetProductionUseRenderGraph(_host, enabled ? 1 : 0);
+    }
+    public bool ProductionUseRenderGraph =>
+        _host != IntPtr.Zero && EditorBridgeApi.EngineHost_GetProductionUseRenderGraph(_host) != 0;
     public long Generation => _openAttempts.ActiveGeneration;
     public long PumpInvocations => Interlocked.Read(ref _pumpInvocations);
 

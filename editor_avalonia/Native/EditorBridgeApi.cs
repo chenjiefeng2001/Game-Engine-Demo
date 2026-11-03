@@ -389,6 +389,13 @@ public static class EditorBridgeApi
     public static extern int EngineHost_PumpOneFrame(IntPtr host,
         float requestedDtSeconds, ref RuntimeResult result);
 
+    // P5-F1: Renderer path selection (additive)
+    [DllImport("EditorBridge", CallingConvention = CallingConvention.Cdecl)]
+    public static extern void EngineHost_SetProductionUseRenderGraph(IntPtr host, int enabled);
+
+    [DllImport("EditorBridge", CallingConvention = CallingConvention.Cdecl)]
+    public static extern int EngineHost_GetProductionUseRenderGraph(IntPtr host);
+
     [DllImport("EditorBridge", CallingConvention = CallingConvention.Cdecl)]
     public static extern int EngineHost_CloseProject(IntPtr host,
         ref RuntimeResult result);

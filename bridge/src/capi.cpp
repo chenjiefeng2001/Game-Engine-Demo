@@ -1002,6 +1002,18 @@ EDITOR_BRIDGE_API int32_t EngineHost_PumpOneFrame(EngineHostHandle h,
     });
 }
 
+// P5-F1: Renderer path selection (additive, does not change ABI structs)
+EDITOR_BRIDGE_API void EngineHost_SetProductionUseRenderGraph(EngineHostHandle h,
+                                                              int32_t enabled) {
+    if (!h) return;
+    H(h)->SetProductionUseRenderGraph(enabled != 0);
+}
+
+EDITOR_BRIDGE_API int32_t EngineHost_GetProductionUseRenderGraph(EngineHostHandle h) {
+    if (!h) return 0;
+    return H(h)->ProductionUseRenderGraph() ? 1 : 0;
+}
+
 EDITOR_BRIDGE_API int32_t EngineHost_CloseProject(EngineHostHandle h,
                                                    RuntimeResult* result) {
     if (!h || !result) {

@@ -799,6 +799,10 @@ EDITOR_BRIDGE_API int32_t EngineHost_Stop(EngineHostHandle h,
 EDITOR_BRIDGE_API int32_t EngineHost_PumpOneFrame(EngineHostHandle h,
                                                   float requestedDtSeconds,
                                                   RuntimeResult* result);
+// P5-F1: Renderer path selection (additive)
+EDITOR_BRIDGE_API void EngineHost_SetProductionUseRenderGraph(EngineHostHandle h,
+                                                              int32_t enabled);
+EDITOR_BRIDGE_API int32_t EngineHost_GetProductionUseRenderGraph(EngineHostHandle h);
 EDITOR_BRIDGE_API int32_t EngineHost_CloseProject(EngineHostHandle h,
                                                    RuntimeResult* result);
 EDITOR_BRIDGE_API int32_t EngineHost_Shutdown(EngineHostHandle h,

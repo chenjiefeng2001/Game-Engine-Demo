@@ -136,6 +136,13 @@ public:
     uint32_t LastProductionRenderableCount() const {
         return m_LastProductionRenderableCount.load();
     }
+    // P5-F1: Renderer path selection (additive, does not change ABI structs)
+    void SetProductionUseRenderGraph(bool v) {
+        if (m_Application) m_Application->SetProductionUseRenderGraph(v);
+    }
+    bool ProductionUseRenderGraph() const {
+        return m_Application ? m_Application->ProductionUseRenderGraph() : false;
+    }
     ENGINE_HOST_P1_TEST_SEAM void SetProductionDebugDrawCallback(
         Engine::Application::ProductionDebugDrawCallback cb);
     /// 读回 presentation target 的像素（RGBA8，行优先，左下角起 —— GL 布局）。
