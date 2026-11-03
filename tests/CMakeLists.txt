@@ -317,6 +317,8 @@ add_executable(test_debugdraw
     main.cpp
 )
 target_link_libraries(test_debugdraw PRIVATE ${COMMON_LIBS} glfw)
+target_include_directories(test_debugdraw PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/../engine/src)
+target_compile_definitions(test_debugdraw PRIVATE $<$<CONFIG:Debug>:JPH_DEBUG_RENDERER>)
 add_test(NAME test_debugdraw COMMAND test_debugdraw)
 set_tests_properties(test_debugdraw PROPERTIES TIMEOUT 180)
 

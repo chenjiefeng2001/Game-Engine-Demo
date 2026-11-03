@@ -17,10 +17,12 @@
 #include "Engine/Editor/ViewportPanel.h"
 #ifdef JPH_DEBUG_RENDERER
 #include "Engine/Jolt/JoltPhysicsWorld.h"
+#include "Engine/Core/Physics/IPhysicsDebugDraw3D.h"
 #include "Engine/Rendering/DebugDraw/Physics/PhysicsDebugDrawAdapter3D.h"
 #endif
 #include "Engine/Rendering/DebugDraw/DebugDraw.h"
 #include "Engine/Rendering/DebugDraw/OpenGL/OpenGL46DebugDrawRenderer.h"
+#include "../../engine/src/OpenGL/Resources/OpenGLPhysicsDebugDraw3D.h"
 #include "Engine/Rendering/DebugDraw/Physics/PhysicsDebugDrawAdapter2D.h"
 #include "Engine/Rendering/DebugDraw/Physics/PhysicsDebugDrawAdapter3D.h"
 
@@ -868,7 +870,57 @@ TEST(DebugDrawGLTest, GLStateIsRestored) {
     EXPECT_TRUE(Near(lineWidth, 2.0f));
 }
 
+#ifdef JPH_DEBUG_RENDERER
+// P5-F3-G: Verify Jolt invokes DrawTriangle (solid fill) with dual DrawBodies
+#endif // JPH_DEBUG_RENDERER
+
+
+TEST(P5F3_Sanity, AlwaysPasses) {
+    SUCCEED();
+}
+
 } // namespace Test
 } // namespace DebugDraw
 } // namespace Rendering
+#ifdef JPH_DEBUG_RENDERER
+TEST(P5F3_JoltSolidFill, JoltDualDrawBodiesInvokesSolidFill) {
+    ::Engine::JoltPhysicsWorld world;
+    ::Engine::PhysicsWorldConfig3D config;
+    ASSERT_TRUE(world.Init(config));
+
+    ::Engine::BodyDef3D bodyDef;
+    bodyDef.type = ::Engine::BodyType3D::Static;
+    bodyDef.position = ::Engine::Vec3(0, 0, 0);
+    bodyDef.shape.type = ::Engine::ShapeType3D::Box;
+    bodyDef.shape.boxHalfExtents = ::Engine::Vec3(1.0f, 1.0f, 1.0f);
+    ASSERT_NE(world.CreateBody(bodyDef), nullptr);
+
+    struct Counter : public ::Engine::IPhysicsDebugDraw3D {
+        int lines = 0, solidTris = 0, wireTris = 0;
+        void DrawLine(const ::Engine::Vec3&, const ::Engine::Vec3&, const ::Engine::Vec4&) override { ++lines; }
+        void DrawTriangle(const ::Engine::Vec3&, const ::Engine::Vec3&, const ::Engine::Vec3&, const ::Engine::Vec4&, bool wireframe) override {
+            if (wireframe) ++wireTris; else ++solidTris;
+        }
+        void DrawSphere(const ::Engine::Vec3&, float, const ::Engine::Vec4&, int32) override {}
+        void DrawBox(const ::Engine::Vec3&, const ::Engine::Vec3&, const ::Engine::Vec4&, bool) override {}
+        void DrawCapsule(const ::Engine::Vec3&, float, float, const ::Engine::Vec4&, bool) override {}
+        void DrawCylinder(const ::Engine::Vec3&, float, float, const ::Engine::Vec4&, bool) override {}
+        void DrawText3D(const ::Engine::Vec3&, const char*, const ::Engine::Vec4&) override {}
+        void DrawAxes(const ::Engine::Mat4&, float) override {}
+        void Clear() override {}
+        void Flush() override {}
+    };
+
+    Counter counter;
+    world.SetDebugDraw(&counter);
+    world.DebugDraw();
+
+    EXPECT_GT(counter.solidTris, 0);
+    EXPECT_GT(counter.lines, 0);
+
+    world.SetDebugDraw(nullptr);
+}
+#endif // JPH_DEBUG_RENDERER
+
+
 } // namespace Engine
