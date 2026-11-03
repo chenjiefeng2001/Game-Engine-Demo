@@ -34,6 +34,7 @@ public:
                     JPH::ColorArg inColor, float inHeight) override;
     void Clear();
     void Flush();
+    void SetCameraPos(const Vec3& cameraPos);
 
 private:
     struct Line { Vec3 from, to; Vec4 color; };
@@ -52,6 +53,7 @@ public:
     JoltDebugRenderer(IPhysicsDebugDraw3D*) {}
     void Clear() {}
     void Flush() {}
+    void SetCameraPos(const Vec3&) {}
 };
 #endif
 

@@ -59,11 +59,23 @@ void JoltDebugRenderer::DrawTriangle(JPH::RVec3Arg inV0, JPH::RVec3Arg inV1, JPH
 
 void JoltDebugRenderer::DrawText3D(JPH::RVec3Arg inPosition,
                                     const std::string_view& inString,
-                                    JPH::ColorArg inColor, float)
+                                    JPH::ColorArg inColor, float inHeight)
 {
     if (!m_Draw) return;
-    std::string text(inString);
-    m_Draw->DrawText3D(ToVec3FromRVec(inPosition), text.c_str(), ToVec4(inColor));
+    Vec3 p = ToVec3FromRVec(inPosition);
+    Vec4 color = ToVec4(inColor);
+    float size = (inHeight > 0.0f) ? inHeight : 0.2f;
+    if (size < 0.05f) size = 0.05f;
+    m_Draw->DrawLine(p + Vec3(-size, 0.0f, 0.0f), p + Vec3(size, 0.0f, 0.0f), color);
+    m_Draw->DrawLine(p + Vec3(0.0f, -size, 0.0f), p + Vec3(0.0f, size, 0.0f), color);
+    m_Draw->DrawLine(p + Vec3(0.0f, 0.0f, -size), p + Vec3(0.0f, 0.0f, size), color);
+    (void)inString;
+}
+
+void JoltDebugRenderer::SetCameraPos(const Vec3& cameraPos) {
+#ifdef JPH_DEBUG_RENDERER
+    JPH::DebugRendererSimple::SetCameraPos(JPH::RVec3(cameraPos.x, cameraPos.y, cameraPos.z));
+#endif
 }
 
 void JoltDebugRenderer::Clear() {

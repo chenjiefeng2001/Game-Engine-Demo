@@ -33,6 +33,11 @@
 #include "Engine/Core/Scene/Scene.h"
 #include "Engine/Core/GameObject/GameObject.h"
 #include "Engine/Core/RHI/SceneRenderer.h"
+#include "Engine/Core/RHI/MeshRenderer.h"
+#include "Engine/Rendering/DebugDraw/DebugDraw.h"
+#include "Engine/Rendering/DebugDraw/OpenGL/OpenGL46DebugDrawRenderer.h"
+#include "Engine/Core/Renderer/PerspectiveCamera.h"
+#include "Engine/Core/GameObject/MeshComponent.h"
 #include "Engine/Core/RHI/RenderQueue.h"
 #include "Engine/Core/RHI/RenderCommand.h"
 #include "Engine/Core/Renderer/OrthographicCamera.h"
@@ -147,6 +152,11 @@ bool Application::PumpOneFrame(float32 dt) {
 
 void Application::Shutdown() {
   if (m_ShutdownComplete) return;
+  if (m_ProductionDebugDraw) {
+    m_ProductionDebugDraw->Shutdown();
+    m_ProductionDebugDraw.reset();
+    m_ProductionDebugDrawReady = false;
+  }
   if (m_Initialized) {
     m_SubsystemManager.Shutdown();
     Time::Shutdown();
@@ -830,6 +840,152 @@ bool Application::RenderProductionFrame(IRenderContext &context, Scene &scene,
     }
   }
 
+  return true;
+}
+
+bool Application::InitProduction3DRenderResources(IRenderContext &context) {
+  if (m_Production3DRenderReady) {
+    return true;
+  }
+  if (!m_Headless) {
+    return false;
+  }
+
+  if (auto *oglCtx = dynamic_cast<OpenGLContext *>(&context)) {
+    m_GL = &oglCtx->GetGL();
+  }
+  if (!m_GL) {
+    Log::Error("[P4-B C2] production 3D render context is not an OpenGLContext");
+    return false;
+  }
+
+  // 3D shader (3d_lit.vert/frag)
+  m_Production3DShader = m_Factory.CreateShader(
+      "assets/shaders/3d_lit.vert", "assets/shaders/3d_lit.frag");
+  if (!m_Production3DShader || m_Production3DShader->IsFailed() ||
+      !m_Production3DShader->IsLoaded()) {
+    Log::Error("[P4-B C2] 3d_lit shader failed to build");
+    m_Production3DShader.reset();
+    return false;
+  }
+
+  // MeshRenderer
+  m_Production3DMeshRenderer =
+      std::make_shared<MeshRenderer>(m_Factory, context);
+  m_Production3DMeshRenderer->SetShader(m_Production3DShader);
+  m_Production3DMeshRenderer->SetAmbientColor(Vec3(0.15f, 0.15f, 0.20f));
+  m_Production3DMeshRenderer->AddLight({Vec3(5.0f, 10.0f, 5.0f),
+                                       Vec3(1.0f, 1.0f, 1.0f), 1.0f});
+
+  // Default EditorCamera (external input mode, perspective)
+  m_Production3DCamera = std::make_unique<EditorCamera>();
+  m_Production3DCamera->SetExternalInputMode(true);
+  m_Production3DCamera->SetViewportSize(800.0f, 600.0f);
+  m_Production3DCamera->SetProjectionType(CameraProjectionType::Perspective);
+  m_Production3DCamera->SetDistance(10.0f);
+  m_Production3DCamera->SetFocusPoint(Vec3(0.0f, 0.0f, 0.0f));
+  m_Production3DCamera->OnUpdate(0.0f);
+  // Feed matrices to MeshRenderer via raw matrices
+  m_Production3DMeshRenderer->SetCameraMatrices(
+      *reinterpret_cast<const Mat4 *>(m_Production3DCamera->GetViewMatrixPtr()),
+      *reinterpret_cast<const Mat4 *>(m_Production3DCamera->GetProjectionMatrixPtr()),
+      m_Production3DCamera->GetPosition());
+
+  if (m_GL) {
+    auto renderer = std::make_unique<Engine::Rendering::DebugDraw::OpenGL46DebugDrawRenderer>(*m_GL);
+    m_ProductionDebugDraw = std::make_unique<Engine::Rendering::DebugDraw::DebugDraw>();
+    if (m_ProductionDebugDraw->Initialize(std::move(renderer)) !=
+        Engine::Rendering::DebugDraw::Status::Ok) {
+      Log::Error("[P4-B C5-1] DebugDraw initialize failed");
+      m_ProductionDebugDraw.reset();
+      m_ProductionDebugDrawReady = false;
+    } else {
+      m_ProductionDebugDrawReady = true;
+    }
+  }
+
+  m_Production3DRenderReady = true;
+  return true;
+}
+
+bool Application::RenderProduction3DFrame(IRenderContext &context, Scene &scene,
+                                         uint32_t targetWidth,
+                                         uint32_t targetHeight) {
+  m_Production3DRenderableCount = 0;
+
+  if (!m_Production3DRenderReady && !InitProduction3DRenderResources(context)) {
+    return false;
+  }
+  if (targetWidth == 0 || targetHeight == 0) {
+    return false;
+  }
+
+  // ���� 1. �ռ� 3D mesh renderables
+  const auto &objects = scene.GetObjects();
+  std::vector<GameObject *> meshObjects;
+  for (const auto &obj : objects) {
+    if (!obj || !obj->IsActive()) continue;
+    auto *mc = obj->GetComponent<MeshComponent>();
+    if (mc && mc->m_Visible && mc->HasMesh()) {
+      meshObjects.push_back(obj.get());
+    }
+  }
+
+  // ???? 2. ??????????????? 3D ??????????
+  m_Production3DCamera->SetViewportSize(
+      static_cast<float>(targetWidth), static_cast<float>(targetHeight));
+  m_Production3DCamera->SetExternalInput(m_ProductionCameraInput);
+  m_Production3DCamera->SetActive(true);
+  m_Production3DCamera->ProcessInput(0.016f);
+  m_Production3DCamera->OnUpdate(0.016f);
+  // ????????????????????
+  m_ProductionCameraInput.mouseDeltaX = 0.0f;
+  m_ProductionCameraInput.mouseDeltaY = 0.0f;
+  m_ProductionCameraInput.mouseWheel = 0.0f;
+
+  const Mat4 viewMat =
+      *reinterpret_cast<const Mat4 *>(m_Production3DCamera->GetViewMatrixPtr());
+  const Mat4 projMat =
+      *reinterpret_cast<const Mat4 *>(m_Production3DCamera->GetProjectionMatrixPtr());
+
+  // C5-1: DebugDraw BeginFrame before scene geometry
+  if (m_ProductionDebugDrawReady && m_ProductionDebugDraw) {
+    Engine::Rendering::DebugDraw::View dbgView{};
+    Mat4Multiply(projMat, viewMat, dbgView.viewProjection);
+    m_ProductionDebugDraw->BeginFrame(dbgView, 0.016f);
+    // C5-2: production coordinate axes via T-5
+    m_ProductionDebugDraw->Axis(Engine::Vec3{0.0f, 0.0f, 0.0f},
+                               Engine::Quat{0.0f, 0.0f, 0.0f, 1.0f}, 2.0f,
+                               0.0f, true);
+    if (m_ProductionDebugDrawCallback) {
+      m_ProductionDebugDrawCallback(*m_ProductionDebugDraw);
+    }
+  }
+
+  if (meshObjects.empty()) {
+    // clear-only ??????? 3D mesh
+    if (m_ProductionDebugDrawReady && m_ProductionDebugDraw) {
+      m_ProductionDebugDraw->EndFrame();
+    }
+    m_Production3DRenderableCount = 0;
+    return true;
+  }
+
+  // ???? 3. ???
+  if (m_GL) {
+    m_GL->Enable(GL_DEPTH_TEST);
+    m_GL->DepthFunc(GL_LESS);
+  }
+  m_Production3DMeshRenderer->SetCameraMatrices(viewMat, projMat,
+      m_Production3DCamera->GetPosition());
+  m_Production3DMeshRenderer->Render(meshObjects);
+
+  // C5-1: DebugDraw EndFrame after scene geometry
+  if (m_ProductionDebugDrawReady && m_ProductionDebugDraw) {
+    m_ProductionDebugDraw->EndFrame();
+  }
+
+  m_Production3DRenderableCount = static_cast<uint32_t>(meshObjects.size());
   return true;
 }
 

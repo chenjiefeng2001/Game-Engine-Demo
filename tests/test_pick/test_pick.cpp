@@ -27,6 +27,9 @@
 #include "Engine/Application.h"
 #include "Engine/Core/GameObject/GameObject.h"
 #include "Engine/Core/GameObject/SpriteComponent.h"
+#include "Engine/Core/GameObject/MeshComponent.h"
+#include "Engine/Core/Renderer/Mesh.h"
+#include "Engine/Rendering/DebugDraw/DebugDraw.h"
 #include "Engine/Core/Scene/Scene.h"
 #include "Engine/OpenGL/OpenGLContext.h"
 #include "Engine/OpenGL/OpenGLFramebuffer.h"
@@ -137,8 +140,36 @@ public:
 
         idA = a->GetID();
         idB = b->GetID();
-        // D3-C2 / U5：有效 ID 恒 >= 1
+        // D3-C2 / U5����Ч ID �� >= 1
         return idA >= 1 && idB >= 1 && idA != idB;
+    }
+
+    bool BuildMeshScene() {
+        m_Scene = std::make_unique<Engine::Scene>("P4B3DFixture");
+        m_Scene->SetActive(true);
+
+        auto obj = std::make_shared<Engine::GameObject>("mesh_cube");
+        auto mesh = std::make_shared<Engine::Mesh>(Engine::Mesh::CreateCube(1.0f));
+        auto mc = obj->AddComponent<Engine::MeshComponent>(mesh);
+        mc->m_Color = {1.0f, 0.5f, 0.25f, 1.0f};
+        obj->GetTransform().SetPosition(0.0f, 0.0f, 0.0f);
+        obj->SetActive(true);
+        m_Scene->AddObject(obj);
+        return true;
+    }
+
+    bool Render3DFrame() {
+        m_Fbo->Clear(0.05f, 0.05f, 0.07f, 1.0f);
+        m_Fbo->Bind();
+        m_Factory->GetGLContext().Viewport(0, 0, kWidth, kHeight);
+        const bool ok = m_App->RenderProduction3DFrame(
+            *m_RenderContext, *m_Scene, kWidth, kHeight);
+        m_Fbo->Unbind();
+        return ok;
+    }
+
+    uint32_t Last3DRenderableCount() const {
+        return m_App->LastProduction3DRenderableCount();
     }
 
     bool RenderFrame() {
@@ -225,6 +256,62 @@ protected:
 
     PickFrameHost host_;
 };
+
+// P4-B C2: production 3D render path must accept a real MeshComponent.
+class P4B3DProof : public ::testing::Test {
+protected:
+    void SetUp() override {
+        ASSERT_TRUE(host_.Setup())
+            << "native GL production-frame setup failed at step: ["
+            << host_.FailStep() << "]";
+    }
+    void TearDown() override { host_.Teardown(); }
+    PickFrameHost host_;
+};
+
+TEST_F(P4B3DProof, MeshSceneRenders) {
+    ASSERT_TRUE(host_.BuildMeshScene());
+    ASSERT_TRUE(host_.Render3DFrame());
+    EXPECT_EQ(host_.Last3DRenderableCount(), 1u);
+}
+
+class P4BC53DepthXRay : public ::testing::Test {
+protected:
+    void SetUp() override {
+        ASSERT_TRUE(host_.Setup())
+            << "native GL production-frame setup failed at step: ["
+            << host_.FailStep() << "]";
+    }
+    void TearDown() override { host_.Teardown(); }
+    PickFrameHost host_;
+};
+
+TEST_F(P4BC53DepthXRay, XRayPrimitiveVisible) {
+    ASSERT_TRUE(host_.BuildMeshScene());
+    host_.App().SetProductionDebugDrawCallback(
+        [](Engine::Rendering::DebugDraw::DebugDraw& dd) {
+            dd.Line(Engine::Vec3{-1.0f, 0.0f, -2.0f},
+                    Engine::Vec3{1.0f, 0.0f, -2.0f},
+                    Engine::Vec4{0.0f, 1.0f, 0.0f, 1.0f}, 0.0f, false);
+        });
+    ASSERT_TRUE(host_.Render3DFrame());
+
+    std::vector<uint8_t> pixels(kWidth * kHeight * 4);
+    auto& gl = host_.Factory().GetGLContext();
+    gl.BindFramebuffer(GL_FRAMEBUFFER, host_.Fbo().GetFramebufferID());
+    gl.ReadBuffer(GL_COLOR_ATTACHMENT0);
+    gl.ReadPixels(0, 0, kWidth, kHeight, GL_RGBA, GL_UNSIGNED_BYTE, pixels.data());
+    gl.BindFramebuffer(GL_FRAMEBUFFER, 0);
+
+    bool sawGreen = false;
+    for (size_t i = 0; i + 3 < pixels.size(); i += 4) {
+        if (pixels[i + 1] > 128 && pixels[i] < 64 && pixels[i + 2] < 64) {
+            sawGreen = true;
+            break;
+        }
+    }
+    EXPECT_TRUE(sawGreen) << "X-Ray primitive did not produce visible pixels";
+}
 
 }  // namespace
 

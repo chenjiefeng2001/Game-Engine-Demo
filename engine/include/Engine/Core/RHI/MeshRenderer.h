@@ -3,6 +3,7 @@
 #include "Engine/Types.h"
 #include "Engine/Core/RHI/MathTypes.h"
 #include "Engine/Core/RHI/Handle.h"
+#include "Engine/Core/Renderer/PerspectiveCamera.h"
 #include "Engine/Core/RHI/RenderPacket.h"
 #include "Engine/Core/RHI/IRHIVertexArray.h"
 #include "Engine/Core/RHI/IRHIVertexBuffer.h"
@@ -55,8 +56,36 @@ namespace Engine {
         void SetShader(std::shared_ptr<Shader> shader) { m_Shader = std::move(shader); }
         std::shared_ptr<Shader> GetShader() const { return m_Shader; }
 
-        void SetCamera(PerspectiveCamera* camera) { m_Camera = camera; }
+        void SetCamera(PerspectiveCamera* camera) { m_Camera = camera; m_UseRawMatrices = false; }
         PerspectiveCamera* GetCamera() const { return m_Camera; }
+
+        // P4-B C3: raw matrix camera (EditorCamera bridge)
+        void SetCameraMatrices(const Mat4& view, const Mat4& proj, const Vec3& viewPos) {
+            m_RawView = view;
+            m_RawProj = proj;
+            m_RawViewPos = viewPos;
+            Mat4Multiply(m_RawProj, m_RawView, m_RawViewProj);
+            m_UseRawMatrices = true;
+        }
+        bool IsUsingRawMatrices() const { return m_UseRawMatrices; }
+
+        // P4-B C3: camera access helpers (raw or PerspectiveCamera)
+        const Mat4& GetViewMatrix() const {
+            if (m_UseRawMatrices) return m_RawView;
+            return m_Camera ? m_Camera->GetViewMatrix() : m_RawView;
+        }
+        const Mat4& GetProjectionMatrix() const {
+            if (m_UseRawMatrices) return m_RawProj;
+            return m_Camera ? m_Camera->GetProjectionMatrix() : m_RawProj;
+        }
+        const float* GetViewProjectionMatrixPtr() const {
+            if (m_UseRawMatrices) return m_RawViewProj.Data();
+            return m_Camera ? m_Camera->GetViewProjectionMatrixPtr() : m_RawViewProj.Data();
+        }
+        Vec3 GetViewPosition() const {
+            if (m_UseRawMatrices) return m_RawViewPos;
+            return m_Camera ? m_Camera->GetPosition() : m_RawViewPos;
+        }
 
         // ── 多光源 ──
         struct Light {
@@ -272,6 +301,13 @@ namespace Engine {
         IRenderContext& m_Context;
         std::shared_ptr<Shader> m_Shader;
         PerspectiveCamera* m_Camera = nullptr;
+
+        // P4-B C3: raw matrix camera support
+        bool m_UseRawMatrices = false;
+        Mat4 m_RawView{};
+        Mat4 m_RawProj{};
+        Mat4 m_RawViewProj{};
+        Vec3 m_RawViewPos = {0, 0, 5};
 
         Vec3  m_AmbientColor  = {0.15f, 0.15f, 0.20f};
         std::vector<Light> m_Lights;

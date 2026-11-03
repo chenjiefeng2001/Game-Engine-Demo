@@ -563,6 +563,64 @@ TEST(DebugDrawAdapterTest, JoltWorldDrawProducesShapeGeometry) {
     EXPECT_GT(fixture.fake->lastDepthVertexCount, 100u);
     world.SetDebugDraw(nullptr);
 }
+
+TEST(DebugDrawAdapterTest, JoltWorldDrawPreservesBodyTransform) {
+    FakeService fixture;
+    JoltPhysicsWorld world;
+    PhysicsWorldConfig3D config;
+    ASSERT_TRUE(world.Init(config));
+    world.SetDebugDraw(nullptr);
+
+    BodyDef3D bodyDef;
+    bodyDef.type = BodyType3D::Static;
+    bodyDef.position = Vec3(5.0f, 2.0f, -3.0f);
+    bodyDef.shape.type = ShapeType3D::Sphere;
+    bodyDef.shape.sphereRadius = 1.0f;
+    ASSERT_NE(world.CreateBody(bodyDef), nullptr);
+
+    PhysicsDebugDrawAdapter3D adapter(fixture.service);
+    world.SetDebugDraw(&adapter);
+    ASSERT_EQ(fixture.service.BeginFrame(IdentityView(), 0.0f), Status::Ok);
+    world.DebugDraw();
+    ASSERT_EQ(fixture.service.EndFrame(), Status::Ok);
+
+    bool foundBodyRegion = false;
+    for (const Vertex& vertex : fixture.fake->depthVertices) {
+        if (vertex.position.x >= 4.0f && vertex.position.x <= 6.0f &&
+            vertex.position.y >= 1.0f && vertex.position.y <= 3.0f &&
+            vertex.position.z >= -4.0f && vertex.position.z <= -2.0f) {
+            foundBodyRegion = true;
+            break;
+        }
+    }
+    EXPECT_TRUE(foundBodyRegion);
+    world.SetDebugDraw(nullptr);
+}
+
+TEST(DebugDrawAdapterTest, JoltWorldDrawCameraPositionCanBeSet) {
+    FakeService fixture;
+    JoltPhysicsWorld world;
+    PhysicsWorldConfig3D config;
+    ASSERT_TRUE(world.Init(config));
+    world.SetDebugCameraPosition(Vec3(0.0f, 10.0f, 20.0f));
+    world.SetDebugDraw(nullptr);
+
+    BodyDef3D bodyDef;
+    bodyDef.type = BodyType3D::Static;
+    bodyDef.position = Vec3(0, 0, 0);
+    bodyDef.shape.type = ShapeType3D::Box;
+    bodyDef.shape.boxHalfExtents = Vec3(1.0f, 1.0f, 1.0f);
+    ASSERT_NE(world.CreateBody(bodyDef), nullptr);
+
+    PhysicsDebugDrawAdapter3D adapter(fixture.service);
+    world.SetDebugDraw(&adapter);
+    ASSERT_EQ(fixture.service.BeginFrame(IdentityView(), 0.0f), Status::Ok);
+    world.DebugDraw();
+    ASSERT_EQ(fixture.service.EndFrame(), Status::Ok);
+
+    EXPECT_GT(fixture.fake->lastDepthVertexCount, 0u);
+    world.SetDebugDraw(nullptr);
+}
 #endif
 
 // ============================================================

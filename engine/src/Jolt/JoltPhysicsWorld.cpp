@@ -573,6 +573,13 @@ void JoltPhysicsWorld::SetDebugDraw(IPhysicsDebugDraw3D* draw) {
     m_DebugDraw = draw;
 }
 
+void JoltPhysicsWorld::SetDebugCameraPosition(const Vec3& cameraPos) {
+    m_DebugCameraPos = cameraPos;
+    if (m_DebugRenderer) {
+        m_DebugRenderer->SetCameraPos(m_DebugCameraPos);
+    }
+}
+
 // ── v4.0: 全功能 DebugDraw（使用 JoltDebugRenderer） ──
 void JoltPhysicsWorld::DebugDraw() {
     if (!m_DebugDraw) return;
@@ -585,6 +592,7 @@ void JoltPhysicsWorld::DebugDraw() {
     // JoltDebugRenderer owns the TLS line buffers; Clear/Flush must be called
     // on it, not on the IPhysicsDebugDraw3D adapter (whose Clear/Flush are no-ops).
     m_DebugRenderer->Clear();
+    m_DebugRenderer->SetCameraPos(m_DebugCameraPos);
 
     JPH::BodyManager::DrawSettings drawSettings;
     drawSettings.mDrawShape = true;

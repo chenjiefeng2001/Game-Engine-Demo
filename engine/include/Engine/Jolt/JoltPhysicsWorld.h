@@ -79,6 +79,7 @@ public:
 
     void SetDebugDraw(IPhysicsDebugDraw3D* draw) override;
     void DebugDraw() override;
+    void SetDebugCameraPosition(const Vec3& cameraPos);
 
     Stats GetStats() const override;
     void* GetNativeWorld() override { return &m_PhysicsSystem; }
@@ -142,6 +143,7 @@ private:
     // 调试绘制
     IPhysicsDebugDraw3D* m_DebugDraw = nullptr;
     std::unique_ptr<JoltDebugRenderer> m_DebugRenderer;
+    Vec3 m_DebugCameraPos{0.0f, 0.0f, 0.0f};
 
     // ECS BodyID → IPhysicsBody3D 映射
     std::unordered_map<uint64, std::shared_ptr<IPhysicsBody3D>> m_BodyMap;

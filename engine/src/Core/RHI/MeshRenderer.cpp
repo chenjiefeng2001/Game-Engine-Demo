@@ -146,20 +146,20 @@ namespace Engine {
     void MeshRenderer::RenderBatched(const std::vector<GameObject*>& objects,
                                       IPrimitiveBatch& batch)
     {
-        if (!m_Shader || !m_Camera)
+        if (!m_Shader || (!m_Camera && !m_UseRawMatrices))
             return;
 
         m_Shader->Bind();
 
         // 设置相机 uniform
-        const Mat4& projMatrix = m_Camera->GetProjectionMatrix();
-        const Mat4& viewMatrix = m_Camera->GetViewMatrix();
-        const float* vpPtr     = m_Camera->GetViewProjectionMatrixPtr();
+        const Mat4& projMatrix = GetProjectionMatrix();
+        const Mat4& viewMatrix = GetViewMatrix();
+        const float* vpPtr     = GetViewProjectionMatrixPtr();
 
         m_Shader->SetMat4("u_View",       viewMatrix.Data());
         m_Shader->SetMat4("u_Projection", projMatrix.Data());
 
-        Vec3 viewPos = m_Camera->GetPosition();
+        Vec3 viewPos = GetViewPosition();
         m_Shader->SetInt("u_LightCount", (int)m_Lights.size());
         for (size_t li = 0; li < m_Lights.size() && li < 4; ++li) {
             auto& L = m_Lights[li];
@@ -274,8 +274,8 @@ namespace Engine {
         auto geomShader = m_GeomShader ? m_GeomShader : m_Shader;
         geomShader->Bind();
 
-        const Mat4& projMatrix = m_Camera->GetProjectionMatrix();
-        const Mat4& viewMatrix = m_Camera->GetViewMatrix();
+        const Mat4& projMatrix = GetProjectionMatrix();
+        const Mat4& viewMatrix = GetViewMatrix();
         glm::mat4 viewGlm = glm::make_mat4(viewMatrix.Data());
         glm::mat4 projGlm = glm::make_mat4(projMatrix.Data());
 
@@ -334,7 +334,7 @@ namespace Engine {
         lightShader->SetInt("u_AOMap", 3);
         lightShader->SetInt("u_DepthMap", 4);
 
-        Vec3 viewPos = m_Camera->GetPosition();
+        Vec3 viewPos = GetViewPosition();
         lightShader->SetVec3("u_ViewPos", &viewPos.x);
         lightShader->SetVec3("u_AmbientColor", &m_AmbientColor.x);
         lightShader->SetMat4("u_View", viewMatrix.Data());
@@ -423,8 +423,8 @@ namespace Engine {
             return;
         }
 
-        const Mat4& projMatrix = m_Camera->GetProjectionMatrix();
-        const Mat4& viewMatrix = m_Camera->GetViewMatrix();
+        const Mat4& projMatrix = GetProjectionMatrix();
+        const Mat4& viewMatrix = GetViewMatrix();
         glm::mat4 viewGlm = glm::make_mat4(viewMatrix.Data());
         glm::mat4 projGlm = glm::make_mat4(projMatrix.Data());
 
@@ -474,7 +474,7 @@ namespace Engine {
         m_Shader->SetMat4("u_View",       viewMatrix.Data());
         m_Shader->SetMat4("u_Projection", projMatrix.Data());
 
-        Vec3 viewPos = m_Camera->GetPosition();
+        Vec3 viewPos = GetViewPosition();
         m_Shader->SetInt("u_LightCount", (int)m_Lights.size());
         for (size_t li = 0; li < m_Lights.size() && li < 4; ++li) {
             auto& L = m_Lights[li];
@@ -590,7 +590,7 @@ namespace Engine {
     // ════════════════════════════════════════════════
 
     void MeshRenderer::Render(const std::vector<GameObject*>& objects) {
-        if (!m_Shader || !m_Camera)
+        if (!m_Shader || (!m_Camera && !m_UseRawMatrices))
             return;
 
         m_Shader->Bind();
@@ -618,16 +618,16 @@ namespace Engine {
         // ═══════════════════════════════════════════════════
 
         // 获取相机的三个矩阵
-        const Mat4& projMatrix = m_Camera->GetProjectionMatrix();
-        const Mat4& viewMatrix = m_Camera->GetViewMatrix();
-        const float* vpPtr     = m_Camera->GetViewProjectionMatrixPtr();
+        const Mat4& projMatrix = GetProjectionMatrix();
+        const Mat4& viewMatrix = GetViewMatrix();
+        const float* vpPtr     = GetViewProjectionMatrixPtr();
 
         // 设置观察空间 uniform
         m_Shader->SetMat4("u_View",       viewMatrix.Data());
         m_Shader->SetMat4("u_Projection", projMatrix.Data());
 
         // 光源 / 环境光 uniform
-        Vec3 viewPos = m_Camera->GetPosition();
+        Vec3 viewPos = GetViewPosition();
         m_Shader->SetInt("u_LightCount", (int)m_Lights.size());
         for (size_t li = 0; li < m_Lights.size() && li < 4; ++li) {
             auto& L = m_Lights[li];
@@ -816,18 +816,18 @@ namespace Engine {
     }
 
     void MeshRenderer::Render_RHI(const std::vector<GameObject*>& objects) {
-        if (!m_Shader || !m_Camera)
+        if (!m_Shader || (!m_Camera && !m_UseRawMatrices))
             return;
 
         m_Shader->Bind();
 
-        const Mat4& projMatrix = m_Camera->GetProjectionMatrix();
-        const Mat4& viewMatrix = m_Camera->GetViewMatrix();
+        const Mat4& projMatrix = GetProjectionMatrix();
+        const Mat4& viewMatrix = GetViewMatrix();
 
         m_Shader->SetMat4("u_View",       viewMatrix.Data());
         m_Shader->SetMat4("u_Projection", projMatrix.Data());
 
-        Vec3 viewPos = m_Camera->GetPosition();
+        Vec3 viewPos = GetViewPosition();
         m_Shader->SetInt("u_LightCount", (int)m_Lights.size());
         for (size_t li = 0; li < m_Lights.size() && li < 4; ++li) {
             auto& L = m_Lights[li];
@@ -1008,7 +1008,7 @@ namespace Engine {
                 worldMatrix.data[13],
                 worldMatrix.data[14]
             );
-            Vec3 camPos = m_Camera ? m_Camera->GetPosition() : Vec3();
+            Vec3 camPos = m_Camera ? GetViewPosition() : Vec3();
             Vec3 delta  = objPos - camPos;
             float depth = delta.x * delta.x + delta.y * delta.y + delta.z * delta.z;
             pkt.sortKey  = RHI::SortKey::Make(false, 0, depth);
@@ -1023,18 +1023,18 @@ namespace Engine {
 
     void MeshRenderer::ExecuteRenderPackets(const RHI::SceneExtraction& extraction)
     {
-        if (!m_Shader || !m_Camera)
+        if (!m_Shader || (!m_Camera && !m_UseRawMatrices))
             return;
 
         m_Shader->Bind();
 
-        const Mat4& projMatrix = m_Camera->GetProjectionMatrix();
-        const Mat4& viewMatrix = m_Camera->GetViewMatrix();
+        const Mat4& projMatrix = GetProjectionMatrix();
+        const Mat4& viewMatrix = GetViewMatrix();
 
         m_Shader->SetMat4("u_View",       viewMatrix.Data());
         m_Shader->SetMat4("u_Projection", projMatrix.Data());
 
-        Vec3 viewPos = m_Camera->GetPosition();
+        Vec3 viewPos = GetViewPosition();
         m_Shader->SetVec3("u_ViewPos",      &viewPos.x);
         m_Shader->SetVec3("u_AmbientColor", &m_AmbientColor.x);
         m_Shader->SetInt("u_LightCount", (int)m_Lights.size());

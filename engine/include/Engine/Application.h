@@ -17,6 +17,9 @@
 #include "Engine/Types.h"
 #include "Engine/UIManager.h"
 #include "Engine/Editor/EditorCamera.h"
+#include "Engine/Rendering/DebugDraw/DebugDraw.h"
+#include <functional>
+#include "Engine/Editor/EditorCameraInput.h"
 #include "Engine/Editor/ViewportPanel.h"
 #include "Engine/OpenGL/OpenGLFramebuffer.h"
 #include <memory>
@@ -38,6 +41,7 @@ class TextureManager;
 class IGraphicsFactory;
 class OrthographicCamera;
 class SceneRenderer;
+class MeshRenderer;
 class Scene;
 class ConsolePanel;
 
@@ -102,6 +106,19 @@ public:
                              uint32_t targetWidth, uint32_t targetHeight);
   /// 上一次 RenderProductionFrame 绘制的 renderable 数量（0 = 没有真实内容）。
   uint32_t LastProductionRenderableCount() const { return m_ProductionRenderableCount; }
+  uint32_t LastProduction3DRenderableCount() const { return m_Production3DRenderableCount; }
+
+  // P4-B C2: production 3D scene render
+  bool InitProduction3DRenderResources(IRenderContext &context);
+  bool RenderProduction3DFrame(IRenderContext &context, Scene &scene,
+                              uint32_t targetWidth, uint32_t targetHeight);
+  void SetProductionCameraInput(const EditorCameraInput &input) { m_ProductionCameraInput = input; }
+
+  using ProductionDebugDrawCallback =
+      std::function<void(Engine::Rendering::DebugDraw::DebugDraw &)>;
+  void SetProductionDebugDrawCallback(ProductionDebugDrawCallback cb) {
+    m_ProductionDebugDrawCallback = std::move(cb);
+  }
 
   /// HRC-3 D3：production pick pass 开关（默认**关闭**）
   ///
@@ -300,6 +317,17 @@ private:
   std::unique_ptr<OrthographicCamera> m_ProductionCamera;
   bool m_ProductionRenderReady = false;
   uint32_t m_ProductionRenderableCount = 0;
+
+  // P4-B C2: 3D render resources
+  std::shared_ptr<class MeshRenderer> m_Production3DMeshRenderer;
+  std::unique_ptr<EditorCamera> m_Production3DCamera;
+  EditorCameraInput m_ProductionCameraInput{};
+  std::unique_ptr<Engine::Rendering::DebugDraw::DebugDraw> m_ProductionDebugDraw;
+  bool m_ProductionDebugDrawReady = false;
+  ProductionDebugDrawCallback m_ProductionDebugDrawCallback;
+  std::shared_ptr<class Shader> m_Production3DShader;
+  bool m_Production3DRenderReady = false;
+  uint32_t m_Production3DRenderableCount = 0;
 
   // ── HRC-3 D3：production pick pass 资源 ──
   // 遵循 D3 Step 2 冻结的 U1/U3：R32I attachment 1 + 专用 pick shader。
