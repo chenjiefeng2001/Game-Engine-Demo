@@ -18,7 +18,6 @@
 #ifdef JPH_DEBUG_RENDERER
 #include "Engine/Jolt/JoltPhysicsWorld.h"
 #include "Engine/Core/Physics/IPhysicsDebugDraw3D.h"
-#include "Engine/Core/Physics/IPhysicsDebugDraw3D.h"
 #include "Engine/Rendering/DebugDraw/Physics/PhysicsDebugDrawAdapter3D.h"
 #endif
 #include "Engine/Rendering/DebugDraw/DebugDraw.h"
@@ -875,10 +874,13 @@ TEST(DebugDrawGLTest, GLStateIsRestored) {
 // P5-F3-G: Verify Jolt invokes DrawTriangle (solid fill) with dual DrawBodies
 #endif // JPH_DEBUG_RENDERER
 
-
+// P5-F3-U1 (DIAGNOSTIC DRAFT — NOT QUALIFIED): not counted in regression baseline
+// until Gate A passes. Do not enable for release sign-off.
+#if 0
 TEST(P5F3_Sanity, AlwaysPasses) {
     SUCCEED();
 }
+#endif
 
 #ifdef JPH_DEBUG_RENDERER
 // P5-F3-G: Verify Jolt invokes DrawTriangle (solid fill) with dual DrawBodies
@@ -929,45 +931,81 @@ TEST(DebugDrawAdapterTest, JoltDualDrawBodiesInvokesSolidFill) {
 } // namespace Test
 } // namespace DebugDraw
 } // namespace Rendering
-#ifdef JPH_DEBUG_RENDERER
-TEST(P5F3_JoltSolidFill, JoltDualDrawBodiesInvokesSolidFill) {
-    ::Engine::JoltPhysicsWorld world;
-    ::Engine::PhysicsWorldConfig3D config;
-    ASSERT_TRUE(world.Init(config));
-
-    ::Engine::BodyDef3D bodyDef;
-    bodyDef.type = ::Engine::BodyType3D::Static;
-    bodyDef.position = ::Engine::Vec3(0, 0, 0);
-    bodyDef.shape.type = ::Engine::ShapeType3D::Box;
-    bodyDef.shape.boxHalfExtents = ::Engine::Vec3(1.0f, 1.0f, 1.0f);
-    ASSERT_NE(world.CreateBody(bodyDef), nullptr);
-
-    struct Counter : public ::Engine::IPhysicsDebugDraw3D {
-        int lines = 0, solidTris = 0, wireTris = 0;
-        void DrawLine(const ::Engine::Vec3&, const ::Engine::Vec3&, const ::Engine::Vec4&) override { ++lines; }
-        void DrawTriangle(const ::Engine::Vec3&, const ::Engine::Vec3&, const ::Engine::Vec3&, const ::Engine::Vec4&, bool wireframe) override {
-            if (wireframe) ++wireTris; else ++solidTris;
-        }
-        void DrawSphere(const ::Engine::Vec3&, float, const ::Engine::Vec4&, int32) override {}
-        void DrawBox(const ::Engine::Vec3&, const ::Engine::Vec3&, const ::Engine::Vec4&, bool) override {}
-        void DrawCapsule(const ::Engine::Vec3&, float, float, const ::Engine::Vec4&, bool) override {}
-        void DrawCylinder(const ::Engine::Vec3&, float, float, const ::Engine::Vec4&, bool) override {}
-        void DrawText3D(const ::Engine::Vec3&, const char*, const ::Engine::Vec4&) override {}
-        void DrawAxes(const ::Engine::Mat4&, float) override {}
-        void Clear() override {}
-        void Flush() override {}
-    };
-
-    Counter counter;
-    world.SetDebugDraw(&counter);
-    world.DebugDraw();
-
-    EXPECT_GT(counter.solidTris, 0);
-    EXPECT_GT(counter.lines, 0);
-
-    world.SetDebugDraw(nullptr);
-}
-#endif // JPH_DEBUG_RENDERER
-
 
 } // namespace Engine
+
+// P5-F3-U1 (PENDING — NOT QUALIFIED): OpenGLPhysicsDebugDraw3D solid-fill
+// GL readback. C0 hits SEH; kept as draft for Gate A investigation.
+// See docs/P5-F3-U1-Gate0-Baseline.md.
+#if 0
+TEST(DebugDrawGLTest, OpenGLPhysicsDebugDrawSolidFillReadback) {
+    Engine::Rendering::DebugDraw::Test::DebugDrawGLFixture fixture;
+    ASSERT_TRUE(fixture.Setup()) << fixture.FailStep();
+    auto& gl = fixture.GL();
+    auto& fbo = fixture.Fbo();
+
+    fbo.Bind();
+    gl.Viewport(0, 0, fbo.GetWidth(), fbo.GetHeight());
+    gl.ClearColor(0.0f, 0.0f, 0.0f, 1.0f);
+    gl.Clear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+
+    ::Engine::OpenGLPhysicsDebugDraw3D dd(gl);
+    float vp[16] = {1,0,0,0, 0,1,0,0, 0,0,1,0, 0,0,0,1};
+    dd.SetViewProjection(vp);
+
+    ::Engine::Vec3 v0(-0.8f, -0.8f, 0.0f);
+    ::Engine::Vec3 v1( 0.8f, -0.8f, 0.0f);
+    ::Engine::Vec3 v2( 0.0f,  0.8f, 0.0f);
+    dd.DrawTriangle(v0, v1, v2, ::Engine::Vec4(1.0f, 0.0f, 0.0f, 1.0f), false); // solid
+    dd.Flush();
+
+    unsigned char px[4] = {0, 0, 0, 0};
+    gl.ReadPixels(fbo.GetWidth() / 2, fbo.GetHeight() / 2, 1, 1, GL_RGBA, GL_UNSIGNED_BYTE, px);
+
+    EXPECT_GT(px[0], 200) << "Solid fill did not produce red pixels at center";
+    EXPECT_LT(px[1], 50) << "Unexpected green component";
+    EXPECT_LT(px[2], 50) << "Unexpected blue component";
+
+    unsigned char corner[4] = {0, 0, 0, 0};
+    gl.ReadPixels(0, 0, 1, 1, GL_RGBA, GL_UNSIGNED_BYTE, corner);
+    EXPECT_LT(corner[0], 50) << "Background should not be red";
+
+    fbo.Unbind();
+    fixture.Teardown();
+}
+
+TEST(DebugDrawGLTest, OpenGLPhysicsDebugDrawWireframeNoFill) {
+    Engine::Rendering::DebugDraw::Test::DebugDrawGLFixture fixture;
+    ASSERT_TRUE(fixture.Setup()) << fixture.FailStep();
+    auto& gl = fixture.GL();
+    auto& fbo = fixture.Fbo();
+
+    fbo.Bind();
+    gl.Viewport(0, 0, fbo.GetWidth(), fbo.GetHeight());
+    gl.ClearColor(0.0f, 0.0f, 0.0f, 1.0f);
+    gl.Clear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+
+    ::Engine::OpenGLPhysicsDebugDraw3D dd(gl);
+    float vp[16] = {1,0,0,0, 0,1,0,0, 0,0,1,0, 0,0,0,1};
+    dd.SetViewProjection(vp);
+
+    ::Engine::Vec3 v0(-0.8f, -0.8f, 0.0f);
+    ::Engine::Vec3 v1( 0.8f, -0.8f, 0.0f);
+    ::Engine::Vec3 v2( 0.0f,  0.8f, 0.0f);
+    dd.DrawTriangle(v0, v1, v2, ::Engine::Vec4(0.0f, 1.0f, 0.0f, 1.0f), true); // wireframe
+    dd.Flush();
+
+    bool foundGreen = false;
+    for (int y = 0; y < fbo.GetHeight() && !foundGreen; ++y) {
+        for (int x = 0; x < fbo.GetWidth() && !foundGreen; ++x) {
+            unsigned char p[4] = {0,0,0,0};
+            gl.ReadPixels(x, y, 1, 1, GL_RGBA, GL_UNSIGNED_BYTE, p);
+            if (p[1] > 200 && p[0] < 50 && p[2] < 50) foundGreen = true;
+        }
+    }
+    EXPECT_TRUE(foundGreen) << "Wireframe triangle did not produce green edge pixels";
+
+    fbo.Unbind();
+    fixture.Teardown();
+}
+#endif // #if 0 docs/P5-F3-U1-Gate0-Baseline.md
