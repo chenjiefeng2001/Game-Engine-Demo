@@ -934,6 +934,47 @@ TEST(DebugDrawAdapterTest, JoltDualDrawBodiesInvokesSolidFill) {
 
 } // namespace Engine
 
+// P5-F3-U1 Gate A1: SEH fault isolation. Uses a scope so that
+// OpenGLPhysicsDebugDraw3D is destroyed before the fixture tears down its
+// GladGLContext/FBO. Previous ordering (fixture.Teardown() before dd
+// destructs) left dd::m_GL as a dangling reference -> SEH 0xC0000005.
+TEST(DebugDrawGLTest, PV2_ScopedAdapterDiagnostic) {
+    Engine::Rendering::DebugDraw::Test::DebugDrawGLFixture fixture;
+    ASSERT_TRUE(fixture.Setup()) << fixture.FailStep();
+    auto& gl = fixture.GL();
+    auto& fbo = fixture.Fbo();
+
+    fbo.Bind();
+    gl.Viewport(0, 0, fbo.GetWidth(), fbo.GetHeight());
+    gl.ClearColor(0.0f, 0.0f, 0.0f, 1.0f);
+    gl.Clear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+
+    {
+        Engine::OpenGLPhysicsDebugDraw3D dd(gl);
+        float vp[16] = {1,0,0,0, 0,1,0,0, 0,0,1,0, 0,0,0,1};
+        dd.SetViewProjection(vp);
+        Engine::Vec3 v0(-0.8f, -0.8f, 0.0f);
+        Engine::Vec3 v1( 0.8f, -0.8f, 0.0f);
+        Engine::Vec3 v2( 0.0f,  0.8f, 0.0f);
+        dd.DrawTriangle(v0, v1, v2, Engine::Vec4(1.0f, 0.0f, 0.0f, 1.0f), false);
+        dd.Flush();
+
+        unsigned char px[4] = {0, 0, 0, 0};
+        gl.ReadPixels(fbo.GetWidth() / 2, fbo.GetHeight() / 2, 1, 1, GL_RGBA, GL_UNSIGNED_BYTE, px);
+        std::printf("ScopedAdapter: center pixel = %d %d %d %d\n", px[0], px[1], px[2], px[3]);
+        EXPECT_GT(px[0], 200) << "Solid fill did not produce red pixel at center";
+        EXPECT_LT(px[1], 50)  << "Unexpected green component";
+        EXPECT_LT(px[2], 50)  << "Unexpected blue component";
+
+        unsigned char corner[4] = {0, 0, 0, 0};
+        gl.ReadPixels(0, 0, 1, 1, GL_RGBA, GL_UNSIGNED_BYTE, corner);
+        EXPECT_LT(corner[0], 50) << "Background should not be red";
+    }
+
+    fbo.Unbind();
+    fixture.Teardown();
+}
+
 // P5-F3-U1 (PENDING — NOT QUALIFIED): OpenGLPhysicsDebugDraw3D solid-fill
 // GL readback. C0 hits SEH; kept as draft for Gate A investigation.
 // See docs/P5-F3-U1-Gate0-Baseline.md.
