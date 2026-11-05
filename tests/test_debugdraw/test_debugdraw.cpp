@@ -975,6 +975,86 @@ TEST(DebugDrawGLTest, PV2_ScopedAdapterDiagnostic) {
     fixture.Teardown();
 }
 
+// P5-F3-U1 Gate B: end-to-end Jolt solid fill pixel proof. JoltPhysicsWorld
+// (dual DrawBodies) -> JoltDebugRenderer TLS buffers -> IPhysicsDebugDraw3D
+// (OpenGLPhysicsDebugDraw3D) -> GL_TRIANGLES -> FBO readback. Scoped so the
+// adapter is destroyed before the fixture tears down the GladGLContext
+// (see PV2_ScopedAdapterDiagnostic for the SEH root cause).
+#ifdef JPH_DEBUG_RENDERER
+TEST(DebugDrawGLTest, JoltSolidFillPixelReadbackEndToEnd) {
+    Engine::Rendering::DebugDraw::Test::DebugDrawGLFixture fixture;
+    ASSERT_TRUE(fixture.Setup()) << fixture.FailStep();
+    auto& gl = fixture.GL();
+    auto& fbo = fixture.Fbo();
+
+    fbo.Bind();
+    gl.Viewport(0, 0, fbo.GetWidth(), fbo.GetHeight());
+    gl.ClearColor(0.0f, 0.0f, 0.0f, 1.0f);
+    gl.ClearDepth(static_cast<GLdouble>(1.0f));
+    gl.Clear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+
+    {
+        Engine::JoltPhysicsWorld world;
+        Engine::PhysicsWorldConfig3D config;
+        ASSERT_TRUE(world.Init(config));
+
+        Engine::BodyDef3D bodyDef;
+        bodyDef.type = Engine::BodyType3D::Static;
+        bodyDef.position = Engine::Vec3(0, 0, 0);
+        bodyDef.shape.type = Engine::ShapeType3D::Box;
+        bodyDef.shape.boxHalfExtents = Engine::Vec3(0.5f, 0.5f, 0.5f);
+        ASSERT_NE(world.CreateBody(bodyDef), nullptr);
+
+        Engine::OpenGLPhysicsDebugDraw3D dd(gl);
+        float vp[16] = {1,0,0,0, 0,1,0,0, 0,0,1,0, 0,0,0,1};
+        dd.SetViewProjection(vp);
+        dd.Clear();
+        world.SetDebugDraw(&dd);
+
+        // Joltdual pass (wireframe + solid) buffers through JoltDebugRenderer;
+        // Flush() on dd submits GL_LINES + GL_TRIANGLES to the bound FBO.
+        world.DebugDraw();
+        dd.Flush();
+
+        // Filled front face covers the NDC square [-0.5, 0.5]^2 (~4k px at
+        // 128x128); wireframe edges + axes reach at most ~1.5k thin pixels.
+        // Counting filled pixels therefore distinguishes solid fill from
+        // wireframe-only output without depending on Jolt palette constants.
+        std::vector<unsigned char> pixels(
+            static_cast<size_t>(fbo.GetWidth()) * fbo.GetHeight() * 4);
+        gl.Finish();
+        gl.ReadPixels(0, 0, fbo.GetWidth(), fbo.GetHeight(), GL_RGBA,
+                      GL_UNSIGNED_BYTE, pixels.data());
+        int filled = 0;
+        for (size_t i = 0; i + 3 < pixels.size(); i += 4) {
+            const unsigned char r = pixels[i];
+            const unsigned char g = pixels[i + 1];
+            const unsigned char b = pixels[i + 2];
+            if (r > 20 || g > 20 || b > 20) ++filled;
+        }
+        EXPECT_GT(filled, 2500) << "Solid fill did not rasterize a face-sized area";
+
+        unsigned char center[4] = {0, 0, 0, 0};
+        gl.ReadPixels(fbo.GetWidth() / 2, fbo.GetHeight() / 2, 1, 1, GL_RGBA,
+                      GL_UNSIGNED_BYTE, center);
+        std::printf("JoltSolidFillE2E: center pixel = %d %d %d %d\n",
+                    center[0], center[1], center[2], center[3]);
+        EXPECT_TRUE(center[0] > 20 || center[1] > 20 || center[2] > 20)
+            << "Center was background; Jolt solid fill did not reach GL";
+        unsigned char corner[4] = {0, 0, 0, 0};
+        gl.ReadPixels(0, 0, 1, 1, GL_RGBA, GL_UNSIGNED_BYTE, corner);
+        EXPECT_LT(corner[0], 50) << "Background corner unexpectedly filled red";
+        EXPECT_LT(corner[1], 50) << "Background corner unexpectedly filled green";
+        EXPECT_LT(corner[2], 50) << "Background corner unexpectedly filled blue";
+
+        world.SetDebugDraw(nullptr);
+    }
+
+    fbo.Unbind();
+    fixture.Teardown();
+}
+#endif // JPH_DEBUG_RENDERER
+
 // P5-F3-U1 (PENDING — NOT QUALIFIED): OpenGLPhysicsDebugDraw3D solid-fill
 // GL readback. C0 hits SEH; kept as draft for Gate A investigation.
 // See docs/P5-F3-U1-Gate0-Baseline.md.
