@@ -43,4 +43,6 @@ The `OpenGLPhysicsDebugDraw3D` solid fill code (added in P4-CX-C2, commit `adf54
 Jolt now invokes `DrawTriangle` (solid fill) in addition to `DrawLine` (wireframe edges) with the dual DrawBodies configuration. The Solid Geometry Fill code capability is activated at runtime. GL pixel readback verification for the OpenGL adapter requires a dedicated GL test infrastructure fix.
 
 Accepted exception: GL readback for `OpenGLPhysicsDebugDraw3D` solid fill remains PENDING.
+
+**Closure (2026-11-05)**: exception resolved — Gate A/B closed PASS with GL pixel readback evidence (adapter path: center pixel 255/0/0; Jolt end-to-end: center pixel 127/127/127 over a face-sized filled area). See `docs/P5-F3-U1-GateAB-Closure-Record.md`.
 EOF

@@ -1,6 +1,6 @@
 # P5-F3-U1 — Source Alignment Follow-up
 
-**Status**: PARTIAL — SOURCE ALIGNMENT RESTORED; ADAPTER SEH PENDING  
+**Status**: CLOSED — superseded by `docs/P5-F3-U1-GateAB-Closure-Record.md` (Gate A/B PASS, 2026-11-05)  
 **Branch**: avalonia  
 **HEAD**: cd33c77  
 **Date**: 2026-11-05
@@ -53,16 +53,18 @@ Build: EngineCore/EditorBridge/editor_avalonia Debug/Release — not re-verified
 
 | Exception | Status |
 |-----------|--------|
-| Jolt Solid Fill GL Pixel Readback | **PARTIAL — CALL-PATH VERIFIED; GL READBACK PENDING** |
-| Adapter SEH (0xC0000005) at C0 | **PENDING — SEH INVESTIGATION** |
-| Gate A | PENDING — ADAPTER SEH BLOCKER |
-| Gate B | PARTIAL — Jolt DrawTriangle call path verified; pixel readback not completed |
+| Jolt Solid Fill GL Pixel Readback | RESOLVED — GATE B PASS (`JoltSolidFillPixelReadbackEndToEnd`) |
+| Adapter SEH (0xC0000005) at C0 | RESOLVED — test fixture destruction ordering (Gate A1) |
+| Gate A | PASS — `PV2_ScopedAdapterDiagnostic` (center pixel 255/0/0) |
+| Gate B | PASS — `JoltSolidFillPixelReadbackEndToEnd` (center pixel 127/127/127) |
 
 ---
 
 ## 5. Next Steps
 
-1. Verify `test_debugdraw`/`test_renderer` Debug/Release builds are clean.
-2. Capture C0 SEH call stack from Release/Debug diagnostic run.
-3. Isolate Adapter/C0 fault; apply minimal fix only if fault is in production Adapter path.
-4. Re-run Solid Fill pixel proof; do not tag Gate A/B PASS on callback evidence alone.
+Completed 2026-11-05 in `docs/P5-F3-U1-GateAB-Closure-Record.md`:
+
+1. ~~Verify `test_debugdraw`/`test_renderer` Debug/Release builds are clean.~~
+2. ~~Capture C0 SEH call stack from Release/Debug diagnostic run.~~ (root cause: fixture Teardown ordering)
+3. ~~Isolate Adapter/C0 fault; apply minimal fix only if fault is in production Adapter path.~~ (fault was test-only; no production change)
+4. ~~Re-run Solid Fill pixel proof; do not tag Gate A/B PASS on callback evidence alone.~~ (Gate A/B pixel evidence recorded)
