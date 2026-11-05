@@ -185,9 +185,11 @@ set_tests_properties(test_bridge PROPERTIES TIMEOUT 120)
 add_executable(test_pick_transport
     test_bridge/test_pick_transport.cpp
 )
-target_link_libraries(test_pick_transport PRIVATE EditorBridge GTest::gtest_main)
-# presentation readback seam 需要 EngineHost 内部类型（与 test_bridge 同一理由：
-# 刻意只取 C++ 证据，不新增 C ABI）
+target_link_libraries(test_pick_transport PRIVATE EditorBridge EngineCore GTest::gtest_main)
+# presentation readback seam 内部类型（与 test_bridge 同一做法：C++ 内部接口取证，
+# 不改 C ABI）；EngineCore 以 PRIVATE 链接仅传导 usage requirements
+# （engine/include、glm、third_party、imgui）。P6-0 修复：此前缺
+# engine include 导致 EngineHost.h 编译失败（C1083）。
 target_include_directories(test_pick_transport PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/../bridge/src)
 # D3-H3 发现的 artifact 缺陷：本 target 原本**没有**自己的 DLL staging，
 # 只能靠 test_bridge 的 POST_BUILD 副作用刷新，导致它可能加载**上一轮**的
