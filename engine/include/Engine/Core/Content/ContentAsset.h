@@ -30,10 +30,25 @@
 
 namespace Engine::Content {
 
-    enum class AssetType : uint8_t { Texture = 0, Script };
+    enum class AssetType : uint8_t { Texture = 0, Script, Mesh = 2, Material = 3 };
 
     inline const char* ToString(AssetType t) {
-        return t == AssetType::Texture ? "Texture" : "Script";
+        switch (t) {
+            case AssetType::Texture: return "Texture";
+            case AssetType::Script: return "Script";
+            case AssetType::Mesh: return "Mesh";
+            case AssetType::Material: return "Material";
+        }
+        return "Texture";
+    }
+
+    /// Manifest type-string parse (strict; unknown strings reject).
+    inline bool TryFromString(const std::string& s, AssetType* out) {
+        if (s == "Texture") { *out = AssetType::Texture; return true; }
+        if (s == "Script") { *out = AssetType::Script; return true; }
+        if (s == "Mesh") { *out = AssetType::Mesh; return true; }
+        if (s == "Material") { *out = AssetType::Material; return true; }
+        return false;
     }
 
     struct AssetEntry {

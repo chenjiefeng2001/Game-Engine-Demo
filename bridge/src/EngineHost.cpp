@@ -12,6 +12,11 @@
 #include "Engine/Core/RHI/RenderQueue.h"
 #include "Engine/Core/RenderResources/Texture.h"
 #include "Engine/Core/RHI/RenderCommand.h"
+#include "Engine/Core/Content/MeshAssetResolver.h"
+#include "Engine/Core/RHI/MeshRuntimeScene.h"
+#include "Engine/Core/RHI/MeshGpuResource.h"
+#include "Engine/Core/RHI/MeshRenderer.h"
+#include "Engine/Core/RHI/TextureGpuResource.h"
 #include "Engine/Core/Renderer/SpriteBatch.h"
 #include "Engine/Platform/PlatformUtils.h"
 #include "Engine/Scripting/GameplayAPI.h"
@@ -511,6 +516,112 @@ bool EngineHost::EnsureRuntimeSession() {
     }
 }
 
+bool EngineHost::QueryRuntimeMeshForTesting(
+    const char* guidHex, int32_t* status, uint64_t* identity,
+    uint64_t* payloadDigest) const {
+    if (!m_MeshRuntimeScene || !guidHex || !status) return false;
+    const Engine::ResourceGUID guid = Engine::ResourceGUID::FromHex(guidHex);
+    if (guid.IsNull()) return false;
+    if (const auto* entry = m_MeshRuntimeScene->FindForTesting(guid)) {
+        *status = static_cast<int32_t>(Engine::MeshRuntimeStatus::Ready);
+        if (identity) *identity = entry->key.identity;
+        if (payloadDigest) *payloadDigest = entry->key.payloadDigest;
+        return true;
+    }
+    if (const auto* failure = m_MeshRuntimeScene->FindFailureForTesting(guid)) {
+        *status = static_cast<int32_t>(failure->status);
+        return true;
+    }
+    return false;
+}
+
+bool EngineHost::LastProductionUsedRenderGraphForTesting() const {
+    return m_Application ?
+               m_Application->LastProductionUsedRenderGraph()
+           : false;
+}
+
+size_t EngineHost::GpuMeshCountForTesting() const {
+    auto* renderer =
+        m_Application ? m_Application->GetProduction3DMeshRenderer() : nullptr;
+    return renderer ? renderer->GpuMeshCountForTesting() : 0;
+}
+
+bool EngineHost::QueryRuntimeMeshErrorForTesting(const char* guidHex,
+                                                  char* out,
+                                                  int32_t cap) const {
+    if (!m_MeshRuntimeScene || !guidHex) return false;
+    const Engine::ResourceGUID guid = Engine::ResourceGUID::FromHex(guidHex);
+    if (guid.IsNull()) return false;
+    if (const auto* failure =
+            m_MeshRuntimeScene->FindFailureForTesting(guid)) {
+        if (out && cap > 0) {
+            int32_t copy =
+                static_cast<int32_t>(failure->error.size());
+            if (copy > cap - 1) copy = cap - 1;
+            std::memcpy(out, failure->error.data(),
+                        static_cast<size_t>(copy));
+            out[copy] = 0;
+        }
+        return true;
+    }
+    return false;
+}
+
+void EngineHost::SetMeshGpuUploadFailureStageForTesting(int32_t stage) {
+    Engine::MeshGpuCache::SetUploadFailureStageForTesting(
+        static_cast<Engine::MeshGpuUploadStage>(stage));
+}
+
+void EngineHost::RefreshMeshRuntime() {
+    m_MeshRuntimeScene.reset();
+    m_MeshResolver.reset();
+    if (!m_Session) return;
+    const auto* root = m_Session->GetProjectRootForRuntime();
+    const auto* revisions = m_Session->GetRevisionStoreForRuntime();
+    if (!root || !revisions) return;
+    m_MeshResolver = std::make_unique<Engine::Content::MeshAssetResolver>(
+        *root, *revisions);
+    if (!m_TextureGpuCache)
+        m_TextureGpuCache = std::make_unique<Engine::TextureGpuCache>();
+    m_MeshRuntimeScene = std::make_unique<Engine::MeshRuntimeScene>();
+}
+
+void EngineHost::SyncMeshRuntime() {
+    if (!m_Session || !m_Application || !m_MeshResolver) return;
+    Engine::Scene* scene = m_Session->GetEditScene();
+    if (!scene) return;
+    Engine::MeshRenderer* renderer =
+        m_Application->GetProduction3DMeshRenderer();
+    if (!renderer) {
+        if (!m_RenderContext ||
+            !m_Application->InitProduction3DRenderResources(*m_RenderContext))
+            return;
+        renderer = m_Application->GetProduction3DMeshRenderer();
+        if (!renderer) return;
+    }
+    if (!m_TextureGpuCache)
+        m_TextureGpuCache = std::make_unique<Engine::TextureGpuCache>();
+    if (!m_MeshRuntimeScene)
+        m_MeshRuntimeScene = std::make_unique<Engine::MeshRuntimeScene>();
+    m_MeshRuntimeScene->SetDependencies(m_MeshResolver.get(), renderer,
+                                      m_TextureGpuCache.get(),
+                                      m_GraphicsFactory.get());
+    (void)m_MeshRuntimeScene->Sync(*scene);
+}
+
+void EngineHost::TeardownMeshRuntime() {
+    if (m_MeshRuntimeScene) {
+        m_MeshRuntimeScene->Unload();
+        m_MeshRuntimeScene.reset();
+    }
+    if (m_TextureGpuCache) {
+        (void)m_TextureGpuCache->Clear();
+        m_TextureGpuCache.reset();
+    }
+    m_MeshResolver.reset();
+}
+
 int32_t EngineHost::InitializeRuntimeResources(RuntimeResult* result) {
     int32_t failureStage = ENGINE_HOST_STAGE_FBO;
     int32_t failureStatus = ENGINE_HOST_STATUS_GL_FAILED;
@@ -606,6 +717,7 @@ int32_t EngineHost::InitializeRuntimeResources(RuntimeResult* result) {
 
 bool EngineHost::TeardownRuntimeResources() noexcept {
     bool success = true;
+    TeardownMeshRuntime();
     if (m_Session) {
         try {
             m_Session->SetEventCallback(nullptr);
@@ -983,6 +1095,8 @@ int32_t EngineHost::SubmitOpenProject(const char* projectRoot,
                                error.c_str());
             return -1;
         }
+        TeardownMeshRuntime();
+        RefreshMeshRuntime();
         if (!m_GraphicsFactory->UncurrentPersistentContext()) {
             FillRejectedResult(result,
                                ENGINE_HOST_STATUS_GL_FAILED,
@@ -1240,6 +1354,7 @@ int32_t EngineHost::PumpOneFrame(float requestedDtSeconds, RuntimeResult* result
             }
             ++m_TickCount;
         }
+        SyncMeshRuntime();
         m_OffscreenFbo->Clear(0.1f, 0.2f, 0.3f, 1.0f);
         uint8_t pixel[4] = {};
         if (!m_OffscreenFbo->ReadColorPixel(32, 32, pixel)) {
@@ -1430,6 +1545,7 @@ int32_t EngineHost::CloseProject(RuntimeResult* result) {
                 m_ReadbackVerified = false;
             }
         }
+        TeardownMeshRuntime();
         if (m_Session) {
             m_Session->SetEventCallback(nullptr);
             m_Session->Stop();

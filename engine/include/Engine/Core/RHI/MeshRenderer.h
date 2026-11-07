@@ -9,11 +9,14 @@
 #include "Engine/Core/RHI/IRHIVertexBuffer.h"
 #include "Engine/Core/RHI/IRHIIndexBuffer.h"
 #include "Engine/Rendering/ShadowMapper.h"
+#include "Engine/Core/RHI/MeshGpuResource.h"
 #include <memory>
 #include <vector>
 #include <unordered_map>
 
 namespace Engine {
+
+namespace AssetImport { struct MeshMaterialBinding; }
 
     class Mesh;
     class Shader;
@@ -223,6 +226,26 @@ namespace Engine {
          */
         void ExecuteRenderPackets(const RHI::SceneExtraction& extraction);
 
+        /// P6-1B B5-G3: attach/detach the resolved Material/Texture binding
+        /// for a mesh GPU resource (key comes from MeshGpuResource::Key()).
+        void SetMeshMaterialBinding(
+            const MeshGpuResourceKey& key,
+            std::shared_ptr<const AssetImport::MeshMaterialBinding> binding);
+        void ClearMeshMaterialBindings();
+        std::shared_ptr<const AssetImport::MeshMaterialBinding>
+        GetMeshMaterialBindingForTesting(const MeshGpuResourceKey& key) const;
+
+        /// P6-1B B5-G4: runtime upload/registration seam. Uploads (or reuses)
+        /// the GPU mesh for a runtime asset identity and returns the resource.
+        std::shared_ptr<const MeshGpuResource> EnsureGpuMesh(
+            const std::shared_ptr<Mesh>& mesh, uint64_t assetIdentity);
+
+        /// Drops the material binding and invalidates the GPU mesh for this key.
+        /// Requires a current GL context on the cache owner thread.
+        bool RemoveMeshGpuResource(const MeshGpuResourceKey& key);
+
+        size_t GpuMeshCountForTesting() const { return m_GpuMeshCache.Size(); }
+
     private:
         const PotentiallyVisibleSet* m_PVS = nullptr;
         std::unique_ptr<IPrimitiveBatch> m_Batch;
@@ -268,15 +291,22 @@ namespace Engine {
         /**
          * @brief 为 Mesh 创建或获取旧路径 GPU 资源
          */
-        uint64 UploadMesh(const std::shared_ptr<Mesh>& mesh);
+        // P6-1B B5-G2: identity-based GPU mesh cache (replaces pointer-key cache)
+        void ApplyMeshMaterialBinding(const MeshGpuResource& resource,
+                                    class Shader& shader);
 
-        struct CachedMeshData {
-            std::shared_ptr<class VertexArray> vao;
-            std::shared_ptr<class VertexBuffer> vbo;
-            std::shared_ptr<class IndexBuffer>  ibo;
-            uint32 indexCount = 0;
-        };
-        std::unordered_map<uint64, CachedMeshData> m_MeshCache;
+        std::shared_ptr<const MeshGpuResource> GetOrCreateGpuMesh(
+            const std::shared_ptr<Mesh>& mesh, uint64_t assetIdentity = 0);
+        MeshGpuCache m_GpuMeshCache;
+        std::unordered_map<MeshGpuResourceKey,
+                           std::shared_ptr<const AssetImport::MeshMaterialBinding>,
+                           MeshGpuResourceKeyHash>
+            m_MeshMaterialBindings;
+
+        /// Release all GPU mesh resources. Requires a current GL context on
+        /// the owner thread (returns false otherwise). Shutdown calls this
+        /// while the runtime context is current.
+        bool ClearGpuResources();
 
         // ════════════════════════════════════
         // v2 RHI 新路径 GPU 资源

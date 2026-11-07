@@ -1233,7 +1233,7 @@ TEST_F(EditorBridgeTest, ImportAssetContract) {
     ASSERT_GE(EditorSession_GetAssetGuid(m_Session, idx, guid, sizeof(guid)), 0);
     EXPECT_GT(std::strlen(guid), 0u);
 
-    // 幂等：同路径再次导入返回同一资产索引，数量不涨
+    // 幂等：同路径再次导入返回同一资产索引（幂等）
     int32_t again = EditorSession_ImportAsset(m_Session, importPath, 0);
     EXPECT_EQ(again, idx);
     EXPECT_EQ(EditorSession_GetAssetCount(m_Session), before + 1);

@@ -12,6 +12,8 @@ add_library(EditorBridge SHARED
 )
 
 target_include_directories(EditorBridge PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
+# P6-1B B3: AssetImport headers live under engine/src (bridge-only private surface)
+target_include_directories(EditorBridge PRIVATE ${CMAKE_SOURCE_DIR}/engine/src)
 target_compile_definitions(EditorBridge PRIVATE EDITOR_BRIDGE_EXPORTS)
 find_package(Threads REQUIRED)
 target_link_libraries(EditorBridge PRIVATE EngineCore Threads::Threads)

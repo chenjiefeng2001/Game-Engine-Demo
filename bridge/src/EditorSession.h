@@ -224,6 +224,13 @@ public:
     // EngineHost 的 production render step 需要拿到"当前打开的编辑场景"。
     // 刻意只暴露指针访问，不新增 C 导出（HRC-3 P2 才引入 managed 侧 Fetch op）。
     Engine::Scene* GetEditScene() const { return m_EditScene.get(); }
+    /// P6-1B B5-G4: bridge-internal committed asset access (no C ABI change).
+    const Engine::Content::ProjectRoot* GetProjectRootForRuntime() const {
+        return m_Root.IsValid() ? &m_Root : nullptr;
+    }
+    const Engine::Content::RevisionStore* GetRevisionStoreForRuntime() const {
+        return m_Root.IsValid() ? &m_Revisions : nullptr;
+    }
     /// 编辑场景里的可渲染内容数量（HRC-3 P1 的前置：0 ⇒ insufficient scene content）。
     int32_t CountEditSceneRenderables() const;
     /// 把编辑场景里"已有 sprite GUID 但尚未绑定纹理"的 sprite 绑上纹理。
@@ -266,6 +273,11 @@ private:
     /// M1-E：统一导入服务（工程内登记 / 外部源拷贝 / 显式 reattach 共用）。
     int32_t ImportAssetInternal(const std::string& input, int32_t type,
                                 const std::string& reattachHex);
+    /// P6-1B B3：静态模型导入（Mesh + Material 组原子提交；C-2 hash 幂等；
+    /// C-1 单 Mesh 资产 + 内部 primitive spans，首材质渲染 + 显式 warning）。
+    int32_t ImportModelAsset(const std::string& input,
+                             const std::string& fwd, bool absolute,
+                             const std::string& reattachHex);
 
     std::thread::id m_CreationThreadId = std::this_thread::get_id();
     std::unique_ptr<Engine::OpenGLGraphicsFactory> m_OwnedGfx;

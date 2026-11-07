@@ -1,6 +1,7 @@
 # 精确 GLOB + CONFIGURE_DEPENDS（新文件自动发现，CMake 3.12+）
 file(GLOB ENGINE_SOURCES CONFIGURE_DEPENDS
     src/*.cpp
+    src/AssetImport/*.cpp
     src/Animation/*.cpp
     src/Audio/*.cpp
     src/Box2D/*.cpp

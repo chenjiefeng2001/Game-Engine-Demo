@@ -4,6 +4,7 @@
 #include "Engine/Core/GameObject/ColliderComponent.h"
 #include "Engine/Core/GameObject/RigidBodyComponent.h"
 #include "Engine/Animation/SkinningComponent.h"
+#include "Engine/Core/GameObject/MeshComponent.h"
 #include "Engine/Core/Log.h"
 
 #include <unordered_map>
@@ -33,6 +34,7 @@ void EnsureRegistered() {
     RegisterColliderComponent();
     RegisterRigidBodyComponent();
     SkinningComponent::Register();
+    Register("Mesh", [] { return std::make_shared<MeshComponent>(); });
 }
 
 void Register(const std::string& typeName, Factory factory) {

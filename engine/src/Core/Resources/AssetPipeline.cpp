@@ -1,7 +1,11 @@
 #include "Engine/Core/Resources/AssetPipeline.h"
 #include "Engine/Core/FileSystem.h"
 #include "Engine/Core/Log.h"
+#include <AssetImport/TexturePreprocess.h>
+#include <Engine/Core/Content/AtomicFile.h>
+#include <nlohmann/json.hpp>
 #include <algorithm>
+#include <filesystem>
 
 namespace {
     Engine::Logger s_Log("AssetPipeline");
@@ -122,23 +126,119 @@ namespace Engine {
         if (ctx.onProgress)
             ctx.onProgress(0.0f, "Preprocessing texture: " + ctx.entry->path);
 
-        // 该规则为占位——在实际引擎中，此处应调用 stb_image 解码
-        // 然后以 RGBA8 PNG 格式写入中间目录
+        // P6-1B B4-B: 真实 decode/validate/colorspace/encode（no-op 移除）。
+        // 走 AssetImport::PreprocessTexture 与 B3 模型链路同一实现：
+        //   1. 读取源 bytes（经 ProjectPaths 权威解析的 ctx.sourcePath）
+        //   2. PreprocessTexture(role = BaseColor 缺省分类／metadata 覆盖颜色空间)
+        //   3. 归一化 PNG + sidecar 写入 intermediateDir（写侧记 generatedFiles）
         //
-        // 示例流程：
-        //   1. stbi_load(sourcePath, &w, &h, &ch, 4) → RGBA8
-        //   2. 使用 stb_image_write 将像素数据写入 intermediateDir/xxx.png
-        //   3. ctx.generatedFiles.push_back(outputPath)
+        // pipeline 视角不写 RevisionStore（F3：submission authority 在
+        // EditorSession::Publish）；模型导入链通过同一预处理函数共享语义。
+        std::vector<uint8_t> sourceBytes;
+        {
+            std::ifstream in(ctx.sourcePath, std::ios::binary);
+            if (!in.good()) {
+                ctx.metadata["validation_error"] =
+                    "TEXTURE_SOURCE_MISSING: cannot read " + ctx.sourcePath;
+                s_Log.Error("TexturePreprocessRule: cannot read {}",
+                            ctx.sourcePath);
+                return false;
+            }
+            in.seekg(0, std::ios::end);
+            const std::streamoff size = in.tellg();
+            in.seekg(0, std::ios::beg);
+            sourceBytes.resize(static_cast<size_t>(size));
+            if (size > 0 && !in.read(reinterpret_cast<char*>(sourceBytes.data()),
+                                     size)) {
+                ctx.metadata["validation_error"] =
+                    "TEXTURE_SOURCE_MISSING: short read " + ctx.sourcePath;
+                return false;
+            }
+        }
+
+        Engine::AssetImport::TextureRole role =
+            Engine::AssetImport::TextureRole::BaseColor;
+        {
+            const auto roleIt = ctx.metadata.find("texture-role");
+            if (roleIt != ctx.metadata.end()) {
+                const std::string& token = roleIt->second;
+                if (token == "normal")
+                    role = Engine::AssetImport::TextureRole::Normal;
+                else if (token == "metallicroughness")
+                    role = Engine::AssetImport::TextureRole::MetallicRoughness;
+                else if (token == "occlusion")
+                    role = Engine::AssetImport::TextureRole::Occlusion;
+                else if (token == "emissive")
+                    role = Engine::AssetImport::TextureRole::Emissive;
+            }
+        }
+
+        const auto processed = Engine::AssetImport::PreprocessTexture(
+            sourceBytes, role);
+        if (!processed.ok) {
+            ctx.metadata["validation_error"] = processed.error;
+            s_Log.Error("TexturePreprocessRule: failed {}: {}",
+                        ctx.sourcePath, processed.error);
+            return false;
+        }
 
         std::string stem = ctx.entry->fileName;
-        // 去掉扩展名
         auto dotPos = stem.find_last_of('.');
-        if (dotPos != std::string::npos)
-            stem = stem.substr(0, dotPos);
+        if (dotPos != std::string::npos) stem = stem.substr(0, dotPos);
 
         std::string outputPath = ctx.intermediateDir + "/" + stem + ".rgba8.png";
+        std::error_code ec;
+        std::filesystem::create_directories(
+            std::filesystem::path(outputPath).parent_path(), ec);
+        if (ec) {
+            ctx.metadata["validation_error"] =
+                "TEXTURE_OUTPUT_DIR: " + ec.message();
+            return false;
+        }
+        const std::string pngText(reinterpret_cast<const char*>(
+                                      processed.pngBytes.data()),
+                                  processed.pngBytes.size());
+        const auto written = Engine::Content::WriteFileAtomic(outputPath, pngText);
+        if (!written.ok) {
+            ctx.metadata["validation_error"] =
+                std::string("TEXTURE_WRITE: ") +
+                Engine::Content::ToString(written.error);
+            return false;
+        }
         ctx.generatedFiles.push_back(outputPath);
+
+        nlohmann::json meta;
+        meta["format"] = "texture-meta";
+        meta["ruleVersion"] = 1;
+        meta["role"] = role == Engine::AssetImport::TextureRole::Normal
+                           ? "normal"
+                       : role == Engine::AssetImport::TextureRole::Occlusion
+                           ? "occlusion"
+                       : role == Engine::AssetImport::TextureRole::Emissive
+                           ? "emissive"
+                       : role == Engine::AssetImport::TextureRole::
+                               MetallicRoughness
+                           ? "metallicroughness"
+                           : "basecolor";
+        meta["colorspace"] =
+            Engine::AssetImport::IsColorRole(role) ? "sRGB" : "linear";
+        meta["width"] = processed.width;
+        meta["height"] = processed.height;
+        meta["components"] = processed.components;
+        const auto metaWritten =
+            Engine::Content::WriteFileAtomic(outputPath + ".tex.meta.json",
+                                             meta.dump());
+        if (!metaWritten.ok) {
+            ctx.metadata["validation_error"] =
+                "TEXTURE_META_WRITE: " +
+                std::string(Engine::Content::ToString(metaWritten.error));
+            return false;
+        }
+        ctx.generatedFiles.push_back(outputPath + ".tex.meta.json");
+
         ctx.metadata["preprocessed"] = outputPath;
+        ctx.metadata["colorspace"] =
+            Engine::AssetImport::IsColorRole(role) ? "sRGB" : "linear";
 
         if (ctx.onProgress)
             ctx.onProgress(1.0f, "Texture preprocessed: " + stem);

@@ -33,8 +33,11 @@ namespace Engine {
         Mesh(const std::vector<Vertex3D>& vertices, const std::vector<uint32>& indices);
 
         // ── 设置器 ──
-        void SetVertices(const std::vector<Vertex3D>& vertices) { m_Vertices = vertices; }
-        void SetIndices(const std::vector<uint32>& indices)     { m_Indices  = indices; }
+        void SetVertices(const std::vector<Vertex3D>& vertices) { m_Vertices = vertices; m_ContentHashValid = false; }
+        void SetIndices(const std::vector<uint32>& indices) { m_Indices = indices; m_ContentHashValid = false; }
+
+        // Content hash (FNV-1a 64 over vertex+index bytes; lazily cached).
+        uint64 GetContentHash() const;
 
         // ── 访问器 ──
         const std::vector<Vertex3D>& GetVertices() const { return m_Vertices; }
@@ -57,6 +60,8 @@ namespace Engine {
     private:
         std::vector<Vertex3D> m_Vertices;
         std::vector<uint32>   m_Indices;
+        mutable uint64 m_ContentHash = 0;
+        mutable bool   m_ContentHashValid = false;
     };
 
 } // namespace Engine

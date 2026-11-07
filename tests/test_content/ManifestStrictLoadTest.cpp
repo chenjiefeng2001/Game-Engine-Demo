@@ -194,7 +194,7 @@ TEST_F(ManifestStrictLoadTest, UnknownTypeIsRejected) {
     ContentRegistry reg;
     SeedRegistry(&reg);
     const auto manifest =
-        Manifest({Entry(kGuidA, "assets/a.png", "Mesh")});
+        Manifest({Entry(kGuidA, "assets/a.png", "Bogus")});
     EXPECT_FALSE(reg.LoadManifest(WriteJson("unknown_type.json", manifest)));
     EXPECT_EQ(reg.Count(), 1u);
 }

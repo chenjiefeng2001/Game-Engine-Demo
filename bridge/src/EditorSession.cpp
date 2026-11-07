@@ -6,6 +6,13 @@
 #include "EditorSession.h"
 #include "editor_bridge/capi.h"
 
+#include <AssetImport/GltfParser.h>
+#include <AssetImport/ObjParser.h>
+#include <AssetImport/ImportDigest.h>
+#include <AssetImport/MeshAssetWriter.h>
+#include <AssetImport/TexturePreprocess.h>
+#include <AssetImport/ImportLimits.h>
+#include <nlohmann/json.hpp>
 #include <Engine/Application.h>
 #include <Engine/Core/Content/AtomicFile.h>
 #include <Engine/Core/Content/RevisionStore.h>
@@ -23,6 +30,7 @@
 #include <Engine/Scripting/LuaEngine.h>
 #include <Engine/Scripting/ScriptAPI.h>
 
+#include <map>
 #include <algorithm>
 #include <atomic>
 #include <cctype>
@@ -108,6 +116,73 @@ namespace {
         for (size_t i = 0; i < order.size(); ++i)
             if (order[i] == guid) return static_cast<int32_t>(i);
         return -1;
+    }
+
+    // ── P6-1B B3 helpers (model import) ─────────────────────────────────
+    std::string LowerAsciiCopy(std::string s) {
+        for (char& c : s)
+            if (c >= 'A' && c <= 'Z') c = static_cast<char>(c - 'A' + 'a');
+        return s;
+    }
+
+    std::string SanitizeName(const std::string& raw) {
+        std::string out;
+        for (const char c : raw) {
+            const bool ok = (c >= '0' && c <= '9') || (c >= 'A' && c <= 'Z') ||
+                            (c >= 'a' && c <= 'z') || c == '_' || c == '-';
+            out += ok ? c : '_';
+            if (out.size() >= 48u) break;
+        }
+        return out.empty() ? std::string("model") : out;
+    }
+
+    std::string Hex8(const std::string& bytes) {
+        const std::string h = Engine::Content::RevisionStore::HashBytes(bytes);
+        return h.substr(0, 8);
+    }
+
+    bool ReadAllBytesFromPath(const std::string& absoluteUtf8,
+                              std::vector<uint8_t>* out) {
+        std::ifstream in(absoluteUtf8, std::ios::binary);
+        if (!in.good()) return false;
+        in.seekg(0, std::ios::end);
+        const std::streamoff size = in.tellg();
+        if (size < 0) return false;
+        in.seekg(0, std::ios::beg);
+        out->resize(static_cast<size_t>(size));
+        if (size > 0 &&
+            !in.read(reinterpret_cast<char*>(out->data()), size)) return false;
+        return true;
+    }
+
+    std::string ResolveRegisteredPath(const Engine::Content::ContentRegistry& reg,
+                                      const Engine::ResourceGUID& guid) {
+        if (guid.IsNull()) return std::string();
+        for (const auto& e : reg.GetAllEntries()) {
+            if (e.guid == guid) return e.path;
+        }
+        return std::string();
+    }
+
+    std::string ParentDirOf(const std::string& path) {
+        const size_t slash = path.find_last_of('/');
+        return (slash == std::string::npos) ? std::string() : path.substr(0, slash);
+    }
+
+    std::string FileNameOf(const std::string& path) {
+        const size_t slash = path.find_last_of('/');
+        return (slash == std::string::npos) ? path : path.substr(slash + 1);
+    }
+
+    std::string StemOf(const std::string& filename) {
+        const size_t dot = filename.find_last_of('.');
+        return (dot == std::string::npos) ? filename : filename.substr(0, dot);
+    }
+
+    std::string ExtOfLower(const std::string& filename) {
+        const size_t dot = filename.find_last_of('.');
+        if (dot == std::string::npos) return std::string();
+        return LowerAsciiCopy(filename.substr(dot + 1));
     }
 
     std::string ScriptError(const Engine::Scripting::ScriptInstance& instance) {
@@ -738,6 +813,7 @@ bool EditorSession::SetComponentProperty(int32_t entityIndex,
 }
 
 bool EditorSession::GetAssetGuid(int32_t index, std::string* out) const {
+
     Engine::Content::AssetEntry e;
     if (!AssetAt(index, &e)) return false;
     *out = e.guid.ToHex();
@@ -769,6 +845,7 @@ bool EditorSession::ReattachAsset(const std::string& missingGuidHex,
 int32_t EditorSession::ImportAssetInternal(const std::string& input,
                                            int32_t type,
                                            const std::string& reattachHex) {
+
     if (m_RecoveryRequired) {
         Fail("import blocked: RecoveryRequired (explicit recovery required)");
         return -1;
@@ -783,8 +860,23 @@ int32_t EditorSession::ImportAssetInternal(const std::string& input,
     AT t;
     if (type == 0) t = AT::Texture;
     else if (type == 1) t = AT::Script;
+    else if (type == 2) t = AT::Mesh;
     else { Fail("import asset: bad type " + std::to_string(type)); return -1; }
 
+    if (t == AT::Mesh) {
+        if (!reattachHex.empty()) {
+            Fail("model import: reattach is not supported for Mesh in v1 "
+                 "(GUID stability is guaranteed by the input digest; use a "
+                 "normal reimport)");
+            return -1;
+        }
+        if (m_EditScene) {
+            return ImportModelAsset(input, WithForwardSlashesCopy(input),
+                                    LooksAbsolutePath(WithForwardSlashesCopy(input)),
+                                    std::string());
+        }
+        return -1;
+    }
     bool reattach = false;
     Engine::ResourceGUID reattachGuid;
     if (!reattachHex.empty()) {
@@ -986,6 +1078,7 @@ int32_t EditorSession::ImportAssetInternal(const std::string& input,
     MarkDirty();
     Engine::Log::Info("[EditorBridge] asset imported: {} ({})",
                       targetRel, Engine::Content::ToString(t));
+
     Emit(EV_ASSET_IMPORTED,
          "idx=" + std::to_string(idx) + ";guid=" + guid.ToHex() +
          ";path=" + targetRel + ";type=" + std::to_string(type) +
@@ -993,6 +1086,571 @@ int32_t EditorSession::ImportAssetInternal(const std::string& input,
     return idx;
 }
 
+// ── P6-1B B3：模型导入提交链 ────────────────────────────────────────────
+// 决策记录（B3 冻结语义）：
+//   - 一个源文件 = 一个 Mesh asset（C-1 方案 a）；primitive spans 保留源序。
+//   - Mesh/Material 资产文件按内容寻址命名（含 import digest8 / 材料 hash8），
+//     重导永不覆写旧 revision 引用的物理字节。
+//   - Material 槽文件路径确定性：stemDir/<base>.m<slot>.<mhash8>.material.json。
+//   - Mesh GUID 稳定性：stemDir/<base>. 前缀的既有 Mesh 条目复用（词序最小路径）。
+//   - 幂等快路径：meshPath 严格一致命中 → 复用既有 GUID，不产生新 revision。
+//   - 单一 Publish 提交 Mesh + 全部 Material 组；失败不更新 mirror/事件。
+//   - 外部源物理拷贝 = assets/imported/model/<base>_<abshash8>/<base>.<srchash8><ext>。
+int32_t EditorSession::ImportModelAsset(const std::string& input,
+                                        const std::string& fwd,
+                                        bool absolute,
+                                        const std::string& reattachHex) {
+    using Engine::Content::AssetEntry;
+    using Engine::Content::AssetType;
+    using Engine::AssetImport::ImportResult;
+    using Engine::AssetImport::ImportSeverity;
+
+    if (!reattachHex.empty()) {
+        Fail("model import: reattach is not supported in v1");
+        return -1;
+    }
+
+    std::string targetRel;
+    std::string sourceAbs;
+    bool copySource = false;
+    if (!absolute) {
+        const auto normalized =
+            Engine::Content::NormalizeProjectRelative(input);
+        if (!normalized.ok) {
+            Fail("model import: path '" + input + "' rejected: " +
+                 Engine::Content::ToString(normalized.error));
+            return -1;
+        }
+        targetRel = normalized.path;
+        const auto resolved = m_Root.Resolve(targetRel);
+        if (!resolved.ok) {
+            Fail("model import: path '" + input +
+                 "' rejected: not resolvable via project root: " +
+                 resolved.diagnostic);
+            return -1;
+        }
+        sourceAbs = resolved.path;
+    } else {
+        const auto inside = m_Root.ToProjectRelative(fwd);
+        if (inside.ok) {
+            targetRel = inside.path;
+            const auto resolved = m_Root.Resolve(targetRel);
+            if (!resolved.ok) {
+                Fail("model import: path '" + input +
+                     "' rejected: not resolvable via project root: " +
+                     resolved.diagnostic);
+                return -1;
+            }
+            sourceAbs = resolved.path;
+        } else if (inside.error ==
+                   Engine::Content::PathError::EscapesRoot) {
+            copySource = true;
+            sourceAbs = fwd;
+        } else {
+            Fail("model import: path '" + input + "' rejected: " +
+                 Engine::Content::ToString(inside.error));
+            return -1;
+        }
+    }
+
+    std::vector<uint8_t> sourceBytes;
+    if (!ReadAllBytesFromPath(sourceAbs, &sourceBytes) || sourceBytes.empty()) {
+        Fail("model import: cannot read source bytes: " + sourceAbs);
+        return -1;
+    }
+    if (sourceBytes.size() > Engine::AssetImport::kMaxSourceFileBytes) {
+        Fail("model import: source exceeds kMaxSourceFileBytes");
+        return -1;
+    }
+
+    // parse consumes bytes by move; keep a copy for the C-2 digest
+    std::vector<uint8_t> digestSourceBytes = sourceBytes;
+    const std::string srcDirAbs = ParentDirOf(sourceAbs);
+    ImportResult parsed;
+    const std::string ext = ExtOfLower(FileNameOf(fwd));
+    if (ext == "obj") {
+        parsed = Engine::AssetImport::ObjParser::ParseObj(std::move(sourceBytes),
+                                                          srcDirAbs);
+    } else if (ext == "gltf") {
+        parsed = Engine::AssetImport::GltfParser::ParseGltfJson(
+            std::move(sourceBytes), srcDirAbs);
+    } else if (ext == "glb") {
+        parsed = Engine::AssetImport::GltfParser::ParseGlb(std::move(sourceBytes),
+                                                           srcDirAbs);
+    } else {
+        Fail("model import: unsupported mesh extension '" + ext + "'");
+        return -1;
+    }
+    if (!parsed.ok) {
+        std::string detail;
+        for (const auto& dg : parsed.diagnostics) {
+            if (dg.severity != ImportSeverity::Error) continue;
+            if (!detail.empty()) detail += "; ";
+            detail += std::string(dg.code) + " @" + dg.location;
+            break;
+        }
+        Fail("model import: parse failed: " + detail);
+        return -1;
+    }
+    for (const auto& wg : parsed.diagnostics) {
+        if (wg.severity == ImportSeverity::Warning) {
+            if (!m_Warnings.empty()) m_Warnings += "\n";
+            m_Warnings += "model import warning: " + std::string(wg.code) +
+                          " @" + wg.location + ": " + wg.message;
+        }
+    }
+    if (parsed.mesh.materials.size() > 1) {
+        if (!m_Warnings.empty()) m_Warnings += "\n";
+        m_Warnings +=
+            "model import warning: source has " +
+            std::to_string(parsed.mesh.materials.size()) +
+            " materials; v1 renders the first material; ALL materials are "
+            "registered (C-1 approved rule)";
+    }
+
+    // ── B4-D texture collection (digest inputs; preprocess deferred until
+    // the idempotency fast path rules out a no-op re-import) ─────────────
+    struct ModelTextureEntry
+    {
+        uint32_t imageIndex = 0;        // index into parsed.mesh.images
+        std::string identity;           // normalized uri or glbimg<docIndex>
+        bool embedded = false;          // GLB bufferView image
+        Engine::AssetImport::TextureRole role =
+            Engine::AssetImport::TextureRole::Unknown;
+        std::vector<uint8_t> externalBytes; // owns external file bytes
+    };
+    std::vector<ModelTextureEntry> textureEntries;
+    auto roleOfRef = [](int which)
+        -> Engine::AssetImport::TextureRole {
+        switch (which) {
+            case 0: return Engine::AssetImport::TextureRole::BaseColor;
+            case 1: return Engine::AssetImport::TextureRole::Normal;
+            case 2: return Engine::AssetImport::TextureRole::Occlusion;
+            case 3: return Engine::AssetImport::TextureRole::Emissive;
+            default:
+                return Engine::AssetImport::TextureRole::MetallicRoughness;
+        }
+    };
+    auto collectTextureRef = [&](int which,
+                                 const Engine::AssetImport::TextureReferenceIR&
+                                     ref) -> bool {
+        if (!ref.present || ref.imageIndex >= parsed.mesh.images.size())
+            return true;
+        const bool isColor =
+            Engine::AssetImport::IsColorRole(roleOfRef(which));
+        for (const auto& existing : textureEntries) {
+            if (existing.imageIndex == ref.imageIndex &&
+                Engine::AssetImport::IsColorRole(existing.role) == isColor)
+                return true; // dedupe (imageIndex, class)
+        }
+        ModelTextureEntry entry;
+        entry.imageIndex = ref.imageIndex;
+        entry.role = roleOfRef(which);
+        const auto& img = parsed.mesh.images[ref.imageIndex];
+        entry.embedded =
+            img.uri.empty() && parsed.mesh.imageBytes[ref.imageIndex].size() > 0;
+        if (entry.embedded) {
+            entry.identity =
+                "glbimg" + std::to_string(img.sourceImageIndex);
+        } else {
+            entry.identity = LowerAsciiCopy(img.uri);
+        }
+        if (!entry.embedded) {
+            const std::string texAbs =
+                LooksAbsolutePath(img.uri)
+                    ? img.uri
+                    : (srcDirAbs.empty() ? img.uri : (srcDirAbs + "/" + img.uri));
+            if (!ReadAllBytesFromPath(texAbs, &entry.externalBytes) ||
+                entry.externalBytes.empty()) {
+                Fail("model import: texture source unreadable: " + img.uri);
+                return false;
+            }
+        }
+        textureEntries.push_back(std::move(entry));
+        return true;
+    };
+    for (uint32_t m = 0; m < parsed.mesh.materials.size(); ++m) {
+        const auto& mat = parsed.mesh.materials[m];
+        if (!collectTextureRef(0, mat.baseColor)) return -1;
+        if (!collectTextureRef(1, mat.normal)) return -1;
+        if (!collectTextureRef(2, mat.occlusion)) return -1;
+        if (!collectTextureRef(3, mat.emissive)) return -1;
+        if (!collectTextureRef(4, mat.metallicRoughness)) return -1;
+    }
+
+    Engine::AssetImport::ImportDigestInput digestIn;
+    digestIn.sourcePathKey = LowerAsciiCopy(fwd);
+    digestIn.sourceBytes = digestSourceBytes.data();
+    digestIn.sourceSize = digestSourceBytes.size();
+    digestIn.schema = Engine::AssetImport::DigestSchema::V2;
+    std::vector<std::vector<uint8_t>> depStorage;
+    for (const std::string& dep : parsed.mesh.dependencyFiles) {
+        const std::string depAbs =
+            LooksAbsolutePath(dep)
+                ? dep
+                : (srcDirAbs.empty() ? dep : (srcDirAbs + "/" + dep));
+        depStorage.emplace_back();
+        if (!ReadAllBytesFromPath(depAbs, &depStorage.back()) ||
+            depStorage.back().empty()) {
+            Fail("model import: digest dependency unreadable: " + dep);
+            return -1;
+        }
+        Engine::AssetImport::DigestDependency dd;
+        dd.pathKey = LowerAsciiCopy(dep);
+        dd.bytes = depStorage.back().data();
+        dd.size = depStorage.back().size();
+        digestIn.dependencies.push_back(std::move(dd));
+    }
+    for (const auto& entry : textureEntries) {
+        Engine::AssetImport::DigestTexture dt;
+        dt.digestClass = Engine::AssetImport::IsColorRole(entry.role)
+                             ? Engine::AssetImport::TextureDigestClass::Color
+                             : Engine::AssetImport::TextureDigestClass::Data;
+        dt.identity = entry.identity;
+        if (entry.embedded) {
+            dt.bytes = parsed.mesh.imageBytes[entry.imageIndex].data();
+            dt.size = parsed.mesh.imageBytes[entry.imageIndex].size();
+        } else {
+            dt.bytes = entry.externalBytes.data();
+            dt.size = entry.externalBytes.size();
+        }
+        digestIn.textures.push_back(std::move(dt));
+    }
+    const std::string digest =
+        Engine::AssetImport::ComputeImportDigest(digestIn);
+    const std::string digest8 = digest.substr(0, 8);
+
+    // ── content-addressed asset naming ─────────────────────────────────
+    const std::string baseCore = SanitizeName(StemOf(FileNameOf(fwd)));
+    std::string stemDir;
+    if (copySource) {
+        const std::string folder =
+            baseCore + "_" + Hex8(LowerAsciiCopy(sourceAbs));
+        const std::string srcHash8 =
+            Hex8(std::string(reinterpret_cast<const char*>(
+                                 digestSourceBytes.data()),
+                             digestSourceBytes.size()));
+        const std::string extCanonical =
+            ext == "obj" ? ".obj" : (ext == "gltf" ? ".gltf" : ".glb");
+        stemDir = "assets/imported/model/" + folder;
+        const std::string copyRel =
+            stemDir + "/" + baseCore + "." + srcHash8 + extCanonical;
+        const auto copyResolved = m_Root.Resolve(copyRel);
+        if (!copyResolved.ok) {
+            Fail("model import: cannot resolve copy target: " + copyRel +
+                 ": " + copyResolved.diagnostic);
+            return -1;
+        }
+        std::error_code ec;
+        if (!fs::exists(fs::path(copyResolved.path), ec)) {
+            fs::create_directories(
+                fs::path(copyResolved.path).parent_path(), ec);
+            if (ec) {
+                Fail("model import: cannot create copy directory: " +
+                     ec.message());
+                return -1;
+            }
+            const auto copied = Engine::Content::CopyFileNoOverwrite(
+                sourceAbs, copyResolved.path);
+            if (!copied.ok &&
+                copied.error != Engine::Content::AtomicFileError::TargetExists) {
+                Fail("model import: copy failed: " +
+                     std::string(Engine::Content::ToString(copied.error)) +
+                     " " + copied.diagnostic);
+                return -1;
+            }
+        }
+        targetRel = copyRel;
+    } else {
+        const std::string parent = ParentDirOf(targetRel);
+        stemDir = parent.empty()
+                      ? ("assets/imported/model/" + baseCore + "_" +
+                         Hex8(LowerAsciiCopy(sourceAbs)))
+                      : parent;
+    }
+    parsed.mesh.sourceFile = targetRel;
+
+    const std::string meshPath =
+        stemDir + "/" + baseCore + "." + digest8 + ".mesh";
+    const std::string meshBytes =
+        Engine::AssetImport::SerializeMeshAssetJson(parsed.mesh);
+
+    // ── B4 texture preprocess (after fast-path) → PNG outputs
+    // content-addressed by normalized bytes; registers as Texture assets ──
+    std::vector<std::string> texturePaths;      // registry path per entry
+    std::vector<std::string> textureMetaBytes;  // sidecar meta json per entry
+    for (auto& entry : textureEntries) {
+        const std::vector<uint8_t>* bytesPtr =
+            entry.embedded ? &parsed.mesh.imageBytes[entry.imageIndex]
+                           : &entry.externalBytes;
+        Engine::AssetImport::TexturePreprocessResult processed =
+            Engine::AssetImport::PreprocessTexture(*bytesPtr, entry.role);
+        if (!processed.ok) {
+            Fail("model import: texture preprocess failed " + entry.identity +
+                 ": " + processed.error);
+            return -1;
+        }
+        const std::string pngHash = Hex8(std::string(
+            reinterpret_cast<const char*>(processed.pngBytes.data()),
+            processed.pngBytes.size()));
+        const char* roleToken =
+            entry.role == Engine::AssetImport::TextureRole::BaseColor
+                ? "basecolor"
+            : entry.role == Engine::AssetImport::TextureRole::Normal
+                ? "normal"
+            : entry.role == Engine::AssetImport::TextureRole::Occlusion
+                ? "occlusion"
+            : entry.role == Engine::AssetImport::TextureRole::Emissive
+                ? "emissive"
+                : "metallicroughness";
+        const std::string sanit =
+            SanitizeName(StemOf(FileNameOf(parsed.mesh.images[entry.imageIndex].uri.empty() ? ("img" + std::to_string(parsed.mesh.images[entry.imageIndex].sourceImageIndex)) : parsed.mesh.images[entry.imageIndex].uri)));
+        const std::string pngPath =
+            stemDir + "/tex/" + sanit + "." + roleToken + "." + pngHash +
+            ".tex.png";
+        nlohmann::json meta;
+        meta["format"] = "texture-meta";
+        meta["ruleVersion"] = 1;
+        meta["role"] = roleToken;
+        meta["colorspace"] =
+            Engine::AssetImport::IsColorRole(entry.role) ? "sRGB" : "linear";
+        meta["width"] = processed.width;
+        meta["height"] = processed.height;
+        meta["components"] = processed.components;
+        meta["sourceIdentity"] = entry.identity;
+        texturePaths.push_back(pngPath);
+        textureMetaBytes.push_back(meta.dump());
+    }
+    // resolved asset paths → into material refs, BEFORE serializing materials
+    for (auto& mat : parsed.mesh.materials) {
+        auto resolve = [&](Engine::AssetImport::TextureReferenceIR& ref) {
+            if (!ref.present || ref.imageIndex >= parsed.mesh.images.size())
+                return;
+            for (size_t i = 0; i < textureEntries.size(); ++i) {
+                if (textureEntries[i].imageIndex != ref.imageIndex) continue;
+                const bool colorRef =
+                    (&ref == &mat.baseColor || &ref == &mat.emissive);
+                const bool colorEntry = Engine::AssetImport::IsColorRole(
+                    textureEntries[i].role);
+                if (colorRef == colorEntry) {
+                    ref.resolvedAssetPath = texturePaths[i];
+                    break;
+                }
+            }
+        };
+        resolve(mat.baseColor);
+        resolve(mat.normal);
+        resolve(mat.occlusion);
+        resolve(mat.emissive);
+        resolve(mat.metallicRoughness);
+    }
+
+    std::vector<std::string> materialPaths;
+    std::vector<std::string> materialBytes;
+    for (uint32_t slot = 0; slot < parsed.mesh.materials.size(); ++slot) {
+        std::string bytes = Engine::AssetImport::SerializeMaterialAssetJson(
+            parsed.mesh.materials[slot], slot);
+        const std::string mh = Hex8(bytes);
+        materialPaths.push_back(stemDir + "/" + baseCore + ".m" +
+                                std::to_string(slot) + "." + mh +
+                                ".material.json");
+        materialBytes.push_back(std::move(bytes));
+    }
+
+    // ── idempotency fast path (C-2): identical digest → identical
+    // content-addressed mesh path → registry hit → same GUID, no revision ──
+    for (const auto& entry : m_Reg.GetAllEntries()) {
+        if (entry.type == AssetType::Mesh &&
+            m_Root.KeysEqual(entry.path, meshPath)) {
+            return IndexOfGuid(m_AssetOrder, entry.guid);
+        }
+    }
+
+    // ── staging writes BEFORE candidate/publish (never overwrites bytes
+    //    referenced by a committed revision; names are content-addressed) ──
+    auto writeAssetFile = [&](const std::string& rel,
+                              const std::string& bytes) -> bool {
+        const auto resolved = m_Root.Resolve(rel);
+        if (!resolved.ok) {
+            Fail("model import: cannot resolve staging path: " + rel +
+                 ": " + resolved.diagnostic);
+            return false;
+        }
+        std::error_code ec;
+        fs::create_directories(fs::path(resolved.path).parent_path(), ec);
+        if (ec) {
+            Fail("model import: cannot create staging directory: " +
+                 ec.message());
+            return false;
+        }
+        const auto written = Engine::Content::WriteFileAtomic(
+            resolved.path, bytes);
+        if (!written.ok) {
+            Fail("model import: staging write failed: " + rel + ": " +
+                 std::string(Engine::Content::ToString(written.error)) +
+                 " " + written.diagnostic);
+            return false;
+        }
+        return true;
+    };
+    if (!writeAssetFile(meshPath, meshBytes)) return -1;
+    for (size_t k = 0; k < materialPaths.size(); ++k) {
+        if (!writeAssetFile(materialPaths[k], materialBytes[k])) return -1;
+    }
+    for (size_t k = 0; k < texturePaths.size(); ++k) {
+        const auto& entry = textureEntries[k];
+        const std::vector<uint8_t>* bytesPtr =
+            entry.embedded ? &parsed.mesh.imageBytes[entry.imageIndex]
+                           : &entry.externalBytes;
+        Engine::AssetImport::TexturePreprocessResult processed =
+            Engine::AssetImport::PreprocessTexture(*bytesPtr, entry.role);
+        if (!writeAssetFile(texturePaths[k], std::string(
+#if defined(_MSC_VER)
+            reinterpret_cast<const char*>(processed.pngBytes.data()),
+            processed.pngBytes.size()
+#else
+            processed.pngBytes.begin(), processed.pngBytes.end()
+#endif
+            ))) return -1;
+        if (!writeAssetFile(texturePaths[k] + ".tex.meta.json",
+                            textureMetaBytes[k])) return -1;
+    }
+
+    // ── candidate: reuse stable GUIDs via exact-path / stem-prefix lookups ──
+    Engine::Content::ContentRegistry candidate = m_Reg;
+    // B4: texture assets register first (exact content-addressed path →
+    // Import keeps GUID stable for unchanged texture bytes).
+    std::vector<Engine::ResourceGUID> textureGuids(texturePaths.size());
+    for (size_t k = 0; k < texturePaths.size(); ++k) {
+        textureGuids[k] = candidate.Import(texturePaths[k], AssetType::Texture);
+        if (textureGuids[k].IsNull()) {
+            Fail("model import: texture GUID allocation failed: " +
+                 texturePaths[k]);
+            return -1;
+        }
+    }
+    const auto candidateEntries = candidate.GetAllEntries();
+    auto findExact = [&](const std::string& path,
+                         AssetType type) -> Engine::ResourceGUID {
+        for (const auto& e : candidateEntries) {
+            if (e.type == type && m_Root.KeysEqual(e.path, path))
+                return e.guid;
+        }
+        return Engine::ResourceGUID();
+    };
+    auto findPrefixLease = [&](const std::string& prefix,
+                               AssetType type) -> Engine::ResourceGUID {
+        std::vector<std::string> matches;
+        for (const auto& e : candidateEntries) {
+            if (e.type == type && e.path.rfind(prefix, 0) == 0)
+                matches.push_back(e.path);
+        }
+        if (matches.empty()) return Engine::ResourceGUID();
+        std::sort(matches.begin(), matches.end());
+        for (const auto& e : candidateEntries) {
+            if (e.type == type && e.path == matches.front()) return e.guid;
+        }
+        return Engine::ResourceGUID();
+    };
+
+    Engine::ResourceGUID meshGuid =
+        findExact(meshPath, AssetType::Mesh);
+    if (meshGuid.IsNull())
+        meshGuid = findPrefixLease(stemDir + "/" + baseCore + ".",
+                                   AssetType::Mesh);
+    bool meshRegistered = false;
+    if (!meshGuid.IsNull()) {
+        // C-2: keep the existing mesh GUID across revisions; rebind it from
+        // its old content-addressed path to the new one.
+        auto oldPath = ResolveRegisteredPath(candidate, meshGuid);
+        if (!oldPath.empty() && !m_Root.KeysEqual(oldPath, meshPath))
+            candidate.Unregister(meshGuid);
+        meshRegistered =
+            candidate.RegisterExplicit(meshGuid, meshPath, AssetType::Mesh);
+    }
+    if (!meshRegistered)
+        meshGuid = candidate.Import(meshPath, AssetType::Mesh);
+    if (meshGuid.IsNull()) {
+        if (m_Warnings.size() > 0) m_Warnings = m_Warnings;
+        Fail("model import: GUID allocation failed");
+        return -1;
+    }
+
+    std::vector<Engine::ResourceGUID> materialGuids(materialPaths.size());
+    for (size_t k = 0; k < materialPaths.size(); ++k) {
+        Engine::ResourceGUID guid =
+            findExact(materialPaths[k], AssetType::Material);
+        if (guid.IsNull())
+            guid = findPrefixLease(stemDir + "/" + baseCore + ".m" +
+                                       std::to_string(k) + ".",
+                                   AssetType::Material);
+        if (!guid.IsNull()) {
+            auto oldPath = ResolveRegisteredPath(candidate, guid);
+            if (!oldPath.empty() &&
+                !m_Root.KeysEqual(oldPath, materialPaths[k]))
+                candidate.Unregister(guid);
+            if (candidate.RegisterExplicit(guid, materialPaths[k],
+                                           AssetType::Material)) {
+                materialGuids[k] = guid;
+                continue;
+            }
+        }
+        materialGuids[k] =
+            candidate.Import(materialPaths[k], AssetType::Material);
+    }
+
+    // ── single Publish for the Mesh + Material group ───────────────────
+    std::string committedScene;
+    if (!m_Revisions.ReadCommittedScene(m_ScenePath, &committedScene)) {
+        Fail("model import: committed scene unavailable");
+        return -1;
+    }
+    const std::string manifestJson = candidate.SerializeManifest();
+    const auto published =
+        m_Revisions.Publish(m_Root, manifestJson, committedScene);
+    if (!published.ok) {
+        if (published.recoveryRequired) {
+            m_RecoveryRequired = true;
+            Fail("model import: RecoveryRequired (commit state uncertain): " +
+                 published.diagnostic);
+            return -1;
+        }
+        Fail("model import: NotCommitted (revision publish failed): " +
+             published.diagnostic);
+        return -1;
+    }
+    m_Reg = std::move(candidate);
+
+    auto ensureOrderPush = [&](const Engine::ResourceGUID& g) -> int32_t {
+        int32_t idx = IndexOfGuid(m_AssetOrder, g);
+        if (idx < 0) {
+            m_AssetOrder.push_back(g);
+            idx = static_cast<int32_t>(m_AssetOrder.size()) - 1;
+        }
+        return idx;
+    };
+    const int32_t meshIdx = ensureOrderPush(meshGuid);
+    for (const auto& g : materialGuids) (void)ensureOrderPush(g);
+    for (const auto& g : textureGuids) (void)ensureOrderPush(g);
+
+    const auto mirror =
+        Engine::Content::WriteFileAtomic(m_ManifestPath, manifestJson);
+    if (!mirror.ok) {
+        if (!m_Warnings.empty()) m_Warnings += "\n";
+        m_Warnings +=
+            "import: CommittedCleanupPending; legacy manifest mirror "
+            "update failed";
+    }
+    MarkDirty();
+    Engine::Log::Info("[EditorBridge] model imported: {} (mesh; {} materials)",
+                      meshPath, materialPaths.size());
+    Emit(EV_ASSET_IMPORTED,
+         "idx=" + std::to_string(meshIdx) + ";guid=" + meshGuid.ToHex() +
+             ";path=" + meshPath +
+             ";type=2;materials=" + std::to_string(materialPaths.size()) +
+             ";textures=" + std::to_string(texturePaths.size()));
+    return meshIdx;
+}
 bool EditorSession::RenameAsset(int32_t assetIndex, const std::string& newName) {
     if (m_RecoveryRequired)
         return Fail("rename blocked: RecoveryRequired (explicit recovery required)");
@@ -1516,8 +2174,7 @@ bool EditorSession::AssetAt(int32_t index, Engine::Content::AssetEntry* out) con
         index >= static_cast<int32_t>(m_AssetOrder.size()))
         return false;
     const Engine::ResourceGUID& guid = m_AssetOrder[static_cast<size_t>(index)];
-    // 注册表按 GUID 查回条目（不依赖 unordered_map 迭代序）；按值拷贝
-    // （GetAllEntries 临时 vector 引用会悬垂，ASan 纪律）
+    // 注意：GUID→条目用线性注册表查找（unordered_map 迭代序不可依赖）。
     auto entries = m_Reg.GetAllEntries();
     for (const auto& e : entries)
         if (e.guid == guid) { *out = e; return true; }

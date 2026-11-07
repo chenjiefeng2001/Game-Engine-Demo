@@ -100,6 +100,8 @@ add_executable(test_content
     test_content/ProjectPathTest.cpp
     test_content/ManifestStrictLoadTest.cpp
     test_content/RevisionStoreTest.cpp
+    test_content/MeshAssetResolverTest.cpp
+    test_content/MeshComponentSerializationTest.cpp
     test_content/RigidBodySerializationTest.cpp
     test_content/ColliderSerializationTest.cpp
     test_content/ContentPipelineTest.cpp
@@ -159,6 +161,7 @@ add_executable(test_bridge
     test_bridge/test_revision_commit.cpp
     test_bridge/test_import_service.cpp
     test_bridge/test_m1f_fault_matrix.cpp
+    test_bridge/test_mesh_runtime_host.cpp
 )
 add_executable(m1f_crash_harness
     test_bridge/M1FCrashHarness.cpp
@@ -206,7 +209,7 @@ set_tests_properties(test_pick_transport PROPERTIES TIMEOUT 180)
 add_executable(test_viewport_resize
     test_bridge/test_viewport_resize.cpp
 )
-target_link_libraries(test_viewport_resize PRIVATE EditorBridge GTest::gtest_main)
+target_link_libraries(test_viewport_resize PRIVATE EditorBridge EngineCore GTest::gtest_main)
 target_include_directories(test_viewport_resize PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/../bridge/src)
 add_custom_command(TARGET test_viewport_resize POST_BUILD
     COMMAND ${CMAKE_COMMAND} -E copy_if_different
@@ -323,6 +326,55 @@ target_include_directories(test_debugdraw PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/..
 target_compile_definitions(test_debugdraw PRIVATE $<$<CONFIG:Debug>:JPH_DEBUG_RENDERER>)
 add_test(NAME test_debugdraw COMMAND test_debugdraw)
 set_tests_properties(test_debugdraw PROPERTIES TIMEOUT 180)
+
+# P6-1B Gate B1: glTF/GLB 解析器 + Import IR（合同 docs/P6-P1A-Asset-Import-Contract.md）
+add_executable(test_assetimport
+    test_assetimport/GltfParserTest.cpp
+    test_assetimport/SecurityAndDeterminismTest.cpp
+    test_assetimport/ObjMtlParserTest.cpp
+    test_assetimport/B3DigestAndEmissiveTest.cpp
+    test_assetimport/B4TexturePreprocessTest.cpp
+    test_assetimport/B4TextureSrgbGLTest.cpp
+    test_assetimport/B5MeshAssetReaderTest.cpp
+    test_assetimport/B5GpuMeshResourceTest.cpp
+    test_assetimport/B5MaterialTextureRuntimeTest.cpp
+    test_assetimport/B5MeshRuntimeSceneTest.cpp
+    main.cpp
+)
+target_link_libraries(test_assetimport PRIVATE ${COMMON_LIBS} glfw)
+target_include_directories(test_assetimport PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/../engine/src ${CMAKE_CURRENT_SOURCE_DIR}/../third_party ${CMAKE_CURRENT_SOURCE_DIR}/test_debugdraw)
+add_test(NAME test_assetimport COMMAND test_assetimport)
+set_tests_properties(test_assetimport PROPERTIES TIMEOUT 180)
+
+# P6-1B B3: 导入提交链（EditorSession model import + C-2 幂等 + 8 fault points）
+add_executable(test_assetimport_commit
+    test_assetimport_commit/TestImportCommit.cpp
+    main.cpp
+)
+target_link_libraries(test_assetimport_commit PRIVATE EditorBridge EngineCore GTest::gtest GTest::gmock)
+target_include_directories(test_assetimport_commit PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/../third_party)
+# DLL staging 与 test_bridge/test_pick_transport 同规矩：exe 必须与同一次构建的
+# EditorBridge.dll 配对（否则旧 DLL 会造成 bad type 漂移）。
+add_custom_command(TARGET test_assetimport_commit POST_BUILD
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different
+            $<TARGET_FILE:EditorBridge> $<TARGET_FILE_DIR:test_assetimport_commit>)
+add_test(NAME test_assetimport_commit COMMAND test_assetimport_commit)
+set_tests_properties(test_assetimport_commit PROPERTIES TIMEOUT 300)
+
+# P6-1B B5-G5: production render end-to-end pixel proof
+add_executable(test_mesh_pixel
+    test_mesh_pixel/B5ProductionPixelTest.cpp
+)
+target_link_libraries(test_mesh_pixel PRIVATE EditorBridge EngineCore GTest::gtest_main)
+target_include_directories(test_mesh_pixel PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/../bridge/src ${CMAKE_CURRENT_SOURCE_DIR}/../third_party)
+if(WIN32)
+    add_custom_command(TARGET test_mesh_pixel POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                $<TARGET_FILE:EditorBridge> $<TARGET_FILE_DIR:test_mesh_pixel>)
+endif()
+add_test(NAME test_mesh_pixel COMMAND test_mesh_pixel)
+set_tests_properties(test_mesh_pixel PROPERTIES TIMEOUT 600 WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}")
+
 
 # NOTE: this block must stay at the END of the file.
 # get_property(... DIRECTORY PROPERTY TESTS) only returns the tests

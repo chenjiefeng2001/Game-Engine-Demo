@@ -21,9 +21,11 @@
 
 #include "Engine/Core/Log.h"
 #include <GLFW/glfw3.h>
+#include <nlohmann/json.hpp>
 #include <cstdlib>
 #include <cstring>
 #include <exception>
+#include <fstream>
 #include <memory>
 
 namespace {
@@ -375,17 +377,32 @@ namespace Engine {
 		// 但它们会经 EditorSession::OpenProject → InstantiateScene → SetTexture
 		// 走到这里。返回 nullptr 是既有契约：TextureManager::Load 对空结果
 		// 不入缓存并原样返回。
-		if (!glfwGetCurrentContext()) {
-			s_Log.Error("CreateTexture('{}') refused: no current OpenGL context", path);
-			return nullptr;
-		}
-
-		if (m_Allocator) {
-			StackAllocatorAdaptor<OpenGLTexture> adaptor(m_Allocator);
-			return std::allocate_shared<OpenGLTexture>(adaptor, path, m_GL);
-		}
-		return std::make_shared<OpenGLTexture>(path, m_GL);
+	if (!glfwGetCurrentContext()) {
+		s_Log.Error("CreateTexture('{}') refused: no current OpenGL context", path);
+		return nullptr;
 	}
+
+	// P6-1B B4-C: sidecar colorspace metadata消费（缺省 Linear = 既有行为）。
+	bool srgb = false;
+	{
+		std::ifstream metaIn(path + ".tex.meta.json", std::ios::binary);
+		if (metaIn.good()) {
+			try {
+				nlohmann::json j;
+				metaIn >> j;
+				const std::string cs = j.value("colorspace", std::string("linear"));
+				srgb = (cs == "sRGB");
+			} catch (...) {
+				s_Log.Error("CreateTexture: malformed sidecar meta for '{}'; treating as Linear", path);
+			}
+		}
+	}
+	if (m_Allocator) {
+		StackAllocatorAdaptor<OpenGLTexture> adaptor(m_Allocator);
+		return std::allocate_shared<OpenGLTexture>(adaptor, path, m_GL, srgb);
+	}
+	return std::make_shared<OpenGLTexture>(path, m_GL, srgb);
+}
 
 	std::shared_ptr<VertexBuffer> OpenGLGraphicsFactory::CreateVertexBuffer(
 		float* vertices,

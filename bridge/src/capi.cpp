@@ -8,6 +8,7 @@
 #include "Engine/Platform/GlfwLifetime.h"
 #include "EditorSession.h"
 #include <Engine/Core/Content/AtomicFile.h>
+#include <Engine/Core/Log.h>
 
 #include <cstdio>
 #include <cstdlib>

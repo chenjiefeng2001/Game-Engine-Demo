@@ -11,6 +11,8 @@ namespace Engine {
 	class OpenGLVertexArray : public VertexArray
 	{
 	public:
+		// P6-1B B5-G2: live GL object counter for resource-rollback tests.
+		static int64_t LiveCount();
 		OpenGLVertexArray(GladGLContext& gl);
 		virtual ~OpenGLVertexArray() override;
 

@@ -932,6 +932,7 @@ bool Application::RenderProduction3DFrame(IRenderContext &context, Scene &scene,
                                          uint32_t targetWidth,
                                          uint32_t targetHeight) {
   m_Production3DRenderableCount = 0;
+  m_LastProductionUsedRenderGraph = false;
 
   if (!m_Production3DRenderReady && !InitProduction3DRenderResources(context)) {
     return false;
@@ -1057,6 +1058,7 @@ bool Application::RenderProduction3DFrame(IRenderContext &context, Scene &scene,
     m_Production3DMeshRenderer->Render(meshObjects);
   }
 
+  m_LastProductionUsedRenderGraph = usedRenderGraph;
   // C5-1: DebugDraw EndFrame after scene geometry
   if (m_ProductionDebugDrawReady && m_ProductionDebugDraw) {
     m_ProductionDebugDraw->EndFrame();

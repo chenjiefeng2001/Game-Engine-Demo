@@ -187,11 +187,7 @@ bool ContentRegistry::LoadManifest(const std::string& filePath,
 
         const std::string typeName = a["type"].get<std::string>();
         AssetType type;
-        if (typeName == "Texture") {
-            type = AssetType::Texture;
-        } else if (typeName == "Script") {
-            type = AssetType::Script;
-        } else {
+        if (!TryFromString(typeName, &type)) {
             s_Log.Error("LoadManifest: {} has unknown type '{}'", where,
                         typeName);
             return false;

@@ -16,11 +16,35 @@ namespace Engine {
     {
     }
 
+    uint64 Mesh::GetContentHash() const {
+        if (m_ContentHashValid) return m_ContentHash;
+        uint64 h = 0xcbf29ce484222325ull;
+        auto mix = [&h](const void* data, size_t size) {
+            const auto* p = static_cast<const uint8_t*>(data);
+            for (size_t i = 0; i < size; ++i) {
+                h ^= p[i];
+                h *= 0x100000001b3ull;
+            }
+        };
+        const uint64 vCount = m_Vertices.size();
+        const uint64 iCount = m_Indices.size();
+        mix(&vCount, sizeof(vCount));
+        if (!m_Vertices.empty())
+            mix(m_Vertices.data(), m_Vertices.size() * sizeof(Vertex3D));
+        mix(&iCount, sizeof(iCount));
+        if (!m_Indices.empty())
+            mix(m_Indices.data(), m_Indices.size() * sizeof(uint32));
+        m_ContentHash = h;
+        m_ContentHashValid = true;
+        return m_ContentHash;
+    }
+
     // ============================================================
     // 法线重算
     // ============================================================
 
     void Mesh::RecalculateNormals() {
+        m_ContentHashValid = false;
         // 初始化所有法线为零
         for (auto& v : m_Vertices)
             v.normal = Vec3(0.0f, 0.0f, 0.0f);

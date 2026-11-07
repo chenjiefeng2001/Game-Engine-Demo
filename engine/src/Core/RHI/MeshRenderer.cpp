@@ -1,4 +1,5 @@
 #include "Engine/Core/RHI/MeshRenderer.h"
+#include "AssetImport/MaterialRuntimeBinding.h"
 #include "Engine/Core/RHI/PotentiallyVisibleSet.h"
 #include "Engine/Core/RHI/IPrimitiveBatch.h"
 #include "Engine/Core/RHI/ISceneGraph.h"
@@ -28,7 +29,8 @@ namespace Engine {
 
     MeshRenderer::~MeshRenderer()
     {
-        // unique_ptr<IPrimitiveBatch> 在此析构（完整类型已可见）
+        // P6-1B B5-G2: release GPU mesh resources while the runtime GL context is current.
+        (void)m_GpuMeshCache.Clear();
     }
 
     MeshRenderer::MeshRenderer(IGraphicsFactory& factory, IRenderContext& context)
@@ -43,48 +45,81 @@ namespace Engine {
     // GPU 资源管理
     // ════════════════════════════════════════════════
 
-    uint64 MeshRenderer::UploadMesh(const std::shared_ptr<Mesh>& mesh) {
-        if (!mesh || !mesh->IsValid()) return 0;
+    std::shared_ptr<const MeshGpuResource> MeshRenderer::GetOrCreateGpuMesh(
+        const std::shared_ptr<Mesh>& mesh, uint64_t assetIdentity) {
+        if (!mesh || !mesh->IsValid()) return nullptr;
+        const std::vector<Vertex3D>& vertices = mesh->GetVertices();
+        const std::vector<uint32>& indices = mesh->GetIndices();
+        std::vector<MeshGpuSpan> spans;
+        MeshGpuSpan span;
+        span.firstIndex = 0;
+        span.indexCount = static_cast<uint32>(indices.size());
+        span.materialIndex = 0xFFFFFFFFu;
+        spans.push_back(span);
+        std::vector<uint8_t> flags(vertices.size(), static_cast<uint8_t>(0x07));
+        MeshGpuResourceKey key;
+        key.identity = assetIdentity;
+        key.payloadDigest = MeshGpuCache::ComputePayloadDigest(
+            vertices, indices, spans, flags);
+        return m_GpuMeshCache.Acquire(key, vertices, indices, spans, flags, m_Factory);
+    }
 
-        uint64 id = reinterpret_cast<uint64>(mesh.get());
+    std::shared_ptr<const MeshGpuResource> MeshRenderer::EnsureGpuMesh(
+        const std::shared_ptr<Mesh>& mesh, uint64_t assetIdentity) {
+        return GetOrCreateGpuMesh(mesh, assetIdentity);
+    }
 
-        auto it = m_MeshCache.find(id);
-        if (it != m_MeshCache.end())
-            return id;
+    void MeshRenderer::SetMeshMaterialBinding(
+        const MeshGpuResourceKey& key,
+        std::shared_ptr<const AssetImport::MeshMaterialBinding> binding) {
+        if (binding) {
+            m_MeshMaterialBindings[key] = std::move(binding);
+        } else {
+            m_MeshMaterialBindings.erase(key);
+        }
+    }
 
-        const auto& vertices = mesh->GetVertices();
-        const auto& indices  = mesh->GetIndices();
+    void MeshRenderer::ClearMeshMaterialBindings() {
+        m_MeshMaterialBindings.clear();
+    }
 
-        // 顶点缓冲区 — 顶点在模型空间（model space / local space）中定义
-        auto vb = m_Factory.CreateVertexBuffer(
-            reinterpret_cast<float*>(const_cast<Vertex3D*>(vertices.data())),
-            static_cast<uint32>(vertices.size() * sizeof(Vertex3D)));
+    std::shared_ptr<const AssetImport::MeshMaterialBinding>
+    MeshRenderer::GetMeshMaterialBindingForTesting(
+        const MeshGpuResourceKey& key) const {
+        const auto it = m_MeshMaterialBindings.find(key);
+        return it == m_MeshMaterialBindings.end() ? nullptr : it->second;
+    }
 
-        // 索引缓冲区
-        auto ib = m_Factory.CreateIndexBuffer(
-            const_cast<uint32*>(indices.data()),
-            static_cast<uint32>(indices.size()));
+    bool MeshRenderer::RemoveMeshGpuResource(const MeshGpuResourceKey& key) {
+        m_MeshMaterialBindings.erase(key);
+        return m_GpuMeshCache.Invalidate(key);
+    }
 
-        // VAO — 顶点属性布局（与 3D shader 的 layout 匹配）
-        auto va = m_Factory.CreateVertexArray();
+    bool MeshRenderer::ClearGpuResources() { return m_GpuMeshCache.Clear(); }
 
-        VertexAttribute attributes[4] = {
-            {0, 3, sizeof(Vertex3D), offsetof(Vertex3D, position)},
-            {1, 3, sizeof(Vertex3D), offsetof(Vertex3D, normal)},
-            {2, 2, sizeof(Vertex3D), offsetof(Vertex3D, texCoord)},
-            {3, 3, sizeof(Vertex3D), offsetof(Vertex3D, tangent)},
-        };
-        va->AddVertexBuffer(vb, attributes, 4);
-        va->SetIndexBuffer(ib);
-
-        CachedMeshData cached;
-        cached.vao        = std::move(va);
-        cached.vbo        = std::move(vb);
-        cached.ibo        = std::move(ib);
-        cached.indexCount = static_cast<uint32>(indices.size());
-        m_MeshCache[id]   = std::move(cached);
-
-        return id;
+    void MeshRenderer::ApplyMeshMaterialBinding(
+        const MeshGpuResource& resource, class Shader& shader) {
+        const auto it = m_MeshMaterialBindings.find(resource.Key());
+        if (it == m_MeshMaterialBindings.end() || !it->second ||
+            !it->second->firstMaterialAvailable || it->second->slots.empty())
+            return;
+        const AssetImport::MaterialBindingEntry& slot0 = it->second->slots[0];
+        shader.SetVec4("u_ObjectColor", slot0.material.baseColorFactor);
+        if (slot0.baseColor.gpu && slot0.baseColor.gpu->IsValid()) {
+            slot0.baseColor.gpu->GetTexture()->Bind(0);
+            shader.SetInt("u_Texture", 0);
+            shader.SetInt("u_HasTexture", 1);
+        } else {
+            shader.SetInt("u_HasTexture", 0);
+        }
+        if (slot0.normal.gpu && slot0.normal.gpu->IsValid()) {
+            slot0.normal.gpu->GetTexture()->Bind(1);
+            shader.SetInt("u_NormalMap", 1);
+            shader.SetInt("u_HasNormalMap", 1);
+            shader.SetFloat("u_NormalStrength", 1.0f);
+        } else {
+            shader.SetInt("u_HasNormalMap", 0);
+        }
     }
 
     // ════════════════════════════════════════════════
@@ -283,18 +318,8 @@ namespace Engine {
             if (!obj || !obj->IsActive()) continue;
             auto* mc = obj->GetComponent<MeshComponent>();
             if (!mc || !mc->m_Visible || !mc->HasMesh()) continue;
-
-            auto mesh = mc->GetMesh();
-            uint64 id = reinterpret_cast<uint64>(mesh.get());
-            auto it = m_MeshCache.find(id);
-            if (it == m_MeshCache.end()) {
-                id = UploadMesh(mesh);
-                if (id == 0) continue;
-                it = m_MeshCache.find(id);
-                if (it == m_MeshCache.end()) continue;
-            }
-
-            const auto& cached = it->second;
+            const auto gpu = GetOrCreateGpuMesh(mc->GetMesh(), mc->GetAssetIdentity());
+            if (!gpu) continue;
             glm::mat4 model = glm::make_mat4(obj->GetTransform().GetWorldMatrix().Data());
             glm::mat4 mvp = projGlm * viewGlm * model;
             glm::mat3 nm = glm::transpose(glm::inverse(glm::mat3(model)));
@@ -319,8 +344,8 @@ namespace Engine {
                 geomShader->SetInt("u_HasNormalMap", 0);
             }
 
-            cached.vao->Bind();
-            m_Context.DrawIndexed(cached.vao);
+            gpu->GetVertexArray()->Bind();
+            m_Context.DrawIndexed(gpu->GetVertexArray());
         }
 
         // ── Pass 2: 光照通道 — 全屏四边形 ──
@@ -388,25 +413,15 @@ namespace Engine {
             if (!obj || !obj->IsActive()) continue;
             auto* mc = obj->GetComponent<MeshComponent>();
             if (!mc || !mc->m_Visible || !mc->HasMesh()) continue;
-
-            auto mesh = mc->GetMesh();
-            uint64 id = reinterpret_cast<uint64>(mesh.get());
-            auto it = m_MeshCache.find(id);
-            if (it == m_MeshCache.end()) {
-                id = UploadMesh(mesh);
-                if (id == 0) continue;
-                it = m_MeshCache.find(id);
-                if (it == m_MeshCache.end()) continue;
-            }
-
-            const auto& cached = it->second;
+            const auto gpu = GetOrCreateGpuMesh(mc->GetMesh(), mc->GetAssetIdentity());
+            if (!gpu) continue;
             glm::mat4 model = glm::make_mat4(obj->GetTransform().GetWorldMatrix().Data());
             glm::mat4 lightVP;
             std::memcpy(&lightVP, csmData.cascades[0].lightViewProj.data, sizeof(float) * 16);
             glm::mat4 mvp = lightVP * model;
             m_DepthShader->SetMat4("u_MVP", glm::value_ptr(mvp));
-            cached.vao->Bind();
-            m_Context.DrawIndexed(cached.vao);
+            gpu->GetVertexArray()->Bind();
+            m_Context.DrawIndexed(gpu->GetVertexArray());
         }
 
         m_Shader->Bind(); // 绑定主 shader 以便继续主渲染
@@ -433,12 +448,7 @@ namespace Engine {
             if (!obj || !obj->IsActive()) continue;
             auto* meshComp = obj->GetComponent<MeshComponent>();
             if (!meshComp || !meshComp->m_Visible || !meshComp->HasMesh()) continue;
-            auto mesh = meshComp->GetMesh();
-            uint64 gpuId = reinterpret_cast<uint64>(mesh.get());
-            auto it = m_MeshCache.find(gpuId);
-            if (it == m_MeshCache.end()) {
-                UploadMesh(mesh);
-            }
+                        (void)GetOrCreateGpuMesh(meshComp->GetMesh(), meshComp->GetAssetIdentity());
         }
 
         // ── Pass 1: 深度只写 ──
@@ -452,17 +462,13 @@ namespace Engine {
             auto* meshComp = obj->GetComponent<MeshComponent>();
             if (!meshComp || !meshComp->m_Visible || !meshComp->HasMesh()) continue;
 
-            auto mesh = meshComp->GetMesh();
-            uint64 gpuId = reinterpret_cast<uint64>(mesh.get());
-            auto it = m_MeshCache.find(gpuId);
-            if (it == m_MeshCache.end()) continue;
-
-            const auto& cached = it->second;
+                        const auto gpu = GetOrCreateGpuMesh(meshComp->GetMesh(), meshComp->GetAssetIdentity());
+            if (!gpu) continue;
             glm::mat4 modelGlm = glm::make_mat4(obj->GetTransform().GetWorldMatrix().Data());
             glm::mat4 mvp = projGlm * viewGlm * modelGlm;
             m_DepthShader->SetMat4("u_MVP", glm::value_ptr(mvp));
-            cached.vao->Bind();
-            m_Context.DrawIndexed(cached.vao);
+            gpu->GetVertexArray()->Bind();
+            m_Context.DrawIndexed(gpu->GetVertexArray());
         }
 
         // ── Pass 2: 主渲染（颜色）with GL_EQUAL ──
@@ -491,12 +497,8 @@ namespace Engine {
             auto* meshComp = obj->GetComponent<MeshComponent>();
             if (!meshComp || !meshComp->m_Visible || !meshComp->HasMesh()) continue;
 
-            auto mesh = meshComp->GetMesh();
-            uint64 gpuId = reinterpret_cast<uint64>(mesh.get());
-            auto it = m_MeshCache.find(gpuId);
-            if (it == m_MeshCache.end()) continue;
-
-            const auto& cached = it->second;
+                        const auto gpu = GetOrCreateGpuMesh(meshComp->GetMesh(), meshComp->GetAssetIdentity());
+            if (!gpu) continue;
             glm::mat4 modelGlm = glm::make_mat4(obj->GetTransform().GetWorldMatrix().Data());
             glm::mat4 mvp = projGlm * viewGlm * modelGlm;
             glm::mat3 normalMat3 = glm::transpose(glm::inverse(glm::mat3(modelGlm)));
@@ -508,8 +510,9 @@ namespace Engine {
             m_Shader->SetVec4("u_ObjectColor", &meshComp->m_Color.x);
             m_Shader->SetInt("u_HasTexture", 0);
 
-            cached.vao->Bind();
-            m_Context.DrawIndexed(cached.vao);
+            ApplyMeshMaterialBinding(*gpu, *m_Shader);
+            gpu->GetVertexArray()->Bind();
+            m_Context.DrawIndexed(gpu->GetVertexArray());
         }
 
         // ── 恢复默认深度状态 ──
@@ -674,19 +677,8 @@ namespace Engine {
             if (!meshComp || !meshComp->m_Visible || !meshComp->HasMesh())
                 continue;
 
-            auto mesh = meshComp->GetMesh();
-            uint64 gpuId = reinterpret_cast<uint64>(mesh.get());
-
-            // 获取或创建 GPU 资源
-            auto it = m_MeshCache.find(gpuId);
-            if (it == m_MeshCache.end()) {
-                gpuId = UploadMesh(mesh);
-                if (gpuId == 0) continue;
-                it = m_MeshCache.find(gpuId);
-                if (it == m_MeshCache.end()) continue;
-            }
-
-            const auto& cached = it->second;
+                        const auto gpu = GetOrCreateGpuMesh(meshComp->GetMesh(), meshComp->GetAssetIdentity());
+            if (!gpu) continue;
 
             // ═══════════════════════════════════════════════
             // Model 矩阵:  模型空间 → 世界空间
@@ -759,8 +751,9 @@ namespace Engine {
             }
 
             // ── 绘制 ──
-            cached.vao->Bind();
-            m_Context.DrawIndexed(cached.vao);
+            ApplyMeshMaterialBinding(*gpu, *m_Shader);
+            gpu->GetVertexArray()->Bind();
+            m_Context.DrawIndexed(gpu->GetVertexArray());
         }
 
     m_Shader->Unbind();

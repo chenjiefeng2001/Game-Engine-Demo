@@ -120,8 +120,12 @@ public:
 
   // P4-B C2: production 3D scene render
   bool InitProduction3DRenderResources(IRenderContext &context);
-  bool RenderProduction3DFrame(IRenderContext &context, Scene &scene,
-                              uint32_t targetWidth, uint32_t targetHeight);
+   bool RenderProduction3DFrame(IRenderContext &context, Scene &scene,
+                               uint32_t targetWidth, uint32_t targetHeight);
+   /// P6-1B B5-G4: internal bridge access to the single production renderer.
+   MeshRenderer *GetProduction3DMeshRenderer() const {
+     return m_Production3DMeshRenderer.get();
+   }
   void SetProductionCameraInput(const EditorCameraInput &input) { m_ProductionCameraInput = input; }
 
   using ProductionDebugDrawCallback =
@@ -134,6 +138,10 @@ public:
   // Default false: Direct Renderer path is used.
   void SetProductionUseRenderGraph(bool v) { m_ProductionUseRenderGraph = v; }
   bool ProductionUseRenderGraph() const { return m_ProductionUseRenderGraph; }
+  /// G5 test observation: whether the last 3D frame actually executed RenderGraph.
+  bool LastProductionUsedRenderGraph() const {
+    return m_LastProductionUsedRenderGraph;
+  }
 
   // P4-E Gate B: presentation render-target FBO id, set by EngineHost each frame.
   void SetProductionRenderTargetFbo(uint32_t fboId) {
@@ -352,6 +360,7 @@ private:
 
   // P4-E Gate B: RenderGraph production path
   bool m_ProductionUseRenderGraph = false;
+  bool m_LastProductionUsedRenderGraph = false;
   uint32_t m_ProductionRenderTargetFbo = 0;
   std::unique_ptr<Rendering::RenderGraph> m_ProductionRenderGraph;
   std::unique_ptr<RHI::IRHIDevice> m_ProductionRenderGraphDevice;

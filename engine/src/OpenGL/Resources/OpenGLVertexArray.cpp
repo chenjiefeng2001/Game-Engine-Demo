@@ -1,17 +1,25 @@
 #include "OpenGLVertexArray.h"
+#include <atomic>
+#include <cstdint>
 #include "Engine/Core/RenderResources/VertexBuffer.h"
 #include "Engine/Core/RenderResources/IndexBuffer.h"
 
 namespace Engine {
 
+	namespace { std::atomic<int64_t> g_Live{0}; }
+
 	OpenGLVertexArray::OpenGLVertexArray(GladGLContext& gl)
 		: m_GL(gl) {
+		++g_Live;
 		m_GL.GenVertexArrays(1, &m_RendererID);
 	}
 
 	OpenGLVertexArray::~OpenGLVertexArray() {
+		--g_Live;
 		m_GL.DeleteVertexArrays(1, &m_RendererID);
 	}
+
+	int64_t OpenGLVertexArray::LiveCount() { return g_Live.load(); }
 
 	void OpenGLVertexArray::Bind() const {
 		m_GL.BindVertexArray(m_RendererID);

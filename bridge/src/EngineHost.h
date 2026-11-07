@@ -20,9 +20,12 @@
 
 namespace Engine {
 class Application;
+class MeshRuntimeScene;
 class OpenGLContext;
 class OpenGLFramebuffer;
 class OpenGLGraphicsFactory;
+class TextureGpuCache;
+namespace Content { class MeshAssetResolver; }
 }
 
 namespace editor_bridge {
@@ -166,6 +169,20 @@ public:
     /// 可被直接断言，而不是只能从"某个 status 变了"间接推断。
     ENGINE_HOST_P1_TEST_SEAM uint32_t ResolveSceneIndexForEntityId(uint32_t entityId) noexcept;
 
+    /// P6-1B B5-G4: native observation seam for the runtime mesh map.
+    /// Returns Ready/entry key when loaded, or the cached failure status.
+    ENGINE_HOST_P1_TEST_SEAM bool QueryRuntimeMeshForTesting(
+        const char* guidHex, int32_t* status, uint64_t* identity,
+        uint64_t* payloadDigest) const;
+
+    /// G5: observation/injection seams for production pixel proof.
+    ENGINE_HOST_P1_TEST_SEAM bool LastProductionUsedRenderGraphForTesting() const;
+    ENGINE_HOST_P1_TEST_SEAM void SetMeshGpuUploadFailureStageForTesting(
+        int32_t stage);
+    ENGINE_HOST_P1_TEST_SEAM bool QueryRuntimeMeshErrorForTesting(
+        const char* guidHex, char* out, int32_t cap) const;
+    ENGINE_HOST_P1_TEST_SEAM size_t GpuMeshCountForTesting() const;
+
 
 
 private:
@@ -224,6 +241,9 @@ private:
     void UpdateGlobalProofState() noexcept;
     void PublishSessionProofState() noexcept;
     bool EnsureRuntimeSession();
+    void RefreshMeshRuntime();
+    void SyncMeshRuntime();
+    void TeardownMeshRuntime();
     int32_t MakeRuntimeContextCurrent();
     int32_t SubmitOpenProject(const char* projectRoot,
                               const char* manifestPath,
@@ -345,6 +365,9 @@ private:
     Engine::EditorCameraInput m_ProductionCameraInput{};
     bool m_ProductionCameraInputPending = false;
     std::unique_ptr<EditorSession> m_Session;
+    std::unique_ptr<Engine::Content::MeshAssetResolver> m_MeshResolver;
+    std::unique_ptr<Engine::MeshRuntimeScene> m_MeshRuntimeScene;
+    std::unique_ptr<Engine::TextureGpuCache> m_TextureGpuCache;
 
     mutable std::mutex m_Mutex;
     mutable std::recursive_mutex m_CallbackMutex;

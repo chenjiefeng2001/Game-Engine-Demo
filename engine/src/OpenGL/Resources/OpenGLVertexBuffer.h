@@ -9,6 +9,8 @@ namespace Engine {
 	class OpenGLVertexBuffer : public VertexBuffer
 	{
 	public:
+		// P6-1B B5-G2: live GL object counter for resource-rollback tests.
+		static int64_t LiveCount();
 		OpenGLVertexBuffer(float32* vertices, uint32 size, GladGLContext& gl);
 		virtual ~OpenGLVertexBuffer() override;
 

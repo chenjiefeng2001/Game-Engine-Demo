@@ -21,8 +21,8 @@ namespace {
 
 namespace Engine {
 
-	OpenGLTexture::OpenGLTexture(const std::string& path, GladGLContext& gl)
-		: Texture(path), m_GL(gl) {
+	OpenGLTexture::OpenGLTexture(const std::string& path, GladGLContext& gl, bool srgb)
+		: Texture(path), m_GL(gl), m_SRGB(srgb) {
 
 		stbi_set_flip_vertically_on_load(true);
 
@@ -33,12 +33,15 @@ namespace Engine {
 			m_Width = static_cast<uint32>(width);
 			m_Height = static_cast<uint32>(height);
 
+			// P6-1B B4-C: colorspace-aware internal format selection (alpha stays linear by spec).
 			GLenum internalFormat = 0, dataFormat = 0;
+			// P6-1B B4-C: colorspace-aware internal format selection (alpha stays linear per OpenGL sRGB spec).
+			const bool useSRGBInternal = m_SRGB;
 			if (channels == 4) {
-				internalFormat = GL_RGBA8;
+				internalFormat = useSRGBInternal ? GL_SRGB8_ALPHA8 : GL_RGBA8;
 				dataFormat = GL_RGBA;
 			} else if (channels == 3) {
-				internalFormat = GL_RGB8;
+				internalFormat = useSRGBInternal ? GL_SRGB8 : GL_RGB8;
 				dataFormat = GL_RGB;
 			}
 
@@ -108,12 +111,15 @@ namespace Engine {
 			m_Width = static_cast<uint32>(width);
 			m_Height = static_cast<uint32>(height);
 
+			// P6-1B B4-C: colorspace-aware internal format selection (alpha stays linear by spec).
 			GLenum internalFormat = 0, dataFormat = 0;
+			// P6-1B B4-C: colorspace-aware internal format selection (alpha stays linear per OpenGL sRGB spec).
+			const bool useSRGBInternal = m_SRGB;
 			if (channels == 4) {
-				internalFormat = GL_RGBA8;
+				internalFormat = useSRGBInternal ? GL_SRGB8_ALPHA8 : GL_RGBA8;
 				dataFormat = GL_RGBA;
 			} else if (channels == 3) {
-				internalFormat = GL_RGB8;
+				internalFormat = useSRGBInternal ? GL_SRGB8 : GL_RGB8;
 				dataFormat = GL_RGB;
 			}
 
