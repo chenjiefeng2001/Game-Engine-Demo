@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Collections.ObjectModel;
 using System.Text;
+using System.Text.Json;
 using System.ComponentModel;
 using System.Linq;
 using System.Runtime.CompilerServices;
@@ -33,6 +34,10 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
     internal EditorHostService Host => _host;
 
     public ObservableCollection<EntityVm> Entities { get; } = new();
+    public ObservableCollection<EntityVm> AllEntities { get; } = new();
+    public ObservableCollection<HierarchyNodeVm> HierarchyRoots { get; } = new();
+    private readonly HashSet<ulong> _collapsedHierarchy = new();
+    public ObservableCollection<HierarchyNodeVm> HierarchyRows { get; } = new();
     public ObservableCollection<AssetVm> Assets { get; } = new();
     public ObservableCollection<string> ConsoleLines { get; } = new();
 
@@ -64,6 +69,8 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
         set
         {
             if (!Set(ref _selectedEntity, value)) return;
+            if (value is not null && value.SceneId != 0)
+                SelectedHierarchyNode = FindNode(value.SceneId);
             RefreshInspectorFromSession();
             Raise(nameof(HasSelection));
         }
@@ -93,6 +100,30 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
     }
 
     public bool HasSelection => _selectedEntity is not null;
+    private HierarchyNodeVm? _selectedHierarchyNode;
+    public HierarchyNodeVm? SelectedHierarchyNode
+    {
+        get => _selectedHierarchyNode;
+        private set => Set(ref _selectedHierarchyNode, value);
+    }
+    public string[] ReparentModes { get; } = { "Keep World", "Keep Local" };
+    public int ReparentModeIndex { get; set; } = 0;
+
+    private int NativeReparentMode => ReparentModeIndex == 1 ? 0 : 1;
+    public void SelectHierarchyNode(HierarchyNodeVm? node)
+    {
+        SelectedHierarchyNode = node;
+        if (node is null) { SelectedEntity = null; return; }
+        SelectedEntity = AllEntities.FirstOrDefault(e => e.SceneId == node.SceneId)
+                         ?? new EntityVm(-1, node.Name, node.SceneId, node.ParentId);
+    }
+    public int SelectedEntityIndex => _selectedEntity?.Index ?? -1;
+    public void RefreshSelectedTransform() => RefreshInspectorFromSession();
+    public void RefreshAfterGizmoCommit()
+    {
+        RefreshInspectorFromSession();
+        RefreshDirtyState();
+    }
 
     // ── Inspector（Transform 冻结契约：仅 px/py/pz）──
     private string _selectedName = "(none)";
@@ -108,6 +139,18 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
     public string PosY { get => _posY; set => Set(ref _posY, value); }
     private string _posZ = "0";
     public string PosZ { get => _posZ; set => Set(ref _posZ, value); }
+    private string _rotX = "0";
+    public string RotX { get => _rotX; set => Set(ref _rotX, value); }
+    private string _rotY = "0";
+    public string RotY { get => _rotY; set => Set(ref _rotY, value); }
+    private string _rotZ = "0";
+    public string RotZ { get => _rotZ; set => Set(ref _rotZ, value); }
+    private string _scaleX = "1";
+    public string ScaleX { get => _scaleX; set => Set(ref _scaleX, value); }
+    private string _scaleY = "1";
+    public string ScaleY { get => _scaleY; set => Set(ref _scaleY, value); }
+    private string _scaleZ = "1";
+    public string ScaleZ { get => _scaleZ; set => Set(ref _scaleZ, value); }
 
     private string _statusText = "no project loaded";
     public string StatusText
@@ -199,7 +242,15 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
     public AssetVm? SelectedAsset
     {
         get => _selectedAsset;
-        set => Set(ref _selectedAsset, value);
+        set
+        {
+            if (!Set(ref _selectedAsset, value)) return;
+            Raise(nameof(HasAssetSelection));
+            Raise(nameof(CanAddSelectedMeshToScene));
+            Raise(nameof(CanReimportSelectedMesh));
+            Raise(nameof(CanInstantiateSelectedPrefab));
+            RefreshMaterialInspector();
+        }
     }
     public bool HasAssetSelection => _selectedAsset is not null;
 
@@ -216,7 +267,7 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
     public ObservableCollection<AssetVm> FilteredAssets { get; } = new();
 
     /// 过滤选项（C1）：All / Texture / Script
-    public string[] AssetTypeOptions { get; } = { "All", "Texture", "Script" };
+    public string[] AssetTypeOptions { get; } = { "All", "Texture", "Script", "Mesh", "Material", "Prefab" };
 
     /// 当前选中资产的裸文件名（不含扩展名）—— Rename 预填用
     public string AssetRenameBaseName
@@ -304,11 +355,18 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
     public bool AddCameraToSelected()
     {
         if (_selectedEntity is null) { LogToConsole("add camera ignored: no selection"); return false; }
-        if (!_host.AddComponent(_selectedEntity.Index, "Camera"))
+        if (!_host.BeginSceneEdit("add camera"))
         {
             LogToConsole("ADD CAMERA FAILED: " + _host.GetLastError());
             return false;
         }
+        if (!_host.AddComponent(_selectedEntity.Index, "Camera"))
+        {
+            _host.CancelSceneEdit();
+            LogToConsole("ADD CAMERA FAILED: " + _host.GetLastError());
+            return false;
+        }
+        _host.CommitSceneEdit();
         LogToConsole($"camera added: {_selectedEntity.Name}");
         RefreshInspectorFromSession();
         RefreshDirtyState();
@@ -318,11 +376,18 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
     public bool RemoveCameraFromSelected()
     {
         if (_selectedEntity is null) { LogToConsole("remove camera ignored: no selection"); return false; }
-        if (!_host.RemoveComponent(_selectedEntity.Index, "Camera"))
+        if (!_host.BeginSceneEdit("remove camera"))
         {
             LogToConsole("REMOVE CAMERA FAILED: " + _host.GetLastError());
             return false;
         }
+        if (!_host.RemoveComponent(_selectedEntity.Index, "Camera"))
+        {
+            _host.CancelSceneEdit();
+            LogToConsole("REMOVE CAMERA FAILED: " + _host.GetLastError());
+            return false;
+        }
+        _host.CommitSceneEdit();
         LogToConsole($"camera removed: {_selectedEntity.Name}");
         RefreshInspectorFromSession();
         RefreshDirtyState();
@@ -335,15 +400,22 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
         if (_selectedEntity is null || !HasCamera) return;
         var idx = _selectedEntity.Index;
         var enabled = CameraEnabled.Equals("true", StringComparison.OrdinalIgnoreCase) ? "true" : "false";
+        if (!_host.BeginSceneEdit("apply camera"))
+        {
+            LogToConsole("CAMERA APPLY FAILED: " + _host.GetLastError());
+            return;
+        }
         if (!_host.SetComponentProperty(idx, "Camera", "enabled", enabled)
             || !_host.SetComponentProperty(idx, "Camera", "zoom", CameraZoom)
             || !_host.SetComponentProperty(idx, "Camera", "viewport", CameraViewport)
             || !_host.SetComponentProperty(idx, "Camera", "bounds", CameraBounds))
         {
+            _host.CancelSceneEdit();
             LogToConsole("CAMERA APPLY FAILED: " + _host.GetLastError());
         }
         else
         {
+            _host.CommitSceneEdit();
             LogToConsole($"camera applied: {_selectedEntity.Name} (zoom={CameraZoom})");
         }
         RefreshInspectorFromSession();
@@ -368,11 +440,18 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
     public bool AddRigidBodyToSelected()
     {
         if (_selectedEntity is null) { LogToConsole("add rigidbody ignored: no selection"); return false; }
-        if (!_host.AddComponent(_selectedEntity.Index, "RigidBody"))
+        if (!_host.BeginSceneEdit("add rigidbody"))
         {
             LogToConsole("ADD RIGIDBODY FAILED: " + _host.GetLastError());
             return false;
         }
+        if (!_host.AddComponent(_selectedEntity.Index, "RigidBody"))
+        {
+            _host.CancelSceneEdit();
+            LogToConsole("ADD RIGIDBODY FAILED: " + _host.GetLastError());
+            return false;
+        }
+        _host.CommitSceneEdit();
         LogToConsole($"rigidbody added: {_selectedEntity.Name}");
         RefreshInspectorFromSession();
         RefreshDirtyState();
@@ -382,11 +461,18 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
     public bool RemoveRigidBodyFromSelected()
     {
         if (_selectedEntity is null) { LogToConsole("remove rigidbody ignored: no selection"); return false; }
-        if (!_host.RemoveComponent(_selectedEntity.Index, "RigidBody"))
+        if (!_host.BeginSceneEdit("remove rigidbody"))
         {
             LogToConsole("REMOVE RIGIDBODY FAILED: " + _host.GetLastError());
             return false;
         }
+        if (!_host.RemoveComponent(_selectedEntity.Index, "RigidBody"))
+        {
+            _host.CancelSceneEdit();
+            LogToConsole("REMOVE RIGIDBODY FAILED: " + _host.GetLastError());
+            return false;
+        }
+        _host.CommitSceneEdit();
         LogToConsole($"rigidbody removed: {_selectedEntity.Name}");
         RefreshInspectorFromSession();
         RefreshDirtyState();
@@ -416,13 +502,20 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
         }
 
         var idx = _selectedEntity.Index;
-        if (!_host.SetComponentProperty(idx, "RigidBody", "motionType", RigidBodyMotionType)
-            || !_host.SetComponentProperty(idx, "RigidBody", "linearDamping", RigidBodyLinearDamping)
-            || !_host.SetComponentProperty(idx, "RigidBody", "angularDamping", RigidBodyAngularDamping))
+        if (!_host.BeginSceneEdit("apply rigidbody"))
         {
             LogToConsole("RIGIDBODY APPLY FAILED: " + _host.GetLastError());
             return false;
         }
+        if (!_host.SetComponentProperty(idx, "RigidBody", "motionType", RigidBodyMotionType)
+            || !_host.SetComponentProperty(idx, "RigidBody", "linearDamping", RigidBodyLinearDamping)
+            || !_host.SetComponentProperty(idx, "RigidBody", "angularDamping", RigidBodyAngularDamping))
+        {
+            _host.CancelSceneEdit();
+            LogToConsole("RIGIDBODY APPLY FAILED: " + _host.GetLastError());
+            return false;
+        }
+        _host.CommitSceneEdit();
         LogToConsole($"rigidbody applied: {_selectedEntity.Name} ({RigidBodyMotionType})");
         RefreshInspectorFromSession();
         RefreshDirtyState();
@@ -432,6 +525,642 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
     // ── Viewport（Phase 7）──
 
     /// 获取视口 FBO 颜色纹理的 OpenGL 句柄（用于 Avalonia 纹理互操作）
+    // ── B6: MeshComponent inspector (read-only diagnostics) ──
+    private bool _hasMesh;
+    public bool HasMesh { get => _hasMesh; private set => Set(ref _hasMesh, value); }
+    private string _meshGuid = "";
+    public string MeshGuid { get => _meshGuid; private set => Set(ref _meshGuid, value); }
+    private string _meshName = "";
+    public string MeshName { get => _meshName; private set => Set(ref _meshName, value); }
+    private string _meshSpanCount = "0";
+    public string MeshSpanCount { get => _meshSpanCount; private set => Set(ref _meshSpanCount, value); }
+    private string _meshMaterialSlotCount = "0";
+    public string MeshMaterialSlotCount { get => _meshMaterialSlotCount; private set => Set(ref _meshMaterialSlotCount, value); }
+    private string _meshStatus = "Unloaded";
+    public string MeshStatus { get => _meshStatus; private set => Set(ref _meshStatus, value); }
+    private string _meshError = "";
+    private bool _isPrefabInstance;
+    public bool IsPrefabInstance { get => _isPrefabInstance; private set => Set(ref _isPrefabInstance, value); }
+    private string _prefabInstanceStatus = "";
+    public string PrefabInstanceStatus { get => _prefabInstanceStatus; private set => Set(ref _prefabInstanceStatus, value); }
+    private string _prefabOverrideFields = "";
+    public string PrefabOverrideFields { get => _prefabOverrideFields; private set => Set(ref _prefabOverrideFields, value); }
+    public ObservableCollection<PrefabOverrideVm> PrefabOverrides { get; } = new();
+    private PrefabOverrideVm? _selectedPrefabOverride;
+    public PrefabOverrideVm? SelectedPrefabOverride { get => _selectedPrefabOverride; set { if (!Set(ref _selectedPrefabOverride, value)) return; Raise(nameof(CanRevertPrefabOverride)); } }
+    private ulong _prefabInstanceRoot;
+    public bool CanRevertPrefabOverride => _prefabInstanceRoot != 0 && _selectedPrefabOverride is not null;
+    public bool CanRevertPrefabInstance => _prefabInstanceRoot != 0 && PrefabOverrides.Count > 0;
+    private string _prefabSyncState = "";
+    private bool _prefabLegacySource;
+    private string _prefabReconciliationStatus = "";
+    public string PrefabReconciliationStatus { get => _prefabReconciliationStatus; private set => Set(ref _prefabReconciliationStatus, value); }
+    private bool _prefabOutOfDate;
+    private bool _prefabSourceUnavailable;
+    private int _prefabPreviewConflictCount;
+    private bool _prefabPreviewDone;
+    public ObservableCollection<PrefabConflictVm> PrefabConflicts { get; } = new();
+    private PrefabConflictVm? _selectedPrefabConflict;
+    public PrefabConflictVm? SelectedPrefabConflict
+    {
+        get => _selectedPrefabConflict;
+        set { if (!Set(ref _selectedPrefabConflict, value)) return; Raise(nameof(CanResolvePrefabConflict)); }
+    }
+    private string _prefabManualConflictValue = "0.0";
+    public string PrefabManualConflictValue { get => _prefabManualConflictValue; set => Set(ref _prefabManualConflictValue, value); }
+    public bool CanPreviewPrefabReconciliation => IsPrefabInstance && _prefabInstanceRoot != 0 &&
+        !_prefabLegacySource && !_prefabSourceUnavailable;
+    public bool CanApplyPrefabReconciliation => CanPreviewPrefabReconciliation &&
+        _prefabOutOfDate && _prefabPreviewDone && _prefabPreviewConflictCount == 0;
+    public bool CanResolvePrefabConflict => _prefabInstanceRoot != 0 &&
+        SelectedPrefabConflict is not null && !_prefabSourceUnavailable;
+    public bool CanApplyPrefabOverrides => IsPrefabInstance && _prefabInstanceRoot != 0 &&
+        PrefabOverrides.Count > 0 && !_prefabLegacySource &&
+        _prefabSyncState != "recovery_required" && _prefabSyncState != "conflict";
+    public string MeshError { get => _meshError; private set => Set(ref _meshError, value); }
+    public bool CanAddSelectedMeshToScene =>
+        _selectedAsset is not null && _selectedAsset.TypeName == "Mesh";
+
+    public bool CanInstantiateSelectedPrefab =>
+        _selectedAsset is not null && _selectedAsset.TypeName == "Prefab";
+
+    public bool InstantiateSelectedPrefab()
+    {
+        if (_selectedAsset is null || _selectedAsset.TypeName != "Prefab")
+        {
+            LogToConsole("instantiate prefab ignored: no Prefab selected");
+            return false;
+        }
+        ulong root = _host.InstantiatePrefab(_selectedAsset.Index, 0);
+        if (root == 0)
+        {
+            LogToConsole("INSTANTIATE PREFAB FAILED: " + _host.GetLastError());
+            return false;
+        }
+        ReloadCollectionsFromSession();
+        SelectedHierarchyNode = FindNode(root);
+        SelectHierarchyNode(SelectedHierarchyNode);
+        LogToConsole("prefab instantiated: #" + root);
+        return true;
+    }
+
+    public bool AddSelectedMeshToScene()
+    {
+        if (_selectedAsset is null)
+        {
+            LogToConsole("add mesh ignored: no asset selected");
+            return false;
+        }
+        if (_selectedAsset.TypeName != "Mesh")
+        {
+            LogToConsole("add mesh ignored: selected asset is not a Mesh");
+            return false;
+        }
+        var status = _host.GetAssetStatus(_selectedAsset.Index);
+        if (status != 0)
+        {
+            LogToConsole($"ADD MESH FAILED: asset unavailable (status={status})");
+            return false;
+        }
+        if (!_host.BeginSceneEdit("add mesh to scene"))
+        {
+            LogToConsole("ADD MESH FAILED: " + _host.GetLastError());
+            return false;
+        }
+        var entity = _host.CreateEntity("Mesh");
+        if (entity < 0
+            || !_host.AddComponent(entity, "Mesh")
+            || !_host.SetComponentProperty(entity, "Mesh", "meshGuid",
+                                           _selectedAsset.Guid))
+        {
+            LogToConsole("ADD MESH FAILED: " + _host.GetLastError());
+            _host.CancelSceneEdit();
+            return false;
+        }
+        _host.CommitSceneEdit();
+        _pendingSelectionIndex = entity;
+        ResolvePendingSelectionIntent(strict: false);
+        RefreshInspectorFromSession();
+        RefreshDirtyState();
+        LogToConsole($"mesh added to scene: {_selectedAsset.Guid}");
+        return true;
+    }
+
+    public void RefreshMeshRuntimeStatus()
+    {
+        if (_selectedEntity is not null) RefreshMesh(_selectedEntity.Index);
+    }
+
+    private void RefreshPrefabInstanceInfo(ulong sceneId)
+    {
+        IsPrefabInstance = false;
+        PrefabInstanceStatus = "";
+        PrefabOverrideFields = "";
+        PrefabOverrides.Clear();
+        SelectedPrefabOverride = null;
+        PrefabConflicts.Clear();
+        SelectedPrefabConflict = null;
+        PrefabReconciliationStatus = "";
+        _prefabOutOfDate = false;
+        _prefabSourceUnavailable = false;
+        _prefabPreviewConflictCount = 0;
+        _prefabPreviewDone = false;
+        _prefabInstanceRoot = 0;
+        Raise(nameof(CanRevertPrefabInstance));
+        Raise(nameof(CanApplyPrefabOverrides));
+        Raise(nameof(CanPreviewPrefabReconciliation));
+        Raise(nameof(CanApplyPrefabReconciliation));
+        Raise(nameof(CanResolvePrefabConflict));
+        if (sceneId == 0) return;
+        string json = _host.GetPrefabInstanceJson(sceneId);
+        if (string.IsNullOrWhiteSpace(json)) return;
+        try
+        {
+            using var doc = System.Text.Json.JsonDocument.Parse(json);
+            var root = doc.RootElement;
+            if (!root.TryGetProperty("isInstance", out var isInstance) ||
+                !isInstance.GetBoolean())
+                return;
+            IsPrefabInstance = true;
+            _prefabInstanceRoot = root.TryGetProperty("rootSceneEntityId", out var r)
+                ? r.GetUInt64() : 0;
+            _prefabLegacySource = root.TryGetProperty("legacySourceIdentity", out var legacy) &&
+                legacy.GetBoolean();
+            string guid = root.TryGetProperty("prefabGuid", out var g)
+                ? g.GetString() ?? "" : "";
+            string state = root.TryGetProperty("syncState", out var s)
+                ? s.GetString() ?? "" : "";
+            _prefabSyncState = state;
+            int count = root.TryGetProperty("overrideCount", out var c)
+                ? c.GetInt32() : 0;
+            int sourceRevision = root.TryGetProperty("sourceRevision", out var sr)
+                ? sr.GetInt32() : -1;
+            PrefabInstanceStatus = "Prefab " + (guid.Length >= 8 ? guid[..8] : guid) +
+                " - " + state + " - " + count + " override(s)" +
+                (sourceRevision >= 0 ? " - src rev " + sourceRevision : "");
+            if (root.TryGetProperty("overrides", out var overrides) &&
+                overrides.ValueKind == System.Text.Json.JsonValueKind.Array)
+            {
+                var fields = new System.Collections.Generic.List<string>();
+                foreach (var item in overrides.EnumerateArray())
+                {
+                    string component = item.TryGetProperty("component", out var c1)
+                        ? c1.GetString() ?? "" : "";
+                    string field = item.TryGetProperty("field", out var f1)
+                        ? f1.GetString() ?? "" : "";
+                    if (component.Length > 0 && field.Length > 0)
+                    {
+                        ulong localId = item.TryGetProperty("localId", out var l)
+                            ? l.GetUInt64() : 0;
+                        fields.Add(component + "." + field);
+                        PrefabOverrides.Add(new PrefabOverrideVm(localId, component, field));
+                    }
+                }
+                PrefabOverrideFields = fields.Count == 0
+                    ? "" : "Overrides: " + string.Join(", ", fields);
+                if (PrefabOverrides.Count > 0)
+                    SelectedPrefabOverride = PrefabOverrides[0];
+            }
+            Raise(nameof(CanRevertPrefabInstance));
+            Raise(nameof(CanApplyPrefabOverrides));
+            RefreshPrefabReconciliationStatus();
+        }
+        catch
+        {
+            IsPrefabInstance = false;
+            PrefabInstanceStatus = "";
+            PrefabOverrideFields = "";
+            PrefabOverrides.Clear();
+            SelectedPrefabOverride = null;
+            PrefabConflicts.Clear();
+            SelectedPrefabConflict = null;
+            PrefabReconciliationStatus = "";
+            _prefabInstanceRoot = 0;
+        }
+    }
+
+    private void RefreshPrefabReconciliationStatus()
+    {
+        _prefabOutOfDate = false;
+        _prefabSourceUnavailable = false;
+        _prefabPreviewConflictCount = 0;
+        _prefabPreviewDone = false;
+        PrefabConflicts.Clear();
+        SelectedPrefabConflict = null;
+        PrefabReconciliationStatus = "";
+        if (_prefabInstanceRoot == 0)
+        {
+            Raise(nameof(CanPreviewPrefabReconciliation));
+            Raise(nameof(CanApplyPrefabReconciliation));
+            Raise(nameof(CanResolvePrefabConflict));
+            return;
+        }
+        string json = _host.GetPrefabReconciliationStatus(_prefabInstanceRoot);
+        if (string.IsNullOrWhiteSpace(json))
+        {
+            Raise(nameof(CanPreviewPrefabReconciliation));
+            Raise(nameof(CanApplyPrefabReconciliation));
+            Raise(nameof(CanResolvePrefabConflict));
+            return;
+        }
+        try
+        {
+            using var doc = System.Text.Json.JsonDocument.Parse(json);
+            var root = doc.RootElement;
+            _prefabOutOfDate = root.TryGetProperty("outOfDate", out var od) &&
+                od.ValueKind == System.Text.Json.JsonValueKind.True;
+            _prefabSourceUnavailable = root.TryGetProperty("sourceUnavailable", out var su) &&
+                su.ValueKind == System.Text.Json.JsonValueKind.True;
+            int persistedConflicts = root.TryGetProperty("persistedConflictCount", out var pc)
+                ? pc.GetInt32() : 0;
+            string unavailableReason = root.TryGetProperty("sourceUnavailableReason", out var ur)
+                ? ur.GetString() ?? "" : "";
+            if (_prefabSourceUnavailable)
+            {
+                PrefabReconciliationStatus = "Source unavailable" +
+                    (unavailableReason.Length > 0 ? ": " + unavailableReason : "");
+            }
+            else
+            {
+                PrefabReconciliationStatus =
+                    (_prefabOutOfDate ? "Out of date" : "Up to date") +
+                    " - " + persistedConflicts + " conflict(s)";
+            }
+            if (root.TryGetProperty("conflicts", out var conflicts) &&
+                conflicts.ValueKind == System.Text.Json.JsonValueKind.Array)
+            {
+                foreach (var item in conflicts.EnumerateArray())
+                    AddPrefabConflict(item);
+            }
+            if (PrefabConflicts.Count > 0)
+                SelectedPrefabConflict = PrefabConflicts[0];
+        }
+        catch
+        {
+            PrefabReconciliationStatus = "Reconciliation status unavailable";
+        }
+        Raise(nameof(CanPreviewPrefabReconciliation));
+        Raise(nameof(CanApplyPrefabReconciliation));
+        Raise(nameof(CanResolvePrefabConflict));
+    }
+
+    private void AddPrefabConflict(System.Text.Json.JsonElement item)
+    {
+        string id = item.TryGetProperty("id", out var i) ? i.GetString() ?? "" : "";
+        string type = item.TryGetProperty("type", out var t) ? t.GetString() ?? "" : "";
+        ulong localId = item.TryGetProperty("localId", out var l) ? l.GetUInt64() : 0;
+        string component = item.TryGetProperty("component", out var c) ? c.GetString() ?? "" : "";
+        string field = item.TryGetProperty("field", out var f) ? f.GetString() ?? "" : "";
+        string detail = item.TryGetProperty("detail", out var d) ? d.GetString() ?? "" : "";
+        if (id.Length == 0) return;
+        PrefabConflicts.Add(new PrefabConflictVm(id, type, localId, component, field, detail));
+    }
+
+    public bool PreviewPrefabReconciliation()
+    {
+        if (!CanPreviewPrefabReconciliation)
+        {
+            LogToConsole("RECONCILE PREVIEW FAILED: no eligible Prefab instance");
+            return false;
+        }
+        string json = _host.PreviewPrefabReconciliation(_prefabInstanceRoot);
+        if (string.IsNullOrWhiteSpace(json))
+        {
+            LogToConsole("RECONCILE PREVIEW FAILED: " + _host.GetLastError());
+            return false;
+        }
+        try
+        {
+            using var doc = System.Text.Json.JsonDocument.Parse(json);
+            var root = doc.RootElement;
+            _prefabOutOfDate = root.TryGetProperty("outOfDate", out var od) &&
+                od.ValueKind == System.Text.Json.JsonValueKind.True;
+            PrefabConflicts.Clear();
+            SelectedPrefabConflict = null;
+            if (root.TryGetProperty("plan", out var plan) &&
+                plan.TryGetProperty("conflicts", out var conflicts) &&
+                conflicts.ValueKind == System.Text.Json.JsonValueKind.Array)
+            {
+                foreach (var item in conflicts.EnumerateArray())
+                    AddPrefabConflict(item);
+            }
+            _prefabPreviewDone = true;
+            _prefabPreviewConflictCount = PrefabConflicts.Count;
+            if (PrefabConflicts.Count > 0)
+                SelectedPrefabConflict = PrefabConflicts[0];
+            PrefabReconciliationStatus = _prefabOutOfDate
+                ? "Out of date - preview: " + PrefabConflicts.Count + " conflict(s)"
+                : "Up to date - preview: " + PrefabConflicts.Count + " conflict(s)";
+            Raise(nameof(CanApplyPrefabReconciliation));
+            Raise(nameof(CanResolvePrefabConflict));
+            LogToConsole("prefab reconciliation preview: " + PrefabConflicts.Count + " conflict(s)");
+            return true;
+        }
+        catch
+        {
+            _prefabPreviewDone = false;
+            _prefabPreviewConflictCount = 0;
+            Raise(nameof(CanApplyPrefabReconciliation));
+            LogToConsole("RECONCILE PREVIEW FAILED: invalid JSON");
+            return false;
+        }
+    }
+
+    public bool ApplyPrefabReconciliation()
+    {
+        if (!CanApplyPrefabReconciliation)
+        {
+            LogToConsole("RECONCILE APPLY FAILED: preview required or conflicts remain");
+            return false;
+        }
+        if (!_host.ApplyPrefabReconciliation(_prefabInstanceRoot))
+        {
+            LogToConsole("RECONCILE APPLY FAILED: " + _host.GetLastError());
+            return false;
+        }
+        RefreshInspectorFromSession();
+        RefreshDirtyState();
+        LogToConsole("prefab reconciliation applied");
+        return true;
+    }
+
+    public bool ResolveSelectedPrefabConflict(string action)
+    {
+        if (!CanResolvePrefabConflict || SelectedPrefabConflict is null)
+        {
+            LogToConsole("RECONCILE RESOLVE FAILED: no conflict selected");
+            return false;
+        }
+        var selected = SelectedPrefabConflict;
+        string? value = action == "manual_edit" ? PrefabManualConflictValue : null;
+        if (!_host.ResolvePrefabReconciliationConflict(_prefabInstanceRoot,
+                                                       selected.Id, action, value))
+        {
+            LogToConsole("RECONCILE RESOLVE FAILED: " + _host.GetLastError());
+            return false;
+        }
+        RefreshInspectorFromSession();
+        _prefabPreviewConflictCount = PrefabConflicts.Count;
+        _prefabPreviewDone = _prefabOutOfDate && PrefabConflicts.Count == 0;
+        Raise(nameof(CanApplyPrefabReconciliation));
+        Raise(nameof(CanResolvePrefabConflict));
+        LogToConsole("prefab conflict resolved: " + selected.Id + " -> " + action);
+        return true;
+    }
+    public bool ApplySelectedPrefabOverrides()
+    {
+        if (!CanApplyPrefabOverrides)
+        {
+            LogToConsole("APPLY FAILED: no applicable overrides");
+            return false;
+        }
+        if (!_host.ApplyPrefabOverrides(_prefabInstanceRoot))
+        {
+            LogToConsole("APPLY FAILED: " + _host.GetLastError());
+            return false;
+        }
+        RefreshInspectorFromSession();
+        RefreshDirtyState();
+        LogToConsole("prefab overrides applied");
+        return true;
+    }
+
+    public bool RevertSelectedPrefabOverride()
+    {
+        if (_prefabInstanceRoot == 0 || SelectedPrefabOverride is null)
+        {
+            LogToConsole("REVERT FAILED: no override selected");
+            return false;
+        }
+        var selected = SelectedPrefabOverride;
+        if (!_host.RevertPrefabOverride(_prefabInstanceRoot, selected.LocalId,
+                                        selected.Component, selected.Field))
+        {
+            LogToConsole("REVERT FAILED: " + _host.GetLastError());
+            return false;
+        }
+        RefreshInspectorFromSession();
+        RefreshDirtyState();
+        LogToConsole("override reverted: " + selected.Display);
+        return true;
+    }
+
+    public bool RevertSelectedPrefabInstance()
+    {
+        if (_prefabInstanceRoot == 0)
+        {
+            LogToConsole("REVERT FAILED: no Prefab instance selected");
+            return false;
+        }
+        if (!_host.RevertPrefabInstance(_prefabInstanceRoot))
+        {
+            LogToConsole("REVERT FAILED: " + _host.GetLastError());
+            return false;
+        }
+        RefreshInspectorFromSession();
+        RefreshDirtyState();
+        LogToConsole("prefab instance reverted");
+        return true;
+    }
+
+    private void RefreshMesh(int? entityIndex)
+    {
+        if (entityIndex is not int idx
+            || !TryHost("refresh mesh", () => _host.HasComponent(idx, "Mesh"), out bool has)
+            || !has)
+        {
+            HasMesh = false;
+            return;
+        }
+        HasMesh = true;
+        MeshGuid = _host.GetComponentProperty(idx, "Mesh", "meshGuid");
+        MeshName = _host.GetComponentProperty(idx, "Mesh", "meshName");
+        var span = _host.GetComponentProperty(idx, "Mesh", "spanCount");
+        MeshSpanCount = span.Length == 0 ? "0" : span;
+        var slots = _host.GetComponentProperty(idx, "Mesh", "materialSlotCount");
+        MeshMaterialSlotCount = slots.Length == 0 ? "0" : slots;
+        var status = _host.GetComponentProperty(idx, "Mesh", "runtimeStatus");
+        MeshStatus = status.Length == 0 ? "Unloaded" : status;
+        MeshError = _host.GetComponentProperty(idx, "Mesh", "runtimeError");
+    }
+
+    // P7-A: Material Inspector / dependency view / reimport.
+    public ObservableCollection<DependencyVm> Dependencies { get; } = new();
+    private bool _isDependencyViewVisible;
+    public bool IsDependencyViewVisible { get => _isDependencyViewVisible; private set => Set(ref _isDependencyViewVisible, value); }
+    private bool _isMaterialSelected;
+    public bool IsMaterialSelected { get => _isMaterialSelected; private set => Set(ref _isMaterialSelected, value); }
+    private string _materialAssetPath = "";
+    public string MaterialAssetPath { get => _materialAssetPath; private set => Set(ref _materialAssetPath, value); }
+    private string _materialBaseColorR = "1";
+    public string MaterialBaseColorR { get => _materialBaseColorR; set => Set(ref _materialBaseColorR, value); }
+    private string _materialBaseColorG = "1";
+    public string MaterialBaseColorG { get => _materialBaseColorG; set => Set(ref _materialBaseColorG, value); }
+    private string _materialBaseColorB = "1";
+    public string MaterialBaseColorB { get => _materialBaseColorB; set => Set(ref _materialBaseColorB, value); }
+    private string _materialBaseColorA = "1";
+    public string MaterialBaseColorA { get => _materialBaseColorA; set => Set(ref _materialBaseColorA, value); }
+    private string _materialMetallic = "1";
+    public string MaterialMetallic { get => _materialMetallic; set => Set(ref _materialMetallic, value); }
+    private string _materialRoughness = "1";
+    public string MaterialRoughness { get => _materialRoughness; set => Set(ref _materialRoughness, value); }
+    private string _materialEmissive = "0 0 0";
+    public string MaterialEmissive { get => _materialEmissive; set => Set(ref _materialEmissive, value); }
+    private string _materialAlphaCutoff = "0.5";
+    public string MaterialAlphaCutoff { get => _materialAlphaCutoff; set => Set(ref _materialAlphaCutoff, value); }
+    private string _materialAlphaMode = "OPAQUE";
+    public string MaterialAlphaMode { get => _materialAlphaMode; set => Set(ref _materialAlphaMode, value); }
+    private string _materialDiagnostic = "";
+    public string MaterialDiagnostic { get => _materialDiagnostic; private set => Set(ref _materialDiagnostic, value); }
+    public bool CanReimportSelectedMesh =>
+        _selectedAsset is not null && _selectedAsset.TypeName == "Mesh";
+
+    public void RefreshMaterialInspector()
+    {
+        IsMaterialSelected = false;
+        MaterialDiagnostic = "";
+        if (_selectedAsset is null || _selectedAsset.TypeName != "Material")
+            return;
+        var json = _host.GetMaterialJson(_selectedAsset.Index);
+        if (string.IsNullOrWhiteSpace(json))
+        {
+            MaterialDiagnostic = "material JSON unavailable";
+            return;
+        }
+        try
+        {
+            using var doc = JsonDocument.Parse(json);
+            var root = doc.RootElement;
+            var c = root.GetProperty("baseColorFactor");
+            MaterialBaseColorR = c[0].GetSingle().ToString("R");
+            MaterialBaseColorG = c[1].GetSingle().ToString("R");
+            MaterialBaseColorB = c[2].GetSingle().ToString("R");
+            MaterialBaseColorA = c[3].GetSingle().ToString("R");
+            MaterialMetallic = root.GetProperty("metallicFactor").GetSingle().ToString("R");
+            MaterialRoughness = root.GetProperty("roughnessFactor").GetSingle().ToString("R");
+            var e = root.GetProperty("emissiveFactor");
+            MaterialEmissive =
+                $"{e[0].GetSingle():R} {e[1].GetSingle():R} {e[2].GetSingle():R}";
+            MaterialAlphaCutoff = root.GetProperty("alphaCutoff").GetSingle().ToString("R");
+            MaterialAlphaMode = root.GetProperty("alphaMode").GetString() ?? "OPAQUE";
+            MaterialAssetPath = _selectedAsset.Path;
+            IsMaterialSelected = true;
+        }
+        catch (Exception ex)
+        {
+            MaterialDiagnostic = "material JSON parse failed: " + ex.Message;
+        }
+    }
+
+    public bool SaveMaterial()
+    {
+        if (_selectedAsset is null || _selectedAsset.TypeName != "Material")
+            return false;
+        if (!TryParse(MaterialBaseColorR, out var r) ||
+            !TryParse(MaterialBaseColorG, out var g) ||
+            !TryParse(MaterialBaseColorB, out var b) ||
+            !TryParse(MaterialBaseColorA, out var a) ||
+            !TryParse(MaterialMetallic, out var metallic) ||
+            !TryParse(MaterialRoughness, out var roughness) ||
+            !TryParse(MaterialAlphaCutoff, out var cutoff))
+        {
+            MaterialDiagnostic = "invalid numeric material value";
+            return false;
+        }
+        float er = 0, eg = 0, eb = 0;
+        var parts = MaterialEmissive.Split(' ', StringSplitOptions.RemoveEmptyEntries);
+        if (parts.Length != 3 ||
+            !TryParse(parts[0], out er) || !TryParse(parts[1], out eg) ||
+            !TryParse(parts[2], out eb))
+        {
+            MaterialDiagnostic = "emissiveFactor must be three numbers";
+            return false;
+        }
+        if (!float.IsFinite(r) || !float.IsFinite(g) || !float.IsFinite(b) ||
+            !float.IsFinite(a) || !float.IsFinite(metallic) ||
+            !float.IsFinite(roughness) || !float.IsFinite(cutoff) ||
+            !float.IsFinite(er) || !float.IsFinite(eg) || !float.IsFinite(eb))
+        {
+            MaterialDiagnostic = "material values must be finite";
+            return false;
+        }
+        var patch = JsonSerializer.Serialize(new
+        {
+            baseColorFactor = new[] { r, g, b, a },
+            metallicFactor = metallic,
+            roughnessFactor = roughness,
+            emissiveFactor = new[] { er, eg, eb },
+            alphaCutoff = cutoff,
+            alphaMode = MaterialAlphaMode,
+        });
+        if (!_host.UpdateMaterial(_selectedAsset.Index, patch))
+        {
+            MaterialDiagnostic = "material save failed: " + _host.GetLastError();
+            LogToConsole("MATERIAL SAVE FAILED: " + MaterialDiagnostic);
+            return false;
+        }
+        var index = _selectedAsset.Index;
+        ReloadCollectionsFromSession();
+        SelectedAsset = Assets.FirstOrDefault(x => x.Index == index) ?? SelectedAsset;
+        RefreshMaterialInspector();
+        LogToConsole("material saved");
+        return true;
+    }
+
+    public void ShowSelectedAssetDependencies()
+    {
+        Dependencies.Clear();
+        IsDependencyViewVisible = true;
+        if (_selectedAsset is null) return;
+        var json = _host.GetAssetDependencies(_selectedAsset.Index);
+        if (string.IsNullOrWhiteSpace(json))
+        {
+            LogToConsole("dependencies unavailable");
+            return;
+        }
+        try
+        {
+            using var doc = JsonDocument.Parse(json);
+            foreach (var d in doc.RootElement.GetProperty("dependencies").EnumerateArray())
+            {
+                Dependencies.Add(new DependencyVm("->",
+                    d.GetProperty("type").GetString() ?? "",
+                    d.GetProperty("path").GetString() ?? "",
+                    d.GetProperty("guid").GetString() ?? "",
+                    d.GetProperty("resolved").GetBoolean(),
+                    d.TryGetProperty("slot", out var slot) ? slot.GetString() ?? "" : ""));
+            }
+            foreach (var d in doc.RootElement.GetProperty("dependents").EnumerateArray())
+            {
+                Dependencies.Add(new DependencyVm("<-",
+                    d.GetProperty("type").GetString() ?? "",
+                    d.GetProperty("path").GetString() ?? "",
+                    d.GetProperty("guid").GetString() ?? "",
+                    true,
+                    d.TryGetProperty("slot", out var slot) ? slot.GetString() ?? "" : ""));
+            }
+        }
+        catch (Exception ex)
+        {
+            LogToConsole("dependencies parse failed: " + ex.Message);
+        }
+    }
+
+    public bool ReimportSelectedMesh(bool discardLocalEdits)
+    {
+        if (_selectedAsset is null || _selectedAsset.TypeName != "Mesh")
+            return false;
+        var index = _host.ReimportAsset(_selectedAsset.Index, discardLocalEdits);
+        if (index < 0)
+        {
+            LogToConsole("REIMPORT FAILED: " + _host.GetLastError());
+            return false;
+        }
+        ReloadCollectionsFromSession();
+        SelectedAsset = Assets.FirstOrDefault(x => x.Index == index) ?? SelectedAsset;
+        LogToConsole("reimport completed");
+        return true;
+    }
     public uint ViewportTextureHandle => _host.GetViewportTextureHandle();
 
     /// 视口当前渲染尺寸
@@ -514,7 +1243,7 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
         get => _gizmoMode;
         set
         {
-            if (Set(ref _gizmoMode, value))
+            if (Set(ref _gizmoMode, value) && !_host.IsEngineHost)
                 _host.SetGizmoMode(value);
         }
     }
@@ -526,7 +1255,7 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
         get => _gizmoSpace;
         set
         {
-            if (Set(ref _gizmoSpace, value))
+            if (Set(ref _gizmoSpace, value) && !_host.IsEngineHost)
                 _host.SetGizmoSpace(value);
         }
     }
@@ -537,7 +1266,7 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
         get => _gizmoSnapEnabled;
         set
         {
-            if (Set(ref _gizmoSnapEnabled, value))
+            if (Set(ref _gizmoSnapEnabled, value) && !_host.IsEngineHost)
                 _host.SetGizmoSnap(value, _gizmoSnapValue);
         }
     }
@@ -548,7 +1277,7 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
         get => _gizmoSnapValue;
         set
         {
-            if (Set(ref _gizmoSnapValue, value))
+            if (Set(ref _gizmoSnapValue, value) && !_host.IsEngineHost)
                 _host.SetGizmoSnap(_gizmoSnapEnabled, value);
         }
     }
@@ -782,14 +1511,22 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
             return refused;
         }
 
+        if (!_host.BeginSceneEdit("create entity"))
+        {
+            var failed = CreateEntityReceipt.Failed(_host.GetLastError());
+            LastCreateReceipt = failed;
+            return failed;
+        }
         if (!TryHost("create entity", () => _host.CreateEntity(name), out int idx) || idx < 0)
         {
-            // host 侧失败：诊断必须可见（typed failure 已由 TryHost 记录，这里补结构化回执）
+            _host.CancelSceneEdit();
+            // host ��ʧ�ܣ���ϱ���ɼ���typed failure ���� TryHost ��¼�����ﲹ�ṹ����ִ��
             var failed = CreateEntityReceipt.Failed(_host.GetLastError());
             LogToConsole("CREATE FAILED: " + failed.Diagnostic);
             LastCreateReceipt = failed;
             return failed;
         }
+        _host.CommitSceneEdit();
 
         string created = _host.GetEntityName(idx) ?? $"#{idx}";
         // D2：只登记索引意图；不解析事件 payload，不假设事件到达时机。
@@ -803,9 +1540,225 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
         // 两种顺序最终收敛到同一 selection，不依赖时序假设。
         ResolvePendingSelectionIntent(strict: false);
         RefreshDirtyState();
-        LogToConsole("entity created: " + created);
         LastCreateReceipt = CreateEntityReceipt.Created(idx, created);
         return LastCreateReceipt;
+    }
+
+    private string _prefabNameInput = "";
+    public string PrefabNameInput { get => _prefabNameInput; set => Set(ref _prefabNameInput, value); }
+    public string PrefabTargetPath => "assets/prefabs";
+    private string _prefabDiagnostic = "";
+    public string PrefabDiagnostic { get => _prefabDiagnostic; private set => Set(ref _prefabDiagnostic, value); }
+
+    public bool CreatePrefabFromSelectedEntity()
+    {
+        if (SelectedHierarchyNode is null && _selectedEntity is not null &&
+            _selectedEntity.SceneId != 0)
+            SelectedHierarchyNode = new HierarchyNodeVm(
+                _selectedEntity.SceneId, _selectedEntity.Name, _selectedEntity.ParentId);
+        if (SelectedHierarchyNode is null)
+        {
+            PrefabDiagnostic = "no entity selected";
+            LogToConsole("CREATE PREFAB FAILED: no entity selected");
+            return false;
+        }
+        if (!_host.IsOpen || _host.State != HostRuntimeState.Ready)
+        {
+            PrefabDiagnostic = "no project";
+            LogToConsole("CREATE PREFAB FAILED: no project");
+            return false;
+        }
+        string name = PrefabNameInput.Trim();
+        if (name.Length == 0) name = SelectedHierarchyNode.Name;
+        int index = _host.CreatePrefabFromEntity(
+            SelectedHierarchyNode.SceneId, name);
+        if (index < 0)
+        {
+            PrefabDiagnostic = _host.GetLastError();
+            if (PrefabDiagnostic.Length == 0)
+                PrefabDiagnostic = "create prefab failed";
+            LogToConsole("CREATE PREFAB FAILED: " + PrefabDiagnostic);
+            return false;
+        }
+        PrefabDiagnostic = "";
+        ReloadCollectionsFromSession();
+        var asset = Assets.FirstOrDefault(a => a.Index == index);
+        if (asset is not null) SelectedAsset = asset;
+        LogToConsole("prefab created: " + name);
+        return true;
+    }
+
+    public bool DuplicateSelectedEntity(bool includeSubtree)
+    {
+        if (SelectedHierarchyNode is null && _selectedEntity is not null &&
+            _selectedEntity.SceneId != 0)
+            SelectedHierarchyNode = new HierarchyNodeVm(
+                _selectedEntity.SceneId, _selectedEntity.Name, _selectedEntity.ParentId);
+        if (SelectedHierarchyNode is null)
+        {
+            LogToConsole("DUPLICATE REFUSED: no entity selection");
+            return false;
+        }
+        if (!_host.IsOpen || _host.State != HostRuntimeState.Ready)
+        {
+            LogToConsole("DUPLICATE REFUSED: no project");
+            return false;
+        }
+        ulong created = _host.DuplicateEntity(SelectedHierarchyNode.SceneId, includeSubtree);
+        if (created == 0)
+        {
+            LogToConsole("DUPLICATE FAILED: " + _host.GetLastError());
+            return false;
+        }
+        ReloadCollectionsFromSession();
+        var node = FindNode(created);
+        if (node is not null) SelectHierarchyNode(node);
+        LogToConsole("duplicated: " + (includeSubtree ? "subtree" : "entity") +
+                     " #" + created);
+        return true;
+    }
+
+    public CreateEntityReceipt CreateChildEntity(string? name = null)
+    {
+        if (SelectedHierarchyNode is null && _selectedEntity is not null &&
+            _selectedEntity.SceneId != 0)
+            SelectedHierarchyNode = new HierarchyNodeVm(
+                _selectedEntity.SceneId, _selectedEntity.Name, _selectedEntity.ParentId);
+        if (SelectedHierarchyNode is null)
+        {
+            var refused = CreateEntityReceipt.Refused("no parent selection");
+            LastCreateReceipt = refused;
+            return refused;
+        }
+        if (!_host.IsOpen || _host.State != HostRuntimeState.Ready)
+        {
+            var refused = CreateEntityReceipt.Refused("no project");
+            LastCreateReceipt = refused;
+            return refused;
+        }
+        if (!_host.BeginSceneEdit("create child"))
+        {
+            var failed = CreateEntityReceipt.Failed(_host.GetLastError());
+            LastCreateReceipt = failed;
+            return failed;
+        }
+        int idx = _host.CreateEntity(name);
+        if (idx < 0)
+        {
+            _host.CancelSceneEdit();
+            var failed = CreateEntityReceipt.Failed(_host.GetLastError());
+            LastCreateReceipt = failed;
+            return failed;
+        }
+        ulong id = _host.GetEntitySceneId(idx);
+        if (!_host.SetEntityParent(id, SelectedHierarchyNode.SceneId, NativeReparentMode))
+        {
+            _host.CancelSceneEdit();
+            var failed = CreateEntityReceipt.Failed(_host.GetLastError());
+            LastCreateReceipt = failed;
+            return failed;
+        }
+        _host.CommitSceneEdit();
+        string created = _host.GetEntityName(idx) ?? $"#{idx}";
+        ReloadCollectionsFromSession();
+        SelectedHierarchyNode = FindNode(id);
+        SelectHierarchyNode(SelectedHierarchyNode);
+        LastCreateReceipt = CreateEntityReceipt.Created(idx, created);
+        LogToConsole("child entity created: " + created);
+        return LastCreateReceipt;
+    }
+
+    public bool ReparentSelectedToRoot()
+    {
+        if (SelectedHierarchyNode is null) return false;
+        return ReparentNode(SelectedHierarchyNode, null);
+    }
+
+    public bool ReparentNode(HierarchyNodeVm? child, HierarchyNodeVm? parent)
+    {
+        if (child is null) return false;
+        ulong parentId = parent?.SceneId ?? 0;
+        if (!_host.BeginSceneEdit("reparent entity"))
+        {
+            LogToConsole("REPARENT FAILED: " + _host.GetLastError());
+            return false;
+        }
+        if (!_host.SetEntityParent(child.SceneId, parentId, NativeReparentMode))
+        {
+            _host.CancelSceneEdit();
+            LogToConsole("REPARENT FAILED: " + _host.GetLastError());
+            return false;
+        }
+        _host.CommitSceneEdit();
+        ReloadCollectionsFromSession();
+        SelectedHierarchyNode = FindNode(child.SceneId);
+        SelectHierarchyNode(SelectedHierarchyNode);
+        LogToConsole("reparented: " + child.Name);
+        return true;
+    }
+    private HierarchyNodeVm? FindNode(ulong sceneId)
+    {
+        HierarchyNodeVm? Find(IEnumerable<HierarchyNodeVm> nodes)
+        {
+            foreach (var node in nodes)
+            {
+                if (node.SceneId == sceneId) return node;
+                var hit = Find(node.Children);
+                if (hit is not null) return hit;
+            }
+            return null;
+        }
+        return Find(HierarchyRoots);
+    }
+
+    private void RebuildHierarchy()
+    {
+        HierarchyRoots.Clear();
+        HierarchyRows.Clear();
+        AllEntities.Clear();
+        var seen = new HashSet<ulong>();
+        int rootCount = _host.GetCounts().entities;
+        for (int i = 0; i < rootCount; i++)
+        {
+            ulong id = _host.GetEntitySceneId(i);
+            if (id == 0 || !seen.Add(id)) continue;
+            string name = _host.GetEntityName(i) ?? $"?{i}";
+            var node = BuildHierarchyNode(id, name, 0, seen, i, 0);
+            if (node is not null) HierarchyRoots.Add(node);
+        }
+    }
+
+    public void ToggleHierarchyNode(HierarchyNodeVm? node)
+    {
+        if (node is null || !node.HasChildren) return;
+        if (!_collapsedHierarchy.Remove(node.SceneId))
+            _collapsedHierarchy.Add(node.SceneId);
+        RebuildHierarchy();
+        var kept = FindNode(node.SceneId);
+        if (kept is not null) SelectHierarchyNode(kept);
+    }
+
+    private HierarchyNodeVm? BuildHierarchyNode(ulong sceneId, string name,
+                                                ulong parentId,
+                                                HashSet<ulong> seen,
+                                                int rootIndex = -1, int depth = 0)
+    {
+        int childCount = _host.GetEntityChildCount(sceneId);
+        var node = new HierarchyNodeVm(sceneId, name, parentId, depth,
+            childCount > 0, !_collapsedHierarchy.Contains(sceneId));
+        AllEntities.Add(new EntityVm(rootIndex, name, sceneId, parentId));
+        HierarchyRows.Add(node);
+        if (childCount <= 0) return node;
+        if (!node.IsExpanded) return node;
+        for (int i = 0; i < childCount; i++)
+        {
+            ulong childId = _host.GetEntityChildId(sceneId, i);
+            if (childId == 0 || !seen.Add(childId)) continue;
+            string childName = _host.GetEntityNameById(childId) ?? $"?{childId}";
+            var child = BuildHierarchyNode(childId, childName, sceneId, seen, -1, depth + 1);
+            if (child is not null) node.Children.Add(child);
+        }
+        return node;
     }
 
     /// <summary>
@@ -851,7 +1804,9 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
             LogToConsole("rename ignored: no selection or empty name");
             return false;
         }
-        bool ok = _host.RenameEntity(_selectedEntity.Index, newName);
+        bool ok = _selectedEntity.SceneId != 0
+            ? _host.RenameEntityById(_selectedEntity.SceneId, newName)
+            : _host.RenameEntity(_selectedEntity.Index, newName);
         LogToConsole(ok ? $"renamed: {_selectedEntity.Name} -> {newName}"
                         : "RENAME FAILED: " + _host.GetLastError());
         if (ok) ReloadCollectionsFromSession();   // 事件也会触发，双保险
@@ -865,16 +1820,91 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
             LogToConsole("delete ignored: no selection");
             return false;
         }
-        bool ok = _host.DeleteEntity(_selectedEntity.Index);
+        if (!_host.BeginSceneEdit("delete entity"))
+        {
+            LogToConsole("DELETE FAILED: " + _host.GetLastError());
+            return false;
+        }
+        bool ok = _selectedEntity.SceneId != 0
+            ? _host.DeleteEntityById(_selectedEntity.SceneId)
+            : _host.DeleteEntity(_selectedEntity.Index);
+        if (ok) _host.CommitSceneEdit();
+        else _host.CancelSceneEdit();
+        RefreshDirtyState();
         LogToConsole(ok ? $"deleted: {_selectedEntity.Name}"
                         : "DELETE FAILED: " + _host.GetLastError());
         if (ok)
         {
-            // A3/D2：删除后索引失效，任何待解析意图都必须丢弃。
+            // A3/D2：删除成功即失效任何待解析的意图，避免把旧意图落到新实体上。
             _pendingSelectionIndex = null;
             SelectedEntity = null;
+            SelectedHierarchyNode = null;
+            ReloadCollectionsFromSession();
         }
         return ok;
+    }
+
+    private bool _canUndoScene;
+    public bool CanUndoScene { get => _canUndoScene; private set => Set(ref _canUndoScene, value); }
+    private bool _canRedoScene;
+    public bool CanRedoScene { get => _canRedoScene; private set => Set(ref _canRedoScene, value); }
+
+    public bool UndoScene()
+    {
+        var name = _selectedEntity?.Name;
+        ulong sceneId = _selectedEntity?.SceneId ?? 0;
+        if (!_host.UndoSceneEdit())
+        {
+            LogToConsole("undo ignored: " + _host.GetLastError());
+            return false;
+        }
+        ReloadCollectionsFromSession();
+        if (!string.IsNullOrEmpty(name))
+        {
+            if (sceneId != 0)
+            {
+                var node = FindNode(sceneId);
+                if (node is null) { RebuildHierarchy(); node = FindNode(sceneId); }
+                SelectHierarchyNode(node);
+            }
+            else SelectedEntity = AllEntities.FirstOrDefault(e => e.Name == name);
+        }
+        RefreshInspectorFromSession();
+        RefreshDirtyState();
+        LogToConsole("undo applied");
+        return true;
+    }
+
+    public bool RedoScene()
+    {
+        var name = _selectedEntity?.Name;
+        ulong sceneId = _selectedEntity?.SceneId ?? 0;
+        if (!_host.RedoSceneEdit())
+        {
+            LogToConsole("redo ignored: " + _host.GetLastError());
+            return false;
+        }
+        ReloadCollectionsFromSession();
+        if (!string.IsNullOrEmpty(name))
+        {
+            if (sceneId != 0)
+            {
+                var node = FindNode(sceneId);
+                if (node is null) { RebuildHierarchy(); node = FindNode(sceneId); }
+                SelectHierarchyNode(node);
+            }
+            else SelectedEntity = AllEntities.FirstOrDefault(e => e.Name == name);
+        }
+        RefreshInspectorFromSession();
+        RefreshDirtyState();
+        LogToConsole("redo applied");
+        return true;
+    }
+
+    private void RefreshUndoRedoState()
+    {
+        CanUndoScene = _host.CanUndoSceneEdit();
+        CanRedoScene = _host.CanRedoSceneEdit();
     }
 
     // ── P2-D Asset Browser：Assign Sprite 到选中实体 ──
@@ -1091,8 +2121,24 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
             LogToConsole("invalid transform input");
             return;
         }
-        if (_host.SetEntityPosition(_selectedEntity.Index, x, y, z))
-            LogToConsole($"transform applied: {_selectedEntity.Name} -> ({Format(x)}, {Format(y)}, {Format(z)})");
+        if (!TryParse(RotX, out var rx) || !TryParse(RotY, out var ry) ||
+            !TryParse(RotZ, out var rz) || !TryParse(ScaleX, out var sx) ||
+            !TryParse(ScaleY, out var sy) || !TryParse(ScaleZ, out var sz))
+        {
+            return;
+        }
+            LogToConsole("invalid rotation/scale input");
+        bool set = _selectedEntity.SceneId != 0
+            ? _host.SetEntityTransformById(_selectedEntity.SceneId,
+                                           new[] { x, y, z, rx, ry, rz, sx, sy, sz })
+            : _host.SetEntityTransform(_selectedEntity.Index,
+                                       new[] { x, y, z, rx, ry, rz, sx, sy, sz });
+        if (set)
+        {
+            RefreshInspectorFromSession();
+            RefreshDirtyState();
+            LogToConsole($"transform applied: {_selectedEntity.Name}");
+        }
         else
             LogToConsole("SET FAILED: " + _host.GetLastError());
     }
@@ -1555,6 +2601,7 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
         // P2-C 纪律：重载后保持选择（重命名/编辑后 selection 不丢）。
         // 删除路径由调用方显式清空选择。
         int? keepIdx = _selectedEntity?.Index;
+        ulong keepSceneId = _selectedEntity?.SceneId ?? 0;
 
         // A2/F2-05：refresh 期间 host 可能已 fault/关闭；查询失败必须转成 Console 记录，
         // 而不是让异常从 View handler 逃出（旧行为是 XAML 反射派发包成 TargetInvocationException）。
@@ -1567,13 +2614,31 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
         var (entCount, assetCount) = counts;
         Entities.Clear();
         for (int i = 0; i < entCount; i++)
-            Entities.Add(new EntityVm(i, _host.GetEntityName(i) ?? $"?{i}"));
+            Entities.Add(new EntityVm(i, _host.GetEntityName(i) ?? $"?{i}",
+                                      _host.GetEntitySceneId(i), 0));
 
         Assets.Clear();
         for (int i = 0; i < assetCount; i++)
+        {
+            var typeName = _host.GetAssetType(i) switch
+            {
+                0 => "Texture",
+                1 => "Script",
+                2 => "Mesh",
+                3 => "Material",
+                4 => "Prefab",
+                _ => "Unknown",
+            };
+            var statusName = _host.GetAssetStatus(i) switch
+            {
+                0 => "Available",
+                1 => "Missing",
+                2 => "PathRejected",
+                _ => "Unknown",
+            };
             Assets.Add(new AssetVm(i, _host.GetAssetPath(i) ?? "",
-                _host.GetAssetType(i) switch { 0 => "Texture", 1 => "Script", _ => "Unknown" },
-                _host.GetAssetGuid(i)));
+                typeName, _host.GetAssetGuid(i), statusName));
+        }
 
         // A3/D2：选择意图优先于"保持旧选择"。
         //
@@ -1582,6 +2647,7 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
         // 会让控件收到一个已经不在集合里的旧实例，OneWay 绑定随即回退到"无选中"。
         // 因此这里先重建列表（意图待解析时不保留旧选择），再在最终列表上解析。
         RebuildFilteredEntities(preserveSelection: _pendingSelectionIndex is null);
+        RebuildHierarchy();
         RebuildFilteredAssets();     // P3-C：资产过滤视图同步
         Raise(nameof(HasEntities));
         Raise(nameof(HasAssets));
@@ -1597,6 +2663,14 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
             // 旧选择被过滤隐藏：模型层保留它（P3-A 契约），不伪造到其它实体上。
             LogToConsole($"selection #{idx} is filtered out; the model keeps it");
         }
+
+        if (keepSceneId != 0 && (_selectedEntity is null || _selectedEntity.SceneId != keepSceneId))
+        {
+            var kept = FindNode(keepSceneId);
+            if (kept is not null) SelectHierarchyNode(kept);
+        }
+        if (_selectedEntity is null && HierarchyRoots.Count > 0)
+            SelectHierarchyNode(HierarchyRoots[0]);
 
         StatusText = $"[Avalonia] project loaded: {entCount} objects, {assetCount} assets";
         LogToConsole(StatusText);
@@ -1631,7 +2705,6 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
         Raise(nameof(HasFilter));
         Raise(nameof(FilteredCount));
     }
-
     private void RefreshInspectorFromSession()
     {
         if (_selectedEntity is null)
@@ -1641,28 +2714,45 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
             SelectedScript = "(none)";
             RefreshCamera(null);
             RefreshRigidBody(null);
+            RefreshMesh(null);
         }
         else if (!TryHost("refresh inspector",
-                     () => _host.GetEntityPosition(_selectedEntity.Index), out var p))
+                     () => _selectedEntity.SceneId != 0
+                         ? _host.GetEntityTransformById(_selectedEntity.SceneId)
+                         : _host.GetEntityTransform(_selectedEntity.Index), out var p))
         {
-            // runtime 不可用：保留上一次回填值，不伪造新状态。
             RefreshCamera(null);
             RefreshRigidBody(null);
+            RefreshMesh(null);
         }
         else
         {
             SelectedName = _selectedEntity.Name;
-            PosX = Format(p.x); PosY = Format(p.y); PosZ = Format(p.z);
-            SelectedSprite = _host.GetEntitySprite(_selectedEntity.Index);
-            if (SelectedSprite.Length == 0) SelectedSprite = "(none)";
-            SelectedScript = _host.GetEntityScript(_selectedEntity.Index);
-            if (SelectedScript.Length == 0) SelectedScript = "(none)";
-            RefreshCamera(_selectedEntity.Index);
-            RefreshRigidBody(_selectedEntity.Index);
+            PosX = Format(p[0]); PosY = Format(p[1]); PosZ = Format(p[2]);
+            RotX = Format(p[3]); RotY = Format(p[4]); RotZ = Format(p[5]);
+            ScaleX = Format(p[6]); ScaleY = Format(p[7]); ScaleZ = Format(p[8]);
+            if (_selectedEntity.Index >= 0)
+            {
+                SelectedSprite = _host.GetEntitySprite(_selectedEntity.Index);
+                if (SelectedSprite.Length == 0) SelectedSprite = "(none)";
+                SelectedScript = _host.GetEntityScript(_selectedEntity.Index);
+                if (SelectedScript.Length == 0) SelectedScript = "(none)";
+                RefreshCamera(_selectedEntity.Index);
+                RefreshRigidBody(_selectedEntity.Index);
+                RefreshMesh(_selectedEntity.Index);
+            }
+            else
+            {
+                SelectedSprite = "(none)";
+                SelectedScript = "(none)";
+                RefreshCamera(null);
+                RefreshRigidBody(null);
+                RefreshMesh(null);
+            }
         }
+        RefreshPrefabInstanceInfo(_selectedEntity?.SceneId ?? 0);
     }
 
-    /// F1：从会话读取 Camera 反射属性（存在则回填 Inspector 字段）
     private void RefreshCamera(int? entityIndex)
     {
         if (entityIndex is not int idx
@@ -1707,6 +2797,7 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
     private void RefreshDirtyState()
     {
         IsDirty = _host.IsDirty();
+        RefreshUndoRedoState();
         Raise(nameof(StatusText));
     }
 
@@ -1882,6 +2973,50 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
     }
 }
 
-public sealed record EntityVm(int Index, string Name);
+public sealed record EntityVm(int Index, string Name, ulong SceneId = 0, ulong ParentId = 0);
 
-public sealed record AssetVm(int Index, string Path, string TypeName, string Guid);
+public sealed class HierarchyNodeVm
+{
+    public HierarchyNodeVm(ulong sceneId, string name, ulong parentId, int depth = 0,
+                           bool hasChildren = false, bool isExpanded = true)
+    {
+        SceneId = sceneId;
+        Name = name;
+        ParentId = parentId;
+        Depth = depth;
+        HasChildren = hasChildren;
+        IsExpanded = isExpanded;
+    }
+
+    public ulong SceneId { get; }
+    public ulong ParentId { get; }
+    public int Depth { get; }
+    public bool HasChildren { get; }
+    public bool IsExpanded { get; }
+    public string ExpandGlyph => !HasChildren ? " " : (IsExpanded ? "-" : "+");
+    public Avalonia.Thickness Indent => new(Depth * 14, 0, 0, 0);
+    public string Name { get; set; }
+    public ObservableCollection<HierarchyNodeVm> Children { get; } = new();
+}
+
+public sealed record AssetVm(int Index, string Path, string TypeName, string Guid, string StatusName)
+{
+    public string Name => System.IO.Path.GetFileName(Path);
+}
+
+public sealed record PrefabConflictVm(string Id, string Type, ulong LocalId,
+                                       string Component, string Field, string Detail)
+{
+    public string Display => Type + " " + Id + " " + Component + "." + Field +
+                             (Detail.Length == 0 ? "" : " - " + Detail);
+}public sealed record PrefabOverrideVm(ulong LocalId, string Component, string Field)
+{
+    public string Display => Component + "." + Field + " (local " + LocalId + ")";
+}
+
+public sealed record DependencyVm(string Direction, string Type, string Path,
+                                  string Guid, bool Resolved, string Slot)
+{
+    public string Display =>
+        $"{Direction} {Type} {Path} {(Resolved ? "" : "[UNRESOLVED]")} {Slot}".Trim();
+}

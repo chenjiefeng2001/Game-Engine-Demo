@@ -65,7 +65,7 @@ public static class EditorBridgeApi
     /// 升版本使 v1.8/v1.9 混搭在 `Create()` lockstep 处失败，而不是让
     /// managed 用错误布局解释 native 输出。
     /// </remarks>
-    public const int EngineHostExpectedVersion = (1 << 16) | 9;
+    public const int EngineHostExpectedVersion = (1 << 16) | 20;
 
     public const int EngineHostStatusSuccess = 0;
     public const int EngineHostStatusSkippedNotPlaying = 1;
@@ -147,7 +147,46 @@ public static class EditorBridgeApi
     /// <summary>Slice E：设置 presentation viewport 尺寸（只登记，下一帧生效）。</summary>
     public const int EngineHostOpSetViewportSize = 30;
     public const int EngineHostOpSetCameraInput = 31;
-    public const int EngineHostOpCount = 32;
+    /// <summary>B6: committed asset availability (0=available,1=missing,2=path rejected,-1=bad index).</summary>
+    public const int EngineHostOpGetAssetStatus = 32;
+    public const int EngineHostOpGetMaterialJson = 33;
+    public const int EngineHostOpUpdateMaterial = 34;
+    public const int EngineHostOpGetAssetDependencies = 35;
+    public const int EngineHostOpReimportAsset = 36;
+    public const int EngineHostOpGetEntityTransform = 37;
+    public const int EngineHostOpSetEntityTransform = 38;
+    public const int EngineHostOpUndoScene = 39;
+    public const int EngineHostOpRedoScene = 40;
+    public const int EngineHostOpCanUndoScene = 41;
+    public const int EngineHostOpCanRedoScene = 42;
+    public const int EngineHostOpBeginSceneEdit = 43;
+    public const int EngineHostOpCommitSceneEdit = 44;
+    public const int EngineHostOpCancelSceneEdit = 45;
+    public const int EngineHostOpGetEditorViewProjection = 46;
+    public const int EngineHostOpGetEntitySceneId = 47;
+    public const int EngineHostOpGetTotalEntityCount = 48;
+    public const int EngineHostOpGetEntityParentId = 49;
+    public const int EngineHostOpGetEntityChildCount = 50;
+    public const int EngineHostOpGetEntityChildId = 51;
+    public const int EngineHostOpGetEntityNameById = 52;
+    public const int EngineHostOpGetEntityTransformById = 53;
+    public const int EngineHostOpSetEntityTransformById = 54;
+    public const int EngineHostOpSetEntityParent = 55;
+    public const int EngineHostOpDeleteEntityById = 56;
+    public const int EngineHostOpRenameEntityById = 57;
+    public const int EngineHostOpDuplicateEntity = 58;
+    public const int EngineHostOpGetLastDuplicatedEntityId = 59;
+    public const int EngineHostOpCreatePrefabFromEntity = 60;
+    public const int EngineHostOpInstantiatePrefab = 61;
+    public const int EngineHostOpGetLastInstantiatedEntityId = 62;
+    public const int EngineHostOpGetPrefabInstanceJson = 63;
+    public const int EngineHostOpRevertOverride = 64;
+    public const int EngineHostOpApplyPrefabOverrides = 65;
+    public const int EngineHostOpGetPrefabReconciliationStatus = 66;
+    public const int EngineHostOpPreviewPrefabReconciliation = 67;
+    public const int EngineHostOpApplyPrefabReconciliation = 68;
+    public const int EngineHostOpResolveReconciliationConflict = 69;
+    public const int EngineHostOpCount = 70;
 
     // ── HRC-3 D3：PickResultPacket 静态容量（编译期常量）──
     /// <summary>packet 定长 32B。pick 只需一个像素 readback，不把 ID 表面搬过 ABI。</summary>
@@ -534,6 +573,122 @@ public static class EditorBridgeApi
     [DllImport("EditorBridge", CallingConvention = CallingConvention.Cdecl)]
     public static extern int EditorSession_GetAssetType(IntPtr session,
         int index);
+
+    [DllImport("EditorBridge", CallingConvention = CallingConvention.Cdecl)]
+    public static extern int EditorSession_GetAssetStatus(IntPtr session,
+        int index);
+
+    [DllImport("EditorBridge", CallingConvention = CallingConvention.Cdecl)]
+    public static extern int EditorSession_GetMaterialJson(IntPtr session,
+        int assetIndex, IntPtr outBuffer, int capacity);
+
+    [DllImport("EditorBridge", CallingConvention = CallingConvention.Cdecl)]
+    public static extern int EditorSession_UpdateMaterial(IntPtr session,
+        int assetIndex, [MarshalAs(UnmanagedType.LPUTF8Str)] string fieldsJson);
+
+    [DllImport("EditorBridge", CallingConvention = CallingConvention.Cdecl)]
+    public static extern int EditorSession_GetAssetDependencies(IntPtr session,
+        int assetIndex, IntPtr outBuffer, int capacity);
+
+    [DllImport("EditorBridge", CallingConvention = CallingConvention.Cdecl)]
+    public static extern int EditorSession_ReimportAsset(IntPtr session,
+        int assetIndex, int discardLocalEdits);
+
+    [DllImport("EditorBridge", CallingConvention = CallingConvention.Cdecl)]
+    public static extern int EditorSession_GetEntityTransform(IntPtr session,
+        int index, IntPtr out9);
+
+    [DllImport("EditorBridge", CallingConvention = CallingConvention.Cdecl)]
+    public static extern int EditorSession_SetEntityTransform(IntPtr session,
+        int index, IntPtr pos3, IntPtr euler3, IntPtr scale3);
+
+    [DllImport("EditorBridge", CallingConvention = CallingConvention.Cdecl)]
+    public static extern ulong EditorSession_GetEntitySceneId(IntPtr session, int index);
+
+    [DllImport("EditorBridge", CallingConvention = CallingConvention.Cdecl)]
+    public static extern int EditorSession_GetTotalEntityCount(IntPtr session);
+
+    [DllImport("EditorBridge", CallingConvention = CallingConvention.Cdecl)]
+    public static extern ulong EditorSession_GetEntityParentId(IntPtr session, ulong entityId);
+
+    [DllImport("EditorBridge", CallingConvention = CallingConvention.Cdecl)]
+    public static extern int EditorSession_GetEntityChildCount(IntPtr session, ulong entityId);
+
+    [DllImport("EditorBridge", CallingConvention = CallingConvention.Cdecl)]
+    public static extern ulong EditorSession_GetEntityChildId(IntPtr session, ulong entityId, int childIndex);
+
+    [DllImport("EditorBridge", CallingConvention = CallingConvention.Cdecl)]
+    public static extern int EditorSession_GetEntityNameById(IntPtr session, ulong entityId, IntPtr outUtf8, int cap);
+
+    [DllImport("EditorBridge", CallingConvention = CallingConvention.Cdecl)]
+    public static extern int EditorSession_GetEntityTransformById(IntPtr session, ulong entityId, IntPtr out9);
+
+    [DllImport("EditorBridge", CallingConvention = CallingConvention.Cdecl)]
+    public static extern int EditorSession_SetEntityTransformById(IntPtr session, ulong entityId, IntPtr pos3, IntPtr euler3, IntPtr scale3);
+
+    [DllImport("EditorBridge", CallingConvention = CallingConvention.Cdecl)]
+    public static extern int EditorSession_SetEntityParent(IntPtr session, ulong childId, ulong parentId, int mode);
+
+    [DllImport("EditorBridge", CallingConvention = CallingConvention.Cdecl)]
+    public static extern int EditorSession_DeleteEntityById(IntPtr session, ulong entityId);
+
+    [DllImport("EditorBridge", CallingConvention = CallingConvention.Cdecl)]
+    public static extern int EditorSession_RenameEntityById(IntPtr session, ulong entityId, [MarshalAs(UnmanagedType.LPUTF8Str)] string newName);
+
+    [DllImport("EditorBridge", CallingConvention = CallingConvention.Cdecl)]
+    public static extern int EditorSession_DuplicateEntity(IntPtr session, ulong entityId,
+        int includeSubtree, out ulong newRootId);
+
+    [DllImport("EditorBridge", CallingConvention = CallingConvention.Cdecl)]
+    public static extern int EditorSession_CreatePrefabFromEntity(IntPtr session,
+        ulong entityId, [MarshalAs(UnmanagedType.LPUTF8Str)] string? assetName);
+
+    [DllImport("EditorBridge", CallingConvention = CallingConvention.Cdecl)]
+    public static extern int EditorSession_InstantiatePrefab(IntPtr session,
+        int assetIndex, ulong parentEntityId, out ulong rootEntityId);
+
+    [DllImport("EditorBridge", CallingConvention = CallingConvention.Cdecl)]
+    public static extern int EditorSession_GetPrefabInstanceJson(IntPtr session,
+        ulong entityId, IntPtr outBuffer, int capacity);
+
+    [DllImport("EditorBridge", CallingConvention = CallingConvention.Cdecl)]
+    public static extern int EditorSession_RevertOverride(IntPtr session,
+        ulong rootEntityId, ulong localId,
+        [MarshalAs(UnmanagedType.LPUTF8Str)] string component,
+        [MarshalAs(UnmanagedType.LPUTF8Str)] string field);
+
+    [DllImport("EditorBridge", CallingConvention = CallingConvention.Cdecl)]
+    public static extern int EditorSession_RevertPrefabInstance(IntPtr session,
+        ulong rootEntityId);
+
+    [DllImport("EditorBridge", CallingConvention = CallingConvention.Cdecl)]
+    public static extern int EditorSession_ApplyPrefabOverrides(IntPtr session,
+        ulong rootEntityId);
+
+    [DllImport("EditorBridge", CallingConvention = CallingConvention.Cdecl)]
+    public static extern int EditorSession_BeginSceneEdit(IntPtr session,
+        [MarshalAs(UnmanagedType.LPUTF8Str)] string label);
+
+    [DllImport("EditorBridge", CallingConvention = CallingConvention.Cdecl)]
+    public static extern int EditorSession_CommitSceneEdit(IntPtr session);
+
+    [DllImport("EditorBridge", CallingConvention = CallingConvention.Cdecl)]
+    public static extern int EditorSession_CancelSceneEdit(IntPtr session);
+
+    [DllImport("EditorBridge", CallingConvention = CallingConvention.Cdecl)]
+    public static extern int EditorSession_UndoSceneEdit(IntPtr session);
+
+    [DllImport("EditorBridge", CallingConvention = CallingConvention.Cdecl)]
+    public static extern int EditorSession_RedoSceneEdit(IntPtr session);
+
+    [DllImport("EditorBridge", CallingConvention = CallingConvention.Cdecl)]
+    public static extern int EditorSession_CanUndoSceneEdit(IntPtr session);
+
+    [DllImport("EditorBridge", CallingConvention = CallingConvention.Cdecl)]
+    public static extern int EditorSession_CanRedoSceneEdit(IntPtr session);
+
+    [DllImport("EditorBridge", CallingConvention = CallingConvention.Cdecl)]
+    public static extern int EditorSession_GetEditorViewProjection(IntPtr session, IntPtr out16);
 
     [DllImport("EditorBridge", CallingConvention = CallingConvention.Cdecl)]
     public static extern int EditorSession_DeleteEntity(IntPtr session,

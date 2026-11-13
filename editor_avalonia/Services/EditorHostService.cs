@@ -131,9 +131,48 @@ internal interface IEditorOps
     int CreateEntity(string? name);
     string? GetEntityName(int index);
     (float x, float y, float z) GetEntityPosition(int index);
+    float[] GetEntityTransform(int index);
+    float[] GetEditorViewProjection();
+    bool SetEntityTransform(int index, float[] transform9);
+    ulong GetEntitySceneId(int rootIndex);
+    int GetTotalEntityCount();
+    ulong GetEntityParentId(ulong entityId);
+    int GetEntityChildCount(ulong entityId);
+    ulong GetEntityChildId(ulong entityId, int childIndex);
+    string GetEntityNameById(ulong entityId);
+    float[] GetEntityTransformById(ulong entityId);
+    bool SetEntityTransformById(ulong entityId, float[] transform9);
+    bool SetEntityParent(ulong childId, ulong parentId, int mode);
+    bool DeleteEntityById(ulong entityId);
+    bool RenameEntityById(ulong entityId, string newName);
+    ulong DuplicateEntity(ulong entityId, bool includeSubtree);
+    int CreatePrefabFromEntity(ulong entityId, string? assetName);
+    ulong InstantiatePrefab(int assetIndex, ulong parentEntityId);
+    string GetPrefabInstanceJson(ulong entityId);
+    bool RevertPrefabOverride(ulong rootEntityId, ulong localId, string component, string field);
+    bool RevertPrefabInstance(ulong rootEntityId);
+    bool ApplyPrefabOverrides(ulong rootEntityId);
+    string GetPrefabReconciliationStatus(ulong rootEntityId);
+    string PreviewPrefabReconciliation(ulong rootEntityId);
+    bool ApplyPrefabReconciliation(ulong rootEntityId);
+    bool ResolvePrefabReconciliationConflict(ulong rootEntityId,
+                                             string conflictId, string action,
+                                             string? valueJson);
+    bool BeginSceneEdit(string label);
+    bool CommitSceneEdit();
+    bool CancelSceneEdit();
+    bool UndoSceneEdit();
+    bool RedoSceneEdit();
+    bool CanUndoSceneEdit();
+    bool CanRedoSceneEdit();
     bool SetEntityPosition(int index, float x, float y, float z);
     string? GetAssetPath(int index);
     int GetAssetType(int index);
+    int GetAssetStatus(int index);
+    string GetMaterialJson(int assetIndex);
+    bool UpdateMaterial(int assetIndex, string fieldsJson);
+    string GetAssetDependencies(int assetIndex);
+    int ReimportAsset(int assetIndex, bool discardLocalEdits);
     string GetAssetGuid(int index);
     int ImportAsset(string path, int type);
     bool RenameAsset(int assetIndex, string newName);
@@ -658,9 +697,47 @@ public sealed class EditorHostService : IDisposable
     }
     public string? GetEntityName(int index) => Guarded(ops => ops.GetEntityName(index));
     public (float x, float y, float z) GetEntityPosition(int index) => Guarded(ops => ops.GetEntityPosition(index));
+    public float[] GetEntityTransform(int index) => Guarded(ops => ops.GetEntityTransform(index));
+    public float[] GetEditorViewProjection() => Guarded(ops => ops.GetEditorViewProjection());
+    public bool SetEntityTransform(int index, float[] transform9) => Guarded(ops => ops.SetEntityTransform(index, transform9));
+    public ulong GetEntitySceneId(int rootIndex) => Guarded(ops => ops.GetEntitySceneId(rootIndex));
+    public int GetTotalEntityCount() => Guarded(ops => ops.GetTotalEntityCount());
+    public ulong GetEntityParentId(ulong entityId) => Guarded(ops => ops.GetEntityParentId(entityId));
+    public int GetEntityChildCount(ulong entityId) => Guarded(ops => ops.GetEntityChildCount(entityId));
+    public ulong GetEntityChildId(ulong entityId, int childIndex) => Guarded(ops => ops.GetEntityChildId(entityId, childIndex));
+    public string GetEntityNameById(ulong entityId) => Guarded(ops => ops.GetEntityNameById(entityId));
+    public float[] GetEntityTransformById(ulong entityId) => Guarded(ops => ops.GetEntityTransformById(entityId));
+    public bool SetEntityTransformById(ulong entityId, float[] transform9) => Guarded(ops => ops.SetEntityTransformById(entityId, transform9));
+    public bool SetEntityParent(ulong childId, ulong parentId, int mode) => Guarded(ops => ops.SetEntityParent(childId, parentId, mode));
+    public bool DeleteEntityById(ulong entityId) => Guarded(ops => ops.DeleteEntityById(entityId));
+    public bool RenameEntityById(ulong entityId, string newName) => Guarded(ops => ops.RenameEntityById(entityId, newName));
+    public ulong DuplicateEntity(ulong entityId, bool includeSubtree) => Guarded(ops => ops.DuplicateEntity(entityId, includeSubtree));
+    public int CreatePrefabFromEntity(ulong entityId, string? assetName) => Guarded(ops => ops.CreatePrefabFromEntity(entityId, assetName));
+    public ulong InstantiatePrefab(int assetIndex, ulong parentEntityId) => Guarded(ops => ops.InstantiatePrefab(assetIndex, parentEntityId));
+    public string GetPrefabInstanceJson(ulong entityId) => Guarded(ops => ops.GetPrefabInstanceJson(entityId));
+    public bool RevertPrefabOverride(ulong rootEntityId, ulong localId, string component, string field) => Guarded(ops => ops.RevertPrefabOverride(rootEntityId, localId, component, field));
+    public bool RevertPrefabInstance(ulong rootEntityId) => Guarded(ops => ops.RevertPrefabInstance(rootEntityId));
+    public bool ApplyPrefabOverrides(ulong rootEntityId) => Guarded(ops => ops.ApplyPrefabOverrides(rootEntityId));
+    public string GetPrefabReconciliationStatus(ulong rootEntityId) => Guarded(ops => ops.GetPrefabReconciliationStatus(rootEntityId));
+    public string PreviewPrefabReconciliation(ulong rootEntityId) => Guarded(ops => ops.PreviewPrefabReconciliation(rootEntityId));
+    public bool ApplyPrefabReconciliation(ulong rootEntityId) => Guarded(ops => ops.ApplyPrefabReconciliation(rootEntityId));
+    public bool ResolvePrefabReconciliationConflict(ulong rootEntityId, string conflictId, string action, string? valueJson) =>
+        Guarded(ops => ops.ResolvePrefabReconciliationConflict(rootEntityId, conflictId, action, valueJson));
+    public bool BeginSceneEdit(string label) => Guarded(ops => ops.BeginSceneEdit(label));
+    public bool CommitSceneEdit() => Guarded(ops => ops.CommitSceneEdit());
+    public bool CancelSceneEdit() => Guarded(ops => ops.CancelSceneEdit());
+    public bool UndoSceneEdit() => Guarded(ops => ops.UndoSceneEdit());
+    public bool RedoSceneEdit() => Guarded(ops => ops.RedoSceneEdit());
+    public bool CanUndoSceneEdit() => Guarded(ops => ops.CanUndoSceneEdit());
+    public bool CanRedoSceneEdit() => Guarded(ops => ops.CanRedoSceneEdit());
     public bool SetEntityPosition(int index, float x, float y, float z) => Guarded(ops => ops.SetEntityPosition(index, x, y, z));
     public string? GetAssetPath(int index) => Guarded(ops => ops.GetAssetPath(index));
     public int GetAssetType(int index) => Guarded(ops => ops.GetAssetType(index));
+    public int GetAssetStatus(int index) => Guarded(ops => ops.GetAssetStatus(index));
+    public string GetMaterialJson(int assetIndex) => Guarded(ops => ops.GetMaterialJson(assetIndex));
+    public bool UpdateMaterial(int assetIndex, string fieldsJson) => Guarded(ops => ops.UpdateMaterial(assetIndex, fieldsJson));
+    public string GetAssetDependencies(int assetIndex) => Guarded(ops => ops.GetAssetDependencies(assetIndex));
+    public int ReimportAsset(int assetIndex, bool discardLocalEdits) => Guarded(ops => ops.ReimportAsset(assetIndex, discardLocalEdits));
     public string GetAssetGuid(int index) => Guarded(ops => ops.GetAssetGuid(index));
     public int ImportAsset(string path, int type) => Guarded(ops => ops.ImportAsset(path, type));
     public bool RenameAsset(int assetIndex, string newName) => Guarded(ops => ops.RenameAsset(assetIndex, newName));
@@ -1309,6 +1386,40 @@ internal sealed class EngineHostChannel : IEditorOps, IDisposable
         return Encoding.UTF8.GetString(buffer, 0, length);
     }
 
+    private string FetchLargeString(int op, string? strArg)
+    {
+        var result = default(EditorBridgeApi.RuntimeResult);
+        var buffer = new byte[65536];
+        int code = EditorBridgeApi.EngineHost_Fetch(_host, op, 0, strArg, null, null,
+                                                    buffer, buffer.Length, ref result);
+        if (code < 0) return string.Empty;
+        int length = Array.IndexOf(buffer, (byte)0);
+        if (length < 0) length = buffer.Length;
+        return Encoding.UTF8.GetString(buffer, 0, length);
+    }
+
+    private ulong FetchU64(int op, int arg0 = 0, string? strArg = null)
+    {
+        var result = default(EditorBridgeApi.RuntimeResult);
+        var buffer = new byte[8];
+        int code = EditorBridgeApi.EngineHost_Fetch(_host, op, arg0, strArg, null, null,
+                                                    buffer, buffer.Length, ref result);
+        if (code < 0) throw Failure("fetch entity id", result);
+        return BitConverter.ToUInt64(buffer, 0);
+    }
+
+    private string FetchLarge(int op, int arg0)
+    {
+        var result = default(EditorBridgeApi.RuntimeResult);
+        var buffer = new byte[65536];
+        int code = EditorBridgeApi.EngineHost_Fetch(_host, op, arg0, null, null, null,
+                                                    buffer, buffer.Length, ref result);
+        if (code < 0) return string.Empty;
+        int length = Array.IndexOf(buffer, (byte)0);
+        if (length < 0) length = buffer.Length;
+        return Encoding.UTF8.GetString(buffer, 0, length);
+    }
+
     public bool OpenProject(string manifestPath, string scenePath)
         => OpenProjectAttempt("open project", () =>
         {
@@ -1455,8 +1566,164 @@ internal sealed class EngineHostChannel : IEditorOps, IDisposable
     public bool SetEntityPosition(int index, float x, float y, float z)
         => Dispatch(EditorBridgeApi.EngineHostOpSetEntityPosition, index, floatArg: new[] { x, y, z }) == 0;
 
+    public float[] GetEntityTransform(int index)
+    {
+        var result = default(EditorBridgeApi.RuntimeResult);
+        var buffer = new byte[36];
+        int code = EditorBridgeApi.EngineHost_Fetch(_host, EditorBridgeApi.EngineHostOpGetEntityTransform,
+                                                    index, null, null, null, buffer, buffer.Length, ref result);
+        if (code < 0) throw Failure("get entity transform", result);
+        var values = new float[9];
+        for (int i = 0; i < 9; ++i) values[i] = BitConverter.ToSingle(buffer, i * 4);
+        return values;
+    }
+
+    public float[] GetEditorViewProjection()
+    {
+        var result = default(EditorBridgeApi.RuntimeResult);
+        var buffer = new byte[64];
+        int code = EditorBridgeApi.EngineHost_Fetch(_host, EditorBridgeApi.EngineHostOpGetEditorViewProjection,
+                                                    0, null, null, null, buffer, buffer.Length, ref result);
+        if (code < 0) throw Failure("get editor camera", result);
+        var values = new float[16];
+        for (int i = 0; i < 16; ++i) values[i] = BitConverter.ToSingle(buffer, i * 4);
+        return values;
+    }
+    public bool SetEntityTransform(int index, float[] transform9)
+    {
+        if (transform9 is null || transform9.Length != 9) return false;
+        return Dispatch(EditorBridgeApi.EngineHostOpSetEntityTransform, index,
+                        floatArg: transform9) == 0;
+    }
+    public ulong GetEntitySceneId(int rootIndex)
+        => FetchU64(EditorBridgeApi.EngineHostOpGetEntitySceneId, rootIndex);
+    public int GetTotalEntityCount()
+        => Dispatch(EditorBridgeApi.EngineHostOpGetTotalEntityCount);
+    public ulong GetEntityParentId(ulong entityId)
+        => FetchU64(EditorBridgeApi.EngineHostOpGetEntityParentId, 0, entityId.ToString(System.Globalization.CultureInfo.InvariantCulture));
+    public int GetEntityChildCount(ulong entityId)
+        => Dispatch(EditorBridgeApi.EngineHostOpGetEntityChildCount,
+                    strArg: entityId.ToString(System.Globalization.CultureInfo.InvariantCulture));
+    public ulong GetEntityChildId(ulong entityId, int childIndex)
+        => FetchU64(EditorBridgeApi.EngineHostOpGetEntityChildId, childIndex,
+                    entityId.ToString(System.Globalization.CultureInfo.InvariantCulture));
+    public string GetEntityNameById(ulong entityId)
+        => Fetch(EditorBridgeApi.EngineHostOpGetEntityNameById, 0,
+                 entityId.ToString(System.Globalization.CultureInfo.InvariantCulture));
+    public float[] GetEntityTransformById(ulong entityId)
+    {
+        var result = default(EditorBridgeApi.RuntimeResult);
+        var buffer = new byte[36];
+        int code = EditorBridgeApi.EngineHost_Fetch(_host, EditorBridgeApi.EngineHostOpGetEntityTransformById,
+                                                    0, entityId.ToString(System.Globalization.CultureInfo.InvariantCulture),
+                                                    null, null, buffer, buffer.Length, ref result);
+        if (code < 0) throw Failure("get entity transform by id", result);
+        var values = new float[9];
+        for (int i = 0; i < 9; ++i) values[i] = BitConverter.ToSingle(buffer, i * 4);
+        return values;
+    }
+    public bool SetEntityTransformById(ulong entityId, float[] transform9)
+    {
+        if (transform9 is null || transform9.Length != 9) return false;
+        return Dispatch(EditorBridgeApi.EngineHostOpSetEntityTransformById,
+                        strArg: entityId.ToString(System.Globalization.CultureInfo.InvariantCulture),
+                        floatArg: transform9) == 0;
+    }
+    public bool SetEntityParent(ulong childId, ulong parentId, int mode)
+        => Dispatch(EditorBridgeApi.EngineHostOpSetEntityParent,
+                    strArg: $"{childId};{parentId};{mode}") == 0;
+    public bool DeleteEntityById(ulong entityId)
+        => Dispatch(EditorBridgeApi.EngineHostOpDeleteEntityById,
+                    strArg: entityId.ToString(System.Globalization.CultureInfo.InvariantCulture)) == 0;
+    public bool RenameEntityById(ulong entityId, string newName)
+        => Dispatch(EditorBridgeApi.EngineHostOpRenameEntityById,
+                    strArg: entityId.ToString(System.Globalization.CultureInfo.InvariantCulture),
+                    strArg2: newName) == 0;
+    public ulong DuplicateEntity(ulong entityId, bool includeSubtree)
+    {
+        if (Dispatch(EditorBridgeApi.EngineHostOpDuplicateEntity,
+                arg0: includeSubtree ? 1 : 0,
+                strArg: entityId.ToString(System.Globalization.CultureInfo.InvariantCulture)) != 0)
+            return 0;
+        return FetchU64(EditorBridgeApi.EngineHostOpGetLastDuplicatedEntityId);
+    }
+    public int CreatePrefabFromEntity(ulong entityId, string? assetName)
+        => Dispatch(EditorBridgeApi.EngineHostOpCreatePrefabFromEntity,
+                    strArg: entityId.ToString(System.Globalization.CultureInfo.InvariantCulture),
+                    strArg2: assetName ?? string.Empty);
+    public ulong InstantiatePrefab(int assetIndex, ulong parentEntityId)
+    {
+        if (Dispatch(EditorBridgeApi.EngineHostOpInstantiatePrefab, assetIndex,
+                strArg: parentEntityId.ToString(System.Globalization.CultureInfo.InvariantCulture)) != 0)
+            return 0;
+        return FetchU64(EditorBridgeApi.EngineHostOpGetLastInstantiatedEntityId);
+    }
+    public string GetPrefabInstanceJson(ulong entityId)
+        => Fetch(EditorBridgeApi.EngineHostOpGetPrefabInstanceJson,
+                 strArg: entityId.ToString(System.Globalization.CultureInfo.InvariantCulture))
+           ?? string.Empty;
+
+
+    public bool RevertPrefabOverride(ulong rootEntityId, ulong localId,
+                                      string component, string field)
+        => Dispatch(EditorBridgeApi.EngineHostOpRevertOverride,
+                    strArg: rootEntityId.ToString(System.Globalization.CultureInfo.InvariantCulture) + ";" +
+                            localId.ToString(System.Globalization.CultureInfo.InvariantCulture) + ";" +
+                            component + ";" + field) == 0;
+    public bool RevertPrefabInstance(ulong rootEntityId)
+        => Dispatch(EditorBridgeApi.EngineHostOpRevertOverride,
+                    strArg: rootEntityId.ToString(System.Globalization.CultureInfo.InvariantCulture) + ";*") == 0;
+    public bool ApplyPrefabOverrides(ulong rootEntityId)
+        => Dispatch(EditorBridgeApi.EngineHostOpApplyPrefabOverrides,
+                    strArg: rootEntityId.ToString(System.Globalization.CultureInfo.InvariantCulture)) == 0;
+
+    public string GetPrefabReconciliationStatus(ulong rootEntityId)
+        => FetchLargeString(EditorBridgeApi.EngineHostOpGetPrefabReconciliationStatus,
+                            rootEntityId.ToString(System.Globalization.CultureInfo.InvariantCulture));
+
+    public string PreviewPrefabReconciliation(ulong rootEntityId)
+        => FetchLargeString(EditorBridgeApi.EngineHostOpPreviewPrefabReconciliation,
+                            rootEntityId.ToString(System.Globalization.CultureInfo.InvariantCulture));
+
+    public bool ApplyPrefabReconciliation(ulong rootEntityId)
+        => Dispatch(EditorBridgeApi.EngineHostOpApplyPrefabReconciliation,
+                    strArg: rootEntityId.ToString(System.Globalization.CultureInfo.InvariantCulture)) == 0;
+
+    public bool ResolvePrefabReconciliationConflict(ulong rootEntityId,
+                                                    string conflictId,
+                                                    string action,
+                                                    string? valueJson)
+        => Dispatch(EditorBridgeApi.EngineHostOpResolveReconciliationConflict,
+                    strArg: rootEntityId.ToString(System.Globalization.CultureInfo.InvariantCulture) +
+                            ";" + conflictId + ";" + action,
+                    strArg2: valueJson) == 0;
+
+    public bool BeginSceneEdit(string label)
+        => Dispatch(EditorBridgeApi.EngineHostOpBeginSceneEdit, strArg: label) == 0;
+    public bool CommitSceneEdit()
+        => Dispatch(EditorBridgeApi.EngineHostOpCommitSceneEdit) == 0;
+    public bool CancelSceneEdit()
+        => Dispatch(EditorBridgeApi.EngineHostOpCancelSceneEdit) == 0;
+    public bool UndoSceneEdit()
+        => Dispatch(EditorBridgeApi.EngineHostOpUndoScene) == 0;
+    public bool RedoSceneEdit()
+        => Dispatch(EditorBridgeApi.EngineHostOpRedoScene) == 0;
+    public bool CanUndoSceneEdit()
+        => Dispatch(EditorBridgeApi.EngineHostOpCanUndoScene) == 1;
+    public bool CanRedoSceneEdit()
+        => Dispatch(EditorBridgeApi.EngineHostOpCanRedoScene) == 1;
+
     public string? GetAssetPath(int index) => Fetch(EditorBridgeApi.EngineHostOpGetAssetPath, index);
     public int GetAssetType(int index) => Dispatch(EditorBridgeApi.EngineHostOpGetAssetType, index);
+        public int GetAssetStatus(int index) => Dispatch(EditorBridgeApi.EngineHostOpGetAssetStatus, index);
+    public string GetMaterialJson(int assetIndex) => FetchLarge(EditorBridgeApi.EngineHostOpGetMaterialJson, assetIndex);
+    public bool UpdateMaterial(int assetIndex, string fieldsJson)
+        => Dispatch(EditorBridgeApi.EngineHostOpUpdateMaterial, assetIndex, strArg: fieldsJson) == 0;
+    public string GetAssetDependencies(int assetIndex)
+        => FetchLarge(EditorBridgeApi.EngineHostOpGetAssetDependencies, assetIndex);
+    public int ReimportAsset(int assetIndex, bool discardLocalEdits)
+        => Dispatch(EditorBridgeApi.EngineHostOpReimportAsset, assetIndex,
+                    discardLocalEdits ? 1 : 0);
     public string GetAssetGuid(int index) => Fetch(EditorBridgeApi.EngineHostOpGetAssetGuid, index);
     public int ImportAsset(string path, int type) => Dispatch(EditorBridgeApi.EngineHostOpImportAsset, type, strArg: path);
     public bool RenameAsset(int assetIndex, string newName) => Dispatch(EditorBridgeApi.EngineHostOpRenameAsset, assetIndex, strArg: newName) == 0;
@@ -1904,8 +2171,130 @@ internal sealed class LegacySessionChannel : IEditorOps
         finally { Marshal.FreeHGlobal(buf); }
     }
 
+    public float[] GetEntityTransform(int index)
+    {
+        var buf = Marshal.AllocHGlobal(36);
+        try
+        {
+            if (EditorBridgeApi.EditorSession_GetEntityTransform(Require(), index, buf) != 0)
+                throw new InvalidOperationException("GetEntityTransform failed");
+            var values = new float[9];
+            Marshal.Copy(buf, values, 0, 9);
+            return values;
+        }
+        finally { Marshal.FreeHGlobal(buf); }
+    }
+
+    public float[] GetEditorViewProjection()
+    {
+        var buf = Marshal.AllocHGlobal(64);
+        try
+        {
+            if (EditorBridgeApi.EditorSession_GetEditorViewProjection(Require(), buf) != 0)
+                throw new InvalidOperationException("GetEditorViewProjection failed");
+            var values = new float[16];
+            Marshal.Copy(buf, values, 0, 16);
+            return values;
+        }
+        finally { Marshal.FreeHGlobal(buf); }
+    }
+    public ulong GetEntitySceneId(int rootIndex) => EditorBridgeApi.EditorSession_GetEntitySceneId(Require(), rootIndex);
+    public int GetTotalEntityCount() => EditorBridgeApi.EditorSession_GetTotalEntityCount(Require());
+    public ulong GetEntityParentId(ulong entityId) => EditorBridgeApi.EditorSession_GetEntityParentId(Require(), entityId);
+    public int GetEntityChildCount(ulong entityId) => EditorBridgeApi.EditorSession_GetEntityChildCount(Require(), entityId);
+    public ulong GetEntityChildId(ulong entityId, int childIndex) => EditorBridgeApi.EditorSession_GetEntityChildId(Require(), entityId, childIndex);
+    public string GetEntityNameById(ulong entityId) => ReadString(256, buf => EditorBridgeApi.EditorSession_GetEntityNameById(Require(), entityId, buf, 256), allowEmpty: true) ?? string.Empty;
+    public float[] GetEntityTransformById(ulong entityId)
+    {
+        var buf = Marshal.AllocHGlobal(36);
+        try {
+            if (EditorBridgeApi.EditorSession_GetEntityTransformById(Require(), entityId, buf) != 0) throw new InvalidOperationException("GetEntityTransformById failed");
+            var values = new float[9]; Marshal.Copy(buf, values, 0, 9); return values;
+        } finally { Marshal.FreeHGlobal(buf); }
+    }
+    public bool SetEntityTransformById(ulong entityId, float[] transform9)
+    {
+        if (transform9 is null || transform9.Length != 9) return false;
+        var buf = Marshal.AllocHGlobal(36);
+        try {
+            Marshal.Copy(transform9, 0, buf, 9);
+            return EditorBridgeApi.EditorSession_SetEntityTransformById(Require(), entityId, buf, buf + 12, buf + 24) == 0;
+        } finally { Marshal.FreeHGlobal(buf); }
+    }
+    public bool SetEntityParent(ulong childId, ulong parentId, int mode) => EditorBridgeApi.EditorSession_SetEntityParent(Require(), childId, parentId, mode) == 0;
+    public bool DeleteEntityById(ulong entityId) => EditorBridgeApi.EditorSession_DeleteEntityById(Require(), entityId) == 0;
+    public bool RenameEntityById(ulong entityId, string newName) => EditorBridgeApi.EditorSession_RenameEntityById(Require(), entityId, newName) == 0;
+    public ulong DuplicateEntity(ulong entityId, bool includeSubtree)
+    {
+        return EditorBridgeApi.EditorSession_DuplicateEntity(Require(), entityId,
+            includeSubtree ? 1 : 0, out ulong created) == 0 ? created : 0;
+    }
+    public int CreatePrefabFromEntity(ulong entityId, string? assetName)
+        => EditorBridgeApi.EditorSession_CreatePrefabFromEntity(
+            Require(), entityId, assetName);
+    public ulong InstantiatePrefab(int assetIndex, ulong parentEntityId)
+        => EditorBridgeApi.EditorSession_InstantiatePrefab(
+            Require(), assetIndex, parentEntityId, out ulong root) == 0 ? root : 0;
+    public string GetPrefabInstanceJson(ulong entityId)
+        => ReadString(65536, buf => EditorBridgeApi.EditorSession_GetPrefabInstanceJson(
+            Require(), entityId, buf, 65536), allowEmpty: false) ?? string.Empty;
+    public bool RevertPrefabOverride(ulong rootEntityId, ulong localId,
+                                      string component, string field)
+        => EditorBridgeApi.EditorSession_RevertOverride(
+            Require(), rootEntityId, localId, component, field) == 0;
+    public bool RevertPrefabInstance(ulong rootEntityId)
+        => EditorBridgeApi.EditorSession_RevertPrefabInstance(
+            Require(), rootEntityId) == 0;
+    public bool ApplyPrefabOverrides(ulong rootEntityId)
+        => EditorBridgeApi.EditorSession_ApplyPrefabOverrides(Require(), rootEntityId) == 0;
+
+    public string GetPrefabReconciliationStatus(ulong rootEntityId) => string.Empty;
+    public string PreviewPrefabReconciliation(ulong rootEntityId) => string.Empty;
+    public bool ApplyPrefabReconciliation(ulong rootEntityId) => false;
+    public bool ResolvePrefabReconciliationConflict(ulong rootEntityId,
+                                                    string conflictId,
+                                                    string action,
+                                                    string? valueJson) => false;
+
+    public bool SetEntityTransform(int index, float[] transform9)
+    {
+        if (transform9 is null || transform9.Length != 9) return false;
+        var buf = Marshal.AllocHGlobal(36);
+        try
+        {
+            Marshal.Copy(transform9, 0, buf, 9);
+            return EditorBridgeApi.EditorSession_SetEntityTransform(
+                       Require(), index, buf, buf + 12, buf + 24) == 0;
+        }
+        finally { Marshal.FreeHGlobal(buf); }
+    }
+
+    public bool BeginSceneEdit(string label) =>
+        EditorBridgeApi.EditorSession_BeginSceneEdit(Require(), label) == 0;
+    public bool CommitSceneEdit() =>
+        EditorBridgeApi.EditorSession_CommitSceneEdit(Require()) == 0;
+    public bool CancelSceneEdit() =>
+        EditorBridgeApi.EditorSession_CancelSceneEdit(Require()) == 0;
+    public bool UndoSceneEdit() =>
+        EditorBridgeApi.EditorSession_UndoSceneEdit(Require()) == 0;
+    public bool RedoSceneEdit() =>
+        EditorBridgeApi.EditorSession_RedoSceneEdit(Require()) == 0;
+    public bool CanUndoSceneEdit() =>
+        EditorBridgeApi.EditorSession_CanUndoSceneEdit(Require()) == 1;
+    public bool CanRedoSceneEdit() =>
+        EditorBridgeApi.EditorSession_CanRedoSceneEdit(Require()) == 1;
+
     public string? GetAssetPath(int index) => ReadString(512, buf => EditorBridgeApi.EditorSession_GetAssetPath(Require(), index, buf, 512), allowEmpty: true);
     public int GetAssetType(int index) => EditorBridgeApi.EditorSession_GetAssetType(Require(), index);
+        public int GetAssetStatus(int index) => EditorBridgeApi.EditorSession_GetAssetStatus(Require(), index);
+        public string GetMaterialJson(int assetIndex) =>
+            ReadString(65536, buf => EditorBridgeApi.EditorSession_GetMaterialJson(Require(), assetIndex, buf, 65536), allowEmpty: false) ?? string.Empty;
+        public bool UpdateMaterial(int assetIndex, string fieldsJson) =>
+            EditorBridgeApi.EditorSession_UpdateMaterial(Require(), assetIndex, fieldsJson) == 0;
+        public string GetAssetDependencies(int assetIndex) =>
+            ReadString(65536, buf => EditorBridgeApi.EditorSession_GetAssetDependencies(Require(), assetIndex, buf, 65536), allowEmpty: false) ?? string.Empty;
+        public int ReimportAsset(int assetIndex, bool discardLocalEdits) =>
+            EditorBridgeApi.EditorSession_ReimportAsset(Require(), assetIndex, discardLocalEdits ? 1 : 0);
 
     public string GetAssetGuid(int index) => ReadString(64, buf => EditorBridgeApi.EditorSession_GetAssetGuid(Require(), index, buf, 64), allowEmpty: false) ?? string.Empty;
 

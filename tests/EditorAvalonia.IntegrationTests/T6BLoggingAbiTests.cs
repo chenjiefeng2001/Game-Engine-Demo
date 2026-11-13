@@ -59,7 +59,7 @@ public sealed class T6BLoggingAbiTests
     public void T6BIncrementIsAdditiveOnly()
     {
         // T-6-B：v1.8 -> v1.9；EV_COUNT 与 RuntimeResult 不变。
-        Assert.AreEqual((1 << 16) | 9, EditorBridgeApi.EngineHostExpectedVersion);
+        Assert.AreEqual((1 << 16) | 20, EditorBridgeApi.EngineHostExpectedVersion);
         Assert.AreEqual(14, EditorBridgeApi.EvCount);
         Assert.AreEqual(76, Marshal.SizeOf<EditorBridgeApi.RuntimeResult>());
         Assert.AreEqual(0x01, EditorBridgeApi.EngineLogFlagCategoryTruncated);
@@ -98,7 +98,7 @@ public sealed class T6BLoggingAbiTests
             () => { verify.Invoke(null, new object[] { (1 << 16) | 8 }); });
         Assert.IsNotNull(thrown.InnerException, "lockstep did not throw");
         StringAssert.Contains(thrown.InnerException!.Message, "ABI version mismatch");
-        StringAssert.Contains(thrown.InnerException.Message, "00010009");
+        StringAssert.Contains(thrown.InnerException.Message, "00010013");
     }
 
     private static int RecordOffset(string fieldName)

@@ -11,6 +11,7 @@ using Avalonia.Media.Imaging;
 using Avalonia.Platform;
 using Avalonia.Platform.Storage;
 using Avalonia.Threading;
+using Avalonia.VisualTree;
 using AvaloniaEditor.Native;
 using AvaloniaEditor.Services;
 using AvaloniaEditor.ViewModels;
@@ -47,8 +48,18 @@ public partial class MainWindow : Window
     private ulong _lastSeenDisplayedFrameId;
     private double _lastControlWidth;
     private Avalonia.Point _lastPointerPos;
+    private HierarchyNodeVm? _hierarchyDragCandidate;
+    private Avalonia.Point _hierarchyDragStart;
+    private bool _hierarchyDragArmed;
     private double _lastControlHeight;
     private bool _hasLastControlSize;
+
+    private bool _gizmoDragging;
+    private int _gizmoAxis;
+    private Avalonia.Point _gizmoDragStart;
+    private Avalonia.Point _gizmoAxisDir;
+    private double _gizmoAxisPixels;
+    private float[]? _gizmoStartTransform;
 
     /// <summary>已派发的 viewport 尺寸请求次数（gate 证据用）。</summary>
     internal int ViewportResizeDispatchCount { get; private set; }
@@ -73,6 +84,9 @@ public partial class MainWindow : Window
         _host = host ?? throw new ArgumentNullException(nameof(host));
         Vm = new MainViewModel(_host);
         InitializeComponent();
+        HierarchyList.AddHandler(Avalonia.Input.InputElement.PointerPressedEvent, OnHierarchyPointerPressed, Avalonia.Interactivity.RoutingStrategies.Tunnel, handledEventsToo: true);
+        HierarchyList.AddHandler(Avalonia.Input.InputElement.PointerMovedEvent, OnHierarchyPointerMoved, Avalonia.Interactivity.RoutingStrategies.Tunnel, handledEventsToo: true);
+        HierarchyList.AddHandler(Avalonia.Input.InputElement.PointerReleasedEvent, OnHierarchyPointerReleased, Avalonia.Interactivity.RoutingStrategies.Tunnel, handledEventsToo: true);
         DataContext = Vm;
         Vm.DerivedStateChanged += SyncStatusBar;
         Vm.PropertyChanged += OnVmPropertyChanged;
@@ -107,6 +121,7 @@ public partial class MainWindow : Window
                 ViewportPlaceholder = this.FindControl<TextBlock>("ViewportPlaceholder"),
             };
             _host.FrameAdvanced += OnFrameAdvanced;
+        Deactivated += (_, _) => CancelGizmoDrag();
 
             // ── Slice E：viewport 尺寸变化 → Dispatch(SET_VIEWPORT_SIZE) ──
             // 这条接线在 E 之前**完全不存在**（审计 A1：SizeChanged 命中 0），
@@ -512,8 +527,108 @@ public partial class MainWindow : Window
     /// 过滤把选中项藏掉时 ListBox 会临时失选，但不得回写 null 覆盖 VM 选择。
     private void OnHierarchySelectionChanged(object? sender, SelectionChangedEventArgs e)
     {
-        if (HierarchyList.SelectedItem is EntityVm evm)
-            Vm.SelectedEntity = evm;
+        if (HierarchyList.SelectedItem is HierarchyNodeVm node)
+            Vm.SelectHierarchyNode(node);
+    }
+
+    private void OnToggleHierarchyNode(object? sender, RoutedEventArgs e)
+    {
+        if (sender is Avalonia.Controls.Button button &&
+            button.DataContext is HierarchyNodeVm node)
+            Vm.ToggleHierarchyNode(node);
+    }
+
+    private void OnCreateChild(object? sender, RoutedEventArgs e)
+    {
+        Vm.CreateChildEntity();
+    }
+    private void OnHierarchyOutdent(object? sender, RoutedEventArgs e)
+    {
+        Vm.ReparentSelectedToRoot();
+    }
+
+    private void OnDuplicateEntity(object? sender, RoutedEventArgs e)
+        => Vm.DuplicateSelectedEntity(includeSubtree: false);
+
+    private void OnDuplicateSubtree(object? sender, RoutedEventArgs e)
+        => Vm.DuplicateSelectedEntity(includeSubtree: true);
+
+    private void OnCreatePrefab(object? sender, RoutedEventArgs e)
+        => Vm.CreatePrefabFromSelectedEntity();
+
+    private void OnInstantiatePrefab(object? sender, RoutedEventArgs e)
+        => Vm.InstantiateSelectedPrefab();
+
+    private void OnRevertPrefabOverride(object? sender, RoutedEventArgs e)
+        => Vm.RevertSelectedPrefabOverride();
+
+    private void OnRevertPrefabInstance(object? sender, RoutedEventArgs e)
+        => Vm.RevertSelectedPrefabInstance();
+
+    private void OnApplyPrefabOverrides(object? sender, RoutedEventArgs e)
+        => Vm.ApplySelectedPrefabOverrides();
+
+    private void OnPreviewReconciliation(object? sender, RoutedEventArgs e)
+        => Vm.PreviewPrefabReconciliation();
+
+    private void OnApplyReconciliation(object? sender, RoutedEventArgs e)
+        => Vm.ApplyPrefabReconciliation();
+
+    private void OnTakeSourceConflict(object? sender, RoutedEventArgs e)
+        => Vm.ResolveSelectedPrefabConflict("take_source");
+
+    private void OnKeepLocalConflict(object? sender, RoutedEventArgs e)
+        => Vm.ResolveSelectedPrefabConflict("keep_local");
+
+    private void OnManualEditConflict(object? sender, RoutedEventArgs e)
+        => Vm.ResolveSelectedPrefabConflict("manual_edit");
+
+    private void OnHierarchyPointerPressed(object? sender,
+                                           Avalonia.Input.PointerPressedEventArgs e)
+    {
+        if (!e.GetCurrentPoint(HierarchyList).Properties.IsLeftButtonPressed) return;
+        _hierarchyDragCandidate = FindHierarchyNode(e.Source);
+        _hierarchyDragStart = e.GetPosition(HierarchyList);
+        _hierarchyDragArmed = false;
+    }
+
+    private void OnHierarchyPointerMoved(object? sender,
+                                         Avalonia.Input.PointerEventArgs e)
+    {
+        if (_hierarchyDragCandidate is null || _hierarchyDragArmed) return;
+        if (!e.GetCurrentPoint(HierarchyList).Properties.IsLeftButtonPressed) return;
+        var p = e.GetPosition(HierarchyList);
+        double dx = p.X - _hierarchyDragStart.X;
+        double dy = p.Y - _hierarchyDragStart.Y;
+        if (dx * dx + dy * dy < 36.0) return;
+        _hierarchyDragArmed = true;
+        e.Pointer.Capture(HierarchyList);
+    }
+
+    private void OnHierarchyPointerReleased(object? sender,
+                                           Avalonia.Input.PointerReleasedEventArgs e)
+    {
+        var source = _hierarchyDragCandidate;
+        bool armed = _hierarchyDragArmed;
+        _hierarchyDragCandidate = null;
+        _hierarchyDragArmed = false;
+        if (!armed || source is null) return;
+        e.Pointer.Capture(null);
+        var target = FindHierarchyNode(e.Source);
+        if (target is not null && target.SceneId != source.SceneId)
+            Vm.ReparentNode(source, target);
+        e.Handled = true;
+    }
+
+    private static HierarchyNodeVm? FindHierarchyNode(object? source)
+    {
+        Control? control = source as Control;
+        while (control is not null)
+        {
+            if (control.DataContext is HierarchyNodeVm node) return node;
+            control = control.Parent as Control;
+        }
+        return null;
     }
 
     private void OnRenameEntity(object? sender, RoutedEventArgs e)
@@ -537,6 +652,41 @@ public partial class MainWindow : Window
     private void OnAssignSprite(object? sender, RoutedEventArgs e)
     {
         Vm.AssignSpriteToSelected();
+    }
+
+    private void OnAddMeshToScene(object? sender, RoutedEventArgs e)
+    {
+        Vm.AddSelectedMeshToScene();
+    }
+
+    private void OnUndoScene(object? sender, RoutedEventArgs e)
+    {
+        Vm.UndoScene();
+    }
+
+    private void OnRedoScene(object? sender, RoutedEventArgs e)
+    {
+        Vm.RedoScene();
+    }
+
+    private void OnSaveMaterial(object? sender, RoutedEventArgs e)
+    {
+        Vm.SaveMaterial();
+    }
+
+    private void OnShowDependencies(object? sender, RoutedEventArgs e)
+    {
+        Vm.ShowSelectedAssetDependencies();
+    }
+
+    private void OnReimportSource(object? sender, RoutedEventArgs e)
+    {
+        Vm.ReimportSelectedMesh(discardLocalEdits: false);
+    }
+
+    private void OnReimportDiscardEdits(object? sender, RoutedEventArgs e)
+    {
+        Vm.ReimportSelectedMesh(discardLocalEdits: true);
     }
 
     // P3-C C4：双击分派 —— .lua → Script Editor；Texture → 预览信息；其他 → 明确不支持
@@ -830,6 +980,13 @@ public partial class MainWindow : Window
         if (_host.Backend == HostBackend.EngineHost)
         {
             var props = e.GetCurrentPoint(ViewportBorder).Properties;
+            if (props.IsLeftButtonPressed &&
+                TryBeginGizmoDrag(e.GetPosition(ViewportBorder)))
+            {
+                e.Pointer.Capture(ViewportBorder);
+                e.Handled = true;
+                return;
+            }
             _host.SetCameraModifiers(e.KeyModifiers.HasFlag(KeyModifiers.Alt),
                                     e.KeyModifiers.HasFlag(KeyModifiers.Shift));
             if (props.IsLeftButtonPressed) _host.CameraButton(0, true);
@@ -1101,7 +1258,16 @@ public partial class MainWindow : Window
         {
             var pt = e.GetCurrentPoint(ViewportBorder);
             if (pt.Properties.PointerUpdateKind == Avalonia.Input.PointerUpdateKind.LeftButtonReleased)
+            {
+                if (_gizmoDragging)
+                {
+                    e.Pointer.Capture(null);
+                    CommitGizmoDrag();
+                    e.Handled = true;
+                    return;
+                }
                 _host.CameraButton(0, false);
+            }
             if (pt.Properties.PointerUpdateKind == Avalonia.Input.PointerUpdateKind.RightButtonReleased)
                 _host.CameraButton(1, false);
             if (pt.Properties.PointerUpdateKind == Avalonia.Input.PointerUpdateKind.MiddleButtonReleased)
@@ -1127,6 +1293,12 @@ public partial class MainWindow : Window
         if (_host.Backend == HostBackend.EngineHost)
         {
             var p = e.GetPosition(ViewportBorder);
+            if (_gizmoDragging)
+            {
+                UpdateGizmoDrag(p);
+                e.Handled = true;
+                return;
+            }
             var dx = (float)(p.X - _lastPointerPos.X);
             var dy = (float)(p.Y - _lastPointerPos.Y);
             _lastPointerPos = p;
@@ -1159,6 +1331,12 @@ public partial class MainWindow : Window
 
     private void OnViewportKeyDown(object? sender, Avalonia.Input.KeyEventArgs e)
     {
+        if (_gizmoDragging && e.Key == Avalonia.Input.Key.Escape)
+        {
+            CancelGizmoDrag();
+            e.Handled = true;
+            return;
+        }
         if (!AcceptViewportKeyboard()) return;
         if (_host.Backend == HostBackend.EngineHost)
         {
@@ -1193,26 +1371,26 @@ public partial class MainWindow : Window
 
     private void OnGizmoSelect(object? sender, RoutedEventArgs e)
     {
-        if (!AcceptLegacyViewportCapability()) return;
         Vm.GizmoMode = 0;
+        UpdateGizmoOverlay();
     }
 
     private void OnGizmoTranslate(object? sender, RoutedEventArgs e)
     {
-        if (!AcceptLegacyViewportCapability()) return;
         Vm.GizmoMode = 1;
+        UpdateGizmoOverlay();
     }
 
     private void OnGizmoRotate(object? sender, RoutedEventArgs e)
     {
-        if (!AcceptLegacyViewportCapability()) return;
         Vm.GizmoMode = 2;
+        UpdateGizmoOverlay();
     }
 
     private void OnGizmoScale(object? sender, RoutedEventArgs e)
     {
-        if (!AcceptLegacyViewportCapability()) return;
         Vm.GizmoMode = 3;
+        UpdateGizmoOverlay();
     }
 
     private void OnToggleGrid(object? sender, RoutedEventArgs e)
@@ -1232,10 +1410,178 @@ public partial class MainWindow : Window
         base.OnClosed(e);
     }
 
+    private void UpdateGizmoOverlay()
+    {
+        if (GizmoCanvas is null) return;
+        if (_host.Backend != HostBackend.EngineHost || Vm.GizmoMode == 0 ||
+            !Vm.HasSelection || ViewportImage is null ||
+            ViewportImage.Bounds.Width < 2 || ViewportImage.Bounds.Height < 2)
+        {
+            GizmoCanvas.IsVisible = false;
+            GizmoScreenHints.Text = "";
+            return;
+        }
+        try
+        {
+            var m = _host.GetEditorViewProjection();
+            var t = _host.GetEntityTransform(Vm.SelectedEntityIndex);
+            if (!TryProjectWorld(m, t[0], t[1], t[2], out var origin))
+            {
+                GizmoCanvas.IsVisible = false;
+                GizmoScreenHints.Text = "";
+                return;
+            }
+            if (!TryProjectWorld(m, t[0] + 1, t[1], t[2], out var ex) ||
+                !TryProjectWorld(m, t[0], t[1] + 1, t[2], out var ey) ||
+                !TryProjectWorld(m, t[0], t[1], t[2] + 1, out var ez))
+            {
+                GizmoCanvas.IsVisible = false;
+                GizmoScreenHints.Text = "";
+                return;
+            }
+            GizmoXLine.StartPoint = origin; GizmoXLine.EndPoint = ex;
+            GizmoYLine.StartPoint = origin; GizmoYLine.EndPoint = ey;
+            GizmoZLine.StartPoint = origin; GizmoZLine.EndPoint = ez;
+            Canvas.SetLeft(GizmoOrigin, origin.X - 4);
+            Canvas.SetTop(GizmoOrigin, origin.Y - 4);
+            var o = ViewportBorder.PointToScreen(origin);
+            var x = ViewportBorder.PointToScreen(ex);
+            GizmoScreenHints.Text = $"visible;{o.X};{o.Y};{x.X};{x.Y}";
+            GizmoCanvas.IsVisible = true;
+        }
+        catch (Exception ex) when (ex is HostOperationException
+                                       or HostRuntimeNotReadyException
+                                       or HostRuntimeUnavailableException)
+        {
+            GizmoCanvas.IsVisible = false;
+            GizmoScreenHints.Text = "";
+        }
+    }
+
+    private bool TryProjectWorld(float[] m, double x, double y, double z,
+                                 out Avalonia.Point point)
+    {
+        point = default;
+        if (ViewportImage is null || ViewportBorder is null || m.Length < 16)
+            return false;
+        double w = ViewportImage.Bounds.Width;
+        double h = ViewportImage.Bounds.Height;
+        double cx = m[0] * x + m[4] * y + m[8] * z + m[12];
+        double cy = m[1] * x + m[5] * y + m[9] * z + m[13];
+        double cw = m[3] * x + m[7] * y + m[11] * z + m[15];
+        if (cw <= 0.0001 || w < 1 || h < 1) return false;
+        var topLeft = ViewportImage.TranslatePoint(new Avalonia.Point(0, 0),
+                                                   ViewportBorder);
+        if (topLeft is null) return false;
+        point = new Avalonia.Point(
+            topLeft.Value.X + (cx / cw * 0.5 + 0.5) * w,
+            topLeft.Value.Y + (1.0 - (cy / cw * 0.5 + 0.5)) * h);
+        return true;
+    }
+
+    private bool TryGetGizmoAxes(out Avalonia.Point origin,
+                                 out Avalonia.Point ex,
+                                 out Avalonia.Point ey,
+                                 out Avalonia.Point ez)
+    {
+        origin = ex = ey = ez = default;
+        if (ViewportImage is null || ViewportImage.Bounds.Width < 2 ||
+            !Vm.HasSelection) return false;
+        var m = _host.GetEditorViewProjection();
+        var t = _host.GetEntityTransform(Vm.SelectedEntityIndex);
+        return TryProjectWorld(m, t[0], t[1], t[2], out origin) &&
+               TryProjectWorld(m, t[0] + 1, t[1], t[2], out ex) &&
+               TryProjectWorld(m, t[0], t[1] + 1, t[2], out ey) &&
+               TryProjectWorld(m, t[0], t[1], t[2] + 1, out ez);
+    }
+
+    private bool TryBeginGizmoDrag(Avalonia.Point p)
+    {
+        if (Vm.GizmoMode == 0 || !Vm.HasSelection) return false;
+        if (!TryGetGizmoAxes(out var origin, out var ex, out var ey, out var ez))
+            return false;
+        var axisPoints = new[] { ex, ey, ez };
+        int best = -1;
+        double bestDistance = 10.0;
+        for (int i = 0; i < axisPoints.Length; ++i)
+        {
+            double d = DistanceToSegment(p, origin, axisPoints[i]);
+            if (d < bestDistance) { best = i; bestDistance = d; }
+        }
+        if (best < 0) return false;
+        var dir = axisPoints[best] - origin;
+        double pixels = Math.Sqrt(dir.X * dir.X + dir.Y * dir.Y);
+        if (pixels < 4) return false;
+        if (!_host.BeginSceneEdit($"gizmo {Vm.GizmoMode} axis {best}"))
+        {
+            Vm.LogToConsole("gizmo ignored: " + _host.GetLastError());
+            return false;
+        }
+        _gizmoDragging = true;
+        _gizmoAxis = best;
+        _gizmoDragStart = p;
+        _gizmoAxisDir = dir;
+        _gizmoAxisPixels = pixels;
+        _gizmoStartTransform = _host.GetEntityTransform(Vm.SelectedEntityIndex);
+        return true;
+    }
+
+    private void UpdateGizmoDrag(Avalonia.Point p)
+    {
+        if (!_gizmoDragging || _gizmoStartTransform is null) return;
+        double dx = p.X - _gizmoDragStart.X;
+        double dy = p.Y - _gizmoDragStart.Y;
+        double along = (dx * _gizmoAxisDir.X + dy * _gizmoAxisDir.Y) /
+                       _gizmoAxisPixels;
+        var t = (float[])_gizmoStartTransform.Clone();
+        if (Vm.GizmoMode == 1)
+            t[_gizmoAxis] += (float)along;
+        else if (Vm.GizmoMode == 2)
+            t[3 + _gizmoAxis] += (float)(along * 90.0);
+        else if (Vm.GizmoMode == 3)
+            t[6 + _gizmoAxis] = Math.Max(0.01f,
+                t[6 + _gizmoAxis] * (float)Math.Max(0.01, 1.0 + along));
+        if (_host.SetEntityTransform(Vm.SelectedEntityIndex, t))
+            Vm.RefreshSelectedTransform();
+    }
+
+    private void CommitGizmoDrag()
+    {
+        _gizmoDragging = false;
+        _gizmoStartTransform = null;
+        _host.CommitSceneEdit();
+        Vm.RefreshSelectedTransform();
+        Vm.RefreshAfterGizmoCommit();
+    }
+
+    private void CancelGizmoDrag()
+    {
+        if (!_gizmoDragging) return;
+        _gizmoDragging = false;
+        _gizmoStartTransform = null;
+        _host.CancelSceneEdit();
+        Vm.RefreshSelectedTransform();
+        Vm.RefreshAfterGizmoCommit();
+    }
+
+    private static double DistanceToSegment(Avalonia.Point p,
+                                            Avalonia.Point a,
+                                            Avalonia.Point b)
+    {
+        double vx = b.X - a.X, vy = b.Y - a.Y;
+        double len2 = vx * vx + vy * vy;
+        if (len2 <= 0.0001) return Math.Sqrt(
+            (p.X - a.X) * (p.X - a.X) + (p.Y - a.Y) * (p.Y - a.Y));
+        double t = ((p.X - a.X) * vx + (p.Y - a.Y) * vy) / len2;
+        t = Math.Max(0, Math.Min(1, t));
+        double qx = a.X + t * vx, qy = a.Y + t * vy;
+        return Math.Sqrt((p.X - qx) * (p.X - qx) + (p.Y - qy) * (p.Y - qy));
+    }
+
     /// <summary>
     /// HRC-3 P2 UI：production 帧消费。service 的唯一 pump 发布 FrameAdvanced 后，
-    /// 这里只取回并呈现该帧；**绝不**在这里调用 RuntimeTick（否则就是第二个 pump）。
-    /// 没有新帧时 presenter 完全不碰控件（不把上一帧 bitmap 当成新帧）。
+    /// UI 只取回并呈现该帧，**不重跑** RuntimeTick（那会是第二个 pump）。
+    /// 没有新帧时 presenter 完全短路，控件保留上一帧位图，不送空帧。
     /// </summary>
     private void OnFrameAdvanced()
     {
@@ -1243,11 +1589,20 @@ public partial class MainWindow : Window
         try
         {
             _viewportPresenter.PresentLatestFrame(_host);
+            var receipt = _viewportPresenter.LastDisplayed;
+            if (receipt is not null)
+            {
+                ViewportFrameStats.Text =
+                    $"frame={receipt.DisplayedFrameId} nonClear={receipt.NonClearPixels} " +
+                    $"{receipt.Width}x{receipt.Height}";
+            }
+            Vm.RefreshMeshRuntimeStatus();
 
             // Slice D **D-C4**：pick 结果与帧走**同一个**唯一 pump 发布点 ——
             // 不新建定时器、不在 UI 里轮询、不阻塞。
             // 传入当前已呈现帧，使 stale 结果可被显式区分（D3-C4）。
             Vm.TryConsumeViewportPick(_viewportPresenter.DisplayedFrameId);
+            UpdateGizmoOverlay();
         }
         catch (Exception ex) when (ex is HostOperationException
                                        or HostRuntimeNotReadyException

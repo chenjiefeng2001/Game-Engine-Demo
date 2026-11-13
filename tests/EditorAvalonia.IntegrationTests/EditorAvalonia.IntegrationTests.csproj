@@ -22,4 +22,12 @@
     <PackageReference Include="MSTest.TestAdapter" Version="3.1.1" />
     <PackageReference Include="MSTest.TestFramework" Version="3.1.1" />
   </ItemGroup>
+  <!-- B6 import harness uses the production bridge from the test process. -->
+  <Target Name="StageEditorBridgeForB6" BeforeTargets="Build">
+    <ItemGroup>
+      <_B6Native Include="$(MSBuildThisFileDirectory)..\..\editor_avalonia\bin\$(Configuration)\net9.0\EditorBridge.dll" />
+      <_B6Native Include="$(MSBuildThisFileDirectory)..\..\editor_avalonia\bin\$(Configuration)\net9.0\OpenAL32.dll" />
+    </ItemGroup>
+    <Copy SourceFiles="@(_B6Native)" DestinationFolder="$(OutDir)" SkipUnchangedFiles="true" Condition="Exists('%(FullPath)')" />
+  </Target>
 </Project>
