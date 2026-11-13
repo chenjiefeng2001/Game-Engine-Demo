@@ -11,6 +11,7 @@
 #include <glad/gl.h>
 
 #include <Engine/OpenGL/OpenGLGraphicsFactory.h>
+#include <OpenGL/Resources/OpenGLTexture.h>
 #include <Engine/Core/RenderResources/Texture.h>
 
 #include <nlohmann/json.hpp>
@@ -204,6 +205,51 @@ TEST(AssetTextureGLTest, LinearRgbDataUsesRgb8InternalFormat) {
     ASSERT_NE(texture, nullptr);
     EXPECT_EQ(ReadInternalFormatOf(*texture, fixture.GL()),
               static_cast<int>(GL_RGB8));
+}
+
+TEST(AssetTextureGLTest, LinearRgbDataReadbackPreservesChannels) {
+    Engine::Rendering::DebugDraw::Test::DebugDrawGLFixture fixture;
+    ASSERT_TRUE(fixture.Setup()) << fixture.FailStep();
+    fs::path tmp = fs::temp_directory_path() /
+                   UniqueTempDir("gd_g6_rgb_readback_");
+    std::error_code ec;
+    fs::create_directories(tmp, ec);
+    ASSERT_FALSE(ec);
+    const fs::path png = tmp / "normal.tex.png";
+    {
+        std::ofstream f(png, std::ios::binary);
+        const auto pngBytes = MakeTinyPng2x2(90, 120, 200, 3);
+        f.write(reinterpret_cast<const char*>(pngBytes.data()),
+                static_cast<std::streamsize>(pngBytes.size()));
+    }
+    nlohmann::json meta = {{"format", "texture-meta"},
+                           {"ruleVersion", 1},
+                           {"role", "normal"},
+                           {"colorspace", "linear"},
+                           {"width", 2},
+                           {"height", 2},
+                           {"components", 3},
+                           {"sourceIdentity", "test"}};
+    {
+        std::ofstream f(png.string() + ".tex.meta.json", std::ios::binary);
+        const std::string text = meta.dump();
+        f.write(text.data(), static_cast<std::streamsize>(text.size()));
+    }
+    auto& factory = fixture.Factory();
+    std::shared_ptr<Engine::Texture> texture =
+        factory.CreateTexture(png.string());
+    ASSERT_NE(texture, nullptr);
+    auto* nativeTexture = static_cast<Engine::OpenGLTexture*>(texture.get());
+    fixture.GL().ActiveTexture(GL_TEXTURE0);
+    fixture.GL().BindTexture(GL_TEXTURE_2D,
+                             nativeTexture->GetRendererIDForTesting());
+    std::vector<uint8_t> pixels(32, 0);
+    fixture.GL().PixelStorei(GL_PACK_ALIGNMENT, 1);
+    fixture.GL().GetTexImage(GL_TEXTURE_2D, 0, GL_RGB, GL_UNSIGNED_BYTE,
+                             pixels.data());
+    EXPECT_EQ(pixels[0], 90);
+    EXPECT_EQ(pixels[1], 120);
+    EXPECT_EQ(pixels[2], 200);
 }
 
 TEST(AssetTextureGLTest, NoMetaLegacyDefaultsLinear) {

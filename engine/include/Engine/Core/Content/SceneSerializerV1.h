@@ -20,11 +20,15 @@
 
 #include "Engine/Core/Content/ContentAsset.h"
 #include "Engine/Core/Resources/ResourceGUID.h"
+#include "Engine/Core/Content/PrefabOverride.h"
+#include "Engine/Core/Content/PrefabReconciliation.h"
 
 #include <nlohmann/json.hpp>
 
 #include <functional>
+#include <optional>
 #include <string>
+#include <unordered_map>
 #include <vector>
 
 namespace Engine {
@@ -41,15 +45,35 @@ namespace Engine::Content {
         std::string   type;
         nlohmann::json data = nlohmann::json::object();
     };
-
+    struct SerializedPrefabInstance {
+        ResourceGUID prefabGuid;
+        int64_t sourceRevision = 0;
+        std::string sourceDigest;
+        std::string sourcePath;
+        bool legacySourceIdentity = false;
+        std::unordered_map<uint64, uint64> localToScene;
+        std::vector<PrefabOverrideRecord> overrides;
+        PrefabSyncState syncState = PrefabSyncState::Clean;
+        std::optional<PrefabReconciliationState> reconciliation;
+    };
     struct SerializedEntity {
+        SerializedEntity() = default;
+        explicit SerializedEntity(std::string n) : name(std::move(n)) {}
+        SerializedEntity(std::string n, float x, float y, float z,
+                         ResourceGUID sprite, ResourceGUID script)
+            : name(std::move(n)), px(x), py(y), pz(z),
+              spriteGuid(sprite), scriptGuid(script) {}
         std::string  name;
         float        px = 0.f, py = 0.f, pz = 0.f;
-        ResourceGUID spriteGuid;   // Null = 无
-        ResourceGUID scriptGuid;   // Null = 无
-        /// 已收编的 Contract 组件（F1-D，组件化快照）。
-        /// 默认空 = 无契约组件；sprite/script 顶层字段保留向后兼容。
+        // P7-B additive transform fields (v1 optional; old scenes default).
+        float        rx = 0.f, ry = 0.f, rz = 0.f, rw = 1.f;
+        float        sx = 1.f, sy = 1.f, sz = 1.f;
+        ResourceGUID spriteGuid;   // Null = none
+        ResourceGUID scriptGuid;   // Null = none
         std::vector<SerializedComponent> components;
+        uint64       entityId = 0;
+        uint64       parentId = 0;
+        std::optional<SerializedPrefabInstance> prefabInstance;
     };
 
     struct SceneSnapshot {
@@ -71,7 +95,10 @@ namespace Engine::Content {
     };
     SceneSnapshot CaptureScene(
         const Scene& scene,
-        const std::vector<EntityContentBinding>& bindings);   // 顺序与 scene 对象序一致
+        const std::vector<EntityContentBinding>& bindings);
+    SceneSnapshot CaptureSceneById(
+        const Scene& scene,
+        const std::unordered_map<uint64, EntityContentBinding>& bindings);
 
     /// 将快照实例化为真实 GameObjects：
     ///   sprite GUID 可解析 → AddComponent<SpriteComponent>(texMgr, path)
@@ -79,6 +106,7 @@ namespace Engine::Content {
     struct LoadResult {
         bool ok = false;
         std::vector<std::string> warnings;
+        std::unordered_map<uint64, EntityContentBinding> bindingsById;
         std::vector<EntityContentBinding> bindings;   // 与加载出的对象一一对应
     };
     /// 可选路径解析器：把注册表里的路径解析为可读文件路径。

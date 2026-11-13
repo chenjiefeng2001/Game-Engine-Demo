@@ -4,6 +4,8 @@
 
 namespace Engine {
 
+    class GameObject;
+
     /**
      * @brief 变换组件 — 描述游戏对象的位置、旋转、缩放
      *
@@ -30,12 +32,12 @@ namespace Engine {
 
         // ── 位置访问器 ──
         const Vec3& GetPosition() const noexcept { return m_Position; }
-        void SetPosition(const Vec3& pos)     { m_Position = pos; m_Dirty = true; }
+        void SetPosition(const Vec3& pos)     { m_Position = pos; InvalidateWorld(); }
         void SetPosition(float32 x, float32 y, float32 z) { SetPosition(Vec3(x, y, z)); }
 
         // ── 缩放访问器 ──
         const Vec3& GetScale() const noexcept { return m_Scale; }
-        void SetScale(const Vec3& s)          { m_Scale = s;    m_Dirty = true; }
+        void SetScale(const Vec3& s)          { m_Scale = s;    InvalidateWorld(); }
         void SetScale(float32 uniform)        { SetScale(Vec3(uniform, uniform, uniform)); }
 
         // ── 旋转访问器（内部使用四元数，避免万向锁）──
@@ -47,7 +49,7 @@ namespace Engine {
         Vec3 GetRotationEuler() const;
 
         /// 设置四元数旋转（物理同步使用）
-        void SetRotationQuat(const Quat& q) { m_RotationQuat = q; m_EulerDirty = true; m_Dirty = true; }
+        void SetRotationQuat(const Quat& q) { m_RotationQuat = q; m_EulerDirty = true; InvalidateWorld(); }
 
         /// 设置欧拉角旋转（Editor/脚本使用）
         void SetRotationEuler(const Vec3& euler);
@@ -96,7 +98,7 @@ namespace Engine {
         Vec3 GetUp()      const noexcept;
 
         // ── 层级 ──
-        void SetParent(TransformComponent* parent) { m_Parent = parent; m_Dirty = true; }
+        void SetParent(TransformComponent* parent) { m_Parent = parent; InvalidateWorld(); }
         TransformComponent* GetParent() const noexcept { return m_Parent; }
         bool HasParent() const noexcept { return m_Parent != nullptr; }
 
@@ -104,6 +106,15 @@ namespace Engine {
         friend class GameObject;
 
         void RecalculateMatrices();
+        void InvalidateWorld();
+        void MarkDirtyOnly() noexcept { m_Dirty = true; }
+        void SetOwner(GameObject* owner) noexcept { m_Owner = owner; }
+
+    public:
+        static bool TryDecomposeMatrix(const Mat4& matrix, Vec3* position,
+                                       Quat* rotation, Vec3* scale);
+
+    private:
 
         // ── 数据（纯 POD，无第三方库类型）──
         Vec3 m_Position       = { 0.0f, 0.0f, 0.0f };
@@ -120,6 +131,7 @@ namespace Engine {
         bool m_Dirty = true;
 
         TransformComponent* m_Parent = nullptr;
+        GameObject* m_Owner = nullptr;
     };
 
 } // namespace Engine

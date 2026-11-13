@@ -20,6 +20,9 @@ namespace Engine {
 		virtual uint32 GetWidth() const override { return m_Width; }
 		virtual uint32 GetHeight() const override { return m_Height; }
 
+		// Test-only observation seam (no ABI/behavior change).
+		GLuint GetRendererIDForTesting() const { return m_RendererID; }
+
 		// ── 加载后初始化钩子 ──
 		bool PostLoad(IGraphicsFactory* factory) override;
 

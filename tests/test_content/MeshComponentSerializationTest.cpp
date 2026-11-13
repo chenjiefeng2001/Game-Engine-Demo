@@ -80,6 +80,41 @@ TEST(MeshComponentContractTest, RegisteredAndRoundTripsGuid) {
     EXPECT_EQ(rc->GetMeshGuid(), kGuidA);
 }
 
+TEST(MeshComponentContractTest, ReflectionPropertiesExposeGuidAndDiagnostics) {
+    MeshComponent mc;
+    ComponentPropertyValue value;
+    ASSERT_EQ(mc.GetPropertyCount(), 10u);
+    ComponentPropertyDesc desc{};
+    ASSERT_TRUE(mc.GetPropertyDesc(0, &desc));
+    EXPECT_EQ(std::string(desc.name), "meshGuid");
+    EXPECT_EQ(desc.type, ComponentValueType::String);
+    EXPECT_TRUE(desc.editable);
+
+    mc.SetMeshGuid(kGuidA);
+    ASSERT_TRUE(mc.GetPropertyValue(0, &value));
+    EXPECT_EQ(value.stringValue, kGuidA.ToHex());
+    ASSERT_TRUE(mc.GetPropertyValue(4, &value));
+    EXPECT_EQ(value.stringValue, "NotRequested");
+    ASSERT_TRUE(mc.GetPropertyValue(2, &value));
+    EXPECT_EQ(value.intValue, 0);
+    ASSERT_TRUE(mc.GetPropertyValue(3, &value));
+    EXPECT_EQ(value.intValue, 0);
+
+    ComponentPropertyValue write;
+    write.type = ComponentValueType::String;
+    write.stringValue = kGuidB.ToHex();
+    EXPECT_TRUE(mc.SetPropertyValue(0, write));
+    EXPECT_EQ(mc.GetMeshGuid(), kGuidB);
+    write.stringValue = "not-a-guid";
+    EXPECT_FALSE(mc.SetPropertyValue(0, write));
+
+    ComponentPropertyValue vis;
+    vis.type = ComponentValueType::Bool;
+    vis.boolValue = false;
+    EXPECT_TRUE(mc.SetPropertyValue(8, vis));
+    EXPECT_FALSE(mc.m_Visible);
+}
+
 TEST(MeshComponentContractTest, RejectsMalformedGuidAndAcceptsExplicitNull) {
     MeshComponent mc;
     EXPECT_TRUE(mc.Deserialize(nlohmann::json::object()));

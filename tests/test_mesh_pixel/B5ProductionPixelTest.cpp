@@ -297,7 +297,7 @@ TEST(MeshProductionPixelTest, GlbEmbeddedColorAndDataTextures) {
     ExpectObjectProbes(rg, kExpectedGlbBlue, 2);
 }
 
-TEST(MeshProductionPixelTest, MultiSpanRendersWholeRangeWithFirstMaterial) {
+TEST(MeshProductionPixelTest, MultiSpanRendersDistinctMaterialSlots) {
     ASSERT_EQ(EditorBridge_RegisterMainThread(), 1);
     PixelProject project;
     const auto redPng = MakePng(4, 4, 4, 230, 20, 20, 255);
@@ -337,18 +337,120 @@ TEST(MeshProductionPixelTest, MultiSpanRendersWholeRangeWithFirstMaterial) {
     EXPECT_GT(CountNonBackground(direct), 30000);
     EXPECT_LT(CountNonBackground(direct), 100000);
     ExpectBackgroundProbes(direct);
-    for (const Probe& p : MultiQuadProbes(direct.width, direct.height)) {
-        const Rgba actual = direct.At(p.x, p.y);
-        EXPECT_TRUE(Close(actual, kExpectedMultiRed, 2, true))
-            << "multi-span probe (" << p.x << "," << p.y << ") should use "
-               "first material";
-    }
+    const auto multiProbes = MultiQuadProbes(direct.width, direct.height);
+    ASSERT_EQ(multiProbes.size(), 2u);
+    EXPECT_TRUE(Close(direct.At(multiProbes[0].x, multiProbes[0].y),
+                      kExpectedMultiRed, 2, true))
+        << "left span must use material slot 0";
+    EXPECT_TRUE(Close(direct.At(multiProbes[1].x, multiProbes[1].y),
+                      ExpectedAmbient(0.0f, 0.0f, 1.0f, 1.0f), 2, true))
+        << "right span must use material slot 1";
     PixelFrame rg;
     ASSERT_TRUE(host.Pump(true, &rg)) << host.Error();
     EXPECT_TRUE(rg.renderGraph);
-    for (const Probe& p : MultiQuadProbes(rg.width, rg.height)) {
-        EXPECT_TRUE(Close(rg.At(p.x, p.y), kExpectedMultiRed, 2, true));
+    EXPECT_TRUE(Close(rg.At(multiProbes[0].x, multiProbes[0].y),
+                      kExpectedMultiRed, 2, true));
+    EXPECT_TRUE(Close(rg.At(multiProbes[1].x, multiProbes[1].y),
+                      ExpectedAmbient(0.0f, 0.0f, 1.0f, 1.0f), 2, true));
+}
+
+TEST(MeshProductionPixelTest, MissingLaterMaterialFallsBackToSlotZero) {
+    ASSERT_EQ(EditorBridge_RegisterMainThread(), 1);
+    PixelProject project;
+    const auto redPng = MakePng(4, 4, 4, 230, 20, 20, 255);
+    std::string guid;
+    {
+        Session session;
+        ASSERT_TRUE(session.Open(project.root));
+        const Fixture f = WriteAndImport(
+            project, session.handle, "fallback_quad",
+            {MakeQuad(-3.0f, 0.0f, 1.5f), MakeQuad(3.0f, 0.0f, 1.5f)},
+            {MaterialDef{"MatRed", {1, 1, 1}, 1.0f, true},
+             MaterialDef{"MatBlue", {0, 0, 1}, 1.0f, false}},
+            redPng);
+        guid = f.guidHex;
+        session.SetSingleMeshGuid(guid);
+        ASSERT_TRUE(session.Save());
     }
+    Json manifest;
+    std::string scene;
+    {
+        RevisionStore store;
+        (void)store.Open(project.projectRoot);
+        ASSERT_TRUE(store.ReadCommittedScene("assets/Main.scene", &scene));
+        manifest = ReadJson(fs::path(store.CommittedManifestPath()));
+    }
+    Json filtered = Json::array();
+    for (const auto& asset : manifest["assets"]) {
+        const std::string path = asset["path"].get<std::string>();
+        if (path.find(".m1.") != std::string::npos) continue;
+        filtered.push_back(asset);
+    }
+    manifest["assets"] = filtered;
+    {
+        RevisionStore store;
+        (void)store.Open(project.projectRoot);
+        const RevisionPublishResult r =
+            store.Publish(project.projectRoot, manifest.dump(), scene);
+        ASSERT_TRUE(r.ok && r.committed) << r.diagnostic;
+    }
+    PixelHost host;
+    ASSERT_TRUE(host.Open(project.root)) << host.Error();
+    PixelFrame direct;
+    ASSERT_TRUE(host.Pump(false, &direct)) << host.Error();
+    int32_t status = -1;
+    ASSERT_TRUE(host.QueryMesh(guid, &status));
+    EXPECT_EQ(status, static_cast<int32_t>(MeshRuntimeStatus::Ready));
+    const auto probes = MultiQuadProbes(direct.width, direct.height);
+    ASSERT_EQ(probes.size(), 2u);
+    EXPECT_TRUE(Close(direct.At(probes[0].x, probes[0].y),
+                      kExpectedMultiRed, 2, true));
+    EXPECT_TRUE(Close(direct.At(probes[1].x, probes[1].y),
+                      kExpectedMultiRed, 2, true))
+        << "missing slot 1 must fall back to slot 0";
+    PixelFrame rg;
+    ASSERT_TRUE(host.Pump(true, &rg)) << host.Error();
+    EXPECT_TRUE(rg.renderGraph);
+    EXPECT_TRUE(Close(rg.At(probes[1].x, probes[1].y),
+                      kExpectedMultiRed, 2, true));
+}
+
+TEST(MeshProductionPixelTest, MaterialEditUpdatesProductionPixels) {
+    ASSERT_EQ(EditorBridge_RegisterMainThread(), 1);
+    PixelProject project;
+    std::string guid;
+    int32_t materialIndex = -1;
+    {
+        Session session;
+        ASSERT_TRUE(session.Open(project.root));
+        const Fixture f = WriteAndImport(
+            project, session.handle, "edit_material",
+            {MakeQuad(0.0f, 0.0f, 4.0f)},
+            {MaterialDef{"MatWhite", {1, 1, 1}, 1.0f, false}}, {});
+        guid = f.guidHex;
+        for (const AssetRef& a : f.assets)
+            if (a.path.find(".material.json") != std::string::npos)
+                materialIndex = a.index;
+        ASSERT_GE(materialIndex, 0);
+        session.SetSingleMeshGuid(guid);
+        ASSERT_TRUE(session.Save());
+    }
+    PixelHost host;
+    ASSERT_TRUE(host.Open(project.root)) << host.Error();
+    PixelFrame before;
+    ASSERT_TRUE(host.Pump(false, &before)) << host.Error();
+    ExpectObjectProbes(before, ExpectedAmbient(1.0f, 1.0f, 1.0f, 1.0f), 2);
+
+    ASSERT_TRUE(host.UpdateMaterial(
+        materialIndex, R"({"baseColorFactor":[1.0,0.0,0.0,1.0]})"))
+        << host.Error();
+    PixelFrame after;
+    ASSERT_TRUE(host.Pump(false, &after)) << host.Error();
+    ExpectObjectProbes(after, ExpectedAmbient(1.0f, 0.0f, 0.0f, 1.0f), 2);
+    PixelFrame rg;
+    ASSERT_TRUE(host.Pump(true, &rg)) << host.Error();
+    EXPECT_TRUE(rg.renderGraph);
+    ExpectObjectProbes(rg, ExpectedAmbient(1.0f, 0.0f, 0.0f, 1.0f), 2);
 }
 
 TEST(MeshProductionPixelTest, AlphaPreservedWithoutExtraGamma) {

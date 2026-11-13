@@ -102,6 +102,13 @@ add_executable(test_content
     test_content/RevisionStoreTest.cpp
     test_content/MeshAssetResolverTest.cpp
     test_content/MeshComponentSerializationTest.cpp
+    test_content/SceneCompositionTest.cpp
+    test_content/PrefabCaptureTest.cpp
+    test_content/PrefabSerializationTest.cpp
+    test_content/PrefabOverrideTest.cpp
+    test_content/PrefabApplyCandidateTest.cpp
+    test_content/PrefabApplyRecordTest.cpp
+    test_content/PrefabReconciliationTest.cpp
     test_content/RigidBodySerializationTest.cpp
     test_content/ColliderSerializationTest.cpp
     test_content/ContentPipelineTest.cpp
@@ -162,6 +169,10 @@ add_executable(test_bridge
     test_bridge/test_import_service.cpp
     test_bridge/test_m1f_fault_matrix.cpp
     test_bridge/test_mesh_runtime_host.cpp
+    ../bridge/src/EditorSession.cpp
+    test_bridge/test_scene_composition.cpp
+    test_bridge/test_prefab_asset.cpp
+    test_bridge/test_prefab_instance.cpp
 )
 add_executable(m1f_crash_harness
     test_bridge/M1FCrashHarness.cpp
@@ -176,7 +187,7 @@ target_compile_definitions(test_bridge PRIVATE
 target_link_libraries(test_bridge PRIVATE EditorBridge EngineCore GTest::gtest_main)# HRC-3 P1：production scene render 的像素证据需要读回 presentation target。
 # P1 阶段刻意不新增 C 导出（那是 P2 的 additive Fetch op），因此该测试白色盒地
 # 包含 bridge 内部头。这**不改变 C ABI**，只是测试取证通道。
-target_include_directories(test_bridge PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/../bridge/src ${CMAKE_CURRENT_SOURCE_DIR}/../engine/include)
+target_include_directories(test_bridge PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/../bridge/src ${CMAKE_CURRENT_SOURCE_DIR}/../engine/include ${CMAKE_CURRENT_SOURCE_DIR}/../engine/src)
 add_test(NAME test_bridge COMMAND test_bridge)
 set_tests_properties(test_bridge PROPERTIES TIMEOUT 120)
 

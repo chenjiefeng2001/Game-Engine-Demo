@@ -30,6 +30,7 @@ struct MaterialBindingTexture
 
 struct MaterialBindingEntry
 {
+    bool available = false; // material asset parsed and textures bound
     uint32_t slot = 0;
     std::string materialAssetPath;
     MaterialAsset material;

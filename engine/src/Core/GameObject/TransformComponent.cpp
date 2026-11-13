@@ -1,9 +1,13 @@
+#define GLM_ENABLE_EXPERIMENTAL
 #include "Engine/Core/GameObject/TransformComponent.h"
+#include "Engine/Core/GameObject/GameObject.h"
 
 #include <glm/glm.hpp>
+#include <glm/gtx/matrix_decompose.hpp>
 #include <glm/gtc/matrix_transform.hpp>
 #include <glm/gtc/quaternion.hpp>
 #include <glm/gtc/type_ptr.hpp>
+#include <cmath>
 #include <cstring>
 
 namespace Engine {
@@ -90,7 +94,7 @@ namespace Engine {
         m_RotationQuat = FromGlmQuat(q);
         m_CachedEuler = euler;
         m_EulerDirty = false;
-        m_Dirty = true;
+        InvalidateWorld();
     }
 
     // ── 相对变换 ──
@@ -98,7 +102,7 @@ namespace Engine {
         m_Position.x += delta.x;
         m_Position.y += delta.y;
         m_Position.z += delta.z;
-        m_Dirty = true;
+        InvalidateWorld();
     }
 
     void TransformComponent::Rotate(const Vec3& eulerDelta) {
@@ -106,14 +110,14 @@ namespace Engine {
         glm::quat delta = glm::quat(glm::radians(glm::vec3(eulerDelta.x, eulerDelta.y, eulerDelta.z)));
         m_RotationQuat = FromGlmQuat(delta * ToGlmQuat(m_RotationQuat));
         m_EulerDirty = true;
-        m_Dirty = true;
+        InvalidateWorld();
     }
 
     void TransformComponent::ScaleBy(const Vec3& factor) {
         m_Scale.x *= factor.x;
         m_Scale.y *= factor.y;
         m_Scale.z *= factor.z;
-        m_Dirty = true;
+        InvalidateWorld();
     }
 
     // ── 矩阵计算（使用 glm）──
@@ -146,6 +150,40 @@ namespace Engine {
             m_Dirty = false;
         }
         return m_LocalMatrix;
+    }
+
+    void TransformComponent::InvalidateWorld() {
+        m_Dirty = true;
+        if (m_Owner) m_Owner->MarkTransformDirtyRecursive();
+    }
+
+    bool TransformComponent::TryDecomposeMatrix(const Mat4& matrix,
+                                                Vec3* position,
+                                                Quat* rotation,
+                                                Vec3* scale) {
+        if (!position || !rotation || !scale) return false;
+        const glm::mat4 m = ToGlm(matrix);
+        glm::vec3 s;
+        glm::quat q;
+        glm::vec3 t;
+        glm::vec3 skew;
+        glm::vec4 perspective;
+        if (!glm::decompose(m, s, q, t, skew, perspective)) return false;
+        const bool finite = std::isfinite(s.x) && std::isfinite(s.y) &&
+                            std::isfinite(s.z) && std::isfinite(t.x) &&
+                            std::isfinite(t.y) && std::isfinite(t.z) &&
+                            std::isfinite(q.x) && std::isfinite(q.y) &&
+                            std::isfinite(q.z) && std::isfinite(q.w);
+        if (!finite) return false;
+        if (glm::length(skew) > 1e-4f) return false;
+        if (std::fabs(perspective.x) > 1e-5f ||
+            std::fabs(perspective.y) > 1e-5f ||
+            std::fabs(perspective.z) > 1e-5f ||
+            std::fabs(perspective.w - 1.0f) > 1e-5f) return false;
+        *position = Vec3(t.x, t.y, t.z);
+        *rotation = FromGlmQuat(q);
+        *scale = Vec3(s.x, s.y, s.z);
+        return true;
     }
 
     const Mat4& TransformComponent::GetWorldMatrix() {

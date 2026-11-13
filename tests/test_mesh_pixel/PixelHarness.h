@@ -623,6 +623,16 @@ public:
                      : 0;
     }
 
+    bool UpdateMaterial(int assetIndex, const std::string& fieldsJson) {
+        if (!host_) return false;
+        RuntimeResult result{};
+        return EngineHost_Dispatch(host_,
+                                   ENGINE_HOST_OP_UPDATE_MATERIAL,
+                                   assetIndex, 0,
+                                   fieldsJson.c_str(), nullptr, nullptr,
+                                   nullptr, &result) == 0;
+    }
+
     void SetGpuUploadFailure(int stage) {
         if (!host_) return;
         static_cast<editor_bridge::EngineHost*>(host_)

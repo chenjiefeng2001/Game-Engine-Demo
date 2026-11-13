@@ -53,6 +53,13 @@ namespace Engine {
 		virtual void SwapBuffers() = 0;
 		virtual void DrawIndexed(const std::shared_ptr<VertexArray>& va) = 0;
 
+		/// Draw a sub-range of the bound index buffer (index units, GL semantics).
+		virtual void DrawIndexedRange(const std::shared_ptr<VertexArray>& va,
+		                              uint32 firstIndex, uint32 indexCount) {
+			(void)firstIndex; (void)indexCount;
+			DrawIndexed(va);
+		}
+
 		/**
 		 * @brief 使用 RHI 顶点数组绘制索引网格
 		 * @param va RHI 顶点数组（不依赖 OpenGL 具体类型）

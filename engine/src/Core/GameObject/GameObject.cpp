@@ -12,10 +12,12 @@ namespace Engine {
 
     GameObject::GameObject()
         : m_ID(GetNextID()), m_Name("GameObject") {
+        m_Transform.SetOwner(this);
     }
 
     GameObject::GameObject(std::string name)
         : m_ID(GetNextID()), m_Name(std::move(name)) {
+        m_Transform.SetOwner(this);
     }
 
     GameObject::~GameObject() {
@@ -86,6 +88,9 @@ namespace Engine {
 
     void GameObject::SetParent(GameObject* parent) {
         if (m_Parent == parent) return;
+        if (parent == this) return;
+        for (GameObject* p = parent; p; p = p->m_Parent)
+            if (p == this) return;
 
         // 从旧父级移除
         if (m_Parent) {
@@ -106,6 +111,12 @@ namespace Engine {
         } else {
             m_Transform.SetParent(nullptr);
         }
+    }
+
+    void GameObject::MarkTransformDirtyRecursive() {
+        m_Transform.MarkDirtyOnly();
+        for (const auto& child : m_Children)
+            if (child) child->MarkTransformDirtyRecursive();
     }
 
     void GameObject::AddChild(std::shared_ptr<GameObject> child) {

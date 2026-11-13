@@ -108,7 +108,25 @@ void OpenGLContext::DrawIndexed(const std::shared_ptr<VertexArray>& va)
 		}
 	}
 
-	void OpenGLContext::DrawIndexed_RHI(const std::shared_ptr<RHI::IRHIVertexArray>& va)
+	void OpenGLContext::DrawIndexedRange(const std::shared_ptr<VertexArray>& va,
+                                      uint32 firstIndex, uint32 indexCount)
+	{
+		if (!va || indexCount == 0) return;
+		va->Bind();
+		const auto& indexBuffer = va->GetIndexBuffer();
+		if (indexBuffer)
+		{
+			const uint32 available = indexBuffer->GetCount();
+			if (firstIndex > available || indexCount > available - firstIndex)
+				return;
+			const void* offset = reinterpret_cast<const void*>(
+				static_cast<uintptr_t>(firstIndex) * sizeof(uint32));
+			m_GL.DrawElements(GL_TRIANGLES, indexCount, GL_UNSIGNED_INT, offset);
+			++m_DrawCallCount;
+		}
+	}
+
+void OpenGLContext::DrawIndexed_RHI(const std::shared_ptr<RHI::IRHIVertexArray>& va)
 	{
 		va->Bind();
 		uint32 indexCount = va->GetIndexCount();

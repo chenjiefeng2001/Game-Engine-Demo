@@ -311,6 +311,15 @@ TEST(MeshRuntimeSceneGLTest, ReadyLoadsCpuGpuAndMaterialBinding) {
     EXPECT_EQ(mc->GetResolvedAssetPath(), kMeshPath);
     EXPECT_EQ(fx.renderer->GpuMeshCountForTesting(), 1u);
     EXPECT_EQ(fx.textures.Size(), 1u);
+    ComponentPropertyValue pv;
+    ASSERT_TRUE(mc->GetPropertyValue(2, &pv));
+    EXPECT_EQ(pv.intValue, 1);
+    ASSERT_TRUE(mc->GetPropertyValue(3, &pv));
+    EXPECT_EQ(pv.intValue, 1);
+    ASSERT_TRUE(mc->GetPropertyValue(4, &pv));
+    EXPECT_EQ(pv.stringValue, "Ready");
+    ASSERT_TRUE(mc->GetPropertyValue(1, &pv));
+    EXPECT_NE(pv.stringValue.find(".mesh"), std::string::npos);
 
     const MeshRuntimeScene::Entry* entry =
         fx.runtime.FindForTesting(project.meshGuid);

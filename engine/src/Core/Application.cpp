@@ -941,14 +941,13 @@ bool Application::RenderProduction3DFrame(IRenderContext &context, Scene &scene,
     return false;
   }
 
-  // ���� 1. �ռ� 3D mesh renderables
-  const auto &objects = scene.GetObjects();
+  const auto objects = scene.GetAllEntities();
   std::vector<GameObject *> meshObjects;
-  for (const auto &obj : objects) {
-    if (!obj || !obj->IsActive()) continue;
+  for (GameObject *obj : objects) {
+    if (!obj || !obj->IsActiveInHierarchy()) continue;
     auto *mc = obj->GetComponent<MeshComponent>();
     if (mc && mc->m_Visible && mc->HasMesh()) {
-      meshObjects.push_back(obj.get());
+      meshObjects.push_back(obj);
     }
   }
 

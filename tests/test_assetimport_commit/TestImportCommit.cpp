@@ -13,6 +13,7 @@
 #include <chrono>
 #include <filesystem>
 #include <fstream>
+#include <limits>
 #include <sstream>
 #include <string>
 #include <vector>
@@ -294,6 +295,370 @@ TEST_F(ImportCommitTest, ImportObjWithMtlRegistersMaterialAssets) {
     EXPECT_EQ(materials, 1);
 }
 
+TEST_F(ImportCommitTest, AssetTypeAndAvailabilityContract) {
+    const fs::path objPath = m_RootPath / "assets" / "models" / "typed.obj";
+    fs::create_directories(objPath.parent_path());
+    WriteFileAt(objPath,
+                "mtllib typed.mtl\nv 0 0 0\nv 1 0 0\nv 0 1 0\n"
+                "usemtl red\nf 1 2 3\n");
+    WriteFileAt(objPath.parent_path() / "typed.mtl",
+                "newmtl red\nKd 1 0 0\nmap_Kd typed.png\n");
+    ImportCommitHelpers::WriteTextureSource(
+        objPath.parent_path() / "typed.png", 200, 30, 30);
+    const int32_t idx =
+        EditorSession_ImportAsset(m_Session, "assets/models/typed.obj", 2);
+    ASSERT_GT(idx, 0) << SessionError(m_Session);
+
+    bool sawMesh = false, sawMaterial = false, sawTexture = false;
+    std::string meshPath;
+    const int32_t count = EditorSession_GetAssetCount(m_Session);
+    for (int32_t i = 0; i < count; ++i) {
+        const std::string path = AssetPathAt(m_Session, i);
+        const int32_t type = EditorSession_GetAssetType(m_Session, i);
+        EXPECT_GE(EditorSession_GetAssetStatus(m_Session, i), 0);
+        if (path.find(".mesh") != std::string::npos) {
+            sawMesh = true;
+            meshPath = path;
+            EXPECT_EQ(type, 2) << path;
+        }
+        if (path.find(".material.json") != std::string::npos) {
+            sawMaterial = true;
+            EXPECT_EQ(type, 3) << path;
+        }
+        if (path.find(".tex.png") != std::string::npos) {
+            sawTexture = true;
+            EXPECT_EQ(type, 0) << path;
+        }
+    }
+    EXPECT_TRUE(sawMesh);
+    EXPECT_TRUE(sawMaterial);
+    EXPECT_TRUE(sawTexture);
+    EXPECT_EQ(EditorSession_GetAssetStatus(m_Session, idx), 0);
+
+    if (!meshPath.empty()) {
+        const fs::path committed = m_RootPath / meshPath;
+        std::error_code ec;
+        fs::remove(committed, ec);
+        EXPECT_FALSE(ec);
+        for (int32_t i = 0; i < count; ++i) {
+            if (AssetPathAt(m_Session, i) == meshPath)
+                EXPECT_EQ(EditorSession_GetAssetStatus(m_Session, i), 1);
+        }
+    }
+}
+
+TEST_F(ImportCommitTest, MeshComponentGuidRoundTripThroughCAbi) {
+    const fs::path objPath = m_RootPath / "assets" / "models" / "meshcomp.obj";
+    fs::create_directories(objPath.parent_path());
+    WriteFileAt(objPath, "v 0 0 0\nv 1 0 0\nv 0 1 0\nf 1 2 3\n");
+    const int32_t idx =
+        EditorSession_ImportAsset(m_Session, "assets/models/meshcomp.obj", 2);
+    ASSERT_GT(idx, 0) << SessionError(m_Session);
+    const std::string guid = AssetGuidHexAt(m_Session, idx);
+    ASSERT_EQ(guid.size(), 32u);
+
+    const int32_t entity = EditorSession_CreateEntity(m_Session, "MeshEntity");
+    ASSERT_GE(entity, 0);
+    ASSERT_EQ(EditorSession_AddComponent(m_Session, entity, "Mesh"), 0);
+    EXPECT_EQ(EditorSession_SetComponentProperty(
+                  m_Session, entity, "Mesh", "meshGuid", guid.c_str()),
+              0)
+        << SessionError(m_Session);
+    char out[128] = {};
+    ASSERT_GE(EditorSession_GetComponentProperty(
+                  m_Session, entity, "Mesh", "meshGuid", out, sizeof(out)),
+              0);
+    EXPECT_EQ(std::string(out), guid);
+    EXPECT_EQ(EditorSession_SaveProject(m_Session), 1);
+
+    Reopen();
+    char restored[128] = {};
+    ASSERT_GE(EditorSession_GetComponentProperty(
+                  m_Session, entity, "Mesh", "meshGuid", restored,
+                  sizeof(restored)),
+              0);
+    EXPECT_EQ(std::string(restored), guid);
+    char status[64] = {};
+    ASSERT_GE(EditorSession_GetComponentProperty(
+                  m_Session, entity, "Mesh", "runtimeStatus", status,
+                  sizeof(status)),
+              0);
+    EXPECT_EQ(std::string(status), "NotRequested");
+
+    EXPECT_EQ(EditorSession_SetComponentProperty(
+                  m_Session, entity, "Mesh", "meshGuid", "bad"),
+              -1);
+}
+
+TEST_F(ImportCommitTest, MaterialEditCommitColdRestartAndReimportGuard) {
+    const fs::path objPath = m_RootPath / "assets" / "models" / "mat_edit.obj";
+    fs::create_directories(objPath.parent_path());
+    WriteFileAt(objPath,
+                "mtllib mat_edit.mtl\nv 0 0 0\nv 1 0 0\nv 0 1 0\n"
+                "usemtl edit\nf 1 2 3\n");
+    WriteFileAt(objPath.parent_path() / "mat_edit.mtl",
+                "newmtl edit\nKd 1 1 1\n");
+    const int32_t meshIdx =
+        EditorSession_ImportAsset(m_Session, "assets/models/mat_edit.obj", 2);
+    ASSERT_GT(meshIdx, 0) << SessionError(m_Session);
+    const std::string meshGuid = AssetGuidHexAt(m_Session, meshIdx);
+
+    int32_t matIdx = -1;
+    std::string matGuid;
+    for (int32_t i = 0; i < EditorSession_GetAssetCount(m_Session); ++i) {
+        if (AssetPathAt(m_Session, i).find(".material.json") !=
+            std::string::npos) {
+            matIdx = i;
+            matGuid = AssetGuidHexAt(m_Session, i);
+            break;
+        }
+    }
+    ASSERT_GE(matIdx, 0);
+    const std::string oldPath = AssetPathAt(m_Session, matIdx);
+    const int64_t rev1 = CommittedRevision();
+
+    EXPECT_EQ(EditorSession_UpdateMaterial(
+                  m_Session, matIdx, R"({"unknownField":1})"),
+              -1);
+    EXPECT_EQ(EditorSession_UpdateMaterial(
+                  m_Session, matIdx, R"({"baseColorFactor":[1,2,3]})"),
+              -1);
+    EXPECT_EQ(EditorSession_UpdateMaterial(
+                  m_Session, matIdx, R"({"alphaMode":"NOPE"})"),
+              -1);
+    EXPECT_EQ(CommittedRevision(), rev1);
+
+    const std::string patch =
+        R"({"baseColorFactor":[0.5,0.25,0.125,1.0],"metallicFactor":0.2,"roughnessFactor":0.75,"emissiveFactor":[0.1,0.2,0.3],"alphaCutoff":0.25,"alphaMode":"MASK"})";
+    ASSERT_EQ(EditorSession_UpdateMaterial(m_Session, matIdx, patch.c_str()), 0)
+        << SessionError(m_Session);
+    const int64_t rev2 = CommittedRevision();
+    EXPECT_GT(rev2, rev1);
+    EXPECT_EQ(AssetGuidHexAt(m_Session, matIdx), matGuid);
+    EXPECT_NE(AssetPathAt(m_Session, matIdx), oldPath);
+
+    char materialBuf[65536] = {};
+    ASSERT_GT(EditorSession_GetMaterialJson(m_Session, matIdx, materialBuf,
+                                            sizeof(materialBuf)),
+              0);
+    auto materialDoc = nlohmann::json::parse(materialBuf);
+    EXPECT_FLOAT_EQ(materialDoc["baseColorFactor"][0].get<float>(), 0.5f);
+    EXPECT_FLOAT_EQ(materialDoc["metallicFactor"].get<float>(), 0.2f);
+    EXPECT_EQ(materialDoc["alphaMode"], "MASK");
+
+    ASSERT_EQ(EditorSession_UpdateMaterial(m_Session, matIdx, patch.c_str()), 0);
+    EXPECT_EQ(CommittedRevision(), rev2);
+
+    Reopen();
+    auto findGuid = [&](const std::string& guid) {
+        for (int32_t i = 0; i < EditorSession_GetAssetCount(m_Session); ++i)
+            if (AssetGuidHexAt(m_Session, i) == guid) return i;
+        return -1;
+    };
+    matIdx = findGuid(matGuid);
+    const int32_t meshIdxAfterReopen = findGuid(meshGuid);
+    ASSERT_GE(matIdx, 0);
+    ASSERT_GE(meshIdxAfterReopen, 0);
+    ASSERT_GT(EditorSession_GetMaterialJson(m_Session, matIdx, materialBuf,
+                                            sizeof(materialBuf)),
+              0);
+    materialDoc = nlohmann::json::parse(materialBuf);
+    EXPECT_FLOAT_EQ(materialDoc["baseColorFactor"][0].get<float>(), 0.5f);
+
+    EXPECT_EQ(EditorSession_ReimportAsset(m_Session, meshIdxAfterReopen, 0), -1);
+    EXPECT_NE(std::string(SessionError(m_Session)).find("local edits"),
+              std::string::npos);
+    EXPECT_EQ(CommittedRevision(), rev2);
+
+    const int32_t reimported =
+        EditorSession_ReimportAsset(m_Session, meshIdxAfterReopen, 1);
+    ASSERT_GE(reimported, 0) << SessionError(m_Session);
+    EXPECT_GT(CommittedRevision(), rev2);
+    ASSERT_GT(EditorSession_GetMaterialJson(m_Session, matIdx, materialBuf,
+                                            sizeof(materialBuf)),
+              0);
+    materialDoc = nlohmann::json::parse(materialBuf);
+    EXPECT_FLOAT_EQ(materialDoc["baseColorFactor"][0].get<float>(), 1.0f);
+    EXPECT_EQ(materialDoc["alphaMode"], "OPAQUE");
+}
+
+TEST_F(ImportCommitTest, AssetDependenciesReportMeshMaterialTexture) {
+    const fs::path objPath = m_RootPath / "assets" / "models" / "deps.obj";
+    fs::create_directories(objPath.parent_path());
+    WriteFileAt(objPath,
+                "mtllib deps.mtl\nv 0 0 0\nv 1 0 0\nv 0 1 0\n"
+                "usemtl deps\nf 1 2 3\n");
+    WriteFileAt(objPath.parent_path() / "deps.mtl",
+                "newmtl deps\nKd 1 1 1\nmap_Kd deps.png\n");
+    ImportCommitHelpers::WriteTextureSource(
+        objPath.parent_path() / "deps.png", 200, 30, 30);
+    const int32_t meshIdx =
+        EditorSession_ImportAsset(m_Session, "assets/models/deps.obj", 2);
+    ASSERT_GT(meshIdx, 0) << SessionError(m_Session);
+
+    int32_t matIdx = -1, texIdx = -1;
+    for (int32_t i = 0; i < EditorSession_GetAssetCount(m_Session); ++i) {
+        const std::string p = AssetPathAt(m_Session, i);
+        if (p.find(".material.json") != std::string::npos) matIdx = i;
+        if (p.find(".tex.png") != std::string::npos) texIdx = i;
+    }
+    ASSERT_GE(matIdx, 0);
+    ASSERT_GE(texIdx, 0);
+
+    char depsBuf[65536] = {};
+    ASSERT_GT(EditorSession_GetAssetDependencies(m_Session, meshIdx, depsBuf,
+                                                 sizeof(depsBuf)),
+              0);
+    auto meshDeps = nlohmann::json::parse(depsBuf);
+    bool sawMaterial = false, sawSource = false, sawTexture = false;
+    for (const auto& d : meshDeps["dependencies"]) {
+        if (d["type"] == "Material") {
+            sawMaterial = true;
+            EXPECT_EQ(d["guid"], AssetGuidHexAt(m_Session, matIdx));
+        }
+        if (d["type"] == "Source") sawSource = true;
+        if (d["type"] == "Texture") sawTexture = true;
+    }
+    EXPECT_TRUE(sawMaterial);
+    EXPECT_TRUE(sawSource);
+    EXPECT_TRUE(sawTexture);
+
+    ASSERT_GT(EditorSession_GetAssetDependencies(m_Session, texIdx, depsBuf,
+                                                 sizeof(depsBuf)),
+              0);
+    auto texDeps = nlohmann::json::parse(depsBuf);
+    bool materialDependsOnTexture = false;
+    for (const auto& d : texDeps["dependents"])
+        if (d["type"] == "Material") materialDependsOnTexture = true;
+    EXPECT_TRUE(materialDependsOnTexture);
+
+    ASSERT_GT(EditorSession_GetAssetDependencies(m_Session, matIdx, depsBuf,
+                                                 sizeof(depsBuf)),
+              0);
+    auto matDeps = nlohmann::json::parse(depsBuf);
+    bool meshDependsOnMaterial = false;
+    for (const auto& d : matDeps["dependents"])
+        if (d["type"] == "Mesh") meshDependsOnMaterial = true;
+    EXPECT_TRUE(meshDependsOnMaterial);
+}
+
+TEST_F(ImportCommitTest, ReimportSourceChangedAndMissingFailClosed) {
+    const fs::path objPath = m_RootPath / "assets" / "models" / "reimport.obj";
+    fs::create_directories(objPath.parent_path());
+    WriteFileAt(objPath, "v 0 0 0\nv 1 0 0\nv 0 1 0\nf 1 2 3\n");
+    const int32_t idx =
+        EditorSession_ImportAsset(m_Session, "assets/models/reimport.obj", 2);
+    ASSERT_GT(idx, 0) << SessionError(m_Session);
+    const std::string guid = AssetGuidHexAt(m_Session, idx);
+    const std::string oldPath = AssetPathAt(m_Session, idx);
+    const int64_t rev1 = CommittedRevision();
+
+    WriteFileAt(objPath, "v 0 0 0\nv 2 0 0\nv 0 2 0\nf 1 2 3\n");
+    const int32_t reimported = EditorSession_ReimportAsset(m_Session, idx, 0);
+    ASSERT_GE(reimported, 0) << SessionError(m_Session);
+    EXPECT_EQ(CommittedRevision(), rev1 + 1);
+    EXPECT_EQ(AssetGuidHexAt(m_Session, idx), guid);
+    EXPECT_NE(AssetPathAt(m_Session, idx), oldPath);
+
+    const int64_t rev2 = CommittedRevision();
+    fs::remove(objPath);
+    EXPECT_EQ(EditorSession_ReimportAsset(m_Session, idx, 0), -1);
+    EXPECT_EQ(CommittedRevision(), rev2);
+}
+
+TEST_F(ImportCommitTest, TransformUndoRedoAndColdRestart) {
+    fs::create_directories(m_RootPath / "assets" / "models");
+    WriteFileAt(m_RootPath / "assets" / "models" / "transform.obj",
+                "v 0 0 0\nv 1 0 0\nv 0 1 0\nf 1 2 3\n");
+    const int32_t meshIdx =
+        EditorSession_ImportAsset(m_Session, "assets/models/transform.obj", 2);
+    ASSERT_GT(meshIdx, 0) << SessionError(m_Session);
+
+    ASSERT_EQ(EditorSession_BeginSceneEdit(m_Session, "create"), 0);
+    const int32_t entity = EditorSession_CreateEntity(m_Session, "TransformEntity");
+    ASSERT_GE(entity, 0);
+    ASSERT_EQ(EditorSession_CommitSceneEdit(m_Session), 0);
+    EXPECT_EQ(EditorSession_CanUndoSceneEdit(m_Session), 1);
+
+    const float pos[3] = {1.0f, 2.0f, 3.0f};
+    const float rot[3] = {0.0f, 0.0f, 90.0f};
+    const float scale[3] = {2.0f, 3.0f, 4.0f};
+    ASSERT_EQ(EditorSession_SetEntityTransform(m_Session, entity, pos, rot,
+                                               scale),
+              0)
+        << SessionError(m_Session);
+    float out[9] = {};
+    ASSERT_EQ(EditorSession_GetEntityTransform(m_Session, entity, out), 0);
+    for (int i = 0; i < 3; ++i) {
+        EXPECT_FLOAT_EQ(out[i], pos[i]);
+        EXPECT_FLOAT_EQ(out[6 + i], scale[i]);
+    }
+    EXPECT_NEAR(out[5], 90.0f, 0.01f);
+
+    ASSERT_EQ(EditorSession_UndoSceneEdit(m_Session), 0);
+    ASSERT_EQ(EditorSession_GetEntityTransform(m_Session, entity, out), 0);
+    EXPECT_FLOAT_EQ(out[0], 0.0f);
+    EXPECT_FLOAT_EQ(out[6], 1.0f);
+    ASSERT_EQ(EditorSession_RedoSceneEdit(m_Session), 0);
+    ASSERT_EQ(EditorSession_GetEntityTransform(m_Session, entity, out), 0);
+    EXPECT_FLOAT_EQ(out[0], 1.0f);
+
+    const float nanPos[3] = {std::numeric_limits<float>::quiet_NaN(), 0, 0};
+    const float zeroRot[3] = {0, 0, 0};
+    const float oneScale[3] = {1, 1, 1};
+    EXPECT_EQ(EditorSession_SetEntityTransform(m_Session, entity, nanPos,
+                                               zeroRot, oneScale),
+              -1);
+
+    ASSERT_EQ(EditorSession_SaveProject(m_Session), 1);
+    Reopen();
+    int32_t restored = -1;
+    for (int32_t i = 0; i < EditorSession_GetEntityCount(m_Session); ++i) {
+        char name[128] = {};
+        EditorSession_GetEntityName(m_Session, i, name, sizeof(name));
+        if (std::string(name) == "TransformEntity") restored = i;
+    }
+    ASSERT_GE(restored, 0);
+    ASSERT_EQ(EditorSession_GetEntityTransform(m_Session, restored, out), 0);
+    EXPECT_FLOAT_EQ(out[0], 1.0f);
+    EXPECT_FLOAT_EQ(out[7], 3.0f);
+    EXPECT_NEAR(out[5], 90.0f, 0.01f);
+}
+
+TEST_F(ImportCommitTest, EntityDeleteUndoRestoresMeshGuid) {
+    fs::create_directories(m_RootPath / "assets" / "models");
+    WriteFileAt(m_RootPath / "assets" / "models" / "undo_mesh.obj",
+                "v 0 0 0\nv 1 0 0\nv 0 1 0\nf 1 2 3\n");
+    const int32_t meshIdx =
+        EditorSession_ImportAsset(m_Session, "assets/models/undo_mesh.obj", 2);
+    ASSERT_GT(meshIdx, 0);
+    char guid[64] = {};
+    EditorSession_GetAssetGuid(m_Session, meshIdx, guid, sizeof(guid));
+
+    ASSERT_EQ(EditorSession_BeginSceneEdit(m_Session, "create mesh entity"), 0);
+    const int32_t entity = EditorSession_CreateEntity(m_Session, "UndoMesh");
+    ASSERT_GE(entity, 0);
+    ASSERT_EQ(EditorSession_AddComponent(m_Session, entity, "Mesh"), 0);
+    ASSERT_EQ(EditorSession_SetComponentProperty(m_Session, entity, "Mesh",
+                                                 "meshGuid", guid),
+              0);
+    ASSERT_EQ(EditorSession_CommitSceneEdit(m_Session), 0);
+    ASSERT_EQ(EditorSession_BeginSceneEdit(m_Session, "delete mesh entity"), 0);
+    ASSERT_EQ(EditorSession_DeleteEntity(m_Session, entity), 0);
+    ASSERT_EQ(EditorSession_CommitSceneEdit(m_Session), 0);
+    EXPECT_EQ(EditorSession_GetEntityCount(m_Session), 10);
+
+    ASSERT_EQ(EditorSession_UndoSceneEdit(m_Session), 0);
+    ASSERT_EQ(EditorSession_GetEntityCount(m_Session), 11);
+    char restored[128] = {};
+    ASSERT_GE(EditorSession_GetComponentProperty(m_Session, 10, "Mesh",
+                                                 "meshGuid", restored,
+                                                 sizeof(restored)),
+              0);
+    EXPECT_EQ(std::string(restored), std::string(guid));
+    ASSERT_EQ(EditorSession_RedoSceneEdit(m_Session), 0);
+    EXPECT_EQ(EditorSession_GetEntityCount(m_Session), 10);
+}
 TEST_F(ImportCommitTest, MeshType3IsFailClosed) {
     WriteFileAt(m_RootPath / "unused.bin", "x");
     EXPECT_EQ(EditorSession_ImportAsset(m_Session, "unused.bin", 3), -1);

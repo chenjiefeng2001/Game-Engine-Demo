@@ -213,6 +213,11 @@ class GameObject : public IRenderable {
         // ── 唯一标识 ──
         uint32 GetID() const noexcept { return m_ID; }
 
+        uint64 GetSceneEntityId() const noexcept { return m_SceneEntityId; }
+        void SetSceneEntityId(uint64 id) noexcept { m_SceneEntityId = id; }
+
+        void MarkTransformDirtyRecursive();
+
         void SetActive(bool active) { m_Active = active; }
         bool IsActive() const noexcept { return m_Active; }
         bool IsActiveInHierarchy() const;
@@ -244,6 +249,7 @@ class GameObject : public IRenderable {
 
     protected:
         uint32 m_ID = 0;              ///< 唯一标识符（用于 Picking 和序列化）
+        uint64 m_SceneEntityId = 0;   ///< Persistent Scene Composition identity.
         std::string m_Name;
 
         TransformComponent  m_Transform;   // 每个 GameObject 都有的内置变换

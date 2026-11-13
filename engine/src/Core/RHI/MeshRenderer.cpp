@@ -51,12 +51,25 @@ namespace Engine {
         const std::vector<Vertex3D>& vertices = mesh->GetVertices();
         const std::vector<uint32>& indices = mesh->GetIndices();
         std::vector<MeshGpuSpan> spans;
-        MeshGpuSpan span;
-        span.firstIndex = 0;
-        span.indexCount = static_cast<uint32>(indices.size());
-        span.materialIndex = 0xFFFFFFFFu;
-        spans.push_back(span);
-        std::vector<uint8_t> flags(vertices.size(), static_cast<uint8_t>(0x07));
+        if (!mesh->GetSpans().empty()) {
+            spans.reserve(mesh->GetSpans().size());
+            for (const MeshSpan& src : mesh->GetSpans()) {
+                MeshGpuSpan span;
+                span.firstIndex = src.firstIndex;
+                span.indexCount = src.indexCount;
+                span.materialIndex = src.materialIndex;
+                spans.push_back(span);
+            }
+        } else {
+            MeshGpuSpan span;
+            span.firstIndex = 0;
+            span.indexCount = static_cast<uint32>(indices.size());
+            span.materialIndex = 0xFFFFFFFFu;
+            spans.push_back(span);
+        }
+        std::vector<uint8_t> flags = mesh->GetVertexFlags();
+        if (flags.empty())
+            flags.assign(vertices.size(), static_cast<uint8_t>(0x07));
         MeshGpuResourceKey key;
         key.identity = assetIdentity;
         key.payloadDigest = MeshGpuCache::ComputePayloadDigest(
@@ -98,12 +111,19 @@ namespace Engine {
     bool MeshRenderer::ClearGpuResources() { return m_GpuMeshCache.Clear(); }
 
     void MeshRenderer::ApplyMeshMaterialBinding(
-        const MeshGpuResource& resource, class Shader& shader) {
+        const MeshGpuResource& resource, class Shader& shader,
+        uint32_t spanMaterialIndex) {
         const auto it = m_MeshMaterialBindings.find(resource.Key());
         if (it == m_MeshMaterialBindings.end() || !it->second ||
             !it->second->firstMaterialAvailable || it->second->slots.empty())
             return;
-        const AssetImport::MaterialBindingEntry& slot0 = it->second->slots[0];
+        const auto& slots = it->second->slots;
+        size_t slotIndex = 0;
+        if (spanMaterialIndex < slots.size() &&
+            slots[spanMaterialIndex].available)
+            slotIndex = spanMaterialIndex;
+        if (!slots[slotIndex].available) slotIndex = 0;
+        const AssetImport::MaterialBindingEntry& slot0 = slots[slotIndex];
         shader.SetVec4("u_ObjectColor", slot0.material.baseColorFactor);
         if (slot0.baseColor.gpu && slot0.baseColor.gpu->IsValid()) {
             slot0.baseColor.gpu->GetTexture()->Bind(0);
@@ -510,9 +530,19 @@ namespace Engine {
             m_Shader->SetVec4("u_ObjectColor", &meshComp->m_Color.x);
             m_Shader->SetInt("u_HasTexture", 0);
 
-            ApplyMeshMaterialBinding(*gpu, *m_Shader);
-            gpu->GetVertexArray()->Bind();
-            m_Context.DrawIndexed(gpu->GetVertexArray());
+            if (gpu->Spans().empty()) {
+                ApplyMeshMaterialBinding(*gpu, *m_Shader);
+                gpu->GetVertexArray()->Bind();
+                m_Context.DrawIndexed(gpu->GetVertexArray());
+            } else {
+                for (const MeshGpuSpan& span : gpu->Spans()) {
+                    ApplyMeshMaterialBinding(*gpu, *m_Shader,
+                                             span.materialIndex);
+                    m_Context.DrawIndexedRange(gpu->GetVertexArray(),
+                                               span.firstIndex,
+                                               span.indexCount);
+                }
+            }
         }
 
         // ── 恢复默认深度状态 ──
@@ -751,9 +781,19 @@ namespace Engine {
             }
 
             // ── 绘制 ──
-            ApplyMeshMaterialBinding(*gpu, *m_Shader);
-            gpu->GetVertexArray()->Bind();
-            m_Context.DrawIndexed(gpu->GetVertexArray());
+            if (gpu->Spans().empty()) {
+                ApplyMeshMaterialBinding(*gpu, *m_Shader);
+                gpu->GetVertexArray()->Bind();
+                m_Context.DrawIndexed(gpu->GetVertexArray());
+            } else {
+                for (const MeshGpuSpan& span : gpu->Spans()) {
+                    ApplyMeshMaterialBinding(*gpu, *m_Shader,
+                                             span.materialIndex);
+                    m_Context.DrawIndexedRange(gpu->GetVertexArray(),
+                                               span.firstIndex,
+                                               span.indexCount);
+                }
+            }
         }
 
     m_Shader->Unbind();

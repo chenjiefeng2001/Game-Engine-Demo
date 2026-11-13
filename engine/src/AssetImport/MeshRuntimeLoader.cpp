@@ -103,6 +103,13 @@ MeshRuntimeLoadResult LoadMeshRuntimeAsset(
     auto cpuMesh = std::make_shared<Mesh>();
     cpuMesh->SetVertices(upload.input.vertices);
     cpuMesh->SetIndices(upload.input.indices);
+    std::vector<MeshSpan> cpuSpans;
+    cpuSpans.reserve(upload.input.spans.size());
+    for (const MeshGpuSpan& span : upload.input.spans)
+        cpuSpans.push_back({span.firstIndex, span.indexCount,
+                            span.materialIndex});
+    cpuMesh->SetSpans(cpuSpans);
+    cpuMesh->SetVertexFlags(upload.input.vertexFlags);
     const std::shared_ptr<const MeshGpuResource> gpu =
         renderer.EnsureGpuMesh(cpuMesh, MeshComponent::FoldGuid(guid));
     if (!gpu) {
@@ -119,6 +126,8 @@ MeshRuntimeLoadResult LoadMeshRuntimeAsset(
     result.mesh = std::move(cpuMesh);
     result.key = gpu->Key();
     result.binding = binding.binding;
+    result.spanCount = static_cast<uint32_t>(upload.input.spans.size());
+    result.materialSlotCount = binding.binding->slotCount;
     result.warnings = binding.binding->warnings;
     return result;
 }

@@ -97,7 +97,8 @@ std::vector<uint8_t> MakeTinyPng2x2(uint8_t r, uint8_t g, uint8_t b,
     push32BE(ihdr, 2);
     push32BE(ihdr, 2);
     ihdr.push_back(8);
-    ihdr.push_back(static_cast<uint8_t>(channels == 4 ? 6 : 2));
+    ihdr.push_back(static_cast<uint8_t>(
+        channels == 4 ? 6 : channels == 3 ? 2 : 4));
     ihdr.push_back(0);
     ihdr.push_back(0);
     ihdr.push_back(0);
@@ -265,7 +266,27 @@ TEST(TextureAssetReaderTest, RgbPngDecodesToRgba8) {
     EXPECT_FALSE(r.hasAlpha);
     EXPECT_EQ(r.sourceComponents, 3u);
     EXPECT_EQ(r.rgba8.size(), 16u);
-    EXPECT_EQ(r.rgba8[3], 255);
+    EXPECT_EQ(r.rgba8[0], 90);
+    EXPECT_EQ(r.rgba8[1], 120);
+    EXPECT_EQ(r.rgba8[2], 200);
+    for (size_t i = 0; i < r.rgba8.size(); i += 4) {
+        EXPECT_EQ(r.rgba8[i], 90);
+        EXPECT_EQ(r.rgba8[i + 1], 120);
+        EXPECT_EQ(r.rgba8[i + 2], 200);
+        EXPECT_EQ(r.rgba8[i + 3], 255);
+    }
+}
+
+TEST(TextureAssetReaderTest, RejectsInvalidAndUnsupportedChannelLayouts) {
+    std::vector<uint8_t> garbage = {1, 2, 3, 4, 5};
+    EXPECT_FALSE(Engine::AssetImport::ReadTextureAsset(
+                     garbage, MakeSidecar("normal", "linear"))
+                     .ok);
+    const auto grayAlpha = MakeTinyPng2x2(80, 80, 80, 2);
+    const auto r = Engine::AssetImport::ReadTextureAsset(
+        grayAlpha, MakeSidecar("normal", "linear", 2, 2, 2));
+    EXPECT_FALSE(r.ok);
+    EXPECT_NE(r.error.find("channel"), std::string::npos);
 }
 
 TEST(TextureAssetReaderTest, RejectsRoleColorConflictAndDimMismatch) {
@@ -394,6 +415,47 @@ TEST(TextureGpuCacheGLTest, SrgbUploadReuseAndSemanticsGuard) {
               static_cast<int>(GL_SRGB8_ALPHA8));
     EXPECT_TRUE(cache.Invalidate(key));
     EXPECT_EQ(cache.Size(), 0u);
+}
+
+TEST(TextureGpuCacheGLTest, ColorAndDataUseSeparateCacheEntries) {
+    Engine::Rendering::DebugDraw::Test::DebugDrawGLFixture fixture;
+    ASSERT_TRUE(fixture.Setup()) << fixture.FailStep();
+    ScopedTempDir tmp;
+    const auto png = MakeTinyPng2x2(120, 60, 30);
+    tmp.Write("color.tex.png", png.data(), png.size());
+    const auto colorMeta = MakeSidecar("basecolor", "sRGB");
+    tmp.Write("color.tex.png.tex.meta.json", colorMeta.data(),
+              colorMeta.size());
+    tmp.Write("data.tex.png", png.data(), png.size());
+    const auto dataMeta = MakeSidecar("normal", "linear");
+    tmp.Write("data.tex.png.tex.meta.json", dataMeta.data(),
+              dataMeta.size());
+    const std::string colorAbs = tmp.Path() + "/color.tex.png";
+    const std::string dataAbs = tmp.Path() + "/data.tex.png";
+
+    Engine::TextureGpuResourceKey colorKey;
+    colorKey.identity = 42;
+    colorKey.contentDigest =
+        Engine::TextureGpuCache::HashBytes(png.data(), png.size());
+    colorKey.uploadSemantics = 1;
+    Engine::TextureGpuResourceKey dataKey = colorKey;
+    dataKey.uploadSemantics = 2;
+    Engine::TextureGpuCache cache;
+    const auto color =
+        cache.Acquire(colorKey, colorAbs, 2, 2, true, fixture.Factory());
+    const auto data =
+        cache.Acquire(dataKey, dataAbs, 2, 2, false, fixture.Factory());
+    ASSERT_NE(color, nullptr);
+    ASSERT_NE(data, nullptr);
+    EXPECT_EQ(cache.Size(), 2u);
+    EXPECT_NE(color.get(), data.get());
+    EXPECT_TRUE(color->IsSrgb());
+    EXPECT_FALSE(data->IsSrgb());
+    EXPECT_EQ(ReadBoundInternalFormat(*color->GetTexture(), fixture.GL()),
+              static_cast<int>(GL_SRGB8_ALPHA8));
+    EXPECT_EQ(ReadBoundInternalFormat(*data->GetTexture(), fixture.GL()),
+              static_cast<int>(GL_RGBA8));
+    EXPECT_TRUE(cache.Clear());
 }
 
 TEST(MaterialRuntimeBindingTest, GpuTexturesResolvedThroughCache) {

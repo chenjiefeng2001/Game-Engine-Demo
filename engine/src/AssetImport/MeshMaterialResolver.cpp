@@ -80,13 +80,18 @@ MaterialSlotResolution ResolveMaterialAssetPaths(
             matches.push_back(entry.first);
         }
         if (matches.size() != 1) {
-            result.error =
-                std::string("MATERIAL_SLOT_") +
-                (matches.empty() ? "MISSING" : "AMBIGUOUS") +
-                ": slot " + std::to_string(slot) + " for '" + base +
-                "' (matches=" + std::to_string(matches.size()) + ")";
-            result.slotPaths.clear();
-            return result;
+            if (slot == 0) {
+                result.error =
+                    std::string("MATERIAL_SLOT_") +
+                    (matches.empty() ? "MISSING" : "AMBIGUOUS") +
+                    ": slot " + std::to_string(slot) + " for '" + base +
+                    "' (matches=" + std::to_string(matches.size()) + ")";
+                result.slotPaths.clear();
+                return result;
+            }
+            // P7-C: later slots are optional; runtime falls back to slot 0.
+            result.slotPaths[slot].clear();
+            continue;
         }
         result.slotPaths[slot] = matches[0];
     }

@@ -30,6 +30,9 @@ public:
         std::shared_ptr<Mesh> mesh;
         MeshGpuResourceKey key;
         std::shared_ptr<const AssetImport::MeshMaterialBinding> binding;
+        uint32_t spanCount = 0;
+        uint32_t materialSlotCount = 0;
+        std::string warnings;
     };
 
     struct Failure {

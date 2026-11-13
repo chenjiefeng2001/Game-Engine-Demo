@@ -30,7 +30,7 @@
 
 namespace Engine::Content {
 
-    enum class AssetType : uint8_t { Texture = 0, Script, Mesh = 2, Material = 3 };
+    enum class AssetType : uint8_t { Texture = 0, Script, Mesh = 2, Material = 3, Prefab = 4 };
 
     inline const char* ToString(AssetType t) {
         switch (t) {
@@ -38,6 +38,7 @@ namespace Engine::Content {
             case AssetType::Script: return "Script";
             case AssetType::Mesh: return "Mesh";
             case AssetType::Material: return "Material";
+            case AssetType::Prefab: return "Prefab";
         }
         return "Texture";
     }
@@ -48,6 +49,7 @@ namespace Engine::Content {
         if (s == "Script") { *out = AssetType::Script; return true; }
         if (s == "Mesh") { *out = AssetType::Mesh; return true; }
         if (s == "Material") { *out = AssetType::Material; return true; }
+        if (s == "Prefab") { *out = AssetType::Prefab; return true; }
         return false;
     }
 

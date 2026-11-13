@@ -25,6 +25,8 @@ namespace Engine {
 		void ClearColor(float r, float g, float b, float a) override;
 		void SwapBuffers() override;
 		void DrawIndexed(const std::shared_ptr<VertexArray>& va) override;
+		void DrawIndexedRange(const std::shared_ptr<VertexArray>& va,
+		                      uint32 firstIndex, uint32 indexCount) override;
 		void DrawIndexed_RHI(const std::shared_ptr<RHI::IRHIVertexArray>& va) override;
 		void OnResize(int32 width, int32 height) override;
 

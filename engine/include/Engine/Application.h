@@ -126,6 +126,9 @@ public:
    MeshRenderer *GetProduction3DMeshRenderer() const {
      return m_Production3DMeshRenderer.get();
    }
+   const EditorCamera *GetProduction3DCamera() const {
+     return m_Production3DCamera.get();
+   }
   void SetProductionCameraInput(const EditorCameraInput &input) { m_ProductionCameraInput = input; }
 
   using ProductionDebugDrawCallback =

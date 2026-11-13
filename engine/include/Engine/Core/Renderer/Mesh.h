@@ -27,6 +27,12 @@ namespace Engine {
      * 存储顶点和索引数据。GPU 资源（VBO/IBO/VAO）由 MeshRenderer 或
      * 上层渲染管线在渲染时按需创建。
      */
+    struct MeshSpan {
+        uint32 firstIndex = 0;
+        uint32 indexCount = 0;
+        uint32 materialIndex = 0xFFFFFFFFu;
+    };
+
     class Mesh {
     public:
         Mesh() = default;
@@ -42,6 +48,10 @@ namespace Engine {
         // ── 访问器 ──
         const std::vector<Vertex3D>& GetVertices() const { return m_Vertices; }
         const std::vector<uint32>&   GetIndices()  const { return m_Indices;  }
+        void SetSpans(const std::vector<MeshSpan>& spans) { m_Spans = spans; }
+        const std::vector<MeshSpan>& GetSpans() const { return m_Spans; }
+        void SetVertexFlags(const std::vector<uint8_t>& flags) { m_VertexFlags = flags; }
+        const std::vector<uint8_t>& GetVertexFlags() const { return m_VertexFlags; }
         size_t GetVertexCount() const { return m_Vertices.size(); }
         size_t GetIndexCount()  const { return m_Indices.size(); }
         bool   IsValid()        const { return !m_Vertices.empty() && !m_Indices.empty(); }
@@ -60,6 +70,8 @@ namespace Engine {
     private:
         std::vector<Vertex3D> m_Vertices;
         std::vector<uint32>   m_Indices;
+        std::vector<MeshSpan> m_Spans;
+        std::vector<uint8_t>  m_VertexFlags;
         mutable uint64 m_ContentHash = 0;
         mutable bool   m_ContentHashValid = false;
     };

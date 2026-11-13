@@ -31,12 +31,17 @@
  */
 
 #include "Engine/Core/GameObject/GameObject.h"
+#include "Engine/Core/Resources/ResourceGUID.h"
+#include "Engine/Core/Content/PrefabOverride.h"
+#include "Engine/Core/Content/PrefabReconciliation.h"
 #include "Engine/Core/RHI/IRenderable.h"
 #include "Engine/Core/RHI/MathTypes.h"
 #include <string>
 #include <vector>
 #include <memory>
+#include <optional>
 #include <functional>
+#include <unordered_map>
 
 namespace Engine {
 
@@ -57,6 +62,19 @@ namespace Engine {
     // ============================================================
     // 场景
     // ============================================================
+    struct PrefabInstanceMetadata {
+        ResourceGUID prefabGuid;
+        int64_t sourceRevision = 0;
+        std::string sourceDigest;
+        std::string sourcePath;
+        bool legacySourceIdentity = false;
+        std::unordered_map<uint64, uint64> localToScene;
+        std::vector<Content::PrefabOverrideRecord> overrides;
+        Content::PrefabSyncState syncState = Content::PrefabSyncState::Clean;
+        std::optional<Content::PrefabReconciliationState> reconciliation;
+    };
+    enum class ReparentMode { KeepLocal = 0, KeepWorld = 1 };
+
     class Scene {
     public:
         Scene();
@@ -95,8 +113,11 @@ namespace Engine {
 
         // ── 对象管理 ──
         /** 添加对象到场景 */
+        bool AddEntity(std::shared_ptr<GameObject> obj, uint64 parentId,
+                       std::string* error = nullptr);
         void AddObject(std::shared_ptr<GameObject> obj);
         /** 从场景移除对象（自动调用 OnDestroy） */
+        bool DeleteEntity(uint64 entityId);
         bool RemoveObject(GameObject* obj);
         /** 清空所有对象 */
         void Clear();
@@ -107,6 +128,31 @@ namespace Engine {
 
         /** 按 ID 查找对象（递归，用于 Picking 系统） */
         GameObject* FindByID(uint32 id);
+        GameObject* FindByEntityId(uint64 entityId);
+        const GameObject* FindByEntityId(uint64 entityId) const;
+        uint64 GetParentEntityId(uint64 entityId) const;
+        std::vector<GameObject*> GetAllEntities() const;
+        bool SetEntityParent(uint64 childId, uint64 parentId, ReparentMode mode,
+                             std::string* error = nullptr);
+        /**
+         * @brief Duplicate an entity or its complete subtree with fresh Scene IDs.
+         *        Placement follows the source parent. No partial entity survives
+         *        on failure. Components are copied only by the frozen G3 allowlist.
+         */
+        bool DuplicateEntity(uint64 sourceId, bool includeSubtree,
+                             uint64* newRootId = nullptr,
+                             std::unordered_map<uint64, uint64>* idMap = nullptr,
+                             std::string* error = nullptr);
+        /** Prefab Instance metadata anchored at a Scene Entity root. */
+        bool SetPrefabInstanceMetadata(uint64 rootId,
+                                       const PrefabInstanceMetadata& metadata,
+                                       std::string* error = nullptr);
+        bool GetPrefabInstanceMetadata(uint64 rootId,
+                                       PrefabInstanceMetadata* out) const;
+        bool FindPrefabInstanceForEntity(uint64 entityId, uint64* rootId,
+                                       PrefabInstanceMetadata* out) const;
+        bool RemovePrefabInstanceMetadata(uint64 rootId);
+        bool ValidateComposition(std::string* error = nullptr) const;
         const GameObject* FindByID(uint32 id) const;
 
         /** 根对象数量 */
@@ -154,11 +200,16 @@ namespace Engine {
         }
 
     private:
+        bool RegisterEntityTree(const std::shared_ptr<GameObject>& obj,
+                                std::string* error);
         std::string          m_Name;
         SceneProperties      m_Properties;
         bool                 m_Active = true;
         bool                 m_Visible = true;
         std::vector<std::shared_ptr<GameObject>> m_Objects;
+        std::unordered_map<uint64, GameObject*> m_EntityById;
+        std::unordered_map<uint64, PrefabInstanceMetadata> m_PrefabInstances;
+        uint64 m_NextEntityId = 1;
     };
 
 } // namespace Engine

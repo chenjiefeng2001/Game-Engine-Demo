@@ -293,7 +293,8 @@ namespace AssetImport { struct MeshMaterialBinding; }
          */
         // P6-1B B5-G2: identity-based GPU mesh cache (replaces pointer-key cache)
         void ApplyMeshMaterialBinding(const MeshGpuResource& resource,
-                                    class Shader& shader);
+                                    class Shader& shader,
+                                    uint32_t spanMaterialIndex = 0xFFFFFFFFu);
 
         std::shared_ptr<const MeshGpuResource> GetOrCreateGpuMesh(
             const std::shared_ptr<Mesh>& mesh, uint64_t assetIdentity = 0);

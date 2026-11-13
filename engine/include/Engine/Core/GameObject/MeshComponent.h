@@ -65,6 +65,70 @@ namespace Engine {
         const std::string& GetResolvedAssetPath() const { return m_ResolvedAssetPath; }
         bool IsRuntimeReady() const { return m_RuntimeStatus == MeshRuntimeStatus::Ready; }
 
+        static const char* RuntimeStatusToString(MeshRuntimeStatus status) {
+            switch (status) {
+            case MeshRuntimeStatus::NotRequested: return "NotRequested";
+            case MeshRuntimeStatus::Unloaded: return "Unloaded";
+            case MeshRuntimeStatus::Ready: return "Ready";
+            case MeshRuntimeStatus::MissingAsset: return "MissingAsset";
+            case MeshRuntimeStatus::InvalidAsset: return "InvalidAsset";
+            case MeshRuntimeStatus::UnsupportedAssetType: return "UnsupportedAssetType";
+            case MeshRuntimeStatus::ReaderFailure: return "ReaderFailure";
+            case MeshRuntimeStatus::GPUUploadFailure: return "GPUUploadFailure";
+            case MeshRuntimeStatus::MaterialBindingFailure: return "MaterialBindingFailure";
+            case MeshRuntimeStatus::TextureBindingFailure: return "TextureBindingFailure";
+            case MeshRuntimeStatus::NotCommitted: return "NotCommitted";
+            }
+            return "Unknown";
+        }
+
+        // B6 component-contract properties (Inspector/read-only diagnostics).
+        size_t GetPropertyCount() const override { return 10; }
+        bool GetPropertyDesc(size_t index, ComponentPropertyDesc* out) const override {
+            if (!out) return false;
+            switch (index) {
+            case 0: *out = {"meshGuid", ComponentValueType::String, true}; return true;
+            case 1: *out = {"meshName", ComponentValueType::String, false}; return true;
+            case 2: *out = {"spanCount", ComponentValueType::Int, false}; return true;
+            case 3: *out = {"materialSlotCount", ComponentValueType::Int, false}; return true;
+            case 4: *out = {"runtimeStatus", ComponentValueType::String, false}; return true;
+            case 5: *out = {"runtimeError", ComponentValueType::String, false}; return true;
+            case 6: *out = {"resolvedRevision", ComponentValueType::Int, false}; return true;
+            case 7: *out = {"resolvedAssetPath", ComponentValueType::String, false}; return true;
+            case 8: *out = {"visible", ComponentValueType::Bool, true}; return true;
+            case 9: *out = {"runtimeWarnings", ComponentValueType::String, false}; return true;
+            default: return false;
+            }
+        }
+        bool GetPropertyValue(size_t index, ComponentPropertyValue* out) const override {
+            if (!out) return false;
+            switch (index) {
+            case 0: out->type = ComponentValueType::String; out->stringValue = m_MeshGuid.ToHex(); return true;
+            case 1: out->type = ComponentValueType::String; out->stringValue = MeshName(); return true;
+            case 2: out->type = ComponentValueType::Int; out->intValue = static_cast<int32>(m_SpanCount); return true;
+            case 3: out->type = ComponentValueType::Int; out->intValue = static_cast<int32>(m_MaterialSlotCount); return true;
+            case 4: out->type = ComponentValueType::String; out->stringValue = RuntimeStatusToString(m_RuntimeStatus); return true;
+            case 5: out->type = ComponentValueType::String; out->stringValue = m_RuntimeError; return true;
+            case 6: out->type = ComponentValueType::Int; out->intValue = static_cast<int32>(m_ResolvedRevision); return true;
+            case 7: out->type = ComponentValueType::String; out->stringValue = m_ResolvedAssetPath; return true;
+            case 8: out->type = ComponentValueType::Bool; out->boolValue = m_Visible; return true;
+            case 9: out->type = ComponentValueType::String; out->stringValue = m_RuntimeWarnings; return true;
+            default: return false;
+            }
+        }
+        bool SetPropertyValue(size_t index, const ComponentPropertyValue& value) override {
+            if (index == 0 && value.type == ComponentValueType::String) {
+                if (value.stringValue.empty()) { m_MeshGuid = ResourceGUID::Null; return true; }
+                if (value.stringValue.size() != 32) return false;
+                const ResourceGUID parsed = ResourceGUID::FromHex(value.stringValue);
+                if (parsed.IsNull()) return false;
+                m_MeshGuid = parsed;
+                return true;
+            }
+            if (index == 8 && value.type == ComponentValueType::Bool) { m_Visible = value.boolValue; return true; }
+            return false;
+        }
+
         const char* GetComponentTypeName() const override { return "Mesh"; }
 
         void Serialize(nlohmann::json& json) const override {
@@ -115,14 +179,26 @@ namespace Engine {
     private:
         friend class MeshRuntimeScene;
 
+        std::string MeshName() const {
+            if (m_ResolvedAssetPath.empty()) return {};
+            const size_t slash = m_ResolvedAssetPath.find_last_of("/\\");
+            return slash == std::string::npos ? m_ResolvedAssetPath
+                                          : m_ResolvedAssetPath.substr(slash + 1);
+        }
+
         void SetRuntimeReady(const ResourceGUID& guid, int64_t revision,
                              std::string assetPath,
-                             std::shared_ptr<Mesh> mesh) {
+                             std::shared_ptr<Mesh> mesh, uint32_t spanCount = 0,
+                             uint32_t materialSlotCount = 0,
+                             std::string warnings = {}) {
             m_RuntimeStatus = MeshRuntimeStatus::Ready;
             m_RuntimeError.clear();
             m_ResolvedRevision = revision;
             m_ResolvedAssetPath = std::move(assetPath);
             m_ResolvedGuid = guid;
+            m_SpanCount = spanCount;
+            m_MaterialSlotCount = materialSlotCount;
+            m_RuntimeWarnings = std::move(warnings);
             m_Mesh = std::move(mesh);
         }
 
@@ -136,12 +212,14 @@ namespace Engine {
             }
             m_RuntimeStatus = status;
             m_RuntimeError = std::move(error);
+            m_RuntimeWarnings.clear();
             m_ResolvedRevision = revision;
         }
 
         void SetRuntimeUnbound() {
             m_RuntimeStatus = MeshRuntimeStatus::NotRequested;
             m_RuntimeError.clear();
+            m_RuntimeWarnings.clear();
             m_ResolvedRevision = -1;
             m_ResolvedAssetPath.clear();
             m_ResolvedGuid = ResourceGUID::Null;
@@ -152,7 +230,10 @@ namespace Engine {
         ResourceGUID m_ResolvedGuid = ResourceGUID::Null;
         MeshRuntimeStatus m_RuntimeStatus = MeshRuntimeStatus::NotRequested;
         std::string m_RuntimeError;
+        std::string m_RuntimeWarnings;
         int64_t m_ResolvedRevision = -1;
+        uint32_t m_SpanCount = 0;
+        uint32_t m_MaterialSlotCount = 0;
         std::string m_ResolvedAssetPath;
         std::shared_ptr<Mesh> m_Mesh;
     };

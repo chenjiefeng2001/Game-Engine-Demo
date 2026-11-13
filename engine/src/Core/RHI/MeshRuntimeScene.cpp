@@ -18,6 +18,15 @@ namespace {
 
 const std::string KeyOf(const ResourceGUID& guid) { return guid.ToHex(); }
 
+std::string JoinWarnings(const std::vector<std::string>& warnings) {
+    std::string joined;
+    for (const std::string& w : warnings) {
+        if (!joined.empty()) joined += "\n";
+        joined += w;
+    }
+    return joined;
+}
+
 void CollectMeshComponents(
     GameObject& object,
     std::unordered_map<std::string, std::vector<MeshComponent*>>& out,
@@ -73,7 +82,10 @@ MeshRuntimeScene::SyncStats MeshRuntimeScene::Sync(Scene& scene) {
             for (MeshComponent* mc : list) {
                 mc->SetRuntimeReady(guid, existing->second.revision,
                                     existing->second.assetPath,
-                                    existing->second.mesh);
+                                    existing->second.mesh,
+                                    existing->second.spanCount,
+                                    existing->second.materialSlotCount,
+                                    existing->second.warnings);
             }
             m_Failures.erase(key);
             ++stats.reused;
@@ -115,12 +127,16 @@ MeshRuntimeScene::SyncStats MeshRuntimeScene::Sync(Scene& scene) {
         entry.mesh = loaded.mesh;
         entry.key = loaded.key;
         entry.binding = loaded.binding;
+        entry.spanCount = loaded.spanCount;
+        entry.materialSlotCount = loaded.materialSlotCount;
+        entry.warnings = JoinWarnings(loaded.warnings);
         m_Renderer->SetMeshMaterialBinding(entry.key, entry.binding);
         m_Entries[key] = entry;
         m_Failures.erase(key);
         for (MeshComponent* mc : list) {
             mc->SetRuntimeReady(guid, entry.revision, entry.assetPath,
-                                entry.mesh);
+                                entry.mesh, entry.spanCount,
+                                entry.materialSlotCount, entry.warnings);
         }
         ++stats.loaded;
     }

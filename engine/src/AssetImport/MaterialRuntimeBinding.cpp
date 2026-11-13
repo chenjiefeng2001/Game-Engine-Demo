@@ -216,6 +216,7 @@ MeshMaterialBindingResult BuildMeshMaterialBinding(
                 detail += ": " + binding->warnings.back();
             return Fail(kCodeMaterialBindingInvalid, detail, failureStage);
         }
+        entry.available = true;
         if (slot == 0) binding->firstMaterialAvailable = true;
     }
 
