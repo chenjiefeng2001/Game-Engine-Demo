@@ -139,6 +139,15 @@ static float LegacyFloat(Function&& function) noexcept {
 }
 
 template <typename Function>
+static uint64_t LegacyU64(Function&& function, uint64_t fallback = 0) noexcept {
+    try {
+        return function();
+    } catch (...) {
+        return fallback;
+    }
+}
+
+template <typename Function>
 static uint32_t LegacyUint32(Function&& function) noexcept {
     try {
         return function();
@@ -324,6 +333,200 @@ EDITOR_BRIDGE_API int32_t EditorSession_SetEntityPosition(EditorSessionHandle h,
     });
 }
 
+EDITOR_BRIDGE_API int32_t EditorSession_GetEditorViewProjection(
+    EditorSessionHandle h, float out16[16]) {
+    return LegacyInt32([&]() -> int32_t {
+        if (!h || !out16) return -1;
+        return S(h)->GetEditorViewProjection(out16) ? 0 : -1;
+    });
+}
+EDITOR_BRIDGE_API int32_t EditorSession_GetEntityTransform(
+    EditorSessionHandle h, int32_t index, float out9[9]) {
+    return LegacyInt32([&]() -> int32_t {
+        if (!h || !out9) return -1;
+        return S(h)->GetEntityTransform(index, out9) ? 0 : -1;
+    });
+}
+
+EDITOR_BRIDGE_API int32_t EditorSession_SetEntityTransform(
+    EditorSessionHandle h, int32_t index, const float pos3[3],
+    const float euler3[3], const float scale3[3]) {
+    return LegacyInt32([&]() -> int32_t {
+        if (!h) return -1;
+        return S(h)->SetEntityTransform(index, pos3, euler3, scale3) ? 0 : -1;
+    });
+}
+EDITOR_BRIDGE_API uint64_t EditorSession_GetEntitySceneId(
+    EditorSessionHandle h, int32_t index) {
+    return LegacyU64([&]() -> uint64_t {
+        return h ? S(h)->GetEntitySceneId(index) : 0;
+    });
+}
+
+EDITOR_BRIDGE_API int32_t EditorSession_GetTotalEntityCount(
+    EditorSessionHandle h) {
+    return LegacyInt32([&]() -> int32_t {
+        return h ? S(h)->GetTotalEntityCount() : -1;
+    });
+}
+
+EDITOR_BRIDGE_API uint64_t EditorSession_GetEntityParentId(
+    EditorSessionHandle h, uint64_t entityId) {
+    return LegacyU64([&]() -> uint64_t {
+        return h ? S(h)->GetEntityParentId(entityId) : 0;
+    });
+}
+
+EDITOR_BRIDGE_API int32_t EditorSession_GetEntityChildCount(
+    EditorSessionHandle h, uint64_t entityId) {
+    return LegacyInt32([&]() -> int32_t {
+        return h ? S(h)->GetEntityChildCount(entityId) : -1;
+    });
+}
+
+EDITOR_BRIDGE_API uint64_t EditorSession_GetEntityChildId(
+    EditorSessionHandle h, uint64_t entityId, int32_t childIndex) {
+    return LegacyU64([&]() -> uint64_t {
+        return h ? S(h)->GetEntityChildId(entityId, childIndex) : 0;
+    });
+}
+
+EDITOR_BRIDGE_API int32_t EditorSession_GetEntityNameById(
+    EditorSessionHandle h, uint64_t entityId, char* out, int32_t cap) {
+    return LegacyInt32([&]() -> int32_t {
+        if (!h || !out || cap <= 0) return -1;
+        std::string name;
+        if (!S(h)->GetEntityNameById(entityId, &name)) return -1;
+        const int32_t len = static_cast<int32_t>(name.size());
+        const int32_t copy = (len < cap - 1) ? len : cap - 1;
+        std::memcpy(out, name.data(), static_cast<size_t>(copy));
+        out[copy] = '\0';
+        return len;
+    });
+}
+
+EDITOR_BRIDGE_API int32_t EditorSession_GetEntityTransformById(
+    EditorSessionHandle h, uint64_t entityId, float out9[9]) {
+    return LegacyInt32([&]() -> int32_t {
+        if (!h || !out9) return -1;
+        return S(h)->GetEntityTransformById(entityId, out9) ? 0 : -1;
+    });
+}
+
+EDITOR_BRIDGE_API int32_t EditorSession_SetEntityTransformById(
+    EditorSessionHandle h, uint64_t entityId, const float pos3[3],
+    const float euler3[3], const float scale3[3]) {
+    return LegacyInt32([&]() -> int32_t {
+        if (!h) return -1;
+        return S(h)->SetEntityTransformById(entityId, pos3, euler3, scale3)
+            ? 0 : -1;
+    });
+}
+
+EDITOR_BRIDGE_API int32_t EditorSession_SetEntityParent(
+    EditorSessionHandle h, uint64_t childId, uint64_t parentId,
+    int32_t mode) {
+    return LegacyInt32([&]() -> int32_t {
+        if (!h) return -1;
+        return S(h)->SetEntityParent(childId, parentId, mode) ? 0 : -1;
+    });
+}
+
+EDITOR_BRIDGE_API int32_t EditorSession_DeleteEntityById(
+    EditorSessionHandle h, uint64_t entityId) {
+    return LegacyInt32([&]() -> int32_t {
+        if (!h) return -1;
+        return S(h)->DeleteEntityById(entityId) ? 0 : -1;
+    });
+}
+
+EDITOR_BRIDGE_API int32_t EditorSession_CreatePrefabFromEntity(
+    EditorSessionHandle h, uint64_t entityId, const char* assetName) {
+    return LegacyInt32([&]() -> int32_t {
+        if (!h) return -1;
+        return S(h)->CreatePrefabFromEntity(entityId, assetName);
+    });
+}
+
+EDITOR_BRIDGE_API int32_t EditorSession_InstantiatePrefab(
+    EditorSessionHandle h, int32_t assetIndex, uint64_t parentEntityId,
+    uint64_t* outRootEntityId) {
+    return LegacyInt32([&]() -> int32_t {
+        if (!h) return -1;
+        uint64_t root = 0;
+        if (!S(h)->InstantiatePrefab(assetIndex, parentEntityId, &root))
+            return -1;
+        if (outRootEntityId) *outRootEntityId = root;
+        return 0;
+    });
+}
+
+EDITOR_BRIDGE_API int32_t EditorSession_RenameEntityById(
+    EditorSessionHandle h, uint64_t entityId, const char* newName) {
+    return LegacyInt32([&]() -> int32_t {
+        if (!h || !newName) return -1;
+        return S(h)->RenameEntityById(entityId, newName) ? 0 : -1;
+    });
+}
+EDITOR_BRIDGE_API int32_t EditorSession_DuplicateEntity(
+    EditorSessionHandle h, uint64_t entityId, int32_t includeSubtree,
+    uint64_t* outNewRootId) {
+    return LegacyInt32([&]() -> int32_t {
+        if (!h) return -1;
+        uint64_t created = 0;
+        if (!S(h)->DuplicateEntityById(entityId, includeSubtree != 0, &created))
+            return -1;
+        if (outNewRootId) *outNewRootId = created;
+        return 0;
+    });
+}
+
+
+
+EDITOR_BRIDGE_API int32_t EditorSession_BeginSceneEdit(EditorSessionHandle h,
+                                                        const char* label) {
+    return LegacyInt32([&]() -> int32_t {
+        if (!h) return -1;
+        return S(h)->BeginSceneEdit(label ? label : "scene edit") ? 0 : -1;
+    });
+}
+
+EDITOR_BRIDGE_API int32_t EditorSession_CommitSceneEdit(EditorSessionHandle h) {
+    return LegacyInt32([&]() -> int32_t {
+        return h && S(h)->CommitSceneEdit() ? 0 : -1;
+    });
+}
+
+EDITOR_BRIDGE_API int32_t EditorSession_CancelSceneEdit(EditorSessionHandle h) {
+    return LegacyInt32([&]() -> int32_t {
+        return h && S(h)->CancelSceneEdit() ? 0 : -1;
+    });
+}
+
+EDITOR_BRIDGE_API int32_t EditorSession_UndoSceneEdit(EditorSessionHandle h) {
+    return LegacyInt32([&]() -> int32_t {
+        return h && S(h)->UndoSceneEdit() ? 0 : -1;
+    });
+}
+
+EDITOR_BRIDGE_API int32_t EditorSession_RedoSceneEdit(EditorSessionHandle h) {
+    return LegacyInt32([&]() -> int32_t {
+        return h && S(h)->RedoSceneEdit() ? 0 : -1;
+    });
+}
+
+EDITOR_BRIDGE_API int32_t EditorSession_CanUndoSceneEdit(EditorSessionHandle h) {
+    return LegacyInt32([&]() -> int32_t {
+        return h && S(h)->CanUndoSceneEdit() ? 1 : 0;
+    });
+}
+
+EDITOR_BRIDGE_API int32_t EditorSession_CanRedoSceneEdit(EditorSessionHandle h) {
+    return LegacyInt32([&]() -> int32_t {
+        return h && S(h)->CanRedoSceneEdit() ? 1 : 0;
+    });
+}
+
 EDITOR_BRIDGE_API int32_t EditorSession_DeleteEntity(EditorSessionHandle h,
                                                      int32_t index) {
     return LegacyInt32([&]() -> int32_t {
@@ -482,6 +685,58 @@ EDITOR_BRIDGE_API int32_t EditorSession_GetAssetGuid(EditorSessionHandle h,
         std::memcpy(out, guid.data(), static_cast<size_t>(copy));
         out[copy] = '\0';
         return len;
+    });
+}
+
+EDITOR_BRIDGE_API int32_t EditorSession_GetAssetStatus(EditorSessionHandle h,
+                                                       int32_t index) {
+    return LegacyInt32([&]() -> int32_t {
+        return h ? S(h)->GetAssetStatus(index) : -1;
+    });
+}
+
+static int32_t CopyUtf8Out(const std::string& text, char* out, int32_t cap) {
+    if (!out || cap <= 0) return -1;
+    const int32_t len = static_cast<int32_t>(text.size());
+    const int32_t copy = (len < cap - 1) ? len : cap - 1;
+    std::memcpy(out, text.data(), static_cast<size_t>(copy));
+    out[copy] = '\0';
+    return len;
+}
+
+EDITOR_BRIDGE_API int32_t EditorSession_GetMaterialJson(
+    EditorSessionHandle h, int32_t assetIndex, char* out, int32_t cap) {
+    return LegacyInt32([&]() -> int32_t {
+        if (!h) return -1;
+        std::string text;
+        if (!S(h)->GetMaterialJson(assetIndex, &text)) return -1;
+        return CopyUtf8Out(text, out, cap);
+    });
+}
+
+EDITOR_BRIDGE_API int32_t EditorSession_UpdateMaterial(
+    EditorSessionHandle h, int32_t assetIndex, const char* fieldsJson) {
+    return LegacyInt32([&]() -> int32_t {
+        if (!h || !fieldsJson) return -1;
+        return S(h)->UpdateMaterial(assetIndex, fieldsJson) ? 0 : -1;
+    });
+}
+
+EDITOR_BRIDGE_API int32_t EditorSession_GetAssetDependencies(
+    EditorSessionHandle h, int32_t assetIndex, char* out, int32_t cap) {
+    return LegacyInt32([&]() -> int32_t {
+        if (!h) return -1;
+        std::string text;
+        if (!S(h)->GetAssetDependencies(assetIndex, &text)) return -1;
+        return CopyUtf8Out(text, out, cap);
+    });
+}
+
+EDITOR_BRIDGE_API int32_t EditorSession_ReimportAsset(
+    EditorSessionHandle h, int32_t assetIndex, int32_t discardLocalEdits) {
+    return LegacyInt32([&]() -> int32_t {
+        if (!h) return -1;
+        return S(h)->ReimportAsset(assetIndex, discardLocalEdits != 0);
     });
 }
 
@@ -852,6 +1107,45 @@ EDITOR_BRIDGE_API int32_t EditorSession_GetLastError(EditorSessionHandle h,
         std::memcpy(out, err.data(), static_cast<size_t>(copy));
         out[copy] = '\0';
         return len;
+    });
+}
+
+
+EDITOR_BRIDGE_API int32_t EditorSession_GetPrefabInstanceJson(
+    EditorSessionHandle h, uint64_t entityId, char* out, int32_t cap) {
+    return LegacyInt32([&]() -> int32_t {
+        if (!h || !out || cap <= 0) return -1;
+        std::string json;
+        if (!S(h)->GetPrefabInstanceJsonForEntity(entityId, &json)) return -1;
+        const int32_t len = static_cast<int32_t>(json.size());
+        const int32_t copy = (len < cap - 1) ? len : cap - 1;
+        std::memcpy(out, json.data(), static_cast<size_t>(copy));
+        out[copy] = '\0';
+        return len;
+    });
+}
+EDITOR_BRIDGE_API int32_t EditorSession_RevertOverride(
+    EditorSessionHandle h, uint64_t rootEntityId, uint64_t localId,
+    const char* component, const char* field) {
+    return LegacyInt32([&]() -> int32_t {
+        if (!h || !component || !field) return -1;
+        return S(h)->RevertPrefabOverride(rootEntityId, localId, component,
+                                           field) ? 0 : -1;
+    });
+}
+
+EDITOR_BRIDGE_API int32_t EditorSession_RevertPrefabInstance(
+    EditorSessionHandle h, uint64_t rootEntityId) {
+    return LegacyInt32([&]() -> int32_t {
+        if (!h) return -1;
+        return S(h)->RevertPrefabInstance(rootEntityId) ? 0 : -1;
+    });
+}
+EDITOR_BRIDGE_API int32_t EditorSession_ApplyPrefabOverrides(
+    EditorSessionHandle h, uint64_t rootEntityId) {
+    return LegacyInt32([&]() -> int32_t {
+        if (!h) return -1;
+        return S(h)->ApplyPrefabOverrides(rootEntityId) ? 0 : -1;
     });
 }
 

@@ -62,6 +62,64 @@ constexpr auto kRuntimeShutdownTimeout = std::chrono::seconds(5);
 // 不发布帧、不 pick），等待新的 SET_VIEWPORT_SIZE 请求或 project 重开。
 constexpr int32_t kMaxViewportResizeRetries = 8;
 
+bool ParseU64(const char* text, uint64_t* out) {
+    if (!text || !*text || !out) return false;
+    try {
+        size_t used = 0;
+        const unsigned long long value = std::stoull(text, &used, 10);
+        if (used != std::strlen(text)) return false;
+        *out = static_cast<uint64_t>(value);
+        return true;
+    } catch (...) {
+        return false;
+    }
+}
+
+bool ParseRevertRequest(const char* text, uint64_t* root, uint64_t* local,
+                        std::string* component, std::string* field) {
+    if (!text || !root || !local || !component || !field) return false;
+    std::string value(text);
+    const size_t a = value.find(';');
+    if (a == std::string::npos) return false;
+    const std::string rootText = value.substr(0, a);
+    const std::string rest = value.substr(a + 1);
+    if (!ParseU64(rootText.c_str(), root) || *root == 0) return false;
+    if (rest == "*") {
+        *local = 0;
+        *component = "*";
+        *field = "*";
+        return true;
+    }
+    const size_t b = rest.find(';');
+    if (b == std::string::npos) return false;
+    const size_t c = rest.find(';', b + 1);
+    if (c == std::string::npos) return false;
+    if (rest.find(';', c + 1) != std::string::npos) return false;
+    if (!ParseU64(rest.substr(0, b).c_str(), local) || *local == 0)
+        return false;
+    *component = rest.substr(b + 1, c - b - 1);
+    *field = rest.substr(c + 1);
+    return !component->empty() && !field->empty();
+}
+bool ParseParentRequest(const char* text, uint64_t* child, uint64_t* parent,
+                        int32_t* mode) {
+    if (!text || !child || !parent || !mode) return false;
+    std::string value(text);
+    const size_t a = value.find(';');
+    if (a == std::string::npos) return false;
+    const size_t b = value.find(';', a + 1);
+    if (b == std::string::npos) return false;
+    if (value.find(';', b + 1) != std::string::npos) return false;
+    if (!ParseU64(value.substr(0, a).c_str(), child)) return false;
+    if (!ParseU64(value.substr(a + 1, b - a - 1).c_str(), parent)) return false;
+    try {
+        *mode = std::stoi(value.substr(b + 1));
+    } catch (...) {
+        return false;
+    }
+    return *mode == 0 || *mode == 1;
+}
+
 bool TestFailure(const char* name) {
     const char* value = std::getenv(name);
     return value && std::strcmp(value, "1") == 0;
@@ -1095,6 +1153,8 @@ int32_t EngineHost::SubmitOpenProject(const char* projectRoot,
                                error.c_str());
             return -1;
         }
+        m_LastDuplicatedEntityId.store(0);
+        m_LastInstantiatedEntityId.store(0);
         TeardownMeshRuntime();
         RefreshMeshRuntime();
         if (!m_GraphicsFactory->UncurrentPersistentContext()) {
@@ -2080,8 +2140,29 @@ int32_t EngineHost::FetchCapacityForOp(int32_t op) noexcept {
         return 4096;
     case ENGINE_HOST_OP_GET_COMPONENT_PROPERTY:
         return 512;
+    case ENGINE_HOST_OP_GET_MATERIAL_JSON:
+    case ENGINE_HOST_OP_GET_ASSET_DEPENDENCIES:
+    case ENGINE_HOST_OP_GET_PREFAB_RECONCILIATION_STATUS:
+    case ENGINE_HOST_OP_PREVIEW_PREFAB_RECONCILIATION:
+        return 65536;
     case ENGINE_HOST_OP_GET_ENTITY_POSITION:
         return static_cast<int32_t>(sizeof(float) * 3);
+    case ENGINE_HOST_OP_GET_ENTITY_TRANSFORM:
+        return static_cast<int32_t>(sizeof(float) * 9);
+    case ENGINE_HOST_OP_GET_ENTITY_SCENE_ID:
+    case ENGINE_HOST_OP_GET_LAST_DUPLICATED_ENTITY_ID:
+    case ENGINE_HOST_OP_GET_LAST_INSTANTIATED_ENTITY_ID:
+        return static_cast<int32_t>(sizeof(uint64_t));
+    case ENGINE_HOST_OP_GET_ENTITY_PARENT_ID:
+    case ENGINE_HOST_OP_GET_ENTITY_CHILD_ID:
+        return static_cast<int32_t>(sizeof(uint64_t));
+    case ENGINE_HOST_OP_GET_ENTITY_NAME_BY_ID:
+    case ENGINE_HOST_OP_GET_PREFAB_INSTANCE_JSON:
+        return 4096;
+    case ENGINE_HOST_OP_GET_ENTITY_TRANSFORM_BY_ID:
+        return static_cast<int32_t>(sizeof(float) * 9);
+    case ENGINE_HOST_OP_GET_EDITOR_VIEW_PROJECTION:
+        return static_cast<int32_t>(sizeof(float) * 16);
     default:
         return 0;
     }
@@ -2149,6 +2230,37 @@ int32_t EngineHost::ExecuteSessionOp(int32_t op,
         return m_Session->GetAssetCount();
     case ENGINE_HOST_OP_GET_ASSET_TYPE:
         return m_Session->GetAssetType(arg0);
+    case ENGINE_HOST_OP_GET_ASSET_STATUS:
+        return m_Session->GetAssetStatus(arg0);
+    case ENGINE_HOST_OP_UPDATE_MATERIAL:
+        return m_Session->UpdateMaterial(arg0, text)
+            ? 0
+            : fail("update material failed");
+    case ENGINE_HOST_OP_REIMPORT_ASSET: {
+        const int32_t index = m_Session->ReimportAsset(arg0, arg1 != 0);
+        if (index < 0) return fail("reimport asset failed");
+        return index;
+    }
+    case ENGINE_HOST_OP_SET_ENTITY_TRANSFORM: {
+        if (!floatArg) return fail("set entity transform: missing values");
+        return m_Session->SetEntityTransform(arg0, floatArg,
+                                         floatArg + 3, floatArg + 6)
+            ? 0 : fail("set entity transform failed");
+    }
+    case ENGINE_HOST_OP_UNDO_SCENE:
+        return m_Session->UndoSceneEdit() ? 0 : fail("undo scene failed");
+    case ENGINE_HOST_OP_REDO_SCENE:
+        return m_Session->RedoSceneEdit() ? 0 : fail("redo scene failed");
+    case ENGINE_HOST_OP_CAN_UNDO_SCENE:
+        return m_Session->CanUndoSceneEdit() ? 1 : 0;
+    case ENGINE_HOST_OP_CAN_REDO_SCENE:
+        return m_Session->CanRedoSceneEdit() ? 1 : 0;
+    case ENGINE_HOST_OP_BEGIN_SCENE_EDIT:
+        return m_Session->BeginSceneEdit(text) ? 0 : fail("begin scene edit failed");
+    case ENGINE_HOST_OP_COMMIT_SCENE_EDIT:
+        return m_Session->CommitSceneEdit() ? 0 : fail("commit scene edit failed");
+    case ENGINE_HOST_OP_CANCEL_SCENE_EDIT:
+        return m_Session->CancelSceneEdit() ? 0 : fail("cancel scene edit failed");
     case ENGINE_HOST_OP_IMPORT_ASSET: {
         const int32_t index = m_Session->ImportAsset(text, arg0);
         if (index < 0) return fail("import asset failed");
@@ -2180,6 +2292,131 @@ int32_t EngineHost::ExecuteSessionOp(int32_t op,
             : fail("set component property failed");
     case ENGINE_HOST_OP_IS_DIRTY:
         return m_Session->IsDirty() ? 1 : 0;
+    case ENGINE_HOST_OP_GET_TOTAL_ENTITY_COUNT:
+        return m_Session->GetTotalEntityCount();
+    case ENGINE_HOST_OP_GET_ENTITY_CHILD_COUNT: {
+        uint64_t id = 0;
+        if (!ParseU64(text.c_str(), &id)) return fail("invalid entity id argument");
+        return m_Session->GetEntityChildCount(id);
+    }
+    case ENGINE_HOST_OP_SET_ENTITY_TRANSFORM_BY_ID: {
+        if (!floatArg) return fail("set entity transform: missing values");
+        uint64_t id = 0;
+        if (!ParseU64(text.c_str(), &id)) return fail("invalid entity id argument");
+        return m_Session->SetEntityTransformById(id, floatArg,
+                                                floatArg + 3, floatArg + 6)
+            ? 0 : fail("set entity transform by id failed");
+    }
+    case ENGINE_HOST_OP_SET_ENTITY_PARENT: {
+        uint64_t child = 0;
+        uint64_t parent = 0;
+        int32_t mode = 0;
+        if (!ParseParentRequest(text.c_str(), &child, &parent, &mode))
+            return fail("invalid parent request");
+        return m_Session->SetEntityParent(child, parent, mode)
+            ? 0 : fail("set entity parent failed");
+    }
+    case ENGINE_HOST_OP_DELETE_ENTITY_BY_ID: {
+        uint64_t id = 0;
+        if (!ParseU64(text.c_str(), &id)) return fail("invalid entity id argument");
+        return m_Session->DeleteEntityById(id) ? 0 : fail("delete entity by id failed");
+    }
+    case ENGINE_HOST_OP_RENAME_ENTITY_BY_ID: {
+        uint64_t id = 0;
+        if (!ParseU64(text.c_str(), &id)) return fail("invalid entity id argument");
+        return m_Session->RenameEntityById(id, strArg2 ? strArg2 : "")
+            ? 0 : fail("rename entity by id failed");
+    }
+    case ENGINE_HOST_OP_DUPLICATE_ENTITY: {
+        uint64_t id = 0;
+        if (!ParseU64(text.c_str(), &id)) return fail("invalid entity id argument");
+        uint64_t created = 0;
+        if (!m_Session->DuplicateEntityById(id, arg0 != 0, &created))
+            return fail("duplicate entity failed");
+        m_LastDuplicatedEntityId.store(created);
+        return 0;
+    }
+    case ENGINE_HOST_OP_CREATE_PREFAB_FROM_ENTITY: {
+        uint64_t id = 0;
+        if (!ParseU64(text.c_str(), &id)) return fail("invalid entity id argument");
+        const int32_t idx = m_Session->CreatePrefabFromEntity(
+            id, strArg2 ? strArg2 : "");
+        if (idx < 0) return fail("create prefab failed");
+        return idx;
+    }
+
+    case ENGINE_HOST_OP_INSTANTIATE_PREFAB: {
+        uint64_t parent = 0;
+        if (!text.empty() && !ParseU64(text.c_str(), &parent))
+            return fail("invalid parent entity id argument");
+        uint64_t root = 0;
+        if (!m_Session->InstantiatePrefab(arg0, parent, &root))
+            return fail("instantiate prefab failed");
+        m_LastInstantiatedEntityId.store(root);
+        return 0;
+    }
+
+    case ENGINE_HOST_OP_REVERT_OVERRIDE: {
+        uint64_t root = 0;
+        uint64_t local = 0;
+        std::string component;
+        std::string field;
+        if (!ParseRevertRequest(text.c_str(), &root, &local, &component,
+                                &field)) return fail("invalid revert request");
+        if (component == "*")
+            return m_Session->RevertPrefabInstance(root)
+                ? 0 : fail("revert prefab instance failed");
+        return m_Session->RevertPrefabOverride(root, local, component, field)
+            ? 0 : fail("revert override failed");
+    }
+
+    case ENGINE_HOST_OP_APPLY_PREFAB_OVERRIDES: {
+        uint64_t root = 0;
+        if (!ParseU64(text.c_str(), &root)) return fail("invalid entity id argument");
+        return m_Session->ApplyPrefabOverrides(root)
+            ? 0 : fail("apply prefab overrides failed");
+    }
+
+    case ENGINE_HOST_OP_APPLY_PREFAB_RECONCILIATION: {
+        uint64_t root = 0;
+        if (!ParseU64(text.c_str(), &root)) return fail("invalid entity id argument");
+        return m_Session->ExecutePrefabReconciliation(root)
+            ? 0 : fail("apply prefab reconciliation failed");
+    }
+
+    case ENGINE_HOST_OP_RESOLVE_RECONCILIATION_CONFLICT: {
+        const size_t first = text.find(';');
+        const size_t second = first == std::string::npos
+            ? std::string::npos
+            : text.find(';', first + 1);
+        if (first == std::string::npos || second == std::string::npos)
+            return fail("invalid reconciliation resolve request");
+        const std::string rootText = text.substr(0, first);
+        const std::string conflictId = text.substr(first + 1,
+                                                    second - first - 1);
+        const std::string action = text.substr(second + 1);
+        uint64_t root = 0;
+        if (!ParseU64(rootText.c_str(), &root))
+            return fail("invalid entity id argument");
+        if (conflictId.empty())
+            return fail("reconciliation conflict id is empty");
+        if (action != "take_source" && action != "keep_local" &&
+            action != "manual_edit")
+            return fail("invalid reconciliation action");
+        nlohmann::json value = nullptr;
+        const std::string valueText = strArg2 ? strArg2 : "";
+        if (!valueText.empty()) {
+            try {
+                value = nlohmann::json::parse(valueText);
+            } catch (const std::exception&) {
+                return fail("invalid reconciliation value JSON");
+            }
+        }
+        return m_Session->ResolvePrefabReconciliationConflict(
+            root, conflictId, action, value)
+            ? 0 : fail("resolve reconciliation conflict failed");
+    }
+
     default:
         if (result) {
             FillRejectedResult(result,
@@ -2235,6 +2472,22 @@ int32_t EngineHost::ExecuteFetchOp(int32_t op,
 
     std::string value;
     switch (op) {
+    case ENGINE_HOST_OP_GET_PREFAB_RECONCILIATION_STATUS: {
+        uint64_t root = 0;
+        if (!ParseU64(strArg ? strArg : "", &root))
+            return fail("invalid entity id argument");
+        if (!m_Session->GetPrefabReconciliationStatusJson(root, &value))
+            return fail("get prefab reconciliation status failed");
+        return copyString(value);
+    }
+    case ENGINE_HOST_OP_PREVIEW_PREFAB_RECONCILIATION: {
+        uint64_t root = 0;
+        if (!ParseU64(strArg ? strArg : "", &root))
+            return fail("invalid entity id argument");
+        if (!m_Session->GetPrefabReconciliationPreviewJson(root, &value))
+            return fail("preview prefab reconciliation failed");
+        return copyString(value);
+    }
     case ENGINE_HOST_OP_GET_PRESENTATION_FRAME:
         return FetchPresentationFrame(outBuffer, capacity, result);
     case ENGINE_HOST_OP_PICK:
@@ -2251,12 +2504,74 @@ int32_t EngineHost::ExecuteFetchOp(int32_t op,
     case ENGINE_HOST_OP_GET_ASSET_GUID:
         if (!m_Session->GetAssetGuid(arg0, &value)) return fail("get asset guid failed");
         return copyString(value);
+    case ENGINE_HOST_OP_GET_MATERIAL_JSON:
+        if (!m_Session->GetMaterialJson(arg0, &value)) return fail("get material json failed");
+        return copyString(value);
+    case ENGINE_HOST_OP_GET_ASSET_DEPENDENCIES:
+        if (!m_Session->GetAssetDependencies(arg0, &value))
+            return fail("get asset dependencies failed");
+        return copyString(value);
     case ENGINE_HOST_OP_GET_ENTITY_SPRITE:
         if (!m_Session->GetEntitySprite(arg0, &value)) return fail("get entity sprite failed");
         return copyString(value);
     case ENGINE_HOST_OP_GET_ENTITY_SCRIPT:
         if (!m_Session->GetEntityScript(arg0, &value)) return fail("get entity script failed");
         return copyString(value);
+    case ENGINE_HOST_OP_GET_ENTITY_SCENE_ID: {
+        if (capacity < static_cast<int32_t>(sizeof(uint64_t))) return fail("entity id buffer too small");
+        const uint64_t id = m_Session->GetEntitySceneId(arg0);
+        if (id == 0) return fail("get entity scene id failed");
+        std::memcpy(outBuffer, &id, sizeof(id));
+        return static_cast<int32_t>(sizeof(id));
+    }
+    case ENGINE_HOST_OP_GET_LAST_DUPLICATED_ENTITY_ID: {
+        if (capacity < static_cast<int32_t>(sizeof(uint64_t)))
+            return fail("duplicated entity id buffer too small");
+        const uint64_t id = m_LastDuplicatedEntityId.load();
+        if (id == 0) return fail("no duplicated entity");
+        std::memcpy(outBuffer, &id, sizeof(id));
+        return static_cast<int32_t>(sizeof(id));
+    }
+    case ENGINE_HOST_OP_GET_LAST_INSTANTIATED_ENTITY_ID: {
+        if (capacity < static_cast<int32_t>(sizeof(uint64_t)))
+            return fail("instantiated entity id buffer too small");
+        const uint64_t id = m_LastInstantiatedEntityId.load();
+        if (id == 0) return fail("no instantiated entity");
+        std::memcpy(outBuffer, &id, sizeof(id));
+        return static_cast<int32_t>(sizeof(id));
+    }
+
+    case ENGINE_HOST_OP_GET_PREFAB_INSTANCE_JSON: {
+        uint64_t id = 0;
+        if (!ParseU64(strArg, &id)) return fail("invalid entity id argument");
+        std::string value;
+        if (!m_Session->GetPrefabInstanceJsonForEntity(id, &value))
+            return fail("get prefab instance json failed");
+        return copyString(value);
+    }
+    case ENGINE_HOST_OP_GET_ENTITY_PARENT_ID: {
+        uint64_t id = 0;
+        if (!ParseU64(strArg, &id)) return fail("invalid parent id argument");
+        if (capacity < static_cast<int32_t>(sizeof(uint64_t))) return fail("parent id buffer too small");
+        const uint64_t parent = m_Session->GetEntityParentId(id);
+        std::memcpy(outBuffer, &parent, sizeof(parent));
+        return static_cast<int32_t>(sizeof(parent));
+    }
+    case ENGINE_HOST_OP_GET_ENTITY_CHILD_ID: {
+        uint64_t parent = 0;
+        if (!ParseU64(strArg, &parent)) return fail("invalid child parent argument");
+        if (capacity < static_cast<int32_t>(sizeof(uint64_t))) return fail("child id buffer too small");
+        const uint64_t child = m_Session->GetEntityChildId(parent, arg0);
+        if (child == 0) return fail("get entity child id failed");
+        std::memcpy(outBuffer, &child, sizeof(child));
+        return static_cast<int32_t>(sizeof(child));
+    }
+    case ENGINE_HOST_OP_GET_ENTITY_NAME_BY_ID: {
+        uint64_t id = 0;
+        if (!ParseU64(strArg, &id)) return fail("invalid entity id argument");
+        if (!m_Session->GetEntityNameById(id, &value)) return fail("get entity name by id failed");
+        return copyString(value);
+    }
     case ENGINE_HOST_OP_GET_COMPONENT_PROPERTY: {
         if (!m_Session->GetComponentProperty(arg0,
                                              strArg ? strArg : "",
@@ -2271,6 +2586,47 @@ int32_t EngineHost::ExecuteFetchOp(int32_t op,
         return copyString(value);
     case ENGINE_HOST_OP_GET_WARNINGS:
         return copyString(m_Session->GetWarnings());
+    case ENGINE_HOST_OP_GET_ENTITY_TRANSFORM: {
+        if (capacity < static_cast<int32_t>(sizeof(float) * 9)) {
+            if (result) FillRejectedResult(result, ENGINE_HOST_STATUS_INVALID_STATE,
+                                         ENGINE_HOST_STAGE_EDIT,
+                                         "get entity transform needs a 36-byte buffer");
+            return -1;
+        }
+        float transform[9] = {};
+        if (!m_Session->GetEntityTransform(arg0, transform))
+            return fail("get entity transform failed");
+        std::memcpy(outBuffer, transform, sizeof(transform));
+        return static_cast<int32_t>(sizeof(transform));
+    }
+    case ENGINE_HOST_OP_GET_ENTITY_TRANSFORM_BY_ID: {
+        if (capacity < static_cast<int32_t>(sizeof(float) * 9)) {
+            if (result) FillRejectedResult(result, ENGINE_HOST_STATUS_INVALID_STATE,
+                                         ENGINE_HOST_STAGE_EDIT,
+                                         "get entity transform needs a 36-byte buffer");
+            return -1;
+        }
+        uint64_t id = 0;
+        if (!ParseU64(strArg, &id)) return fail("invalid entity id argument");
+        float transform[9] = {};
+        if (!m_Session->GetEntityTransformById(id, transform))
+            return fail("get entity transform by id failed");
+        std::memcpy(outBuffer, transform, sizeof(transform));
+        return static_cast<int32_t>(sizeof(transform));
+    }
+    case ENGINE_HOST_OP_GET_EDITOR_VIEW_PROJECTION: {
+        if (capacity < static_cast<int32_t>(sizeof(float) * 16)) {
+            if (result) FillRejectedResult(result, ENGINE_HOST_STATUS_INVALID_STATE,
+                                         ENGINE_HOST_STAGE_EDIT,
+                                         "get editor camera needs a 64-byte buffer");
+            return -1;
+        }
+        float viewProj[16] = {};
+        if (!m_Session->GetEditorViewProjection(viewProj))
+            return fail("get editor camera failed");
+        std::memcpy(outBuffer, viewProj, sizeof(viewProj));
+        return static_cast<int32_t>(sizeof(viewProj));
+    }
     case ENGINE_HOST_OP_GET_ENTITY_POSITION: {
         if (capacity < static_cast<int32_t>(sizeof(float) * 3)) {
             if (result) {
@@ -2715,7 +3071,7 @@ uint32_t EngineHost::ResolveSceneIndexForEntityId(uint32_t entityId) noexcept {
     // 1) 身份判定：实体是否仍存在于场景中。
     if (scene->FindByID(entityId) == nullptr) return ENGINE_HOST_PICK_INDEX_NONE;
     // 2) 定位下标：与 `EditorSession` 的 entityIndex 使用同一个容器与同一顺序。
-    const auto& objects = scene->GetObjects();
+    const auto objects = scene->GetAllEntities();
     for (size_t i = 0; i < objects.size(); ++i) {
         if (objects[i] && objects[i]->GetID() == entityId) {
             return static_cast<uint32_t>(i);

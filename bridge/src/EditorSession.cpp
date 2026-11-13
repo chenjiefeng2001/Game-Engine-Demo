@@ -10,13 +10,23 @@
 #include <AssetImport/ObjParser.h>
 #include <AssetImport/ImportDigest.h>
 #include <AssetImport/MeshAssetWriter.h>
+#include <AssetImport/MaterialAssetReader.h>
+#include <AssetImport/MeshMaterialResolver.h>
 #include <AssetImport/TexturePreprocess.h>
 #include <AssetImport/ImportLimits.h>
 #include <nlohmann/json.hpp>
 #include <Engine/Application.h>
+#include <Engine/Editor/EditorCamera.h>
 #include <Engine/Core/Content/AtomicFile.h>
 #include <Engine/Core/Content/RevisionStore.h>
 #include <Engine/Core/Content/SceneSerializerV1.h>
+#include <Engine/Core/Content/PrefabAsset.h>
+#include <Engine/Core/Content/PrefabSerialization.h>
+#include <Engine/Core/Content/PrefabOverrideModel.h>
+#include <Engine/Core/Content/PrefabApplyCandidate.h>
+#include <Engine/Core/Content/PrefabApplyRecord.h>
+#include <Engine/Core/Content/PrefabReconciliationSources.h>
+#include <chrono>
 #include <Engine/Core/Content/Utf8Path.h>
 #include <Engine/Core/GameObject/GameObject.h>
 #include <Engine/Core/GameObject/Component.h>
@@ -31,8 +41,11 @@
 #include <Engine/Scripting/ScriptAPI.h>
 
 #include <map>
+#include <unordered_set>
 #include <algorithm>
 #include <atomic>
+#include <cmath>
+#include <filesystem>
 #include <cctype>
 #include <cstdlib>
 #include <cstring>
@@ -231,6 +244,32 @@ namespace {
         return false;
     }
 
+    bool JsonToPropertyValue(const nlohmann::json& value,
+                            Engine::ComponentValueType type,
+                            Engine::ComponentPropertyValue* out) {
+        if (!out) return false;
+        out->type = type;
+        switch (type) {
+        case Engine::ComponentValueType::Bool:
+            if (!value.is_boolean()) return false;
+            out->boolValue = value.get<bool>();
+            return true;
+        case Engine::ComponentValueType::Int:
+            if (!value.is_number_integer()) return false;
+            try { out->intValue = value.get<int32>(); } catch (...) { return false; }
+            return true;
+        case Engine::ComponentValueType::Float:
+            if (!value.is_number()) return false;
+            try { out->floatValue = value.get<float>(); } catch (...) { return false; }
+            return true;
+        case Engine::ComponentValueType::String:
+            if (!value.is_string()) return false;
+            out->stringValue = value.get<std::string>();
+            return true;
+        }
+        return false;
+    }
+
     int FindPropertyIndex(Engine::Component* comp, const std::string& propName) {
         if (!comp) return -1;
         const size_t n = comp->GetPropertyCount();
@@ -241,6 +280,468 @@ namespace {
         }
         return -1;
     }
+    std::string PrefabSyncStateText(Engine::Content::PrefabSyncState state) {
+        switch (state) {
+        case Engine::Content::PrefabSyncState::Clean: return "clean";
+        case Engine::Content::PrefabSyncState::Overrides: return "overrides";
+        case Engine::Content::PrefabSyncState::ApplyPending: return "apply_pending";
+        case Engine::Content::PrefabSyncState::RecoveryRequired: return "recovery_required";
+        case Engine::Content::PrefabSyncState::Conflict: return "conflict";
+        }
+        return "recovery_required";
+    }
+
+    nlohmann::json PrefabInstanceMetadataJson(
+        const Engine::PrefabInstanceMetadata& metadata,
+        int64_t sourceRevision, const std::string& sourceDigest,
+        const std::string& sourcePath, const std::vector<Engine::Content::PrefabOverrideRecord>& overrides,
+        Engine::Content::PrefabSyncState syncState) {
+        nlohmann::json json = nlohmann::json::object();
+        json["prefabGuid"] = metadata.prefabGuid.ToHex();
+        json["sourceRevision"] = sourceRevision;
+        json["sourceDigest"] = sourceDigest;
+        json["sourcePath"] = sourcePath;
+        json["legacySourceIdentity"] = metadata.legacySourceIdentity;
+        nlohmann::json map = nlohmann::json::object();
+        for (const auto& [localId, sceneId] : metadata.localToScene)
+            map[std::to_string(localId)] = sceneId;
+        json["localToScene"] = std::move(map);
+        nlohmann::json records = nlohmann::json::array();
+        for (const auto& record : overrides) {
+            records.push_back({{"localId", record.localId},
+                               {"component", record.component},
+                               {"field", record.field},
+                               {"value", record.value}});
+        }
+        json["overrides"] = std::move(records);
+        json["syncState"] = PrefabSyncStateText(syncState);
+        return json;
+    }
+
+    std::string PrefabDecisionText(
+        Engine::Content::PrefabReconciliationDecision decision) {
+        switch (decision) {
+        case Engine::Content::PrefabReconciliationDecision::TakeLatest:
+            return "take_latest";
+        case Engine::Content::PrefabReconciliationDecision::KeepLocal:
+            return "keep_local";
+        case Engine::Content::PrefabReconciliationDecision::Conflict:
+            return "conflict";
+        }
+        return "conflict";
+    }
+
+    std::string PrefabStructuralKindText(
+        Engine::Content::PrefabStructuralChangeKind kind) {
+        switch (kind) {
+        case Engine::Content::PrefabStructuralChangeKind::AddEntity:
+            return "add_entity";
+        case Engine::Content::PrefabStructuralChangeKind::DeleteEntity:
+            return "delete_entity";
+        case Engine::Content::PrefabStructuralChangeKind::SetName:
+            return "set_name";
+        case Engine::Content::PrefabStructuralChangeKind::SetParent:
+            return "set_parent";
+        case Engine::Content::PrefabStructuralChangeKind::AddComponent:
+            return "add_component";
+        case Engine::Content::PrefabStructuralChangeKind::RemoveComponent:
+            return "remove_component";
+        }
+        return "unknown";
+    }
+
+    nlohmann::json PrefabConflictJson(
+        const Engine::Content::PrefabReconciliationConflict& conflict) {
+        nlohmann::json item = {
+            {"id", conflict.id},
+            {"type", Engine::Content::PrefabConflictTypeText(conflict.type)},
+            {"localId", conflict.localId},
+            {"detail", conflict.detail},
+            {"base", conflict.base},
+            {"latest", conflict.latest},
+            {"local", conflict.local}
+        };
+        if (!conflict.component.empty()) item["component"] = conflict.component;
+        if (!conflict.field.empty()) item["field"] = conflict.field;
+        return item;
+    }
+
+    nlohmann::json PrefabReconciliationPlanJson(
+        const Engine::Content::PrefabReconciliationPlan& plan) {
+        nlohmann::json json = nlohmann::json::object();
+        json["outOfDate"] = plan.outOfDate;
+        json["hasConflicts"] = plan.hasConflicts;
+        json["fields"] = nlohmann::json::array();
+        for (const auto& field : plan.fields) {
+            json["fields"].push_back({
+                {"decision", PrefabDecisionText(field.decision)},
+                {"localId", field.localId},
+                {"component", field.component},
+                {"field", field.field},
+                {"base", field.base},
+                {"latest", field.latest},
+                {"local", field.local},
+                {"conflictId", field.conflictId}
+            });
+        }
+        json["structural"] = nlohmann::json::array();
+        for (const auto& change : plan.structural) {
+            nlohmann::json item = {
+                {"kind", PrefabStructuralKindText(change.kind)},
+                {"localId", change.localId},
+                {"parentLocalId", change.parentLocalId},
+                {"name", change.name},
+                {"component", change.component},
+                {"automatic", change.automatic},
+                {"conflictId", change.conflictId}
+            };
+            if (!change.data.is_null()) item["data"] = change.data;
+            if (!change.components.empty()) {
+                item["components"] = nlohmann::json::array();
+                for (const auto& component : change.components) {
+                    item["components"].push_back(
+                        {{"type", component.type}, {"data", component.data}});
+                }
+            }
+            json["structural"].push_back(std::move(item));
+        }
+        json["overrides"] = nlohmann::json::array();
+        for (const auto& override : plan.overrides) {
+            json["overrides"].push_back({
+                {"decision", PrefabDecisionText(override.decision)},
+                {"localId", override.localId},
+                {"component", override.component},
+                {"field", override.field},
+                {"base", override.base},
+                {"latestBase", override.latestBase},
+                {"value", override.value},
+                {"conflictId", override.conflictId}
+            });
+        }
+        json["conflicts"] = nlohmann::json::array();
+        for (const auto& conflict : plan.conflicts)
+            json["conflicts"].push_back(PrefabConflictJson(conflict));
+        json["validationErrors"] = plan.validationErrors;
+        return json;
+    }
+    bool DerivePrefabCandidatePath(const std::string& oldPath,
+                                   const std::string& oldDigest,
+                                   const std::string& newDigest,
+                                   std::string* out) {
+        if (!out || oldDigest.size() != 16 || newDigest.size() != 16) return false;
+        const std::string prefix = "assets/prefabs/";
+        const std::string suffix = ".prefab.json";
+        if (oldPath.rfind(prefix, 0) != 0 ||
+            oldPath.size() <= prefix.size() + suffix.size() ||
+            oldPath.compare(oldPath.size() - suffix.size(), suffix.size(), suffix) != 0)
+            return false;
+        const std::string base = oldPath.substr(prefix.size(),
+            oldPath.size() - prefix.size() - suffix.size());
+        const size_t dot = base.find_last_of('.');
+        if (dot == std::string::npos || dot == 0 ||
+            base.substr(dot + 1) != oldDigest)
+            return false;
+        const std::string stem = base.substr(0, dot);
+        for (const char c : stem)
+            if (!((c >= '0' && c <= '9') || (c >= 'A' && c <= 'Z') ||
+                  (c >= 'a' && c <= 'z') || c == '_' || c == '-'))
+                return false;
+        *out = prefix + stem + "." + newDigest + suffix;
+        return true;
+    }
+
+    std::string MakeApplyTransactionId(uint64_t rootEntityId) {
+        return "apply-" + std::to_string(rootEntityId) + "-" +
+               std::to_string(std::chrono::steady_clock::now()
+                                  .time_since_epoch().count());
+    }
+} // namespace
+
+namespace {
+
+bool LoadRecoveryManifest(const Engine::Content::ProjectRoot& root,
+                          const std::string& manifestPath,
+                          Engine::Content::ContentRegistry* out,
+                          std::string* error) {
+    if (!out) return false;
+    Engine::Content::ManifestLoadOptions options;
+    options.root = &root;
+    options.allowLegacyAbsolute = false;
+    options.caseMode = root.CaseMode();
+    if (!out->LoadManifest(manifestPath, options)) {
+        if (error) *error = "apply recovery: committed Manifest invalid";
+        return false;
+    }
+    return true;
+}
+
+bool LoadRecoveryScene(const Engine::Content::RevisionStore& revisions,
+                       Engine::Content::SceneSnapshot* out, std::string* error) {
+    if (!out) return false;
+    std::string bytes;
+    if (!revisions.ReadCommittedScene("", &bytes)) {
+        if (error) *error = "apply recovery: committed Scene unreadable";
+        return false;
+    }
+    nlohmann::json json;
+    try {
+        json = nlohmann::json::parse(bytes);
+    } catch (const std::exception& ex) {
+        if (error) *error = "apply recovery: committed Scene JSON invalid: " +
+                            std::string(ex.what());
+        return false;
+    }
+    std::string parseError;
+    if (!Engine::Content::DeserializeSnapshot(json, *out, parseError)) {
+        if (error) *error = "apply recovery: committed Scene invalid: " + parseError;
+        return false;
+    }
+    return true;
+}
+
+bool FindSerializedInstance(Engine::Content::SceneSnapshot* snapshot,
+                            uint64_t rootEntityId,
+                            Engine::Content::SerializedEntity** out,
+                            std::string* error) {
+    if (!snapshot || !out) return false;
+    Engine::Content::SerializedEntity* target = nullptr;
+    for (auto& entity : snapshot->entities) {
+        if (entity.entityId != rootEntityId) continue;
+        if (target) {
+            if (error) *error = "apply recovery: duplicate instance anchor";
+            return false;
+        }
+        target = &entity;
+    }
+    if (!target || !target->prefabInstance.has_value()) {
+        if (error) *error = "apply recovery: instance metadata missing";
+        return false;
+    }
+    *out = target;
+    return true;
+}
+
+bool RecoverySceneMatches(const Engine::Content::SerializedPrefabInstance& meta,
+                          const Engine::Content::PrefabApplyRecord& record,
+                          bool* isNew, std::string* error) {
+    if (!isNew) return false;
+    *isNew = false;
+    if (meta.prefabGuid != record.prefabGuid) {
+        if (error) *error = "apply recovery: instance GUID mismatch";
+        return false;
+    }
+    if (meta.sourceDigest == record.newDigest &&
+        meta.sourcePath == record.newPath) {
+        *isNew = true;
+        return true;
+    }
+    if (meta.sourceDigest != record.oldSourceDigest ||
+        meta.sourcePath != record.oldSourcePath) {
+        if (error) *error = "apply recovery: instance source is neither old nor new";
+        return false;
+    }
+    return true;
+}
+
+bool PublishRecoveryPhase2(
+    const Engine::Content::ProjectRoot& root,
+    Engine::Content::RevisionStore* revisions,
+    const Engine::Content::PrefabApplyRecord& record,
+    Engine::Content::SceneSnapshot* snapshot,
+    const std::string& candidateManifest,
+    bool* recoveryRequired,
+    std::string* error) {
+    if (!revisions || !snapshot) return false;
+    if (recoveryRequired) *recoveryRequired = false;
+    Engine::Content::SerializedEntity* target = nullptr;
+    if (!FindSerializedInstance(snapshot, record.instanceRootEntityId, &target,
+                                error))
+        return false;
+    auto& meta = *target->prefabInstance;
+    if (meta.prefabGuid != record.prefabGuid ||
+        meta.sourceDigest != record.oldSourceDigest ||
+        meta.sourcePath != record.oldSourcePath) {
+        if (error) *error = "apply recovery: Phase 2 source mismatch";
+        return false;
+    }
+    meta.sourceRevision = record.phase1Revision >= 1
+        ? record.phase1Revision
+        : static_cast<int64_t>(revisions->Revision());
+    meta.sourceDigest = record.newDigest;
+    meta.sourcePath = record.newPath;
+    meta.legacySourceIdentity = false;
+    meta.overrides.clear();
+    meta.syncState = Engine::Content::PrefabSyncState::Clean;
+    const std::string scene = Engine::Content::SerializeSnapshot(*snapshot).dump(2);
+    const auto published = revisions->Publish(root, candidateManifest, scene);
+    if (!published.ok) {
+        if (recoveryRequired) *recoveryRequired = published.recoveryRequired;
+        if (error) *error = "apply recovery: Phase 2 Publish failed: " +
+                            published.diagnostic;
+        return false;
+    }
+    return true;
+}
+
+bool RecoverOnePrefabApplyRecord(
+    const Engine::Content::ProjectRoot& root,
+    Engine::Content::RevisionStore* revisions,
+    const Engine::Content::PrefabApplyRecord& record,
+    std::string* error) {
+    if (record.state == Engine::Content::PrefabApplyState::RecoveryRequired) {
+        if (error) *error = "apply recovery: record requires explicit recovery";
+        return false;
+    }
+    const int64_t current = revisions->Revision();
+    Engine::Content::ContentRegistry registry;
+    std::string parseError;
+    if (!LoadRecoveryManifest(root, revisions->CommittedManifestPath(), &registry,
+                              &parseError))
+        return false;
+    Engine::Content::SceneSnapshot snapshot;
+    if (!LoadRecoveryScene(*revisions, &snapshot, &parseError))
+        return false;
+    Engine::Content::SerializedEntity* target = nullptr;
+    if (!FindSerializedInstance(&snapshot, record.instanceRootEntityId, &target,
+                                &parseError))
+        return false;
+    bool sceneNew = false;
+    if (!RecoverySceneMatches(*target->prefabInstance, record, &sceneNew,
+                              &parseError))
+        return false;
+    const std::string manifestPath = registry.ResolvePath(record.prefabGuid);
+    const bool manifestNew = manifestPath == record.newPath;
+    const bool manifestOld = manifestPath == record.oldSourcePath;
+
+    if (sceneNew && manifestNew) {
+        if (!Engine::Content::RemovePrefabApplyRecord(
+                root, record.prefabGuid, record.instanceRootEntityId, &parseError))
+            return false;
+        return true;
+    }
+    if (current == record.oldRevisionSnapshot) {
+        if (record.state == Engine::Content::PrefabApplyState::Prepared &&
+            manifestOld && !sceneNew) {
+            if (!Engine::Content::RemovePrefabApplyRecord(
+                    root, record.prefabGuid, record.instanceRootEntityId,
+                    &parseError))
+                return false;
+            return true;
+        }
+        if (error) *error = "apply recovery: old revision has inconsistent state";
+        return false;
+    }
+    if (!manifestNew) {
+        if (error) *error = "apply recovery: current Manifest is not Phase 1 candidate";
+        return false;
+    }
+    if (record.state == Engine::Content::PrefabApplyState::ScenePublished) {
+        if (error) *error = "apply recovery: Phase 2 record has old Scene";
+        return false;
+    }
+    if (record.state == Engine::Content::PrefabApplyState::Prepared) {
+        if (record.phase1Revision >= 1 && current != record.phase1Revision) {
+            if (error) *error = "apply recovery: Phase 1 revision mismatch";
+            return false;
+        }
+    } else if (record.phase1Revision >= 1 &&
+               current != record.phase1Revision) {
+        if (error) *error = "apply recovery: current is not Phase 1 revision";
+        return false;
+    }
+    std::vector<uint8_t> manifestBytes;
+    if (!ReadAllBytesFromPath(revisions->CommittedManifestPath(),
+                              &manifestBytes)) {
+        if (error) *error = "apply recovery: committed Manifest unreadable";
+        return false;
+    }
+    const std::string candidateManifest(manifestBytes.begin(),
+                                        manifestBytes.end());
+    Engine::Content::PrefabApplyRecord effective = record;
+    if (effective.state == Engine::Content::PrefabApplyState::Prepared) {
+        effective.state = Engine::Content::PrefabApplyState::PrefabPublished;
+        effective.phase1Revision = current;
+        effective.newSourceRevision = current;
+        effective.newInstanceMetadata["sourceRevision"] = current;
+        if (!Engine::Content::WritePrefabApplyRecord(root, effective,
+                                                      &parseError))
+            return false;
+    }
+    bool recoveryRequired = false;
+    if (!PublishRecoveryPhase2(root, revisions, effective, &snapshot,
+                              candidateManifest, &recoveryRequired,
+                              &parseError)) {
+        if (recoveryRequired) {
+            effective.state = Engine::Content::PrefabApplyState::RecoveryRequired;
+            Engine::Content::WritePrefabApplyRecord(root, effective, nullptr);
+        }
+        if (error) *error = parseError;
+        return false;
+    }
+    effective.state = Engine::Content::PrefabApplyState::ScenePublished;
+    effective.phase2Revision = static_cast<int64_t>(revisions->Revision());
+    effective.newInstanceMetadata["sourceRevision"] = effective.phase1Revision;
+    if (!Engine::Content::WritePrefabApplyRecord(root, effective, &parseError)) {
+        if (error) *error = "apply recovery: ScenePublished record update failed: " +
+                            parseError;
+        return false;
+    }
+    if (!Engine::Content::RemovePrefabApplyRecord(
+            root, effective.prefabGuid, effective.instanceRootEntityId,
+            &parseError)) {
+        if (error) *error = parseError;
+        return false;
+    }
+    return true;
+}
+
+bool RecoverPrefabApplyOnStartup(const Engine::Content::ProjectRoot& root,
+                                 Engine::Content::RevisionStore* revisions,
+                                 std::string* error) {
+    if (!revisions) return false;
+    const std::string dir = root.Path() + "/.engine-content/prefab-apply";
+    std::error_code ec;
+    if (!std::filesystem::exists(Engine::Content::PathFromUtf8(dir), ec)) {
+        if (ec) {
+            if (error) *error = "apply recovery: cannot inspect recovery directory";
+            return false;
+        }
+        return true;
+    }
+    std::vector<std::string> files;
+    for (const auto& item : std::filesystem::directory_iterator(
+             Engine::Content::PathFromUtf8(dir), ec)) {
+        if (ec) {
+            if (error) *error = "apply recovery: cannot enumerate recovery directory";
+            return false;
+        }
+        if (item.is_regular_file(ec) && !ec &&
+            item.path().extension() == ".json")
+            files.push_back(Engine::Content::PathToUtf8(item.path()));
+    }
+    std::sort(files.begin(), files.end());
+    for (const auto& file : files) {
+        std::vector<uint8_t> bytes;
+        if (!ReadAllBytesFromPath(file, &bytes)) {
+            if (error) *error = "apply recovery: recovery record unreadable: " + file;
+            return false;
+        }
+        const std::string text(bytes.begin(), bytes.end());
+        Engine::Content::PrefabApplyRecord record;
+        std::string parseError;
+        if (!Engine::Content::ParsePrefabApplyRecord(text, &record,
+                                                      &parseError)) {
+            if (error) *error = "apply recovery: " + parseError + " (" + file + ")";
+            return false;
+        }
+        if (!RecoverOnePrefabApplyRecord(root, revisions, record, &parseError)) {
+            if (error) *error = parseError;
+            return false;
+        }
+    }
+    return true;
+}
+
 } // namespace
 
 bool EditorSession::OpenProject(const std::string& manifestPath,
@@ -296,6 +797,11 @@ bool EditorSession::OpenProjectInternal(const std::string& projectRoot,
     }
     const bool versioned =
         revisionOpen.state == Engine::Content::RevisionOpenState::Current;
+    if (versioned) {
+        std::string recoveryError;
+        if (!RecoverPrefabApplyOnStartup(root, &revisions, &recoveryError))
+            return Fail("open project: RecoveryRequired: " + recoveryError);
+    }
 
     // M1-B：严格候选加载。revision 内清单必须是规范工程相对路径；
     // 旧工程（无 current）保留 K4.4 legacy 绝对路径兼容。
@@ -307,9 +813,9 @@ bool EditorSession::OpenProjectInternal(const std::string& projectRoot,
     loadOptions.warnings = &pathWarnings;
 
     const std::string manifestLoadPath =
-        versioned ? revisionOpen.manifestPath : manifestRes.path;
+        versioned ? revisions.CommittedManifestPath() : manifestRes.path;
     const std::string sceneLoadPath =
-        versioned ? revisionOpen.scenePath : sceneRes.path;
+        versioned ? revisions.CommittedScenePath() : sceneRes.path;
 
     Engine::Content::ContentRegistry reg;
     if (!reg.LoadManifest(manifestLoadPath, loadOptions)) {
@@ -363,10 +869,16 @@ bool EditorSession::OpenProjectInternal(const std::string& projectRoot,
     }
 
     m_Root = std::move(root);
+    LoadMaterialEdits();
     m_Revisions = std::move(revisions);
     m_Reg = std::move(reg);
     m_EditScene = std::move(scene);
     m_Bindings = std::move(r.bindings);
+    m_BindingsById = std::move(r.bindingsById);
+    m_SavedSceneJson = CaptureSceneJson();
+    m_HasSavedScene = true;
+    m_SceneHistory.clear();
+    m_SceneHistoryCursor = 0;
     m_ScenePath = sceneRes.path;
     m_ManifestPath = manifestRes.path;
     m_Dirty = false;
@@ -407,7 +919,7 @@ bool EditorSession::SaveProject() {
         }
     }
     Engine::Content::SceneSnapshot live =
-        Engine::Content::CaptureScene(*m_EditScene, m_Bindings);
+        Engine::Content::CaptureSceneById(*m_EditScene, m_BindingsById);
     const std::string manifestJson = canonical.SerializeManifest();
     const std::string sceneJson =
         Engine::Content::SerializeSnapshot(live).dump(2);
@@ -425,6 +937,8 @@ bool EditorSession::SaveProject() {
                     published.diagnostic);
     }
     m_Reg = std::move(canonical);
+    m_SavedSceneJson = sceneJson;
+    m_HasSavedScene = true;
     m_Dirty = false;
     Engine::Log::Info("[EditorBridge] project saved: revision {} ({} entities)",
                       published.revision, live.entities.size());
@@ -467,6 +981,2077 @@ int32_t EditorSession::CreateEntity(const char* name) {
     Engine::Log::Info("[EditorBridge] entity created: {}", unique);
     Emit(EV_ENTITY_CREATED, unique);
     return static_cast<int32_t>(m_EditScene->GetObjectCount()) - 1;
+    }
+
+uint64 EditorSession::GetEntitySceneId(int32_t index) const {
+    if (!m_EditScene || index < 0 ||
+        index >= static_cast<int32_t>(m_EditScene->GetObjectCount()))
+        return 0;
+    return m_EditScene->GetObjects()[static_cast<size_t>(index)]->GetSceneEntityId();
+}
+
+int32_t EditorSession::GetTotalEntityCount() const {
+    return m_EditScene ? static_cast<int32_t>(m_EditScene->GetAllEntities().size()) : -1;
+}
+
+bool EditorSession::SetEntityParent(uint64 childId, uint64 parentId,
+                                    int32_t mode) {
+    if (!m_EditScene) return Fail("set parent: no project loaded");
+    if (mode != 0 && mode != 1) return Fail("set parent: invalid mode");
+    std::string error;
+    const Engine::ReparentMode reparent =
+        mode == 1 ? Engine::ReparentMode::KeepWorld
+                  : Engine::ReparentMode::KeepLocal;
+    if (!m_EditScene->SetEntityParent(childId, parentId, reparent, &error))
+        return Fail("set parent failed: " + error);
+    RealignBindings();
+    MarkDirty();
+    Emit(EV_ENTITY_MOVED, "id=" + std::to_string(childId));
+    return true;
+}
+
+bool EditorSession::DeleteEntityById(uint64 entityId) {
+    if (!m_EditScene) return Fail("delete entity: no project loaded");
+    if (!m_EditScene->DeleteEntity(entityId))
+        return Fail("delete entity: not found");
+    RealignBindings();
+    MarkDirty();
+    Emit(EV_ENTITY_DELETED, "id=" + std::to_string(entityId));
+    return true;
+}
+bool EditorSession::GetEntityNameById(uint64 entityId,
+                                       std::string* out) const {
+    if (!out || !m_EditScene) return false;
+    const Engine::GameObject* obj = m_EditScene->FindByEntityId(entityId);
+    if (!obj) return false;
+    *out = obj->GetName();
+    return true;
+}
+
+uint64 EditorSession::GetEntityParentId(uint64 entityId) const {
+    return m_EditScene ? m_EditScene->GetParentEntityId(entityId) : 0;
+}
+
+int32_t EditorSession::GetEntityChildCount(uint64 entityId) const {
+    if (!m_EditScene) return -1;
+    const Engine::GameObject* obj = m_EditScene->FindByEntityId(entityId);
+    return obj ? static_cast<int32_t>(obj->GetChildren().size()) : -1;
+}
+
+uint64 EditorSession::GetEntityChildId(uint64 entityId,
+                                       int32_t childIndex) const {
+    if (!m_EditScene || childIndex < 0) return 0;
+    const Engine::GameObject* obj = m_EditScene->FindByEntityId(entityId);
+    if (!obj || childIndex >= static_cast<int32_t>(obj->GetChildren().size()))
+        return 0;
+    const auto& child = obj->GetChildren()[static_cast<size_t>(childIndex)];
+    return child ? child->GetSceneEntityId() : 0;
+}
+
+bool EditorSession::LoadPrefabSourceForInstance(
+    const Engine::PrefabInstanceMetadata& metadata,
+    Engine::Content::PrefabModel* model,
+    std::string* error) const {
+    if (!model) {
+        if (error) *error = "Prefab source output is null";
+        return false;
+    }
+    if (metadata.legacySourceIdentity ||
+        metadata.sourcePath.empty() ||
+        metadata.sourceDigest.size() != 16) {
+        if (error) *error = "Prefab instance source identity is legacy/incomplete";
+        return false;
+    }
+    const auto resolved = m_Root.Resolve(metadata.sourcePath);
+    if (!resolved.ok) {
+        if (error) *error = "Prefab source path rejected";
+        return false;
+    }
+    std::vector<uint8_t> bytes;
+    if (!ReadAllBytesFromPath(resolved.path, &bytes)) {
+        if (error) *error = "Prefab source bytes unreadable";
+        return false;
+    }
+    const std::string text(bytes.begin(), bytes.end());
+    if (Engine::Content::ComputePrefabDigest(text) != metadata.sourceDigest) {
+        if (error) *error = "Prefab source digest mismatch";
+        return false;
+    }
+    const auto read = Engine::Content::ReadPrefab(text, &metadata.prefabGuid);
+    if (!read.ok) {
+        if (error) *error = read.error;
+        return false;
+    }
+    *model = read.model;
+    return true;
+}
+
+bool EditorSession::BuildPrefabApplyCandidateForInstance(
+    uint64 rootEntityId, Engine::Content::PrefabApplyCandidateResult* out) const {
+    if (!out) return false;
+    *out = {};
+    if (!m_EditScene || IsPlaying()) {
+        out->error = "apply candidate: edit scene unavailable";
+        return false;
+    }
+    Engine::PrefabInstanceMetadata metadata;
+    if (!m_EditScene->GetPrefabInstanceMetadata(rootEntityId, &metadata)) {
+        out->error = "apply candidate: instance metadata not found";
+        return false;
+    }
+    if (metadata.legacySourceIdentity || metadata.sourceRevision < 0) {
+        out->error = "apply candidate: legacy/invalid source identity";
+        return false;
+    }
+    if (metadata.overrides.empty()) {
+        out->error = "apply candidate: no overrides";
+        return false;
+    }
+    Engine::Content::PrefabModel source;
+    std::string sourceError;
+    if (!LoadPrefabSourceForInstance(metadata, &source, &sourceError)) {
+        out->error = "apply candidate: " + sourceError;
+        return false;
+    }
+    *out = Engine::Content::BuildPrefabApplyCandidate(
+        source, metadata.overrides, metadata.localToScene,
+        metadata.prefabGuid, metadata.sourceRevision);
+    return out->ok;
+}
+
+namespace {
+
+bool IsReconciliationSupportedComponent(const std::string& type) {
+    return type == "Mesh" || type == "Camera" || type == "Collider" ||
+           type == "RigidBody" || type == "Skinning";
+}
+
+bool ReadReconciliationSource(
+    const Engine::Content::ProjectRoot& root,
+    const std::string& path,
+    const Engine::ResourceGUID& expectedGuid,
+    const std::string& expectedDigest,
+    int64_t projectRevision,
+    Engine::Content::PrefabSourceSnapshot* out,
+    std::string* error) {
+    if (!out) return false;
+    const auto resolved = root.Resolve(path);
+    if (!resolved.ok) {
+        if (error) *error = "reconciliation source path rejected";
+        return false;
+    }
+    std::vector<uint8_t> bytes;
+    if (!ReadAllBytesFromPath(resolved.path, &bytes)) {
+        if (error) *error = "reconciliation source bytes unreadable";
+        return false;
+    }
+    const std::string text(bytes.begin(), bytes.end());
+    const std::string digest = Engine::Content::ComputePrefabDigest(text);
+    if (!expectedDigest.empty() && digest != expectedDigest) {
+        if (error) *error = "reconciliation source digest mismatch";
+        return false;
+    }
+    const auto read = Engine::Content::ReadPrefab(text, &expectedGuid);
+    if (!read.ok) {
+        if (error) *error = "reconciliation source invalid: " + read.error;
+        return false;
+    }
+    out->prefabGuid = read.model.prefabGuid;
+    out->projectRevision = projectRevision;
+    out->contentDigest = digest;
+    out->contentPath = path;
+    out->model = read.model;
+    return true;
+}
+
+bool BuildLocalReconciliationSnapshot(
+    const Engine::Scene& scene,
+    uint64_t rootEntityId,
+    const Engine::PrefabInstanceMetadata& metadata,
+    Engine::Content::PrefabLocalInstanceSnapshot* out,
+    std::string* error) {
+    if (!out) return false;
+    if (rootEntityId == 0 || metadata.localToScene.empty()) {
+        if (error) *error = "reconciliation local: empty instance mapping";
+        return false;
+    }
+    const Engine::GameObject* root = scene.FindByEntityId(rootEntityId);
+    if (!root) {
+        if (error) *error = "reconciliation local: root missing";
+        return false;
+    }
+    std::unordered_set<uint64> actualScenes;
+    std::unordered_set<uint64> localIds;
+    std::unordered_map<uint64, uint64> localByScene;
+    std::unordered_set<uint64> mappedScenes;
+    bool rootMapped = false;
+    for (const auto& [localId, sceneId] : metadata.localToScene) {
+        if (localId == 0 || sceneId == 0 || !localIds.insert(localId).second ||
+            !mappedScenes.insert(sceneId).second) {
+            if (error) *error = "reconciliation local: invalid/duplicate mapping";
+            return false;
+        }
+        localByScene[sceneId] = localId;
+    }
+    std::function<void(const Engine::GameObject*)> collect =
+        [&](const Engine::GameObject* node) {
+            if (!node) return;
+            actualScenes.insert(node->GetSceneEntityId());
+            for (const auto& child : node->GetChildren())
+                collect(child.get());
+        };
+    collect(root);
+    if (actualScenes != mappedScenes) {
+        if (error) *error = "reconciliation local: subtree/mapping mismatch";
+        return false;
+    }
+    for (const auto& [sceneId, localId] : localByScene) {
+        if (sceneId == rootEntityId) rootMapped = true;
+    }
+    if (!rootMapped) {
+        if (error) *error = "reconciliation local: root is not mapped";
+        return false;
+    }
+
+    out->rootEntityId = rootEntityId;
+    out->localToScene = metadata.localToScene;
+    out->overrides = metadata.overrides;
+    out->syncState = metadata.syncState;
+    out->entities.clear();
+    out->entities.reserve(localByScene.size());
+    for (const auto& [sceneId, localId] : localByScene) {
+        const Engine::GameObject* object = scene.FindByEntityId(sceneId);
+        if (!object) {
+            if (error) *error = "reconciliation local: mapped entity missing";
+            return false;
+        }
+        Engine::Content::PrefabLocalEntitySnapshot entity;
+        entity.localId = localId;
+        entity.sceneEntityId = sceneId;
+        entity.name = object->GetName();
+        if (sceneId != rootEntityId) {
+            const Engine::GameObject* parent = object->GetParent();
+            const auto parentIt = parent == nullptr
+                ? localByScene.end()
+                : localByScene.find(parent->GetSceneEntityId());
+            if (parentIt == localByScene.end()) {
+                if (error) *error = "reconciliation local: parent mapping missing";
+                return false;
+            }
+            entity.parentLocalId = parentIt->second;
+        }
+        const auto& transform = object->GetTransform();
+        entity.localTransform.position = transform.GetPosition();
+        entity.localTransform.rotation = transform.GetRotationQuat();
+        entity.localTransform.scale = transform.GetScale();
+        object->ForEachComponent([&](const Engine::Component& component) {
+            Engine::Content::PrefabLocalComponentSnapshot snapshot;
+            const char* typeName = component.GetComponentTypeName();
+            snapshot.type = typeName ? typeName : "(non-contract)";
+            snapshot.supported = IsReconciliationSupportedComponent(snapshot.type);
+            try {
+                component.Serialize(snapshot.data);
+            } catch (...) {
+                snapshot.data = nlohmann::json::object();
+                snapshot.supported = false;
+            }
+            entity.components.push_back(std::move(snapshot));
+        });
+        std::sort(entity.components.begin(), entity.components.end(),
+                  [](const Engine::Content::PrefabLocalComponentSnapshot& a,
+                     const Engine::Content::PrefabLocalComponentSnapshot& b) {
+                      return a.type < b.type;
+                  });
+        out->entities.push_back(std::move(entity));
+    }
+    std::sort(out->entities.begin(), out->entities.end(),
+              [](const Engine::Content::PrefabLocalEntitySnapshot& a,
+                 const Engine::Content::PrefabLocalEntitySnapshot& b) {
+                  return a.localId < b.localId;
+              });
+    return true;
+}
+
+bool ApplyPrefabFieldValue(Engine::GameObject* object,
+                           const std::string& component,
+                           const std::string& field,
+                           const nlohmann::json& value,
+                           std::string* error) {
+    if (!object) {
+        if (error) *error = "reconciliation value: entity missing";
+        return false;
+    }
+    if (component == "Transform") {
+        if (!value.is_number()) {
+            if (error) *error = "reconciliation value: Transform is not numeric";
+            return false;
+        }
+        auto& transform = object->GetTransform();
+        Engine::Vec3 position = transform.GetPosition();
+        Engine::Quat rotation = transform.GetRotationQuat();
+        Engine::Vec3 scale = transform.GetScale();
+        const float scalar = value.get<float>();
+        if (field == "position.x") position.x = scalar;
+        else if (field == "position.y") position.y = scalar;
+        else if (field == "position.z") position.z = scalar;
+        else if (field == "rotation.x") rotation.x = scalar;
+        else if (field == "rotation.y") rotation.y = scalar;
+        else if (field == "rotation.z") rotation.z = scalar;
+        else if (field == "rotation.w") rotation.w = scalar;
+        else if (field == "scale.x") scale.x = scalar;
+        else if (field == "scale.y") scale.y = scalar;
+        else if (field == "scale.z") scale.z = scalar;
+        else {
+            if (error) *error = "reconciliation value: unsupported Transform field";
+            return false;
+        }
+        transform.SetPosition(position);
+        transform.SetRotationQuat(rotation);
+        transform.SetScale(scale);
+        return true;
+    }
+    Engine::Component* comp = object->GetComponentByName(component);
+    if (!comp) {
+        if (error) *error = "reconciliation value: component missing";
+        return false;
+    }
+    const int index = FindPropertyIndex(comp, field);
+    if (index < 0) {
+        if (error) *error = "reconciliation value: property missing";
+        return false;
+    }
+    Engine::ComponentPropertyDesc desc;
+    if (!comp->GetPropertyDesc(static_cast<size_t>(index), &desc) ||
+        !desc.editable) {
+        if (error) *error = "reconciliation value: property not editable";
+        return false;
+    }
+    Engine::ComponentPropertyValue parsed;
+    if (!JsonToPropertyValue(value, desc.type, &parsed) ||
+        !comp->SetPropertyValue(static_cast<size_t>(index), parsed)) {
+        if (error) *error = "reconciliation value: rejected";
+        return false;
+    }
+    return true;
+}
+
+bool ApplyPrefabComponentPayload(Engine::GameObject* object,
+                                 const std::string& component,
+                                 const nlohmann::json& data,
+                                 std::string* error) {
+    if (!object || !data.is_object()) {
+        if (error) *error = "reconciliation component: invalid payload";
+        return false;
+    }
+    for (auto it = data.begin(); it != data.end(); ++it) {
+        if (!ApplyPrefabFieldValue(object, component, it.key(), it.value(),
+                                   error)) {
+            return false;
+        }
+    }
+    return true;
+}
+
+bool BuildPrefabGameObject(
+    const std::string& name,
+    const Engine::Content::PrefabLocalTransform& transform,
+    const std::vector<Engine::Content::PrefabComponentData>& components,
+    std::shared_ptr<Engine::GameObject>* out, std::string* error) {
+    if (!out) return false;
+    auto object = std::make_shared<Engine::GameObject>(name);
+    object->GetTransform().SetPosition(transform.position);
+    object->GetTransform().SetRotationQuat(transform.rotation);
+    object->GetTransform().SetScale(transform.scale);
+    for (const auto& data : components) {
+        auto component = Engine::ComponentRegistryGo::Create(data.type);
+        if (!component || !component->Deserialize(data.data) ||
+            !object->Attach(component)) {
+            if (error) {
+                *error = "reconciliation component '" + data.type +
+                         "' could not be instantiated";
+            }
+            return false;
+        }
+    }
+    *out = std::move(object);
+    return true;
+}
+
+} // namespace
+
+bool EditorSession::GetPrefabInstanceJsonForEntity(uint64 entityId,
+                                                   std::string* out) const {
+    if (!out || !m_EditScene) return false;
+    nlohmann::json doc = nlohmann::json::object();
+    uint64_t rootId = 0;
+    Engine::PrefabInstanceMetadata metadata;
+    if (!m_EditScene->FindPrefabInstanceForEntity(entityId, &rootId, &metadata)) {
+        doc["isInstance"] = false;
+        *out = doc.dump();
+        return true;
+    }
+    uint64_t localId = 0;
+    for (const auto& [local, scene] : metadata.localToScene) {
+        if (scene == entityId) { localId = local; break; }
+    }
+    doc["isInstance"] = true;
+    doc["rootSceneEntityId"] = rootId;
+    doc["localId"] = localId;
+    doc["prefabGuid"] = metadata.prefabGuid.ToHex();
+    doc["sourceRevision"] = metadata.sourceRevision;
+    doc["sourceDigest"] = metadata.sourceDigest;
+    doc["sourcePath"] = metadata.sourcePath;
+    doc["legacySourceIdentity"] = metadata.legacySourceIdentity;
+    switch (metadata.syncState) {
+    case Engine::Content::PrefabSyncState::Clean: doc["syncState"] = "clean"; break;
+    case Engine::Content::PrefabSyncState::Overrides: doc["syncState"] = "overrides"; break;
+    case Engine::Content::PrefabSyncState::ApplyPending: doc["syncState"] = "apply_pending"; break;
+    case Engine::Content::PrefabSyncState::RecoveryRequired: doc["syncState"] = "recovery_required"; break;
+    case Engine::Content::PrefabSyncState::Conflict: doc["syncState"] = "conflict"; break;
+    }
+    nlohmann::json overrides = nlohmann::json::array();
+    for (const auto& record : metadata.overrides) {
+        overrides.push_back({{"localId", record.localId},
+                             {"component", record.component},
+                             {"field", record.field},
+                             {"value", record.value}});
+    }
+    doc["overrideCount"] = metadata.overrides.size();
+    doc["overrides"] = std::move(overrides);
+    doc["conflictCount"] = metadata.reconciliation.has_value()
+        ? metadata.reconciliation->conflicts.size()
+        : 0;
+    if (metadata.reconciliation.has_value())
+        doc["reconciliation"] =
+            Engine::Content::PrefabReconciliationStateToJson(
+                *metadata.reconciliation);
+    *out = doc.dump();
+    return true;
+}
+
+bool EditorSession::PublishPrefabApplyPhase1(uint64 rootEntityId) {
+    Engine::Content::PrefabApplyCandidateResult candidate;
+    if (!BuildPrefabApplyCandidateForInstance(rootEntityId, &candidate))
+        return Fail("apply phase 1: " + candidate.error);
+    Engine::PrefabInstanceMetadata metadata;
+    if (!m_EditScene->GetPrefabInstanceMetadata(rootEntityId, &metadata))
+        return Fail("apply phase 1: instance metadata not found");
+
+    const std::string recordPath = Engine::Content::PrefabApplyRecordPath(
+        m_Root, metadata.prefabGuid, rootEntityId);
+    if (recordPath.empty())
+        return Fail("apply phase 1: recovery path invalid");
+    std::error_code existsEc;
+    if (std::filesystem::exists(Engine::Content::PathFromUtf8(recordPath),
+                                existsEc)) {
+        return Fail("apply phase 1: another Apply is pending for this instance");
+    }
+
+    std::string newPath;
+    if (!DerivePrefabCandidatePath(metadata.sourcePath, metadata.sourceDigest,
+                                   candidate.digest, &newPath))
+        return Fail("apply phase 1: source path does not match Prefab layout");
+
+    const auto resolved = m_Root.Resolve(newPath);
+    if (!resolved.ok)
+        return Fail("apply phase 1: candidate path rejected");
+    std::filesystem::create_directories(
+        std::filesystem::path(Engine::Content::PathFromUtf8(resolved.path))
+            .parent_path(), existsEc);
+    if (existsEc) return Fail("apply phase 1: cannot create Prefab directory");
+    bool alreadyStaged = false;
+    std::ifstream existing(Engine::Content::PathFromUtf8(resolved.path),
+                           std::ios::binary);
+    if (existing.good()) {
+        std::string bytes((std::istreambuf_iterator<char>(existing)),
+                          std::istreambuf_iterator<char>());
+        if (bytes != candidate.bytes)
+            return Fail("apply phase 1: candidate path collision");
+        alreadyStaged = true;
+    }
+    if (!alreadyStaged) {
+        const auto written = Engine::Content::WriteFileAtomic(
+            resolved.path, candidate.bytes);
+        if (!written.ok)
+            return Fail("apply phase 1: cannot stage candidate Prefab");
+    }
+
+    Engine::Content::PrefabApplyRecord record;
+    record.transactionId = MakeApplyTransactionId(rootEntityId);
+    record.recordVersion = 1;
+    record.state = Engine::Content::PrefabApplyState::Prepared;
+    record.prefabGuid = metadata.prefabGuid;
+    record.oldSourceRevision = metadata.sourceRevision;
+    record.oldSourceDigest = metadata.sourceDigest;
+    record.oldSourcePath = metadata.sourcePath;
+    record.newDigest = candidate.digest;
+    record.newPath = newPath;
+    record.newSourceRevision = -1;
+    record.instanceRootEntityId = rootEntityId;
+    record.oldInstanceMetadata = PrefabInstanceMetadataJson(
+        metadata, metadata.sourceRevision, metadata.sourceDigest,
+        metadata.sourcePath, metadata.overrides, metadata.syncState);
+    record.newInstanceMetadata = PrefabInstanceMetadataJson(
+        metadata, -1, candidate.digest, newPath, {}, Engine::Content::PrefabSyncState::Clean);
+    record.oldRevisionSnapshot = static_cast<int64_t>(m_Revisions.Revision());
+    record.phase1Revision = -1;
+    record.phase2Revision = -1;
+    std::string recordError;
+    if (!Engine::Content::WritePrefabApplyRecord(m_Root, record, &recordError))
+        return Fail("apply phase 1: " + recordError);
+
+    Engine::Content::ContentRegistry candidateRegistry = m_Reg;
+    candidateRegistry.Unregister(metadata.prefabGuid);
+    if (!candidateRegistry.RegisterExplicit(
+            metadata.prefabGuid, newPath, Engine::Content::AssetType::Prefab)) {
+        Engine::Content::RemovePrefabApplyRecord(
+            m_Root, metadata.prefabGuid, rootEntityId, nullptr);
+        return Fail("apply phase 1: registry rebind failed");
+    }
+    std::string committedScene;
+    if (!m_Revisions.ReadCommittedScene(m_ScenePath, &committedScene)) {
+        Engine::Content::RemovePrefabApplyRecord(
+            m_Root, metadata.prefabGuid, rootEntityId, nullptr);
+        return Fail("apply phase 1: committed Scene unreadable");
+    }
+
+    const auto published = m_Revisions.Publish(
+        m_Root, candidateRegistry.SerializeManifest(), committedScene);
+    if (!published.ok) {
+        if (published.recoveryRequired) {
+            record.state = Engine::Content::PrefabApplyState::RecoveryRequired;
+            const bool recordWritten =
+                Engine::Content::WritePrefabApplyRecord(
+                    m_Root, record, nullptr);
+            m_RecoveryRequired = true;
+            return Fail("apply phase 1: " + published.diagnostic +
+                        (recordWritten ? "" : " (record update failed)"));
+        }
+        Engine::Content::RemovePrefabApplyRecord(
+            m_Root, metadata.prefabGuid, rootEntityId, nullptr);
+        return Fail("apply phase 1: " + published.diagnostic);
+    }
+
+    record.state = Engine::Content::PrefabApplyState::PrefabPublished;
+    record.phase1Revision = published.revision;
+    record.newSourceRevision = published.revision;
+    record.newInstanceMetadata["sourceRevision"] = published.revision;
+    if (!Engine::Content::WritePrefabApplyRecord(m_Root, record, &recordError)) {
+        m_RecoveryRequired = true;
+        return Fail("apply phase 1: published but recovery record update failed: " +
+                    recordError);
+    }
+    m_Reg = std::move(candidateRegistry);
+    Engine::Log::Info("[EditorBridge] prefab apply phase 1: {} -> {} (revision {})",
+                      metadata.sourcePath, newPath, published.revision);
+    return true;
+}
+
+bool EditorSession::PublishPrefabApplyPhase2(uint64 rootEntityId) {
+    if (!m_EditScene || IsPlaying())
+        return Fail("apply phase 2: edit scene unavailable");
+    Engine::PrefabInstanceMetadata liveMetadata;
+    if (!m_EditScene->GetPrefabInstanceMetadata(rootEntityId, &liveMetadata))
+        return Fail("apply phase 2: instance metadata not found");
+    const std::string recordPath = Engine::Content::PrefabApplyRecordPath(
+        m_Root, liveMetadata.prefabGuid, rootEntityId);
+    Engine::Content::PrefabApplyRecord record;
+    std::string recordError;
+    if (!Engine::Content::ReadPrefabApplyRecord(
+            m_Root, liveMetadata.prefabGuid, rootEntityId, &record, &recordError))
+        return Fail("apply phase 2: recovery record unavailable: " + recordError);
+    if (record.state != Engine::Content::PrefabApplyState::PrefabPublished)
+        return Fail("apply phase 2: recovery record is not PrefabPublished");
+    if (record.phase1Revision < 1 ||
+        m_Revisions.Revision() != record.phase1Revision)
+        return Fail("apply phase 2: current revision is not Phase 1 revision");
+    const auto candidateResolved = m_Root.Resolve(record.newPath);
+    if (!candidateResolved.ok)
+        return Fail("apply phase 2: Phase 1 candidate path rejected");
+    std::vector<uint8_t> candidateBytes;
+    if (!ReadAllBytesFromPath(candidateResolved.path, &candidateBytes))
+        return Fail("apply phase 2: Phase 1 candidate bytes unreadable");
+    const std::string candidateText(candidateBytes.begin(), candidateBytes.end());
+    if (Engine::Content::ComputePrefabDigest(candidateText) != record.newDigest)
+        return Fail("apply phase 2: Phase 1 candidate digest mismatch");
+    const auto phase1Prefab = Engine::Content::ReadPrefab(
+        candidateText, &liveMetadata.prefabGuid);
+    if (!phase1Prefab.ok)
+        return Fail("apply phase 2: Phase 1 candidate invalid: " + phase1Prefab.error);
+    const auto currentAsset = m_Reg.SerializeManifest();
+    const std::string registeredPath = m_Reg.ResolvePath(liveMetadata.prefabGuid);
+    if (registeredPath != record.newPath)
+        return Fail("apply phase 2: live registry is not the Phase 1 candidate");
+
+    std::string committedScene;
+    if (!m_Revisions.ReadCommittedScene(m_ScenePath, &committedScene))
+        return Fail("apply phase 2: committed Scene unreadable");
+    nlohmann::json sceneJson;
+    Engine::Content::SceneSnapshot snapshot;
+    std::string sceneError;
+    try {
+        sceneJson = nlohmann::json::parse(committedScene);
+    } catch (const std::exception& ex) {
+        return Fail("apply phase 2: committed Scene JSON invalid: " +
+                    std::string(ex.what()));
+    }
+    if (!Engine::Content::DeserializeSnapshot(sceneJson, snapshot, sceneError))
+        return Fail("apply phase 2: committed Scene invalid: " + sceneError);
+    Engine::Content::SerializedEntity* target = nullptr;
+    for (auto& entity : snapshot.entities) {
+        if (entity.entityId != rootEntityId) continue;
+        if (target) return Fail("apply phase 2: duplicate instance anchor");
+        target = &entity;
+    }
+    if (!target || !target->prefabInstance.has_value())
+        return Fail("apply phase 2: Instance metadata missing in committed Scene");
+    auto& serialized = *target->prefabInstance;
+    if (serialized.prefabGuid != record.prefabGuid)
+        return Fail("apply phase 2: committed Instance GUID mismatch");
+    if (serialized.sourceDigest != record.oldSourceDigest ||
+        serialized.sourcePath != record.oldSourcePath)
+        return Fail("apply phase 2: committed Instance source is not Phase 1 source");
+    serialized.sourceRevision = record.phase1Revision;
+    serialized.sourceDigest = record.newDigest;
+    serialized.sourcePath = record.newPath;
+    serialized.legacySourceIdentity = false;
+    serialized.overrides.clear();
+    serialized.syncState = Engine::Content::PrefabSyncState::Clean;
+    const std::string newScene = Engine::Content::SerializeSnapshot(snapshot).dump(2);
+
+    const auto published = m_Revisions.Publish(
+        m_Root, currentAsset, newScene);
+    if (!published.ok) {
+        if (published.recoveryRequired) {
+            record.state = Engine::Content::PrefabApplyState::RecoveryRequired;
+            Engine::Content::WritePrefabApplyRecord(m_Root, record, nullptr);
+            m_RecoveryRequired = true;
+        }
+        return Fail("apply phase 2: " + published.diagnostic);
+    }
+
+    record.state = Engine::Content::PrefabApplyState::ScenePublished;
+    record.phase2Revision = published.revision;
+    record.newInstanceMetadata["sourceRevision"] = record.phase1Revision;
+    if (!Engine::Content::WritePrefabApplyRecord(m_Root, record, &recordError)) {
+        m_RecoveryRequired = true;
+        return Fail("apply phase 2: published but recovery record update failed: " +
+                    recordError);
+    }
+
+    Engine::PrefabInstanceMetadata newMetadata = liveMetadata;
+    newMetadata.sourceRevision = record.phase1Revision;
+    newMetadata.sourceDigest = record.newDigest;
+    newMetadata.sourcePath = record.newPath;
+    newMetadata.legacySourceIdentity = false;
+    newMetadata.overrides.clear();
+    newMetadata.syncState = Engine::Content::PrefabSyncState::Clean;
+    if (!m_EditScene->SetPrefabInstanceMetadata(rootEntityId, newMetadata,
+                                                 &recordError)) {
+        m_RecoveryRequired = true;
+        return Fail("apply phase 2: live metadata update failed: " + recordError);
+    }
+    m_SavedSceneJson = newScene;
+    m_HasSavedScene = true;
+    RefreshDirtyFromScene();
+    Engine::Content::RemovePrefabApplyRecord(
+        m_Root, liveMetadata.prefabGuid, rootEntityId, nullptr);
+    Engine::Log::Info("[EditorBridge] prefab apply phase 2: instance {} (revision {})",
+                      rootEntityId, published.revision);
+    return true;
+}
+
+bool EditorSession::ApplyPrefabOverrides(uint64 rootEntityId) {
+    if (!m_EditScene || IsPlaying())
+        return Fail("apply: edit scene unavailable");
+    if (m_RecoveryRequired)
+        return Fail("apply: RecoveryRequired");
+    Engine::PrefabInstanceMetadata metadata;
+    if (!m_EditScene->GetPrefabInstanceMetadata(rootEntityId, &metadata))
+        return Fail("apply: instance metadata not found");
+    if (metadata.legacySourceIdentity)
+        return Fail("apply: legacy source identity");
+    if (metadata.overrides.empty())
+        return Fail("apply: no overrides");
+    if (metadata.syncState == Engine::Content::PrefabSyncState::RecoveryRequired ||
+        metadata.syncState == Engine::Content::PrefabSyncState::Conflict)
+        return Fail("apply: instance is not editable");
+    if (!PublishPrefabApplyPhase1(rootEntityId)) return false;
+    if (!PublishPrefabApplyPhase2(rootEntityId)) return false;
+    Engine::Log::Info("[EditorBridge] prefab apply completed: root {}", rootEntityId);
+    return true;
+}
+
+bool EditorSession::LoadPrefabReconciliationSources(
+    uint64 rootEntityId, Engine::Content::PrefabReconciliationSources* out) {
+    if (!out) return false;
+    *out = {};
+    if (!m_EditScene || IsPlaying())
+        return Fail("reconciliation sources: edit scene unavailable");
+    Engine::PrefabInstanceMetadata metadata;
+    if (!m_EditScene->GetPrefabInstanceMetadata(rootEntityId, &metadata))
+        return Fail("reconciliation sources: instance metadata not found");
+    if (metadata.legacySourceIdentity)
+        return Fail("reconciliation sources: legacy source identity");
+    std::string sourceError;
+    if (!LoadPrefabSourceForInstance(metadata, &out->base.model, &sourceError))
+        return Fail("reconciliation sources: base unavailable: " + sourceError);
+    out->base.prefabGuid = metadata.prefabGuid;
+    out->base.projectRevision = metadata.sourceRevision;
+    out->base.contentDigest = metadata.sourceDigest;
+    out->base.contentPath = metadata.sourcePath;
+
+    const std::string latestPath = m_Reg.ResolvePath(metadata.prefabGuid);
+    if (latestPath.empty())
+        return Fail("reconciliation sources: latest source not registered");
+    if (!ReadReconciliationSource(m_Root, latestPath, metadata.prefabGuid, "",
+                                  static_cast<int64_t>(m_Revisions.Revision()),
+                                  &out->latest, &sourceError))
+        return Fail("reconciliation sources: latest unavailable: " + sourceError);
+    if (!BuildLocalReconciliationSnapshot(*m_EditScene, rootEntityId, metadata,
+                                          &out->local, &sourceError))
+        return Fail("reconciliation sources: local unavailable: " + sourceError);
+    out->outOfDate = out->base.contentDigest != out->latest.contentDigest ||
+                     out->base.contentPath != out->latest.contentPath;
+    return true;
+}
+
+bool EditorSession::PreviewPrefabReconciliation(
+    uint64 rootEntityId, Engine::Content::PrefabReconciliationPlan* out) {
+    if (!out) return false;
+    *out = {};
+    Engine::Content::PrefabReconciliationSources sources;
+    if (!LoadPrefabReconciliationSources(rootEntityId, &sources))
+        return false;
+    *out = Engine::Content::BuildPrefabReconciliation(
+        sources.base, sources.latest, sources.local);
+    return true;
+}
+
+bool EditorSession::PersistPrefabReconciliationConflicts(
+    uint64 rootEntityId,
+    const Engine::Content::PrefabReconciliationPlan& plan) {
+    if (!m_EditScene || IsPlaying())
+        return Fail("persist reconciliation conflicts: edit scene unavailable");
+    Engine::PrefabInstanceMetadata metadata;
+    if (!m_EditScene->GetPrefabInstanceMetadata(rootEntityId, &metadata))
+        return Fail("persist reconciliation conflicts: metadata not found");
+    if (metadata.legacySourceIdentity)
+        return Fail("persist reconciliation conflicts: legacy source identity");
+    if (metadata.syncState == Engine::Content::PrefabSyncState::ApplyPending ||
+        metadata.syncState == Engine::Content::PrefabSyncState::RecoveryRequired)
+        return Fail("persist reconciliation conflicts: instance state is not editable");
+    if (plan.validationErrors.size() > 0)
+        return Fail("persist reconciliation conflicts: plan validation failed");
+    if (plan.hasConflicts && plan.conflicts.empty())
+        return Fail("persist reconciliation conflicts: conflicts are missing");
+
+    Engine::Content::PrefabReconciliationSources sources;
+    if (!LoadPrefabReconciliationSources(rootEntityId, &sources))
+        return false;
+
+    if (plan.hasConflicts) {
+        Engine::Content::PrefabReconciliationState state;
+        state.latestSourceDigest = sources.latest.contentDigest;
+        state.latestSourcePath = sources.latest.contentPath;
+        state.conflicts = plan.conflicts;
+        std::string stateError;
+        if (!Engine::Content::ValidatePrefabReconciliationState(
+                state, &stateError)) {
+            return Fail("persist reconciliation conflicts: " + stateError);
+        }
+        metadata.reconciliation = std::move(state);
+        metadata.syncState = Engine::Content::PrefabSyncState::Conflict;
+    } else {
+        metadata.reconciliation.reset();
+        metadata.syncState = metadata.overrides.empty()
+            ? Engine::Content::PrefabSyncState::Clean
+            : Engine::Content::PrefabSyncState::Overrides;
+    }
+    std::string metadataError;
+    if (!m_EditScene->SetPrefabInstanceMetadata(rootEntityId, metadata,
+                                                 &metadataError))
+        return Fail("persist reconciliation conflicts: " + metadataError);
+    MarkDirty();
+    return true;
+}
+
+bool EditorSession::ResolvePrefabReconciliationConflict(
+    uint64 rootEntityId, const std::string& conflictId,
+    const std::string& action, const nlohmann::json& value) {
+    if (!m_EditScene || IsPlaying())
+        return Fail("resolve reconciliation conflict: edit scene unavailable");
+    if (action != "take_source" && action != "keep_local" &&
+        action != "manual_edit") {
+        return Fail("resolve reconciliation conflict: invalid action");
+    }
+    Engine::PrefabInstanceMetadata metadata;
+    if (!m_EditScene->GetPrefabInstanceMetadata(rootEntityId, &metadata))
+        return Fail("resolve reconciliation conflict: metadata not found");
+    if (metadata.legacySourceIdentity)
+        return Fail("resolve reconciliation conflict: legacy source identity");
+    if (metadata.syncState == Engine::Content::PrefabSyncState::ApplyPending ||
+        metadata.syncState == Engine::Content::PrefabSyncState::RecoveryRequired)
+        return Fail("resolve reconciliation conflict: instance is not editable");
+
+    Engine::Content::PrefabReconciliationSources sources;
+    if (!LoadPrefabReconciliationSources(rootEntityId, &sources))
+        return false;
+    if (!metadata.reconciliation.has_value()) {
+        const auto plan = Engine::Content::BuildPrefabReconciliation(
+            sources.base, sources.latest, sources.local);
+        const auto planIt = std::find_if(
+            plan.conflicts.begin(), plan.conflicts.end(),
+            [&](const Engine::Content::PrefabReconciliationConflict& conflict) {
+                return conflict.id == conflictId;
+            });
+        if (planIt == plan.conflicts.end())
+            return Fail("resolve reconciliation conflict: conflict not found");
+        Engine::Content::PrefabReconciliationState state;
+        state.latestSourceDigest = sources.latest.contentDigest;
+        state.latestSourcePath = sources.latest.contentPath;
+        state.conflicts = plan.conflicts;
+        std::string stateError;
+        if (!Engine::Content::ValidatePrefabReconciliationState(
+                state, &stateError))
+            return Fail("resolve reconciliation conflict: " + stateError);
+        metadata.reconciliation = std::move(state);
+        metadata.syncState = Engine::Content::PrefabSyncState::Conflict;
+    } else {
+        if (metadata.syncState != Engine::Content::PrefabSyncState::Conflict)
+            return Fail("resolve reconciliation conflict: state is not conflict");
+        if (metadata.reconciliation->latestSourceDigest !=
+                sources.latest.contentDigest ||
+            metadata.reconciliation->latestSourcePath !=
+                sources.latest.contentPath) {
+            return Fail("resolve reconciliation conflict: latest source changed");
+        }
+    }
+
+    auto stateIt = std::find_if(
+        metadata.reconciliation->conflicts.begin(),
+        metadata.reconciliation->conflicts.end(),
+        [&](const Engine::Content::PrefabReconciliationConflict& conflict) {
+            return conflict.id == conflictId;
+        });
+    if (stateIt == metadata.reconciliation->conflicts.end())
+        return Fail("resolve reconciliation conflict: conflict not found");
+    const Engine::Content::PrefabReconciliationConflict conflict = *stateIt;
+
+    const bool autoTxn = !m_SceneTxnActive;
+    if (autoTxn && !BeginSceneEdit("resolve prefab conflict")) return false;
+    std::string failure;
+    auto cancel = [&]() {
+        if (autoTxn) CancelSceneEdit();
+    };
+    auto failTxn = [&](const std::string& message) {
+        cancel();
+        return Fail(message);
+    };
+
+    const auto mapIt = metadata.localToScene.find(conflict.localId);
+    Engine::GameObject* object = mapIt == metadata.localToScene.end()
+        ? nullptr
+        : m_EditScene->FindByEntityId(mapIt->second);
+    if ((conflict.type == Engine::Content::PrefabConflictType::Field ||
+         conflict.type == Engine::Content::PrefabConflictType::EntityName ||
+         conflict.type == Engine::Content::PrefabConflictType::EntityParent ||
+         conflict.type == Engine::Content::PrefabConflictType::EntityDelete ||
+         conflict.type == Engine::Content::PrefabConflictType::ComponentSet) &&
+        !object) {
+        return failTxn("resolve reconciliation conflict: mapped entity missing");
+    }
+
+    auto removeOverride = [&](const Engine::Content::PrefabOverrideRecord& record) {
+        Engine::Content::RemovePrefabOverride(
+            &metadata.overrides, record.localId, record.component, record.field);
+    };
+    auto applyField = [&](const nlohmann::json& target,
+                         const bool applyToScene,
+                         const bool persistOverride) -> bool {
+        if (applyToScene &&
+            !ApplyPrefabFieldValue(object, conflict.component, conflict.field,
+                                   target, &failure)) {
+            return failTxn("resolve reconciliation conflict: " + failure);
+        }
+        Engine::Content::PrefabOverrideRecord record;
+        record.localId = conflict.localId;
+        record.component = conflict.component;
+        record.field = conflict.field;
+        record.value = target;
+        if (!persistOverride) {
+            removeOverride(record);
+            return true;
+        }
+        std::string overrideError;
+        if (!Engine::Content::AddOrUpdatePrefabOverride(
+                sources.latest.model, &metadata.overrides, record,
+                &overrideError)) {
+            return failTxn("resolve reconciliation conflict: " + overrideError);
+        }
+        return true;
+    };
+
+    switch (conflict.type) {
+    case Engine::Content::PrefabConflictType::Field: {
+        if (action == "take_source") {
+            if (!applyField(conflict.latest, true, false)) return false;
+        } else if (action == "keep_local") {
+            if (!applyField(conflict.local, false, true)) return false;
+        } else {
+            if (value.is_null()) {
+                return failTxn("resolve reconciliation conflict: manual value missing");
+            }
+            if (!applyField(value, true, true)) return false;
+        }
+        break;
+    }
+    case Engine::Content::PrefabConflictType::EntityName: {
+        if (action == "keep_local") break;
+        if (action == "take_source") {
+            if (!conflict.latest.is_string())
+                return failTxn("resolve reconciliation conflict: latest name invalid");
+            object->SetName(conflict.latest.get<std::string>());
+        } else {
+            if (!value.is_string())
+                return failTxn("resolve reconciliation conflict: manual name invalid");
+            object->SetName(value.get<std::string>());
+        }
+        break;
+    }
+    case Engine::Content::PrefabConflictType::EntityParent: {
+        if (action == "keep_local") break;
+        nlohmann::json parent = action == "take_source" ? conflict.latest : value;
+        if (parent.is_null()) {
+            if (object->GetSceneEntityId() == rootEntityId)
+                return failTxn("resolve reconciliation conflict: root parent is immutable");
+            if (!m_EditScene->SetEntityParent(object->GetSceneEntityId(), 0,
+                                              Engine::ReparentMode::KeepLocal,
+                                              &failure))
+                return failTxn("resolve reconciliation conflict: " + failure);
+            break;
+        }
+        if (!parent.is_number_unsigned())
+            return failTxn("resolve reconciliation conflict: parent Local ID invalid");
+        const uint64_t parentLocal = parent.get<uint64_t>();
+        const auto parentIt = metadata.localToScene.find(parentLocal);
+        if (parentIt == metadata.localToScene.end())
+            return failTxn("resolve reconciliation conflict: parent not mapped");
+        if (!m_EditScene->SetEntityParent(object->GetSceneEntityId(),
+                                          parentIt->second,
+                                          Engine::ReparentMode::KeepLocal,
+                                          &failure))
+            return failTxn("resolve reconciliation conflict: " + failure);
+        break;
+    }
+    case Engine::Content::PrefabConflictType::EntityDelete: {
+        if (action == "keep_local") break;
+        if (action != "take_source")
+            return failTxn("resolve reconciliation conflict: manual delete is unsupported");
+        if (object->GetSceneEntityId() == rootEntityId)
+            return failTxn("resolve reconciliation conflict: root delete is unsupported");
+        if (object->GetChildren().size() != 0)
+            return failTxn("resolve reconciliation conflict: entity has local children");
+        if (!m_EditScene->DeleteEntity(object->GetSceneEntityId()))
+            return failTxn("resolve reconciliation conflict: entity delete failed");
+        metadata.localToScene.erase(conflict.localId);
+        for (auto it = metadata.overrides.begin(); it != metadata.overrides.end();) {
+            if (it->localId == conflict.localId)
+                it = metadata.overrides.erase(it);
+            else ++it;
+        }
+        break;
+    }
+    case Engine::Content::PrefabConflictType::ComponentSet: {
+        if (action == "keep_local") break;
+        if (action == "manual_edit")
+            return failTxn("resolve reconciliation conflict: manual component edit is unsupported");
+        if (conflict.component.empty())
+            return failTxn("resolve reconciliation conflict: component is empty");
+        if (conflict.latest.is_null()) {
+            object->RemoveComponentByName(conflict.component);
+        } else {
+            if (!conflict.latest.is_object())
+                return failTxn("resolve reconciliation conflict: component payload invalid");
+            if (!object->HasComponentByName(conflict.component)) {
+                if (!object->AddComponentByName(conflict.component))
+                    return failTxn("resolve reconciliation conflict: component add failed");
+            }
+            if (!ApplyPrefabComponentPayload(object, conflict.component,
+                                             conflict.latest, &failure))
+                return failTxn("resolve reconciliation conflict: " + failure);
+        }
+        for (auto it = metadata.overrides.begin(); it != metadata.overrides.end();) {
+            if (it->localId == conflict.localId &&
+                it->component == conflict.component)
+                it = metadata.overrides.erase(it);
+            else ++it;
+        }
+        break;
+    }
+    case Engine::Content::PrefabConflictType::EntityMissing: {
+        return failTxn("resolve reconciliation conflict: entity missing requires built-in add");
+    }
+    case Engine::Content::PrefabConflictType::UnsupportedLocalEdit:
+    case Engine::Content::PrefabConflictType::UnsupportedComponentChange: {
+        if (action != "keep_local")
+            return failTxn("resolve reconciliation conflict: unsupported conflict is keep-local only");
+        break;
+    }
+    }
+
+    std::string localError;
+    Engine::Content::PrefabLocalInstanceSnapshot localSnapshot;
+    if (!BuildLocalReconciliationSnapshot(*m_EditScene, rootEntityId,
+                                          metadata, &localSnapshot, &localError))
+        return failTxn("resolve reconciliation conflict: " + localError);
+    if (!m_EditScene->ValidateComposition(&failure))
+        return failTxn("resolve reconciliation conflict: " + failure);
+
+    metadata.reconciliation->conflicts.erase(stateIt);
+    if (metadata.reconciliation->conflicts.empty()) {
+        metadata.reconciliation.reset();
+        metadata.syncState = metadata.overrides.empty()
+            ? Engine::Content::PrefabSyncState::Clean
+            : Engine::Content::PrefabSyncState::Overrides;
+    } else {
+        metadata.syncState = Engine::Content::PrefabSyncState::Conflict;
+    }
+    std::string metadataError;
+    if (!m_EditScene->SetPrefabInstanceMetadata(rootEntityId, metadata,
+                                                 &metadataError))
+        return failTxn("resolve reconciliation conflict: " + metadataError);
+    MarkDirty();
+    if (autoTxn && !CommitSceneEdit()) return false;
+    return true;
+}
+bool EditorSession::GetPrefabReconciliationStatusJson(uint64 rootEntityId,
+                                                       std::string* out) {
+    if (!out || !m_EditScene)
+        return Fail("reconciliation status: edit scene unavailable");
+    *out = {};
+    Engine::PrefabInstanceMetadata metadata;
+    if (!m_EditScene->GetPrefabInstanceMetadata(rootEntityId, &metadata))
+        return Fail("reconciliation status: instance metadata not found");
+
+    nlohmann::json json = nlohmann::json::object();
+    json["isInstance"] = true;
+    json["rootSceneEntityId"] = rootEntityId;
+    json["prefabGuid"] = metadata.prefabGuid.ToHex();
+    json["sourceRevision"] = metadata.sourceRevision;
+    json["sourceDigest"] = metadata.sourceDigest;
+    json["sourcePath"] = metadata.sourcePath;
+    json["legacySourceIdentity"] = metadata.legacySourceIdentity;
+    json["syncState"] = PrefabSyncStateText(metadata.syncState);
+    json["overrideCount"] = metadata.overrides.size();
+    json["persistedConflictCount"] = metadata.reconciliation.has_value()
+        ? metadata.reconciliation->conflicts.size()
+        : 0;
+    json["conflictCount"] = metadata.reconciliation.has_value()
+        ? metadata.reconciliation->conflicts.size()
+        : 0;
+    json["conflicts"] = nlohmann::json::array();
+    if (metadata.reconciliation.has_value()) {
+        for (const auto& conflict : metadata.reconciliation->conflicts)
+            json["conflicts"].push_back(PrefabConflictJson(conflict));
+        json["latestSourceDigest"] =
+            metadata.reconciliation->latestSourceDigest;
+        json["latestSourcePath"] = metadata.reconciliation->latestSourcePath;
+    }
+
+    bool sourceAvailable = false;
+    Engine::Content::PrefabReconciliationSources sources;
+    if (!metadata.legacySourceIdentity &&
+        LoadPrefabReconciliationSources(rootEntityId, &sources)) {
+        sourceAvailable = true;
+        json["outOfDate"] = sources.outOfDate;
+        json["latestSourceDigest"] = sources.latest.contentDigest;
+        json["latestSourcePath"] = sources.latest.contentPath;
+        const auto plan = Engine::Content::BuildPrefabReconciliation(
+            sources.base, sources.latest, sources.local);
+        json["planConflictCount"] = plan.conflicts.size();
+        json["hasPendingPlanConflicts"] = plan.hasConflicts;
+    } else {
+        json["outOfDate"] = false;
+        json["planConflictCount"] = 0;
+        json["hasPendingPlanConflicts"] = false;
+        if (!metadata.legacySourceIdentity)
+            json["sourceUnavailableReason"] = GetLastError();
+    }
+    json["sourceUnavailable"] = !sourceAvailable;
+    *out = json.dump();
+    return true;
+}
+
+bool EditorSession::GetPrefabReconciliationPreviewJson(uint64 rootEntityId,
+                                                        std::string* out) {
+    if (!out) return false;
+    *out = {};
+    Engine::Content::PrefabReconciliationSources sources;
+    if (!LoadPrefabReconciliationSources(rootEntityId, &sources))
+        return false;
+    const auto plan = Engine::Content::BuildPrefabReconciliation(
+        sources.base, sources.latest, sources.local);
+    nlohmann::json json = nlohmann::json::object();
+    json["rootSceneEntityId"] = rootEntityId;
+    json["baseSourceDigest"] = sources.base.contentDigest;
+    json["baseSourcePath"] = sources.base.contentPath;
+    json["latestSourceDigest"] = sources.latest.contentDigest;
+    json["latestSourcePath"] = sources.latest.contentPath;
+    json["latestSourceRevision"] = sources.latest.projectRevision;
+    json["outOfDate"] = plan.outOfDate;
+    json["plan"] = PrefabReconciliationPlanJson(plan);
+    *out = json.dump();
+    return true;
+}
+bool EditorSession::ExecutePrefabReconciliation(uint64 rootEntityId) {
+    if (!m_EditScene || IsPlaying())
+        return Fail("execute reconciliation: edit scene unavailable");
+    Engine::PrefabInstanceMetadata metadata;
+    if (!m_EditScene->GetPrefabInstanceMetadata(rootEntityId, &metadata))
+        return Fail("execute reconciliation: metadata not found");
+    if (metadata.legacySourceIdentity)
+        return Fail("execute reconciliation: legacy source identity");
+    if (metadata.reconciliation.has_value())
+        return Fail("execute reconciliation: unresolved conflicts remain");
+    if (metadata.syncState == Engine::Content::PrefabSyncState::ApplyPending ||
+        metadata.syncState == Engine::Content::PrefabSyncState::RecoveryRequired)
+        return Fail("execute reconciliation: instance is not editable");
+
+    Engine::Content::PrefabReconciliationSources sources;
+    if (!LoadPrefabReconciliationSources(rootEntityId, &sources))
+        return false;
+    const auto plan = Engine::Content::BuildPrefabReconciliation(
+        sources.base, sources.latest, sources.local);
+    if (!plan.validationErrors.empty())
+        return Fail("execute reconciliation: plan validation failed");
+
+    const auto latestEntity = [&](uint64_t localId) -> const Engine::Content::PrefabEntity* {
+        for (const auto& entity : sources.latest.model.entities)
+            if (entity.localId == localId) return &entity;
+        return nullptr;
+    };
+
+    std::map<uint64_t, Engine::Content::PrefabEntity> additions;
+    for (const auto& change : plan.structural) {
+        if (change.kind != Engine::Content::PrefabStructuralChangeKind::AddEntity)
+            continue;
+        Engine::Content::PrefabEntity entity;
+        entity.localId = change.localId;
+        entity.name = change.name;
+        if (change.parentLocalId != 0)
+            entity.parentLocalId = change.parentLocalId;
+        entity.localTransform = change.localTransform;
+        entity.components = change.components;
+        additions.emplace(entity.localId, std::move(entity));
+    }
+    for (const auto& conflict : plan.conflicts) {
+        if (conflict.type != Engine::Content::PrefabConflictType::EntityMissing)
+            continue;
+        const auto* entity = latestEntity(conflict.localId);
+        if (!entity)
+            return Fail("execute reconciliation: missing entity has no Latest source");
+        if (metadata.overrides.end() != std::find_if(
+                metadata.overrides.begin(), metadata.overrides.end(),
+                [&](const Engine::Content::PrefabOverrideRecord& record) {
+                    return record.localId == conflict.localId;
+                })) {
+            return Fail("execute reconciliation: missing entity has stale overrides");
+        }
+        additions.emplace(entity->localId, *entity);
+    }
+
+    std::unordered_map<uint64_t, std::shared_ptr<Engine::GameObject>> newObjects;
+    for (const auto& item : additions) {
+        const auto& entity = item.second;
+        if (metadata.localToScene.count(entity.localId))
+            return Fail("execute reconciliation: new Local ID is already mapped");
+        std::shared_ptr<Engine::GameObject> object;
+        std::string buildError;
+        if (!BuildPrefabGameObject(entity.name, entity.localTransform,
+                                   entity.components, &object, &buildError))
+            return Fail("execute reconciliation: " + buildError);
+        newObjects.emplace(entity.localId, std::move(object));
+    }
+
+    std::vector<uint64_t> addRoots;
+    for (const auto& item : additions) {
+        const auto& entity = item.second;
+        if (!entity.parentLocalId.has_value())
+            return Fail("execute reconciliation: new entity requires a mapped parent");
+        const auto parent = entity.parentLocalId.value();
+        if (newObjects.count(parent)) {
+            newObjects[parent]->AddChild(newObjects[entity.localId]);
+            continue;
+        }
+        if (metadata.localToScene.find(parent) == metadata.localToScene.end())
+            return Fail("execute reconciliation: new entity parent is not mapped");
+        addRoots.push_back(entity.localId);
+    }
+
+    std::set<uint64_t> deleteIds;
+    for (const auto& change : plan.structural) {
+        if (change.kind == Engine::Content::PrefabStructuralChangeKind::DeleteEntity)
+            deleteIds.insert(change.localId);
+    }
+    std::unordered_map<uint64_t, uint64_t> localParent;
+    for (const auto& entity : sources.local.entities)
+        if (entity.parentLocalId.has_value())
+            localParent[entity.localId] = entity.parentLocalId.value();
+    auto depth = [&](uint64_t localId) {
+        uint64_t result = 0;
+        auto it = localParent.find(localId);
+        while (it != localParent.end() && result < 256) {
+            ++result;
+            it = localParent.find(it->second);
+            if (it != localParent.end() && it->second == localId) break;
+        }
+        return result;
+    };
+
+    std::set<uint64_t> removedLocalIds;
+    std::unordered_set<uint64_t> removedSceneIds;
+    std::vector<uint64_t> deleteOrder(deleteIds.begin(), deleteIds.end());
+    std::sort(deleteOrder.begin(), deleteOrder.end(),
+              [&](uint64_t a, uint64_t b) {
+                  const uint64_t da = depth(a);
+                  const uint64_t db = depth(b);
+                  if (da != db) return da > db;
+                  return a < b;
+              });
+
+    const bool autoTxn = !m_SceneTxnActive;
+    if (autoTxn && !BeginSceneEdit("execute prefab reconciliation")) return false;
+    auto cancel = [&]() {
+        if (autoTxn) CancelSceneEdit();
+    };
+    auto failTxn = [&](const std::string& message) {
+        cancel();
+        return Fail(message);
+    };
+
+    for (const uint64_t localId : addRoots) {
+        const auto parentIt = metadata.localToScene.find(
+            additions[localId].parentLocalId.value());
+        if (parentIt == metadata.localToScene.end())
+            return failTxn("execute reconciliation: new entity parent disappeared");
+        std::string addError;
+        std::shared_ptr<Engine::GameObject> object = newObjects[localId];
+        if (!m_EditScene->AddEntity(object, parentIt->second, &addError))
+            return failTxn("execute reconciliation: add entity failed: " + addError);
+    }
+    for (const auto& item : newObjects) {
+        const uint64_t sceneId = item.second->GetSceneEntityId();
+        if (sceneId == 0)
+            return failTxn("execute reconciliation: new entity has no Scene ID");
+        metadata.localToScene[item.first] = sceneId;
+    }
+
+    for (const uint64_t localId : deleteOrder) {
+        const auto mapIt = metadata.localToScene.find(localId);
+        if (mapIt == metadata.localToScene.end()) continue;
+        Engine::GameObject* object = m_EditScene->FindByEntityId(mapIt->second);
+        if (!object) {
+            removedLocalIds.insert(localId);
+            continue;
+        }
+        if (object->GetSceneEntityId() == rootEntityId)
+            return failTxn("execute reconciliation: root delete is unsupported");
+        std::function<void(Engine::GameObject*)> collect =
+            [&](Engine::GameObject* node) {
+                if (!node) return;
+                removedSceneIds.insert(node->GetSceneEntityId());
+                for (const auto& child : node->GetChildren())
+                    collect(child.get());
+            };
+        collect(object);
+        for (const auto& [otherLocal, otherScene] : metadata.localToScene) {
+            if (otherScene == object->GetSceneEntityId()) continue;
+            if (removedSceneIds.count(otherScene)) {
+                removedLocalIds.insert(otherLocal);
+            }
+        }
+        removedLocalIds.insert(localId);
+        if (!m_EditScene->DeleteEntity(object->GetSceneEntityId()))
+            return failTxn("execute reconciliation: delete entity failed");
+    }
+    for (const uint64_t localId : removedLocalIds) {
+        metadata.localToScene.erase(localId);
+    }
+    for (auto it = metadata.localToScene.begin(); it != metadata.localToScene.end();) {
+        if (!m_EditScene->FindByEntityId(it->second))
+            it = metadata.localToScene.erase(it);
+        else ++it;
+    }
+    for (auto it = metadata.overrides.begin(); it != metadata.overrides.end();) {
+        if (removedLocalIds.count(it->localId))
+            it = metadata.overrides.erase(it);
+        else ++it;
+    }
+
+    auto objectFor = [&](uint64_t localId) -> Engine::GameObject* {
+        const auto it = metadata.localToScene.find(localId);
+        return it == metadata.localToScene.end()
+            ? nullptr
+            : m_EditScene->FindByEntityId(it->second);
+    };
+    for (const auto& change : plan.structural) {
+        if (change.kind == Engine::Content::PrefabStructuralChangeKind::AddEntity ||
+            change.kind == Engine::Content::PrefabStructuralChangeKind::DeleteEntity)
+            continue;
+        Engine::GameObject* object = objectFor(change.localId);
+        if (!object) {
+            if (change.kind == Engine::Content::PrefabStructuralChangeKind::SetName ||
+                change.kind == Engine::Content::PrefabStructuralChangeKind::SetParent ||
+                change.kind == Engine::Content::PrefabStructuralChangeKind::AddComponent ||
+                change.kind == Engine::Content::PrefabStructuralChangeKind::RemoveComponent)
+                continue;
+            return failTxn("execute reconciliation: structural entity missing");
+        }
+        if (change.kind == Engine::Content::PrefabStructuralChangeKind::SetName) {
+            if (object->GetName() != change.name) object->SetName(change.name);
+        } else if (change.kind == Engine::Content::PrefabStructuralChangeKind::SetParent) {
+            uint64_t parentSceneId = 0;
+            if (change.parentLocalId != 0) {
+                const auto parentIt = metadata.localToScene.find(change.parentLocalId);
+                if (parentIt == metadata.localToScene.end())
+                    return failTxn("execute reconciliation: parent not mapped");
+                parentSceneId = parentIt->second;
+            }
+            if (object->GetSceneEntityId() != rootEntityId &&
+                m_EditScene->GetParentEntityId(object->GetSceneEntityId()) != parentSceneId) {
+                std::string parentError;
+                if (!m_EditScene->SetEntityParent(object->GetSceneEntityId(),
+                                                  parentSceneId,
+                                                  Engine::ReparentMode::KeepLocal,
+                                                  &parentError))
+                    return failTxn("execute reconciliation: " + parentError);
+            }
+        } else if (change.kind == Engine::Content::PrefabStructuralChangeKind::AddComponent) {
+            if (object->HasComponentByName(change.component)) continue;
+            auto component = Engine::ComponentRegistryGo::Create(change.component);
+            if (!component || !component->Deserialize(change.data) ||
+                !object->Attach(component))
+                return failTxn("execute reconciliation: component add failed");
+        } else if (change.kind == Engine::Content::PrefabStructuralChangeKind::RemoveComponent) {
+            if (object->HasComponentByName(change.component))
+                object->RemoveComponentByName(change.component);
+            for (auto it = metadata.overrides.begin(); it != metadata.overrides.end();) {
+                if (it->localId == change.localId &&
+                    it->component == change.component)
+                    it = metadata.overrides.erase(it);
+                else ++it;
+            }
+        }
+    }
+
+    std::string fieldError;
+    for (const auto& field : plan.fields) {
+        if (field.decision == Engine::Content::PrefabReconciliationDecision::Conflict)
+            continue;
+        Engine::GameObject* object = objectFor(field.localId);
+        if (!object) return failTxn("execute reconciliation: field entity missing");
+        if (field.decision == Engine::Content::PrefabReconciliationDecision::TakeLatest) {
+            if (!ApplyPrefabFieldValue(object, field.component, field.field,
+                                       field.latest, &fieldError))
+                return failTxn("execute reconciliation: " + fieldError);
+        } else {
+            Engine::Content::PrefabOverrideRecord record;
+            record.localId = field.localId;
+            record.component = field.component;
+            record.field = field.field;
+            record.value = field.local;
+            if (!Engine::Content::AddOrUpdatePrefabOverride(
+                    sources.latest.model, &metadata.overrides, record,
+                    &fieldError))
+                return failTxn("execute reconciliation: " + fieldError);
+        }
+    }
+    for (const auto& conflict : plan.conflicts) {
+        if (conflict.type != Engine::Content::PrefabConflictType::Field)
+            continue;
+        const bool localIsLatest = conflict.local == conflict.latest;
+        const bool hasOverride = metadata.overrides.end() != std::find_if(
+            metadata.overrides.begin(), metadata.overrides.end(),
+            [&](const Engine::Content::PrefabOverrideRecord& record) {
+                return record.localId == conflict.localId &&
+                       record.component == conflict.component &&
+                       record.field == conflict.field;
+            });
+        if (!localIsLatest && !hasOverride)
+            return failTxn("execute reconciliation: unresolved field conflict remains");
+    }
+
+    std::unordered_set<uint64_t> removedOverrides;
+    for (auto it = metadata.overrides.begin(); it != metadata.overrides.end();) {
+        if (metadata.localToScene.find(it->localId) == metadata.localToScene.end()) {
+            it = metadata.overrides.erase(it);
+            continue;
+        }
+        if (removedLocalIds.count(it->localId)) {
+            it = metadata.overrides.erase(it);
+            continue;
+        }
+        nlohmann::json latestBase;
+        std::string baseError;
+        if (!Engine::Content::ReadPrefabOverrideBaseValue(
+                sources.latest.model, it->localId, it->component, it->field,
+                &latestBase, &baseError))
+            return failTxn("execute reconciliation: " + baseError);
+        if (latestBase == it->value)
+            it = metadata.overrides.erase(it);
+        else ++it;
+    }
+    Engine::Content::NormalizePrefabOverrides(&metadata.overrides);
+    metadata.overrides = metadata.overrides;
+
+    metadata.sourceRevision = static_cast<int64_t>(m_Revisions.Revision());
+    metadata.sourceDigest = sources.latest.contentDigest;
+    metadata.sourcePath = sources.latest.contentPath;
+    metadata.legacySourceIdentity = false;
+    metadata.reconciliation.reset();
+    metadata.syncState = metadata.overrides.empty()
+        ? Engine::Content::PrefabSyncState::Clean
+        : Engine::Content::PrefabSyncState::Overrides;
+
+    std::string mappingError;
+    Engine::Content::PrefabLocalInstanceSnapshot localSnapshot;
+    if (!BuildLocalReconciliationSnapshot(*m_EditScene, rootEntityId, metadata,
+                                          &localSnapshot, &mappingError))
+        return failTxn("execute reconciliation: " + mappingError);
+    std::string compositionError;
+    if (!m_EditScene->ValidateComposition(&compositionError))
+        return failTxn("execute reconciliation: " + compositionError);
+    std::string metadataError;
+    if (!m_EditScene->SetPrefabInstanceMetadata(rootEntityId, metadata,
+                                                 &metadataError))
+        return failTxn("execute reconciliation: " + metadataError);
+
+    RealignBindings();
+    MarkDirty();
+    if (autoTxn && !CommitSceneEdit()) return false;
+    Emit(EV_ENTITY_MOVED, "root=" + std::to_string(rootEntityId) +
+                              ";reconcile=source");
+    return true;
+}
+bool EditorSession::RevertPrefabOverride(uint64 rootEntityId, uint64 localId,
+                                         const std::string& component,
+                                         const std::string& field) {
+    if (!m_EditScene || IsPlaying())
+        return Fail("revert override: edit scene unavailable");
+    Engine::PrefabInstanceMetadata metadata;
+    if (!m_EditScene->GetPrefabInstanceMetadata(rootEntityId, &metadata))
+        return Fail("revert override: instance metadata not found");
+    Engine::Content::PrefabModel source;
+    std::string sourceError;
+    if (!LoadPrefabSourceForInstance(metadata, &source, &sourceError))
+        return Fail("revert override: " + sourceError);
+    const auto it = std::find_if(
+        metadata.overrides.begin(), metadata.overrides.end(),
+        [&](const Engine::Content::PrefabOverrideRecord& record) {
+            return record.localId == localId && record.component == component &&
+                   record.field == field;
+        });
+    if (it == metadata.overrides.end())
+        return Fail("revert override: matching override not found");
+    nlohmann::json base;
+    if (!Engine::Content::ReadPrefabOverrideBaseValue(
+            source, localId, component, field, &base, &sourceError))
+        return Fail("revert override: " + sourceError);
+    const auto sceneIt = metadata.localToScene.find(localId);
+    if (sceneIt == metadata.localToScene.end())
+        return Fail("revert override: Local ID is not mapped");
+    Engine::GameObject* object = m_EditScene->FindByEntityId(sceneIt->second);
+    if (!object)
+        return Fail("revert override: mapped entity not found");
+
+    const bool autoTxn = !m_SceneTxnActive;
+    if (autoTxn && !BeginSceneEdit("revert override")) return false;
+    auto cancel = [&]() {
+        if (autoTxn) CancelSceneEdit();
+    };
+
+    if (component == "Transform") {
+        auto& transform = object->GetTransform();
+        Engine::Vec3 position = transform.GetPosition();
+        Engine::Quat rotation = transform.GetRotationQuat();
+        Engine::Vec3 scale = transform.GetScale();
+        float value = 0.0f;
+        if (!base.is_number()) {
+            cancel();
+            return Fail("revert override: Transform base is not numeric");
+        }
+        value = base.get<float>();
+        if (field == "position.x") position.x = value;
+        else if (field == "position.y") position.y = value;
+        else if (field == "position.z") position.z = value;
+        else if (field == "rotation.x") rotation.x = value;
+        else if (field == "rotation.y") rotation.y = value;
+        else if (field == "rotation.z") rotation.z = value;
+        else if (field == "rotation.w") rotation.w = value;
+        else if (field == "scale.x") scale.x = value;
+        else if (field == "scale.y") scale.y = value;
+        else if (field == "scale.z") scale.z = value;
+        else {
+            cancel();
+            return Fail("revert override: unsupported Transform field");
+        }
+        transform.SetPosition(position);
+        transform.SetRotationQuat(rotation);
+        transform.SetScale(scale);
+    } else {
+        Engine::Component* componentObject =
+            object->GetComponentByName(component);
+        if (!componentObject) {
+            cancel();
+            return Fail("revert override: component not found");
+        }
+        int propertyIndex = FindPropertyIndex(componentObject, field);
+        if (propertyIndex < 0) {
+            cancel();
+            return Fail("revert override: property not found");
+        }
+        Engine::ComponentPropertyDesc desc;
+        if (!componentObject->GetPropertyDesc(
+                static_cast<size_t>(propertyIndex), &desc)) {
+            cancel();
+            return Fail("revert override: property descriptor unavailable");
+        }
+        Engine::ComponentPropertyValue value;
+        if (!JsonToPropertyValue(base, desc.type, &value) ||
+            !componentObject->SetPropertyValue(
+                static_cast<size_t>(propertyIndex), value)) {
+            cancel();
+            return Fail("revert override: base value rejected");
+        }
+    }
+
+    metadata.overrides.erase(it);
+    metadata.syncState = metadata.overrides.empty()
+        ? Engine::Content::PrefabSyncState::Clean
+        : Engine::Content::PrefabSyncState::Overrides;
+    std::string metadataError;
+    if (!m_EditScene->SetPrefabInstanceMetadata(rootEntityId, metadata,
+                                                 &metadataError)) {
+        cancel();
+        return Fail("revert override: " + metadataError);
+    }
+    MarkDirty();
+    if (autoTxn && !CommitSceneEdit()) return false;
+    Emit(EV_COMPONENT_CHANGED,
+         "root=" + std::to_string(rootEntityId) + ";revert=" + component +
+             "." + field);
+    return true;
+}
+
+bool EditorSession::RevertPrefabInstance(uint64 rootEntityId) {
+    if (!m_EditScene || IsPlaying())
+        return Fail("revert instance: edit scene unavailable");
+    Engine::PrefabInstanceMetadata metadata;
+    if (!m_EditScene->GetPrefabInstanceMetadata(rootEntityId, &metadata))
+        return Fail("revert instance: metadata not found");
+    if (metadata.overrides.empty())
+        return Fail("revert instance: no overrides");
+    Engine::Content::PrefabModel source;
+    std::string sourceError;
+    if (!LoadPrefabSourceForInstance(metadata, &source, &sourceError))
+        return Fail("revert instance: " + sourceError);
+    if (metadata.localToScene.size() != source.entities.size())
+        return Fail("revert instance: Local ID mapping count mismatch");
+    std::unordered_set<uint64> mappedScenes;
+    for (const auto& [local, scene] : metadata.localToScene)
+        mappedScenes.insert(scene);
+    std::unordered_set<uint64> subtreeScenes;
+    std::function<void(const Engine::GameObject*)> collectScenes =
+        [&](const Engine::GameObject* node) {
+            if (!node) return;
+            subtreeScenes.insert(node->GetSceneEntityId());
+            for (const auto& child : node->GetChildren())
+                collectScenes(child.get());
+        };
+    collectScenes(m_EditScene->FindByEntityId(rootEntityId));
+    if (subtreeScenes != mappedScenes)
+        return Fail("revert instance: Scene subtree contains unmapped entities");
+
+    std::vector<Engine::GameObject*> objects;
+    objects.reserve(source.entities.size());
+    for (const auto& entity : source.entities) {
+        const auto mapped = metadata.localToScene.find(entity.localId);
+        if (mapped == metadata.localToScene.end())
+            return Fail("revert instance: source Local ID is unmapped");
+        Engine::GameObject* object = m_EditScene->FindByEntityId(mapped->second);
+        if (!object)
+            return Fail("revert instance: mapped entity not found");
+        std::unordered_set<std::string> sourceTypes;
+        for (const auto& component : entity.components)
+            sourceTypes.insert(component.type);
+        std::unordered_set<std::string> currentTypes;
+        object->ForEachComponent([&](const Engine::Component& component) {
+            if (const char* type = component.GetComponentTypeName())
+                currentTypes.insert(type);
+        });
+        if (sourceTypes != currentTypes)
+            return Fail("revert instance: component set mismatch on local id " +
+                        std::to_string(entity.localId));
+        objects.push_back(object);
+    }
+
+    const bool autoTxn = !m_SceneTxnActive;
+    if (autoTxn && !BeginSceneEdit("revert prefab instance")) return false;
+    auto cancel = [&]() {
+        if (autoTxn) CancelSceneEdit();
+    };
+
+    for (size_t i = 0; i < source.entities.size(); ++i) {
+        const auto& entity = source.entities[i];
+        Engine::GameObject* object = objects[i];
+        object->SetName(entity.name);
+        auto& transform = object->GetTransform();
+        transform.SetPosition(entity.localTransform.position);
+        transform.SetRotationQuat(entity.localTransform.rotation);
+        transform.SetScale(entity.localTransform.scale);
+        for (const auto& componentData : entity.components) {
+            Engine::Component* component =
+                object->GetComponentByName(componentData.type);
+            if (!component) {
+                cancel();
+                return Fail("revert instance: component missing");
+            }
+            if (!component->Deserialize(componentData.data)) {
+                cancel();
+                return Fail("revert instance: component data rejected");
+            }
+        }
+    }
+
+    metadata.overrides.clear();
+    metadata.syncState = Engine::Content::PrefabSyncState::Clean;
+    std::string metadataError;
+    if (!m_EditScene->SetPrefabInstanceMetadata(rootEntityId, metadata,
+                                                 &metadataError)) {
+        cancel();
+        return Fail("revert instance: " + metadataError);
+    }
+    MarkDirty();
+    if (autoTxn && !CommitSceneEdit()) return false;
+    Emit(EV_COMPONENT_CHANGED,
+         "root=" + std::to_string(rootEntityId) + ";revert=instance");
+    return true;
+}
+
+bool EditorSession::GetEntityTransformById(uint64 entityId,
+                                           float out9[9]) const {
+    if (!out9 || !m_EditScene) return false;
+    const Engine::GameObject* obj = m_EditScene->FindByEntityId(entityId);
+    if (!obj) return false;
+    const auto& t = obj->GetTransform();
+    const Engine::Vec3 p = t.GetPosition();
+    const Engine::Vec3 r = t.GetRotationEuler();
+    const Engine::Vec3 s = t.GetScale();
+    out9[0] = p.x; out9[1] = p.y; out9[2] = p.z;
+    out9[3] = r.x; out9[4] = r.y; out9[5] = r.z;
+    out9[6] = s.x; out9[7] = s.y; out9[8] = s.z;
+    return true;
+}
+
+bool EditorSession::SetEntityTransformById(uint64 entityId,
+                                           const float pos3[3],
+                                           const float euler3[3],
+                                           const float scale3[3]) {
+    if (!pos3 || !euler3 || !scale3 || !m_EditScene || IsPlaying())
+        return false;
+    Engine::GameObject* obj = m_EditScene->FindByEntityId(entityId);
+    if (!obj) return Fail("set transform: entity not found");
+    for (int i = 0; i < 9; ++i) {
+        const float v = i < 3 ? pos3[i] : (i < 6 ? euler3[i - 3]
+                                                  : scale3[i - 6]);
+        if (!std::isfinite(v)) return Fail("transform: non-finite value");
+    }
+
+    bool isInstance = false;
+    uint64_t instanceRoot = 0;
+    uint64_t localId = 0;
+    Engine::PrefabInstanceMetadata instanceMeta;
+    Engine::Content::PrefabModel sourceModel;
+    if (m_EditScene->FindPrefabInstanceForEntity(entityId, &instanceRoot,
+                                                  &instanceMeta)) {
+        isInstance = true;
+        for (const auto& [local, scene] : instanceMeta.localToScene)
+            if (scene == entityId) { localId = local; break; }
+        if (localId == 0)
+            return Fail("set transform: instance local id not mapped");
+        std::string sourceError;
+        if (!LoadPrefabSourceForInstance(instanceMeta, &sourceModel,
+                                          &sourceError))
+            return Fail("set transform: " + sourceError);
+    }
+
+    const Engine::Vec3 oldPosition = obj->GetTransform().GetPosition();
+    const Engine::Quat oldRotation = obj->GetTransform().GetRotationQuat();
+    const Engine::Vec3 oldScale = obj->GetTransform().GetScale();
+    const bool autoTxn = !m_SceneTxnActive;
+    if (autoTxn && !BeginSceneEdit("transform")) return false;
+    auto abandon = [&]() {
+        m_SceneTxnActive = false;
+        m_SceneTxnBefore.clear();
+        m_SceneTxnLabel.clear();
+    };
+    auto& t = obj->GetTransform();
+    t.SetPosition(pos3[0], pos3[1], pos3[2]);
+    t.SetRotationEuler(Engine::Vec3(euler3[0], euler3[1], euler3[2]));
+    t.SetScale(Engine::Vec3(scale3[0], scale3[1], scale3[2]));
+
+    if (isInstance) {
+        const Engine::Quat q = t.GetRotationQuat();
+        const Engine::Vec3 p = t.GetPosition();
+        const Engine::Vec3 s = t.GetScale();
+        auto update = [&](const char* component, const char* field,
+                          double value) {
+            Engine::Content::PrefabOverrideRecord record;
+            record.localId = localId;
+            record.component = component;
+            record.field = field;
+            record.value = value;
+            return Engine::Content::AddOrUpdatePrefabOverride(
+                sourceModel, &instanceMeta.overrides, record, nullptr);
+        };
+        bool tracked = true;
+        tracked = tracked && update("Transform", "position.x", p.x);
+        tracked = tracked && update("Transform", "position.y", p.y);
+        tracked = tracked && update("Transform", "position.z", p.z);
+        tracked = tracked && update("Transform", "rotation.x", q.x);
+        tracked = tracked && update("Transform", "rotation.y", q.y);
+        tracked = tracked && update("Transform", "rotation.z", q.z);
+        tracked = tracked && update("Transform", "rotation.w", q.w);
+        tracked = tracked && update("Transform", "scale.x", s.x);
+        tracked = tracked && update("Transform", "scale.y", s.y);
+        tracked = tracked && update("Transform", "scale.z", s.z);
+        instanceMeta.syncState = instanceMeta.overrides.empty()
+            ? Engine::Content::PrefabSyncState::Clean
+            : Engine::Content::PrefabSyncState::Overrides;
+        std::string metadataError;
+        if (!tracked || !m_EditScene->SetPrefabInstanceMetadata(
+                            instanceRoot, instanceMeta, &metadataError)) {
+            t.SetPosition(oldPosition);
+            t.SetRotationQuat(oldRotation);
+            t.SetScale(oldScale);
+            if (autoTxn) abandon();
+            return Fail("set transform: override tracking failed" +
+                        (metadataError.empty() ? std::string()
+                                               : ": " + metadataError));
+        }
+    }
+
+    MarkDirty();
+    if (autoTxn && !CommitSceneEdit()) return false;
+    Emit(EV_ENTITY_MOVED, "id=" + std::to_string(entityId));
+    return true;
+}
+
+bool EditorSession::RenameEntityById(uint64 entityId,
+                                     const std::string& newName) {
+    if (IsPlaying()) return Fail("rename entity ignored while playing");
+    if (!m_EditScene) return Fail("rename entity: no project loaded");
+    Engine::GameObject* obj = m_EditScene->FindByEntityId(entityId);
+    if (!obj) return Fail("rename entity: not found");
+    std::string cleaned = newName;
+    auto isSpace = [](unsigned char c) { return std::isspace(c) != 0; };
+    if (cleaned.empty() ||
+        std::all_of(cleaned.begin(), cleaned.end(), isSpace))
+        return Fail("rename entity: empty name rejected");
+    if (obj->GetName() != cleaned && m_EditScene->FindObject(cleaned) != nullptr)
+        return Fail("rename entity: duplicate name \"" + cleaned + "\"");
+    const std::string old = obj->GetName();
+    obj->SetName(cleaned);
+    MarkDirty();
+    Emit(EV_ENTITY_RENAMED,
+         "id=" + std::to_string(entityId) + ";old=" + old + ";new=" + cleaned);
+    return true;
+}
+
+bool EditorSession::DuplicateEntityById(uint64 entityId, bool includeSubtree,
+                                        uint64* newRootId) {
+    if (newRootId) *newRootId = 0;
+    if (IsPlaying()) return Fail("duplicate entity ignored while playing");
+    if (!m_EditScene) return Fail("duplicate entity: no project loaded");
+    Engine::GameObject* source = m_EditScene->FindByEntityId(entityId);
+    if (!source) return Fail("duplicate entity: not found");
+    if (!newRootId) return Fail("duplicate entity: missing result");
+
+    std::string error;
+    std::function<bool(Engine::GameObject*)> checkBindings = [&](Engine::GameObject* node) -> bool {
+        if (!node) return true;
+        const auto it = m_BindingsById.find(node->GetSceneEntityId());
+        if (it != m_BindingsById.end() &&
+            (!it->second.spriteGuid.IsNull() || !it->second.scriptGuid.IsNull()))
+            return Fail("duplicate entity: legacy sprite/script binding is not "
+                        "supported by G3 policy");
+        if (!includeSubtree) return true;
+        for (const auto& child : node->GetChildren())
+            if (!checkBindings(child.get())) return false;
+        return true;
+    };
+    if (!checkBindings(source)) return false;
+
+    const bool autoTxn = !m_SceneTxnActive;
+    if (autoTxn && !BeginSceneEdit("duplicate entity")) return false;
+
+    auto abandon = [&]() {
+        m_SceneTxnActive = false;
+        m_SceneTxnBefore.clear();
+        m_SceneTxnLabel.clear();
+    };
+
+    uint64 createdId = 0;
+    if (!m_EditScene->DuplicateEntity(entityId, includeSubtree, &createdId,
+                                       nullptr, &error)) {
+        if (autoTxn) abandon();
+        return Fail("duplicate entity failed: " + error);
+    }
+
+    RealignBindings();
+    MarkDirty();
+    if (autoTxn && !CommitSceneEdit()) return false;
+    *newRootId = createdId;
+    Emit(EV_ENTITY_CREATED,
+         "id=" + std::to_string(createdId) +
+         ";source=" + std::to_string(entityId) +
+         ";subtree=" + (includeSubtree ? "1" : "0"));
+    return true;
+}
+
+int32_t EditorSession::CreatePrefabFromEntity(uint64 entityId,
+                                              const char* assetName) {
+    using AT = Engine::Content::AssetType;
+    if (!m_EditScene) {
+        Fail("create prefab: no project loaded");
+        return -1;
+    }
+    Engine::GameObject* source = m_EditScene->FindByEntityId(entityId);
+    if (!source) {
+        Fail("create prefab: entity not found");
+        return -1;
+    }
+
+    auto sanitizeStem = [](const std::string& raw) {
+        std::string out;
+        for (const char c : raw) {
+            const bool ok = (c >= '0' && c <= '9') ||
+                            (c >= 'A' && c <= 'Z') ||
+                            (c >= 'a' && c <= 'z') || c == '_' || c == '-';
+            if (ok) out += c;
+            if (out.size() >= 48u) break;
+        }
+        return out.empty() ? std::string("prefab") : out;
+    };
+
+    std::unordered_map<uint64, Engine::Content::PrefabLegacyBinding> legacy;
+    for (const auto& entry : m_BindingsById) {
+        Engine::Content::PrefabLegacyBinding binding;
+        binding.spriteGuid = entry.second.spriteGuid;
+        binding.scriptGuid = entry.second.scriptGuid;
+        if (!binding.spriteGuid.IsNull() || !binding.scriptGuid.IsNull())
+            legacy[entry.first] = binding;
+    }
+
+    Engine::Content::PrefabCaptureOptions options;
+    options.prefabGuid = Engine::ResourceGUID::Create();
+    while (options.prefabGuid.IsNull() || m_Reg.ContainsGuid(options.prefabGuid))
+        options.prefabGuid = Engine::ResourceGUID::Create();
+    options.legacyBindings = &legacy;
+
+    const auto capture = Engine::Content::CapturePrefabFromScene(
+        *m_EditScene, entityId, options);
+    if (!capture.ok) {
+        Fail("create prefab: " + capture.error);
+        return -1;
+    }
+    const auto written = Engine::Content::WritePrefab(capture.model);
+    if (!written.ok) {
+        Fail("create prefab: " + written.error);
+        return -1;
+    }
+
+    const std::string rawName =
+        (assetName && *assetName) ? assetName : source->GetName();
+    const std::string stem = sanitizeStem(rawName);
+    const std::string relPath =
+        "assets/prefabs/" + stem + "." + written.digest + ".prefab.json";
+    const auto resolved = m_Root.Resolve(relPath);
+    if (!resolved.ok) {
+        Fail("create prefab: path rejected: " + resolved.diagnostic);
+        return -1;
+    }
+
+    std::error_code ec;
+    std::filesystem::create_directories(
+        Engine::Content::PathFromUtf8(resolved.path).parent_path(), ec);
+    if (ec) {
+        Fail("create prefab: cannot create assets/prefabs directory");
+        return -1;
+    }
+
+    std::ifstream existing(Engine::Content::PathFromUtf8(resolved.path),
+                           std::ios::binary);
+    if (existing.good()) {
+        std::string existingBytes((std::istreambuf_iterator<char>(existing)),
+                                  std::istreambuf_iterator<char>());
+        if (existingBytes != written.bytes) {
+            Fail("create prefab: content-addressed path collision");
+            return -1;
+        }
+    }
+
+    const auto fileWritten =
+        Engine::Content::WriteFileAtomic(resolved.path, written.bytes);
+    if (!fileWritten.ok) {
+        Fail("create prefab: cannot stage Prefab bytes");
+        return -1;
+    }
+
+    Engine::Content::ContentRegistry candidate = m_Reg;
+    if (!candidate.RegisterExplicit(options.prefabGuid, relPath, AT::Prefab)) {
+        Fail("create prefab: registry registration failed");
+        return -1;
+    }
+
+    std::string committedScene;
+    if (!m_Revisions.ReadCommittedScene(m_ScenePath, &committedScene)) {
+        Fail("create prefab: committed scene unreadable");
+        return -1;
+    }
+    const auto published = m_Revisions.Publish(
+        m_Root, candidate.SerializeManifest(), committedScene);
+    if (!published.ok) {
+        if (published.recoveryRequired) m_RecoveryRequired = true;
+        Fail("create prefab: " + published.diagnostic);
+        return -1;
+    }
+
+    m_Reg = std::move(candidate);
+    int32_t idx = IndexOfGuid(m_AssetOrder, options.prefabGuid);
+    if (idx < 0) {
+        m_AssetOrder.push_back(options.prefabGuid);
+        idx = static_cast<int32_t>(m_AssetOrder.size()) - 1;
+    }
+
+    const auto mirror = Engine::Content::WriteFileAtomic(
+        m_ManifestPath, m_Reg.SerializeManifest());
+    if (!mirror.ok) {
+        if (!m_Warnings.empty()) m_Warnings += "\n";
+        m_Warnings +=
+            "create prefab: CommittedCleanupPending; legacy mirror update failed";
+    }
+
+    Engine::Log::Info("[EditorBridge] prefab created: {} ({}; revision {})",
+                      relPath, options.prefabGuid.ToHex(), published.revision);
+    Emit(EV_ASSET_IMPORTED,
+         "idx=" + std::to_string(idx) +
+             ";guid=" + options.prefabGuid.ToHex() +
+             ";path=" + relPath + ";type=4");
+    return idx;
+}
+
+bool EditorSession::InstantiatePrefab(int32_t assetIndex, uint64 parentEntityId,
+                                      uint64* newRootId) {
+    if (newRootId) *newRootId = 0;
+    if (!m_EditScene) return Fail("instantiate prefab: no project loaded");
+    if (IsPlaying()) return Fail("instantiate prefab ignored while playing");
+    Engine::Content::AssetEntry entry;
+    if (!AssetAt(assetIndex, &entry) ||
+        entry.type != Engine::Content::AssetType::Prefab)
+        return Fail("instantiate prefab: asset is not a Prefab");
+    const auto resolved = m_Root.Resolve(entry.path);
+    if (!resolved.ok)
+        return Fail("instantiate prefab: path rejected");
+    std::vector<uint8_t> bytes;
+    if (!ReadAllBytesFromPath(resolved.path, &bytes))
+        return Fail("instantiate prefab: bytes unreadable");
+    const std::string text(bytes.begin(), bytes.end());
+    const auto read = Engine::Content::ReadPrefab(text, &entry.guid);
+    if (!read.ok) return Fail("instantiate prefab: " + read.error);
+    if (parentEntityId != 0 &&
+        !m_EditScene->FindByEntityId(parentEntityId))
+        return Fail("instantiate prefab: parent entity not found");
+
+    const bool autoTxn = !m_SceneTxnActive;
+    if (autoTxn && !BeginSceneEdit("instantiate prefab")) return false;
+    auto abandon = [&]() {
+        m_SceneTxnActive = false;
+        m_SceneTxnBefore.clear();
+        m_SceneTxnLabel.clear();
+    };
+
+    std::unordered_map<uint64_t, std::shared_ptr<Engine::GameObject>> objects;
+    std::string buildError;
+    for (const auto& e : read.model.entities) {
+        auto object = std::make_shared<Engine::GameObject>(e.name);
+        object->GetTransform().SetPosition(e.localTransform.position);
+        object->GetTransform().SetRotationQuat(e.localTransform.rotation);
+        object->GetTransform().SetScale(e.localTransform.scale);
+        for (const auto& c : e.components) {
+            auto component = Engine::ComponentRegistryGo::Create(c.type);
+            if (!component || !component->Deserialize(c.data) ||
+                !object->Attach(component)) {
+                buildError = "component '" + c.type + "' could not be instantiated";
+                break;
+            }
+        }
+        if (!buildError.empty()) break;
+        objects.emplace(e.localId, std::move(object));
+    }
+    if (!buildError.empty()) {
+        if (autoTxn) abandon();
+        return Fail("instantiate prefab: " + buildError);
+    }
+
+    for (const auto& e : read.model.entities) {
+        if (!e.parentLocalId.has_value()) continue;
+        const auto parent = objects.find(*e.parentLocalId);
+        const auto child = objects.find(e.localId);
+        if (parent == objects.end() || child == objects.end()) {
+            if (autoTxn) abandon();
+            return Fail("instantiate prefab: Local ID parent missing");
+        }
+        parent->second->AddChild(child->second);
+    }
+    const auto rootIt = objects.find(read.model.rootLocalId);
+    if (rootIt == objects.end()) {
+        if (autoTxn) abandon();
+        return Fail("instantiate prefab: root Local ID missing");
+    }
+
+    std::string addError;
+    if (!m_EditScene->AddEntity(rootIt->second, parentEntityId, &addError)) {
+        if (autoTxn) abandon();
+        return Fail("instantiate prefab: " + addError);
+    }
+    const uint64_t rootSceneId = rootIt->second->GetSceneEntityId();
+    Engine::PrefabInstanceMetadata metadata;
+    metadata.prefabGuid = read.model.prefabGuid;
+    metadata.sourceRevision = static_cast<int64_t>(m_Revisions.Revision());
+    metadata.sourceDigest = Engine::Content::ComputePrefabDigest(text);
+    metadata.sourcePath = entry.path;
+    metadata.legacySourceIdentity = false;
+    metadata.syncState = Engine::Content::PrefabSyncState::Clean;
+    for (const auto& pair : objects)
+        metadata.localToScene[pair.first] = pair.second->GetSceneEntityId();
+    std::string metadataError;
+    if (!m_EditScene->SetPrefabInstanceMetadata(rootSceneId, metadata,
+                                                 &metadataError)) {
+        m_EditScene->DeleteEntity(rootSceneId);
+        if (autoTxn) abandon();
+        return Fail("instantiate prefab: " + metadataError);
+    }
+
+    RealignBindings();
+    MarkDirty();
+    if (autoTxn && !CommitSceneEdit()) return false;
+    if (newRootId) *newRootId = rootSceneId;
+    Emit(EV_ENTITY_CREATED,
+         "id=" + std::to_string(rootSceneId) +
+             ";prefab=" + read.model.prefabGuid.ToHex());
+    return true;
 }
 
 bool EditorSession::GetEntityName(int32_t index, std::string* out) const {
@@ -510,6 +3095,166 @@ bool EditorSession::SetEntityPosition(int32_t index, const float pos3[3]) {
     return true;
 }
 
+std::string EditorSession::CaptureSceneJson() {
+    if (!m_EditScene) return {};
+    const auto snap = Engine::Content::CaptureSceneById(*m_EditScene, m_BindingsById);
+    return Engine::Content::SerializeSnapshot(snap).dump(2);
+}
+
+bool EditorSession::ApplySceneJson(const std::string& json) {
+    if (!m_EditScene) return false;
+    nlohmann::json doc;
+    Engine::Content::SceneSnapshot snap;
+    std::string err;
+    try {
+        doc = nlohmann::json::parse(json);
+    } catch (const std::exception& ex) {
+        return Fail(std::string("scene transaction: JSON invalid: ") + ex.what());
+    }
+    if (!Engine::Content::DeserializeSnapshot(doc, snap, err))
+        return Fail("scene transaction: snapshot invalid: " + err);
+    auto scene = std::make_shared<Engine::Scene>("AvaloniaSession");
+    auto instantiate = Engine::Content::InstantiateScene(
+        snap, *scene, m_TexMgr, m_Reg,
+        [this](const std::string& stored) {
+            const auto r = m_Root.ResolveAny(stored);
+            return r.ok ? r.path : std::string();
+        });
+    if (!instantiate.ok)
+        return Fail("scene transaction: instantiate failed");
+    m_EditScene = std::move(scene);
+    m_Bindings = std::move(instantiate.bindings);
+    m_BindingsById = std::move(instantiate.bindingsById);
+    RealignBindings();
+    return true;
+}
+
+void EditorSession::RefreshDirtyFromScene() {
+    if (!m_EditScene) return;
+    if (!m_HasSavedScene) {
+        m_Dirty = true;
+        return;
+    }
+    m_Dirty = CaptureSceneJson() != m_SavedSceneJson;
+}
+
+bool EditorSession::GetEntityTransform(int32_t index, float out9[9]) const {
+    if (!out9 || !m_EditScene || index < 0 ||
+        index >= static_cast<int32_t>(m_EditScene->GetObjectCount()))
+        return false;
+    const auto& t = m_EditScene->GetObjects()[static_cast<size_t>(index)]
+                        ->GetTransform();
+    const Engine::Vec3 p = t.GetPosition();
+    const Engine::Vec3 r = t.GetRotationEuler();
+    const Engine::Vec3 s = t.GetScale();
+    out9[0] = p.x; out9[1] = p.y; out9[2] = p.z;
+    out9[3] = r.x; out9[4] = r.y; out9[5] = r.z;
+    out9[6] = s.x; out9[7] = s.y; out9[8] = s.z;
+    return true;
+}
+
+bool EditorSession::GetEditorViewProjection(float out16[16]) const {
+    if (!out16 || !m_Application) return false;
+    const auto *camera = m_Application->GetProduction3DCamera();
+    if (!camera) return false;
+    std::memcpy(out16, camera->GetViewProjectionMatrixPtr(),
+                sizeof(float) * 16);
+    return true;
+}
+bool EditorSession::SetEntityTransform(int32_t index, const float pos3[3],
+                                       const float euler3[3],
+                                       const float scale3[3]) {
+    if (!pos3 || !euler3 || !scale3 || !m_EditScene || IsPlaying() ||
+        index < 0 ||
+        index >= static_cast<int32_t>(m_EditScene->GetObjectCount()))
+        return false;
+    for (int i = 0; i < 9; ++i) {
+        const float v = i < 3 ? pos3[i] : (i < 6 ? euler3[i - 3]
+                                                  : scale3[i - 6]);
+        if (!std::isfinite(v)) return Fail("transform: non-finite value");
+    }
+    const bool autoTxn = !m_SceneTxnActive;
+    if (autoTxn && !BeginSceneEdit("transform")) return false;
+    auto& t = m_EditScene->GetObjects()[static_cast<size_t>(index)]
+                  ->GetTransform();
+    t.SetPosition(pos3[0], pos3[1], pos3[2]);
+    t.SetRotationEuler(Engine::Vec3(euler3[0], euler3[1], euler3[2]));
+    t.SetScale(Engine::Vec3(scale3[0], scale3[1], scale3[2]));
+    MarkDirty();
+    if (autoTxn && !CommitSceneEdit()) return false;
+    Emit(EV_ENTITY_MOVED, "idx=" + std::to_string(index));
+    return true;
+}
+
+bool EditorSession::BeginSceneEdit(const std::string& label) {
+    if (!m_EditScene || IsPlaying()) return false;
+    if (m_SceneTxnActive) return true;
+    m_SceneTxnBefore = CaptureSceneJson();
+    m_SceneTxnLabel = label;
+    m_SceneTxnActive = true;
+    return true;
+}
+
+bool EditorSession::CommitSceneEdit() {
+    if (!m_SceneTxnActive) return false;
+    const std::string after = CaptureSceneJson();
+    if (after != m_SceneTxnBefore) {
+        if (m_SceneHistory.size() >= 64) {
+            m_SceneHistory.erase(m_SceneHistory.begin());
+            if (m_SceneHistoryCursor > 0) --m_SceneHistoryCursor;
+        }
+        m_SceneHistory.resize(m_SceneHistoryCursor);
+        m_SceneHistory.push_back({m_SceneTxnLabel, m_SceneTxnBefore, after});
+        m_SceneHistoryCursor = m_SceneHistory.size();
+    }
+    m_SceneTxnActive = false;
+    m_SceneTxnBefore.clear();
+    m_SceneTxnLabel.clear();
+    RefreshDirtyFromScene();
+    return true;
+}
+
+bool EditorSession::CancelSceneEdit() {
+    if (!m_SceneTxnActive) return false;
+    const std::string before = m_SceneTxnBefore;
+    m_SceneTxnActive = false;
+    m_SceneTxnBefore.clear();
+    m_SceneTxnLabel.clear();
+    if (!before.empty() && !ApplySceneJson(before)) return false;
+    RefreshDirtyFromScene();
+    return true;
+}
+
+bool EditorSession::UndoSceneEdit() {
+    if (m_SceneTxnActive || m_SceneHistoryCursor == 0) return false;
+    --m_SceneHistoryCursor;
+    const auto& entry = m_SceneHistory[m_SceneHistoryCursor];
+    if (!ApplySceneJson(entry.before)) {
+        ++m_SceneHistoryCursor;
+        return false;
+    }
+    RefreshDirtyFromScene();
+    return true;
+}
+
+bool EditorSession::RedoSceneEdit() {
+    if (m_SceneTxnActive || m_SceneHistoryCursor >= m_SceneHistory.size())
+        return false;
+    const auto& entry = m_SceneHistory[m_SceneHistoryCursor];
+    if (!ApplySceneJson(entry.after)) return false;
+    ++m_SceneHistoryCursor;
+    RefreshDirtyFromScene();
+    return true;
+}
+
+bool EditorSession::CanUndoSceneEdit() const {
+    return !m_SceneTxnActive && m_SceneHistoryCursor > 0;
+}
+
+bool EditorSession::CanRedoSceneEdit() const {
+    return !m_SceneTxnActive &&
+           m_SceneHistoryCursor < m_SceneHistory.size();
+}
 bool EditorSession::DeleteEntity(int32_t index) {
     if (IsPlaying()) {
         return Fail("delete entity ignored while playing (edit-state only)");
@@ -606,6 +3351,7 @@ bool EditorSession::AssignSprite(int32_t assetIndex, int32_t entityIndex) {
            ->SetTexture(m_TexMgr, texturePath);
     RealignBindings();
     m_Bindings[static_cast<size_t>(entityIndex)].spriteGuid = entry.guid;
+    m_BindingsById[obj->GetSceneEntityId()].spriteGuid = entry.guid;
     MarkDirty();
     Engine::Log::Info("[EditorBridge] sprite assigned: {} -> {}",
                       obj->GetName(), entry.path);
@@ -652,6 +3398,7 @@ bool EditorSession::AssignScript(int32_t assetIndex, int32_t entityIndex) {
     // 运行时（Play）按 GP01 语义消费第一个非空 scriptGuid 作 director。
     RealignBindings();
     m_Bindings[static_cast<size_t>(entityIndex)].scriptGuid = entry.guid;
+    m_BindingsById[obj->GetSceneEntityId()].scriptGuid = entry.guid;
     MarkDirty();
     Engine::Log::Info("[EditorBridge] script assigned: {} -> {}",
                       obj->GetName(), entry.path);
@@ -801,8 +3548,67 @@ bool EditorSession::SetComponentProperty(int32_t entityIndex,
     Engine::ComponentPropertyValue v;
     if (!ParseComponentValue(valueStr, d.type, &v))
         return Fail("set component: bad value '" + valueStr + "' for '" + propName + "'");
+
+    bool isInstance = false;
+    uint64_t instanceRoot = 0;
+    uint64_t localId = 0;
+    Engine::PrefabInstanceMetadata instanceMeta;
+    Engine::Content::PrefabModel sourceModel;
+    if (m_EditScene->FindPrefabInstanceForEntity(obj->GetSceneEntityId(),
+                                                  &instanceRoot, &instanceMeta)) {
+        isInstance = true;
+        for (const auto& [local, scene] : instanceMeta.localToScene)
+            if (scene == obj->GetSceneEntityId()) { localId = local; break; }
+        if (localId == 0)
+            return Fail("set component: instance local id not mapped");
+        Engine::Content::PrefabOverrideFieldSpec fieldSpec;
+        if (!Engine::Content::ResolvePrefabOverrideField(
+                typeName, propName, &fieldSpec))
+            return Fail("set component: field is not Override-capable: " +
+                        typeName + "." + propName);
+        std::string sourceError;
+        if (!LoadPrefabSourceForInstance(instanceMeta, &sourceModel,
+                                          &sourceError))
+            return Fail("set component: " + sourceError);
+    }
+
+    Engine::ComponentPropertyValue oldValue;
+    const bool hasOld = comp->GetPropertyValue(static_cast<size_t>(i), &oldValue);
     if (!comp->SetPropertyValue(static_cast<size_t>(i), v))
         return Fail("set component: write failed for '" + propName + "'");
+
+    if (isInstance) {
+        nlohmann::json value;
+        switch (v.type) {
+        case Engine::ComponentValueType::Bool: value = v.boolValue; break;
+        case Engine::ComponentValueType::Int: value = v.intValue; break;
+        case Engine::ComponentValueType::Float: value = v.floatValue; break;
+        case Engine::ComponentValueType::String: value = v.stringValue; break;
+        }
+        Engine::Content::PrefabOverrideRecord record;
+        record.localId = localId;
+        record.component = typeName;
+        record.field = propName;
+        record.value = std::move(value);
+        std::string overrideError;
+        if (!Engine::Content::AddOrUpdatePrefabOverride(
+                sourceModel, &instanceMeta.overrides, record, &overrideError)) {
+            if (hasOld) comp->SetPropertyValue(static_cast<size_t>(i), oldValue);
+            return Fail("set component: override tracking failed: " +
+                        overrideError);
+        }
+        instanceMeta.syncState = instanceMeta.overrides.empty()
+            ? Engine::Content::PrefabSyncState::Clean
+            : Engine::Content::PrefabSyncState::Overrides;
+        std::string metadataError;
+        if (!m_EditScene->SetPrefabInstanceMetadata(
+                instanceRoot, instanceMeta, &metadataError)) {
+            if (hasOld) comp->SetPropertyValue(static_cast<size_t>(i), oldValue);
+            return Fail("set component: metadata update failed: " +
+                        metadataError);
+        }
+    }
+
     MarkDirty();
     Emit(EV_COMPONENT_CHANGED,
          "idx=" + std::to_string(entityIndex) + ";type=" + typeName +
@@ -1099,7 +3905,8 @@ int32_t EditorSession::ImportAssetInternal(const std::string& input,
 int32_t EditorSession::ImportModelAsset(const std::string& input,
                                         const std::string& fwd,
                                         bool absolute,
-                                        const std::string& reattachHex) {
+                                        const std::string& reattachHex,
+                                        bool forceReimport) {
     using Engine::Content::AssetEntry;
     using Engine::Content::AssetType;
     using Engine::AssetImport::ImportResult;
@@ -1459,10 +4266,12 @@ int32_t EditorSession::ImportModelAsset(const std::string& input,
 
     // ── idempotency fast path (C-2): identical digest → identical
     // content-addressed mesh path → registry hit → same GUID, no revision ──
-    for (const auto& entry : m_Reg.GetAllEntries()) {
-        if (entry.type == AssetType::Mesh &&
-            m_Root.KeysEqual(entry.path, meshPath)) {
-            return IndexOfGuid(m_AssetOrder, entry.guid);
+    if (!forceReimport) {
+        for (const auto& entry : m_Reg.GetAllEntries()) {
+            if (entry.type == AssetType::Mesh &&
+                m_Root.KeysEqual(entry.path, meshPath)) {
+                return IndexOfGuid(m_AssetOrder, entry.guid);
+            }
         }
     }
 
@@ -1963,7 +4772,7 @@ bool EditorSession::Play(int32_t assetIndex) {
 
     RealignBindings();
     Engine::Content::SceneSnapshot live =
-        Engine::Content::CaptureScene(*m_EditScene, m_Bindings);
+        Engine::Content::CaptureSceneById(*m_EditScene, m_BindingsById);
 
     // ── 解析要运行的脚本路径 ──
     std::string scriptPath;
@@ -2163,12 +4972,520 @@ int32_t EditorSession::GetAssetType(int32_t index) const {
     Engine::Content::AssetEntry e;
     if (!AssetAt(index, &e)) return -1;
     switch (e.type) {
-        case AT::Texture: return 0;
-        case AT::Script:  return 1;
-        default:          return 2;
+        case AT::Texture:  return 0;
+        case AT::Script:   return 1;
+        case AT::Mesh:     return 2;
+        case AT::Material: return 3;
+        case AT::Prefab:   return 4;
+    }
+    return 2;
+}
+
+int32_t EditorSession::GetAssetStatus(int32_t index) const {
+    Engine::Content::AssetEntry e;
+    if (!AssetAt(index, &e)) return -1;
+    const Engine::Content::PathResolution resolved = m_Root.Resolve(e.path);
+    if (!resolved.ok) return 2;
+    std::error_code ec;
+    const std::filesystem::path p = Engine::Content::PathFromUtf8(resolved.path);
+    if (!std::filesystem::exists(p, ec) || ec) return 1;
+    const uint64_t size = std::filesystem::file_size(p, ec);
+    if (ec || size == 0) return 1;
+    return 0;
+}
+
+void EditorSession::LoadMaterialEdits() {
+    m_EditedMaterials.clear();
+    if (!m_Root.IsValid()) return;
+    const auto p = Engine::Content::PathFromUtf8(
+        m_Root.Path() + "/.engine-content/material-edits.json");
+    std::error_code ec;
+    if (!std::filesystem::exists(p, ec) || ec) return;
+    try {
+        std::ifstream f(p, std::ios::binary);
+        nlohmann::json doc;
+        f >> doc;
+        if (!doc.is_object() || !doc.contains("edited") ||
+            !doc["edited"].is_array())
+            return;
+        for (const auto& item : doc["edited"]) {
+            if (!item.is_string()) continue;
+            const Engine::ResourceGUID guid =
+                Engine::ResourceGUID::FromHex(item.get<std::string>());
+            if (!guid.IsNull()) m_EditedMaterials.insert(guid.ToHex());
+        }
+    } catch (...) {
+        m_EditedMaterials.clear();
     }
 }
 
+bool EditorSession::SaveMaterialEdits() {
+    nlohmann::json doc;
+    doc["version"] = 1;
+    doc["edited"] = nlohmann::json::array();
+    for (const auto& guid : m_EditedMaterials) doc["edited"].push_back(guid);
+    const auto dir = Engine::Content::PathFromUtf8(m_Root.Path() + "/.engine-content");
+    std::error_code ec;
+    std::filesystem::create_directories(dir, ec);
+    if (ec) return false;
+    const auto written = Engine::Content::WriteFileAtomic(
+        m_Root.Path() + "/.engine-content/material-edits.json", doc.dump(2));
+    return written.ok;
+}
+
+bool EditorSession::GetMaterialJson(int32_t assetIndex, std::string* out) const {
+    if (!out) return false;
+    Engine::Content::AssetEntry e;
+    if (!AssetAt(assetIndex, &e) ||
+        e.type != Engine::Content::AssetType::Material)
+        return false;
+    const auto resolved = m_Root.Resolve(e.path);
+    if (!resolved.ok) return false;
+    std::vector<uint8_t> bytes;
+    if (!ReadAllBytesFromPath(resolved.path, &bytes)) return false;
+    out->assign(bytes.begin(), bytes.end());
+    return true;
+}
+
+bool EditorSession::UpdateMaterial(int32_t assetIndex,
+                                   const std::string& fieldsJson) {
+    using AT = Engine::Content::AssetType;
+    Engine::Content::AssetEntry entry;
+    if (!AssetAt(assetIndex, &entry) || entry.type != AT::Material)
+        return Fail("material edit: asset is not a Material");
+    const auto resolved = m_Root.Resolve(entry.path);
+    if (!resolved.ok)
+        return Fail("material edit: path rejected");
+    std::vector<uint8_t> currentBytes;
+    if (!ReadAllBytesFromPath(resolved.path, &currentBytes))
+        return Fail("material edit: committed bytes unreadable");
+
+    std::string currentText(currentBytes.begin(), currentBytes.end());
+    nlohmann::json doc;
+    nlohmann::json patch;
+    try {
+        doc = nlohmann::json::parse(currentText);
+        patch = nlohmann::json::parse(fieldsJson);
+    } catch (const std::exception& ex) {
+        return Fail(std::string("material edit: JSON invalid: ") + ex.what());
+    }
+    if (!doc.is_object() || !patch.is_object())
+        return Fail("material edit: patch must be an object");
+
+    auto finiteNumber = [](const nlohmann::json& value, float* out) {
+        if (!value.is_number()) return false;
+        const double d = value.get<double>();
+        if (!std::isfinite(d)) return false;
+        const float f = static_cast<float>(d);
+        if (!std::isfinite(f)) return false;
+        *out = f;
+        return true;
+    };
+    auto floatArray = [&](const nlohmann::json& value, float* out,
+                          size_t count) {
+        if (!value.is_array() || value.size() != count) return false;
+        for (size_t i = 0; i < count; ++i)
+            if (!finiteNumber(value[i], &out[i])) return false;
+        return true;
+    };
+
+    for (const auto& item : patch.items()) {
+        const std::string& key = item.key();
+        if (key == "baseColorFactor") {
+            float values[4];
+            if (!floatArray(item.value(), values, 4))
+                return Fail("material edit: baseColorFactor invalid");
+            doc["baseColorFactor"] =
+                {values[0], values[1], values[2], values[3]};
+        } else if (key == "metallicFactor") {
+            float value = 0.0f;
+            if (!finiteNumber(item.value(), &value))
+                return Fail("material edit: metallicFactor invalid");
+            doc["metallicFactor"] = value;
+        } else if (key == "roughnessFactor") {
+            float value = 0.0f;
+            if (!finiteNumber(item.value(), &value))
+                return Fail("material edit: roughnessFactor invalid");
+            doc["roughnessFactor"] = value;
+        } else if (key == "emissiveFactor") {
+            float values[3];
+            if (!floatArray(item.value(), values, 3))
+                return Fail("material edit: emissiveFactor invalid");
+            doc["emissiveFactor"] = {values[0], values[1], values[2]};
+        } else if (key == "alphaCutoff") {
+            float value = 0.0f;
+            if (!finiteNumber(item.value(), &value) || value < 0.0f)
+                return Fail("material edit: alphaCutoff invalid");
+            doc["alphaCutoff"] = value;
+        } else if (key == "alphaMode") {
+            if (!item.value().is_string())
+                return Fail("material edit: alphaMode invalid");
+            const std::string mode = item.value().get<std::string>();
+            if (mode != "OPAQUE" && mode != "MASK" && mode != "BLEND")
+                return Fail("material edit: alphaMode invalid");
+            doc["alphaMode"] = mode;
+        } else {
+            return Fail("material edit: unsupported field '" + key + "'");
+        }
+    }
+    const std::string newText = doc.dump();
+    std::vector<uint8_t> newBytes(newText.begin(), newText.end());
+    if (!Engine::AssetImport::ReadMaterialAssetJson(newBytes).ok)
+        return Fail("material edit: edited payload failed validation");
+    if (newText == currentText) return true; // no-op, no revision
+
+    const std::string suffix = ".material.json";
+    if (entry.path.size() <= suffix.size() ||
+        entry.path.compare(entry.path.size() - suffix.size(), suffix.size(),
+                           suffix) != 0)
+        return Fail("material edit: unsupported material path");
+    const std::string withoutSuffix =
+        entry.path.substr(0, entry.path.size() - suffix.size());
+    const size_t lastDot = withoutSuffix.find_last_of('.');
+    if (lastDot == std::string::npos)
+        return Fail("material edit: unsupported material path");
+    const std::string beforeHash = withoutSuffix.substr(0, lastDot);
+    const size_t slotMarker = beforeHash.rfind(".m");
+    if (slotMarker == std::string::npos)
+        return Fail("material edit: unsupported material path");
+    const std::string slotDigits = beforeHash.substr(slotMarker + 2);
+    if (slotDigits.empty()) return Fail("material edit: unsupported material path");
+    for (char c : slotDigits)
+        if (c < '0' || c > '9')
+            return Fail("material edit: unsupported material path");
+    const std::string newPath =
+        beforeHash + "." + Hex8(newText) + suffix;
+
+    const auto newResolved = m_Root.Resolve(newPath);
+    if (!newResolved.ok)
+        return Fail("material edit: edited path rejected");
+    const auto written = Engine::Content::WriteFileAtomic(newResolved.path,
+                                                          newText);
+    if (!written.ok)
+        return Fail("material edit: could not stage edited material");
+
+    Engine::Content::ContentRegistry candidate = m_Reg;
+    candidate.Unregister(entry.guid);
+    if (!candidate.RegisterExplicit(entry.guid, newPath, AT::Material))
+        return Fail("material edit: registry rebind failed");
+    std::string committedScene;
+    if (!m_Revisions.ReadCommittedScene(m_ScenePath, &committedScene))
+        return Fail("material edit: committed scene unreadable");
+    const auto published = m_Revisions.Publish(
+        m_Root, candidate.SerializeManifest(), committedScene);
+    if (!published.ok) {
+        if (published.recoveryRequired) m_RecoveryRequired = true;
+        return Fail("material edit: " + published.diagnostic);
+    }
+    m_Reg = std::move(candidate);
+    m_EditedMaterials.insert(entry.guid.ToHex());
+    if (!SaveMaterialEdits()) {
+        if (!m_Warnings.empty()) m_Warnings += "\n";
+        m_Warnings += "material edit: CouldNotPersistEditMarker";
+    }
+    const auto mirror = Engine::Content::WriteFileAtomic(
+        m_ManifestPath, m_Reg.SerializeManifest());
+    if (!mirror.ok) {
+        if (!m_Warnings.empty()) m_Warnings += "\n";
+        m_Warnings += "material edit: CommittedCleanupPending; legacy mirror update failed";
+    }
+    Engine::Log::Info("[EditorBridge] material edited: {} (revision {})",
+                      newPath, published.revision);
+    return true;
+}
+
+bool EditorSession::GetAssetDependencies(int32_t assetIndex,
+                                         std::string* out) const {
+    if (!out) return false;
+    Engine::Content::AssetEntry asset;
+    if (!AssetAt(assetIndex, &asset)) return false;
+    const auto entries = m_Reg.GetAllEntries();
+    std::vector<std::pair<std::string, std::string>> registryPairs;
+    registryPairs.reserve(entries.size());
+    for (const auto& e : entries)
+        registryPairs.emplace_back(e.path,
+                                   Engine::Content::ToString(e.type));
+    auto guidOfPath = [&](const std::string& path) -> std::string {
+        for (const auto& e : entries)
+            if (e.path == path) return e.guid.ToHex();
+        return {};
+    };
+    auto resolvedOf = [&](const std::string& path) {
+        const auto r = m_Root.Resolve(path);
+        if (!r.ok) return false;
+        std::error_code ec;
+        return std::filesystem::exists(Engine::Content::PathFromUtf8(r.path), ec) && !ec;
+    };
+    auto typeName = [](Engine::Content::AssetType t) {
+        return std::string(Engine::Content::ToString(t));
+    };
+    nlohmann::json deps = nlohmann::json::array();
+    auto addGuidDep = [&](const std::string& type, const std::string& guidHex,
+                         const std::string& slot) {
+        const auto guid = Engine::ResourceGUID::FromHex(guidHex);
+        std::string path;
+        for (const auto& entry : entries) {
+            if (entry.guid == guid) { path = entry.path; break; }
+        }
+        nlohmann::json d;
+        d["type"] = type;
+        d["path"] = path;
+        d["guid"] = guidHex;
+        d["resolved"] = !path.empty() && resolvedOf(path);
+        d["slot"] = slot;
+        deps.push_back(std::move(d));
+    };
+
+    auto addDep = [&](const std::string& type, const std::string& path,
+                      const std::string& slot, const std::string& via) {
+        nlohmann::json d;
+        d["type"] = type;
+        d["path"] = path;
+        d["guid"] = guidOfPath(path);
+        d["resolved"] = resolvedOf(path);
+        d["slot"] = slot;
+        if (!via.empty()) d["via"] = via;
+        deps.push_back(std::move(d));
+    };
+
+    auto readAsset = [&](const Engine::Content::AssetEntry& e,
+                         std::vector<uint8_t>* bytes) {
+        const auto r = m_Root.Resolve(e.path);
+        return r.ok && ReadAllBytesFromPath(r.path, bytes);
+    };
+
+    if (asset.type == Engine::Content::AssetType::Mesh) {
+        std::vector<uint8_t> bytes;
+        if (!readAsset(asset, &bytes)) return false;
+        try {
+            const auto doc = nlohmann::json::parse(bytes.begin(), bytes.end());
+            if (doc.contains("sourceFile") && doc["sourceFile"].is_string()) {
+                const std::string source = doc["sourceFile"].get<std::string>();
+                if (!source.empty()) addDep("Source", source, "source", "");
+            }
+            std::vector<std::string> names;
+            if (doc.contains("materialNames") &&
+                doc["materialNames"].is_array()) {
+                for (const auto& n : doc["materialNames"])
+                    if (n.is_string()) names.push_back(n.get<std::string>());
+            }
+            const auto slots = Engine::AssetImport::ResolveMaterialAssetPaths(
+                asset.path, static_cast<uint32_t>(names.size()), registryPairs);
+            if (slots.ok) {
+                for (uint32_t slot = 0; slot < slots.slotPaths.size(); ++slot) {
+                    const std::string& path = slots.slotPaths[slot];
+                    if (path.empty()) continue;
+                    addDep("Material", path, std::to_string(slot), "");
+                    Engine::Content::AssetEntry mat;
+                    mat.path = path;
+                    mat.type = Engine::Content::AssetType::Material;
+                    std::vector<uint8_t> mb;
+                    if (readAsset(mat, &mb)) {
+                        const auto mr =
+                            Engine::AssetImport::ReadMaterialAssetJson(mb);
+                        if (mr.ok) {
+                            auto addTex = [&](const Engine::AssetImport::MaterialTextureRef& ref,
+                                              const char* role) {
+                                if (ref.present && !ref.assetPath.empty())
+                                    addDep("Texture", ref.assetPath,
+                                           std::string("m") + std::to_string(slot) +
+                                               ":" + role,
+                                           path);
+                            };
+                            addTex(mr.material.baseColor, "baseColorTexture");
+                            addTex(mr.material.normal, "normalTexture");
+                            addTex(mr.material.occlusion, "occlusionTexture");
+                            addTex(mr.material.emissive, "emissiveTexture");
+                            addTex(mr.material.metallicRoughness,
+                                   "metallicRoughnessTexture");
+                        }
+                    }
+                }
+            }
+        } catch (...) {
+            return false;
+        }
+    } else if (asset.type == Engine::Content::AssetType::Material) {
+        std::vector<uint8_t> bytes;
+        if (!readAsset(asset, &bytes)) return false;
+        const auto mr = Engine::AssetImport::ReadMaterialAssetJson(bytes);
+        if (!mr.ok) return false;
+        auto addTex = [&](const Engine::AssetImport::MaterialTextureRef& ref,
+                          const char* role) {
+            if (ref.present && !ref.assetPath.empty())
+                addDep("Texture", ref.assetPath, role, "");
+        };
+        addTex(mr.material.baseColor, "baseColorTexture");
+        addTex(mr.material.normal, "normalTexture");
+        addTex(mr.material.occlusion, "occlusionTexture");
+        addTex(mr.material.emissive, "emissiveTexture");
+        addTex(mr.material.metallicRoughness, "metallicRoughnessTexture");
+    } else if (asset.type == Engine::Content::AssetType::Prefab) {
+        std::vector<uint8_t> bytes;
+        if (!readAsset(asset, &bytes)) return false;
+        const std::string text(bytes.begin(), bytes.end());
+        const auto prefab = Engine::Content::ReadPrefab(text, &asset.guid);
+        if (!prefab.ok) return false;
+        std::unordered_set<std::string> seen;
+        for (const auto& entity : prefab.model.entities) {
+            for (const auto& component : entity.components) {
+                if (component.type != "Mesh") continue;
+                if (!component.data.contains("meshGuid") ||
+                    !component.data["meshGuid"].is_string())
+                    continue;
+                const std::string meshGuid =
+                    component.data["meshGuid"].get<std::string>();
+                if (seen.insert(meshGuid).second)
+                    addGuidDep("Mesh", meshGuid, "component");
+            }
+        }
+    }
+
+    nlohmann::json dependents = nlohmann::json::array();
+    for (const auto& other : entries) {
+        if (other.guid == asset.guid) continue;
+        std::vector<uint8_t> bytes;
+        if (!readAsset(other, &bytes)) continue;
+        if (other.type == Engine::Content::AssetType::Mesh) {
+            try {
+                const auto doc = nlohmann::json::parse(bytes.begin(), bytes.end());
+                std::vector<std::string> names;
+                if (doc.contains("materialNames") && doc["materialNames"].is_array())
+                    for (const auto& n : doc["materialNames"])
+                        if (n.is_string()) names.push_back(n.get<std::string>());
+                const auto slots = Engine::AssetImport::ResolveMaterialAssetPaths(
+                    other.path, static_cast<uint32_t>(names.size()), registryPairs);
+                if (slots.ok) {
+                    for (uint32_t slot = 0; slot < slots.slotPaths.size(); ++slot) {
+                        if (slots.slotPaths[slot] == asset.path) {
+                            dependents.push_back(
+                                {{"type", "Mesh"},
+                                 {"path", other.path},
+                                 {"guid", other.guid.ToHex()},
+                                 {"slot", std::to_string(slot)}});
+                        }
+                    }
+                }
+            } catch (...) {
+            }
+        } else if (other.type == Engine::Content::AssetType::Material) {
+            const auto mr = Engine::AssetImport::ReadMaterialAssetJson(bytes);
+            if (!mr.ok) continue;
+            auto check = [&](const Engine::AssetImport::MaterialTextureRef& ref,
+                             const char* role) {
+                if (ref.present && ref.assetPath == asset.path) {
+                    dependents.push_back({{"type", "Material"},
+                                          {"path", other.path},
+                                          {"guid", other.guid.ToHex()},
+                                          {"slot", role}});
+                }
+            };
+            check(mr.material.baseColor, "baseColorTexture");
+            check(mr.material.normal, "normalTexture");
+            check(mr.material.occlusion, "occlusionTexture");
+            check(mr.material.emissive, "emissiveTexture");
+            check(mr.material.metallicRoughness, "metallicRoughnessTexture");
+        } else if (other.type == Engine::Content::AssetType::Prefab) {
+            const std::string text(bytes.begin(), bytes.end());
+            const auto prefab = Engine::Content::ReadPrefab(text, &other.guid);
+            if (!prefab.ok) continue;
+            for (const auto& entity : prefab.model.entities) {
+                for (const auto& component : entity.components) {
+                    if (component.type != "Mesh" ||
+                        !component.data.contains("meshGuid") ||
+                        !component.data["meshGuid"].is_string())
+                        continue;
+                    if (component.data["meshGuid"].get<std::string>() !=
+                        asset.guid.ToHex())
+                        continue;
+                    dependents.push_back({{"type", "Prefab"},
+                                          {"path", other.path},
+                                          {"guid", other.guid.ToHex()},
+                                          {"slot", "component"}});
+                }
+            }
+        }
+    }
+
+    nlohmann::json doc;
+    doc["asset"] = {{"type", typeName(asset.type)},
+                    {"path", asset.path},
+                    {"guid", asset.guid.ToHex()}};
+    doc["dependencies"] = deps;
+    doc["dependents"] = dependents;
+    *out = doc.dump();
+    return true;
+}
+
+int32_t EditorSession::ReimportAsset(int32_t assetIndex,
+                                     bool discardLocalEdits) {
+    Engine::Content::AssetEntry asset;
+    if (!AssetAt(assetIndex, &asset))
+        return Fail("reimport: bad asset index"), -1;
+    if (asset.type != Engine::Content::AssetType::Mesh)
+        return Fail("reimport: only Mesh assets have a source file"), -1;
+    const auto resolved = m_Root.Resolve(asset.path);
+    if (!resolved.ok) return Fail("reimport: mesh path rejected"), -1;
+    std::vector<uint8_t> bytes;
+    if (!ReadAllBytesFromPath(resolved.path, &bytes))
+        return Fail("reimport: mesh bytes unreadable"), -1;
+    std::string sourceFile;
+    std::vector<std::string> materialNames;
+    try {
+        const auto doc = nlohmann::json::parse(bytes.begin(), bytes.end());
+        if (doc.contains("sourceFile") && doc["sourceFile"].is_string())
+            sourceFile = doc["sourceFile"].get<std::string>();
+        if (doc.contains("materialNames") && doc["materialNames"].is_array())
+            for (const auto& n : doc["materialNames"])
+                if (n.is_string()) materialNames.push_back(n.get<std::string>());
+    } catch (...) {
+        return Fail("reimport: mesh JSON invalid"), -1;
+    }
+    if (sourceFile.empty()) return Fail("reimport: source path missing"), -1;
+    const auto sourceResolved = m_Root.Resolve(sourceFile);
+    if (!sourceResolved.ok)
+        return Fail("reimport: source path rejected"), -1;
+    std::error_code ec;
+    if (!std::filesystem::exists(
+            Engine::Content::PathFromUtf8(sourceResolved.path), ec) || ec)
+        return Fail("reimport: source file missing"), -1;
+
+    const auto entries = m_Reg.GetAllEntries();
+    std::vector<std::pair<std::string, std::string>> registryPairs;
+    registryPairs.reserve(entries.size());
+    for (const auto& e : entries)
+        registryPairs.emplace_back(e.path,
+                                   Engine::Content::ToString(e.type));
+    const auto slots = Engine::AssetImport::ResolveMaterialAssetPaths(
+        asset.path, static_cast<uint32_t>(materialNames.size()),
+        registryPairs);
+    std::vector<std::string> editedGuids;
+    if (slots.ok) {
+        for (const std::string& path : slots.slotPaths) {
+            if (path.empty()) continue;
+            for (const auto& e : entries) {
+                if (e.path == path && m_EditedMaterials.count(e.guid.ToHex()))
+                    editedGuids.push_back(e.guid.ToHex());
+            }
+        }
+    }
+    if (!editedGuids.empty() && !discardLocalEdits) {
+        return Fail("reimport blocked: material " + editedGuids.front() +
+                    " has local edits; use discard-local-edits"),
+               -1;
+    }
+    const int32_t result = ImportModelAsset(sourceFile, sourceFile, false, "",
+                                            discardLocalEdits);
+    if (result < 0) return -1;
+    if (discardLocalEdits && !editedGuids.empty()) {
+        for (const auto& guid : editedGuids) m_EditedMaterials.erase(guid);
+        if (!SaveMaterialEdits()) {
+            if (!m_Warnings.empty()) m_Warnings += "\n";
+            m_Warnings += "reimport: CouldNotPersistEditMarkerReset";
+        }
+    }
+    return result;
+}
 bool EditorSession::AssetAt(int32_t index, Engine::Content::AssetEntry* out) const {
     if (!out || index < 0 ||
         index >= static_cast<int32_t>(m_AssetOrder.size()))
@@ -2223,7 +5540,14 @@ bool EditorSession::GetRuntimeStats(RuntimeStats* out) const {
 
 void EditorSession::RealignBindings() {
     if (!m_EditScene) return;
-    m_Bindings.resize(m_EditScene->GetObjectCount());   // 补 Null 绑定
+    m_Bindings.assign(m_EditScene->GetObjectCount(),
+                      Engine::Content::EntityContentBinding{});
+    for (size_t i = 0; i < m_EditScene->GetObjectCount(); ++i) {
+        const auto& obj = m_EditScene->GetObjects()[i];
+        if (!obj) continue;
+        const auto it = m_BindingsById.find(obj->GetSceneEntityId());
+        if (it != m_BindingsById.end()) m_Bindings[i] = it->second;
+    }
 }
 
 void EditorSession::MarkDirty() {

@@ -21,14 +21,21 @@
 #include <mutex>
 #include <string>
 #include <thread>
+#include <set>
 #include <vector>
 #include <functional>
+#include <unordered_map>
 #include <Engine/Editor/EditorCameraInput.h>
 
 #include <Engine/Core/Content/ContentAsset.h>
 #include <Engine/Core/Content/ProjectPaths.h>
 #include <Engine/Core/Content/RevisionStore.h>
 #include <Engine/Core/Content/SceneSerializerV1.h>
+#include <Engine/Core/Content/PrefabAsset.h>
+#include <Engine/Core/Content/PrefabApplyCandidate.h>
+#include <Engine/Core/Content/PrefabApplyRecord.h>
+#include <Engine/Core/Content/PrefabReconciliationSources.h>
+#include <Engine/Core/Content/PrefabReconciliation.h>
 #include <Engine/Core/Scene/Scene.h>
 #include <Engine/Core/RenderResources/TextureManager.h>
 #include <Engine/OpenGL/OpenGLGraphicsFactory.h>
@@ -73,6 +80,48 @@ public:
 
     // ── Phase 2 (AV-G2) ──
     bool DeleteEntity(int32_t index);
+    uint64 GetEntitySceneId(int32_t index) const;
+    bool SetEntityParent(uint64 childId, uint64 parentId, int32_t mode);
+    bool DeleteEntityById(uint64 entityId);
+    int32_t GetTotalEntityCount() const;
+    bool GetEntityNameById(uint64 entityId, std::string* out) const;
+    uint64 GetEntityParentId(uint64 entityId) const;
+    int32_t GetEntityChildCount(uint64 entityId) const;
+    uint64 GetEntityChildId(uint64 entityId, int32_t childIndex) const;
+    bool GetEntityTransformById(uint64 entityId, float out9[9]) const;
+    bool GetPrefabInstanceJsonForEntity(uint64 entityId, std::string* out) const;
+    bool BuildPrefabApplyCandidateForInstance(
+        uint64 rootEntityId, Engine::Content::PrefabApplyCandidateResult* out) const;
+    bool PublishPrefabApplyPhase1(uint64 rootEntityId);
+    bool PublishPrefabApplyPhase2(uint64 rootEntityId);
+    bool ApplyPrefabOverrides(uint64 rootEntityId);
+    bool LoadPrefabReconciliationSources(
+        uint64 rootEntityId,
+        Engine::Content::PrefabReconciliationSources* out);
+    bool PreviewPrefabReconciliation(
+        uint64 rootEntityId,
+        Engine::Content::PrefabReconciliationPlan* out);
+    bool PersistPrefabReconciliationConflicts(
+        uint64 rootEntityId,
+        const Engine::Content::PrefabReconciliationPlan& plan);
+    bool ResolvePrefabReconciliationConflict(
+        uint64 rootEntityId, const std::string& conflictId,
+        const std::string& action, const nlohmann::json& value);
+    bool ExecutePrefabReconciliation(uint64 rootEntityId);
+    bool GetPrefabReconciliationStatusJson(uint64 rootEntityId,
+                                           std::string* out);
+    bool GetPrefabReconciliationPreviewJson(uint64 rootEntityId,
+                                            std::string* out);
+    bool RevertPrefabOverride(uint64 rootEntityId, uint64 localId,
+                              const std::string& component,
+                              const std::string& field);
+    bool RevertPrefabInstance(uint64 rootEntityId);
+    bool SetEntityTransformById(uint64 entityId, const float pos3[3],
+                               const float euler3[3], const float scale3[3]);
+    bool RenameEntityById(uint64 entityId, const std::string& newName);
+    int32_t CreatePrefabFromEntity(uint64 entityId, const char* assetName);
+    bool InstantiatePrefab(int32_t assetIndex, uint64 parentEntityId, uint64* newRootId);
+    bool DuplicateEntityById(uint64 entityId, bool includeSubtree, uint64* newRootId);
     bool RenameEntity(int32_t index, const std::string& newName);
     bool GetEntitySprite(int32_t index, std::string* out) const;
     bool AssignSprite(int32_t assetIndex, int32_t entityIndex);
@@ -105,6 +154,43 @@ public:
 
     bool GetAssetPath(int32_t index, std::string* out) const;
     int32_t GetAssetType(int32_t index) const;
+    /// B6: committed asset availability (0=available,1=missing file,
+    /// 2=path rejected, -1=bad index).
+    int32_t GetAssetStatus(int32_t index) const;
+    /// P7-A: material JSON read/update, dependency query, controlled reimport.
+    bool GetMaterialJson(int32_t assetIndex, std::string* out) const;
+    bool UpdateMaterial(int32_t assetIndex, const std::string& fieldsJson);
+    bool GetAssetDependencies(int32_t assetIndex, std::string* out) const;
+    int32_t ReimportAsset(int32_t assetIndex, bool discardLocalEdits);
+    bool GetEntityTransform(int32_t index, float out9[9]) const;
+    bool GetEditorViewProjection(float out16[16]) const;
+    bool SetEntityTransform(int32_t index, const float pos3[3],
+                            const float euler3[3],
+                            const float scale3[3]);
+    bool BeginSceneEdit(const std::string& label);
+    bool CommitSceneEdit();
+    bool CancelSceneEdit();
+    bool UndoSceneEdit();
+    bool RedoSceneEdit();
+    bool CanUndoSceneEdit() const;
+    bool CanRedoSceneEdit() const;
+    void LoadMaterialEdits();
+    std::string CaptureSceneJson();
+    bool ApplySceneJson(const std::string& json);
+    void RefreshDirtyFromScene();
+    struct SceneEditHistoryEntry {
+        std::string label;
+        std::string before;
+        std::string after;
+    };
+    std::vector<SceneEditHistoryEntry> m_SceneHistory;
+    size_t m_SceneHistoryCursor = 0;
+    bool m_SceneTxnActive = false;
+    std::string m_SceneTxnLabel;
+    std::string m_SceneTxnBefore;
+    std::string m_SavedSceneJson;
+    bool m_HasSavedScene = false;
+    bool SaveMaterialEdits();
     bool GetAssetGuid(int32_t index, std::string* out) const;
 
     // ── Phase 3-C (Asset Browser) ──
@@ -255,6 +341,10 @@ private:
     /// 位移。禁止直接 m_Reg.GetAllEntries()[i]：unordered_map 迭代序随
     /// 插入/重排变化，二次导入后旧索引会指向别的资产（P3-C 实证）。
     bool AssetAt(int32_t index, Engine::Content::AssetEntry* out) const;
+    bool LoadPrefabSourceForInstance(
+        const Engine::PrefabInstanceMetadata& metadata,
+        Engine::Content::PrefabModel* model,
+        std::string* error) const;
     /// 记录失败并返回 false（统一错误出口，供 ABI 层读取）
     bool Fail(const std::string& msg);
     /// 置 dirty（任何编辑路径统一入口）
@@ -277,7 +367,8 @@ private:
     /// C-1 单 Mesh 资产 + 内部 primitive spans，首材质渲染 + 显式 warning）。
     int32_t ImportModelAsset(const std::string& input,
                              const std::string& fwd, bool absolute,
-                             const std::string& reattachHex);
+                             const std::string& reattachHex,
+                             bool forceReimport = false);
 
     std::thread::id m_CreationThreadId = std::this_thread::get_id();
     std::unique_ptr<Engine::OpenGLGraphicsFactory> m_OwnedGfx;
@@ -291,11 +382,13 @@ private:
     Engine::Content::RevisionStore m_Revisions;
     std::shared_ptr<Engine::Scene> m_EditScene;
     std::vector<Engine::Content::EntityContentBinding> m_Bindings;
+    std::unordered_map<uint64, Engine::Content::EntityContentBinding> m_BindingsById;
     /// 会话内稳定资产序（只追加 GUID；索引语义 = 此 vector 下标）
     std::vector<Engine::ResourceGUID> m_AssetOrder;
 
     std::string m_ScenePath;
     std::string m_ManifestPath;
+    std::set<std::string> m_EditedMaterials;
     EventFn m_Event;
     mutable std::recursive_mutex m_EventMutex;
     mutable std::mutex m_ProofMutex;

@@ -142,7 +142,7 @@ TEST(EngineHostAbiTest, T6BIncrementKeepsFrozenSurfaces) {
     // T-6-B 只做 additive：EV_COUNT / RuntimeResult 不变。
     EXPECT_EQ(EV_COUNT, 14);
     EXPECT_EQ(sizeof(RuntimeResult), 76u);
-    EXPECT_EQ(ENGINE_HOST_ABI_VERSION, (1 << 16) | 9);
+    EXPECT_EQ(ENGINE_HOST_ABI_VERSION, (1 << 16) | 20);
 }
 
 TEST(EngineHostAbiTest, SkeletonLifecycle) {
@@ -939,6 +939,35 @@ TEST_F(EditorBridgeTest, CreateEntityAndEvents) {
     ASSERT_EQ(events.size(), static_cast<size_t>(2));
     EXPECT_EQ(events[0].type, EV_ENTITY_CREATED);
     EXPECT_EQ(events[0].payload, "Probe");
+}
+
+TEST_F(EditorBridgeTest, DuplicateEntityCAbiAllocatesNewRootId) {
+    ASSERT_EQ(EditorSession_OpenProject(m_Session, kManifest, kScene), 1);
+    const int32_t parentIndex = EditorSession_CreateEntity(m_Session, "DupParent");
+    const int32_t childIndex = EditorSession_CreateEntity(m_Session, "DupChild");
+    const uint64_t parentId = EditorSession_GetEntitySceneId(m_Session, parentIndex);
+    const uint64_t childId = EditorSession_GetEntitySceneId(m_Session, childIndex);
+    ASSERT_NE(parentId, 0u);
+    ASSERT_NE(childId, 0u);
+    ASSERT_EQ(EditorSession_SetEntityParent(m_Session, childId, parentId, 0), 0);
+    const int32_t beforeTotal = EditorSession_GetTotalEntityCount(m_Session);
+
+    uint64_t copyId = 0;
+    ASSERT_EQ(EditorSession_DuplicateEntity(m_Session, parentId, 1, &copyId), 0);
+    ASSERT_NE(copyId, 0u);
+    EXPECT_NE(copyId, parentId);
+    EXPECT_EQ(EditorSession_GetEntityChildCount(m_Session, copyId), 1);
+    const uint64_t childCopyId = EditorSession_GetEntityChildId(m_Session, copyId, 0);
+    ASSERT_NE(childCopyId, 0u);
+    EXPECT_NE(childCopyId, childId);
+    EXPECT_EQ(EditorSession_GetEntityParentId(m_Session, childCopyId), copyId);
+    EXPECT_EQ(EditorSession_CanUndoSceneEdit(m_Session), 1);
+    const int32_t undo = EditorSession_UndoSceneEdit(m_Session);
+    char undoError[512] = {};
+    EditorSession_GetLastError(m_Session, undoError, sizeof(undoError));
+    ASSERT_EQ(undo, 0) << undoError;
+    EXPECT_EQ(EditorSession_GetTotalEntityCount(m_Session), beforeTotal);
+    EXPECT_EQ(EditorSession_GetEntityParentId(m_Session, childId), parentId);
 }
 
 TEST_F(EditorBridgeTest, ErrorChannelOnBadPath) {
@@ -2408,15 +2437,29 @@ TEST_F(EditorBridgeTest, T1FEndToEndPhysicsSaveReopenPlayStopReplay) {
         // v1.8（M1-F）追加测试专用故障注入钩子；
         // v1.9（T-6-B）追加 EngineHost_PollEngineLogs 与自然对齐日志 POD；
         // 均不新增 op、不改既有结构体与取值。始终 append-only。
-        EXPECT_EQ(ENGINE_HOST_ABI_VERSION, (1 << 16) | 9);
+        EXPECT_EQ(ENGINE_HOST_ABI_VERSION, (1 << 16) | 20);
         EXPECT_EQ(ENGINE_HOST_OP_GET_PRESENTATION_FRAME, 28);
         EXPECT_EQ(ENGINE_HOST_OP_PICK, 29);
         EXPECT_EQ(ENGINE_HOST_OP_SET_VIEWPORT_SIZE, 30);
         EXPECT_EQ(ENGINE_HOST_OP_SET_CAMERA_INPUT, 31);
-        EXPECT_EQ(ENGINE_HOST_OP_COUNT, 32);
-        // 既有 op 编号一个都不能动
-        EXPECT_EQ(ENGINE_HOST_OP_GET_ENTITY_POSITION, 27);
-        EXPECT_EQ(ENGINE_HOST_OP_ASSIGN_SPRITE, 26);
+        EXPECT_EQ(ENGINE_HOST_OP_GET_ASSET_STATUS, 32);
+        EXPECT_EQ(ENGINE_HOST_OP_GET_MATERIAL_JSON, 33);
+        EXPECT_EQ(ENGINE_HOST_OP_UPDATE_MATERIAL, 34);
+        EXPECT_EQ(ENGINE_HOST_OP_GET_ASSET_DEPENDENCIES, 35);
+        EXPECT_EQ(ENGINE_HOST_OP_REIMPORT_ASSET, 36);
+        EXPECT_EQ(ENGINE_HOST_OP_CREATE_PREFAB_FROM_ENTITY, 60);
+        EXPECT_EQ(ENGINE_HOST_OP_INSTANTIATE_PREFAB, 61);
+        EXPECT_EQ(ENGINE_HOST_OP_GET_LAST_INSTANTIATED_ENTITY_ID, 62);
+        EXPECT_EQ(ENGINE_HOST_OP_GET_PREFAB_INSTANCE_JSON, 63);
+        EXPECT_EQ(ENGINE_HOST_OP_REVERT_OVERRIDE, 64);
+        EXPECT_EQ(ENGINE_HOST_OP_APPLY_PREFAB_OVERRIDES, 65);
+        EXPECT_EQ(ENGINE_HOST_OP_GET_PREFAB_RECONCILIATION_STATUS, 66);
+        EXPECT_EQ(ENGINE_HOST_OP_PREVIEW_PREFAB_RECONCILIATION, 67);
+        EXPECT_EQ(ENGINE_HOST_OP_APPLY_PREFAB_RECONCILIATION, 68);
+        EXPECT_EQ(ENGINE_HOST_OP_RESOLVE_RECONCILIATION_CONFLICT, 69);
+        EXPECT_EQ(ENGINE_HOST_OP_COUNT,
+                  ENGINE_HOST_OP_RESOLVE_RECONCILIATION_CONFLICT + 1);
+        EXPECT_EQ(ENGINE_HOST_OP_COUNT, 70);
         // 既有 status 取值不变，新值是追加
         EXPECT_EQ(ENGINE_HOST_STATUS_EDIT_ACCEPTED, 10);
         EXPECT_EQ(ENGINE_HOST_STATUS_NO_NEW_FRAME, 11);

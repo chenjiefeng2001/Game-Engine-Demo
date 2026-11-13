@@ -238,7 +238,7 @@ TEST(EditorHostAbiTest, D3PickRequestPumpFetchHappyPath) {
 // v1.9 / T-6-B：只新增 EngineHost_PollEngineLogs 与日志 POD，packet 布局不变。
 // 这条用例把"布局没动"变成编译期+运行期双重断言，防止后续有人顺手重排字段。
 TEST(EditorHostAbiTest, D3PickPacketLayoutIsStableInV16) {
-    EXPECT_EQ(ENGINE_HOST_ABI_VERSION, (1 << 16) | 9);
+    EXPECT_EQ(ENGINE_HOST_ABI_VERSION, (1 << 16) | 20);
     EXPECT_EQ(sizeof(PickResultPacket), 32u);
     EXPECT_EQ(ENGINE_HOST_PICK_RESULT_PACKET_BYTES, 32u);
     EXPECT_EQ(offsetof(PickResultPacket, struct_size), 0u);

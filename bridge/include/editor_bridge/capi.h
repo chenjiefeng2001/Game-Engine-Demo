@@ -141,6 +141,75 @@ EDITOR_BRIDGE_API int32_t EditorSession_GetEntityPosition(EditorSessionHandle h,
 EDITOR_BRIDGE_API int32_t EditorSession_SetEntityPosition(EditorSessionHandle h,
                                                           int32_t index,
                                                           const float pos3[3]);
+/// P7-B: 9 floats = position[3], Euler degrees[3], scale[3].
+EDITOR_BRIDGE_API int32_t EditorSession_GetEditorViewProjection(
+    EditorSessionHandle h, float out16[16]);
+EDITOR_BRIDGE_API int32_t EditorSession_GetEntityTransform(EditorSessionHandle h,
+                                                           int32_t index,
+                                                           float out9[9]);
+EDITOR_BRIDGE_API int32_t EditorSession_SetEntityTransform(
+    EditorSessionHandle h, int32_t index, const float pos3[3],
+    const float euler3[3], const float scale3[3]);
+
+EDITOR_BRIDGE_API uint64_t EditorSession_GetEntitySceneId(
+    EditorSessionHandle h, int32_t index);
+EDITOR_BRIDGE_API int32_t EditorSession_GetTotalEntityCount(EditorSessionHandle h);
+EDITOR_BRIDGE_API uint64_t EditorSession_GetEntityParentId(
+    EditorSessionHandle h, uint64_t entityId);
+EDITOR_BRIDGE_API int32_t EditorSession_GetEntityChildCount(
+    EditorSessionHandle h, uint64_t entityId);
+EDITOR_BRIDGE_API uint64_t EditorSession_GetEntityChildId(
+    EditorSessionHandle h, uint64_t entityId, int32_t childIndex);
+EDITOR_BRIDGE_API int32_t EditorSession_GetEntityNameById(
+    EditorSessionHandle h, uint64_t entityId, char* out, int32_t cap);
+
+EDITOR_BRIDGE_API int32_t EditorSession_GetEntityTransformById(
+    EditorSessionHandle h, uint64_t entityId, float out9[9]);
+EDITOR_BRIDGE_API int32_t EditorSession_SetEntityTransformById(
+    EditorSessionHandle h, uint64_t entityId, const float pos3[3],
+    const float euler3[3], const float scale3[3]);
+EDITOR_BRIDGE_API int32_t EditorSession_SetEntityParent(
+    EditorSessionHandle h, uint64_t childId, uint64_t parentId, int32_t mode);
+EDITOR_BRIDGE_API int32_t EditorSession_DeleteEntityById(
+    EditorSessionHandle h, uint64_t entityId);
+/// G3: duplicate an entity/subtree by Scene Entity ID; returns new root via out param.
+EDITOR_BRIDGE_API int32_t EditorSession_DuplicateEntity(
+    EditorSessionHandle h, uint64_t entityId, int32_t includeSubtree,
+    uint64_t* outNewRootId);
+
+/// G4-3: create a committed Prefab Asset from a Scene subtree. Returns asset index or -1.
+EDITOR_BRIDGE_API int32_t EditorSession_CreatePrefabFromEntity(
+    EditorSessionHandle h, uint64_t entityId, const char* assetName);
+
+/// G5: instantiate a committed Prefab under parentId (0 = scene root).
+EDITOR_BRIDGE_API int32_t EditorSession_InstantiatePrefab(
+    EditorSessionHandle h, int32_t assetIndex, uint64_t parentEntityId,
+    uint64_t* outRootEntityId);
+
+/// G6: Prefab instance metadata/override JSON for an entity.
+EDITOR_BRIDGE_API int32_t EditorSession_GetPrefabInstanceJson(
+    EditorSessionHandle h, uint64_t entityId, char* out, int32_t cap);
+
+/// G6: revert one/few/all instance overrides.
+EDITOR_BRIDGE_API int32_t EditorSession_RevertOverride(
+    EditorSessionHandle h, uint64_t rootEntityId, uint64_t localId,
+    const char* component, const char* field);
+EDITOR_BRIDGE_API int32_t EditorSession_RevertPrefabInstance(
+    EditorSessionHandle h, uint64_t rootEntityId);
+
+/// G6-4: apply all instance overrides through Phase 1 + Phase 2.
+EDITOR_BRIDGE_API int32_t EditorSession_ApplyPrefabOverrides(
+    EditorSessionHandle h, uint64_t rootEntityId);
+EDITOR_BRIDGE_API int32_t EditorSession_RenameEntityById(
+    EditorSessionHandle h, uint64_t entityId, const char* newName);
+EDITOR_BRIDGE_API int32_t EditorSession_BeginSceneEdit(EditorSessionHandle h,
+                                                       const char* label);
+EDITOR_BRIDGE_API int32_t EditorSession_CommitSceneEdit(EditorSessionHandle h);
+EDITOR_BRIDGE_API int32_t EditorSession_CancelSceneEdit(EditorSessionHandle h);
+EDITOR_BRIDGE_API int32_t EditorSession_UndoSceneEdit(EditorSessionHandle h);
+EDITOR_BRIDGE_API int32_t EditorSession_RedoSceneEdit(EditorSessionHandle h);
+EDITOR_BRIDGE_API int32_t EditorSession_CanUndoSceneEdit(EditorSessionHandle h);
+EDITOR_BRIDGE_API int32_t EditorSession_CanRedoSceneEdit(EditorSessionHandle h);
 /// 删除实体（编辑态；越界拒绝；会置 dirty）。成功广播 EV_ENTITY_DELETED。
 EDITOR_BRIDGE_API int32_t EditorSession_DeleteEntity(EditorSessionHandle h,
                                                      int32_t index);
@@ -193,9 +262,23 @@ EDITOR_BRIDGE_API int32_t EditorSession_GetAssetPath(EditorSessionHandle h,
                                                      int32_t index,
                                                      char* out,
                                                      int32_t cap);
-/// 0=Texture 1=Script 2=Unknown
+/// B6/P8: 0=Texture 1=Script 2=Mesh 3=Material 4=Prefab; -1 = bad index.
 EDITOR_BRIDGE_API int32_t EditorSession_GetAssetType(EditorSessionHandle h,
                                                      int32_t index);
+/// B6: committed asset availability (0=available,1=missing file,2=path rejected,-1=bad index).
+EDITOR_BRIDGE_API int32_t EditorSession_GetAssetStatus(EditorSessionHandle h,
+                                                       int32_t index);
+/// P7-A: material JSON read/update, dependency graph, controlled reimport.
+EDITOR_BRIDGE_API int32_t EditorSession_GetMaterialJson(EditorSessionHandle h,
+                                                        int32_t assetIndex,
+                                                        char* out, int32_t cap);
+EDITOR_BRIDGE_API int32_t EditorSession_UpdateMaterial(
+    EditorSessionHandle h, int32_t assetIndex, const char* fieldsJson);
+EDITOR_BRIDGE_API int32_t EditorSession_GetAssetDependencies(
+    EditorSessionHandle h, int32_t assetIndex, char* out, int32_t cap);
+/// discardLocalEdits=0 blocks reimport when any referenced material was edited.
+EDITOR_BRIDGE_API int32_t EditorSession_ReimportAsset(
+    EditorSessionHandle h, int32_t assetIndex, int32_t discardLocalEdits);
 /// 读资产 GUID（32 字符 hex）。越界失败返回 -1，否则返回长度。
 EDITOR_BRIDGE_API int32_t EditorSession_GetAssetGuid(EditorSessionHandle h,
                                                      int32_t index,
@@ -443,7 +526,12 @@ typedef int32_t EngineHostStage;
 /// 为什么必须升版本：新增导出是 additive，但 managed 日志轮询会直接按新结构
 /// 布局解释 native 输出；v1.8 native + v1.9 managed 混搭若不升版本，只会在
 /// 首次 poll 时才以错误布局暴露。升版本让 lockstep 在 `Create()` 处失败。
-#define ENGINE_HOST_ABI_VERSION ((1 << 16) | 9)
+/// v1.9 -> v1.10 (P6-1B B6): additive EngineHost op GET_ASSET_STATUS=32;
+/// GetAssetType now returns 3 for Material (2 remains Mesh). No export/struct/
+/// RuntimeResult layout changes.
+/// v1.10 -> v1.11 (P7-A): additive material edit/dependency/reimport exports
+/// and EngineHost ops 33..36. Existing layouts/op numbers unchanged.
+#define ENGINE_HOST_ABI_VERSION ((1 << 16) | 20)
 
 /// HRC-3 P1（D4 已后置 ⇒ v1 目标尺寸固定）：production presentation target 的尺寸。
 /// 单一来源，供 P1 的 presentation FBO、P2 的 Fetch 静态容量、P3 的 gate 断言共用。
@@ -578,7 +666,49 @@ ENGINE_HOST_OP_PICK = 29,
 ///     保持当前 FBO 尺寸不变并记录诊断。
 ENGINE_HOST_OP_SET_VIEWPORT_SIZE = 30,
 ENGINE_HOST_OP_SET_CAMERA_INPUT = 31,
-ENGINE_HOST_OP_COUNT = 32
+/// B6: committed asset availability (0=available, 1=missing/unreadable,
+/// 2=path rejected, -1=bad index). Dispatch op; returns int.
+ENGINE_HOST_OP_GET_ASSET_STATUS = 32,
+/// P7-A additive ops (fetch strings return JSON/raw material string).
+ENGINE_HOST_OP_GET_MATERIAL_JSON = 33,
+ENGINE_HOST_OP_UPDATE_MATERIAL = 34,
+ENGINE_HOST_OP_GET_ASSET_DEPENDENCIES = 35,
+ENGINE_HOST_OP_REIMPORT_ASSET = 36,
+ENGINE_HOST_OP_GET_ENTITY_TRANSFORM = 37,
+ENGINE_HOST_OP_SET_ENTITY_TRANSFORM = 38,
+ENGINE_HOST_OP_UNDO_SCENE = 39,
+ENGINE_HOST_OP_REDO_SCENE = 40,
+ENGINE_HOST_OP_CAN_UNDO_SCENE = 41,
+ENGINE_HOST_OP_CAN_REDO_SCENE = 42,
+ENGINE_HOST_OP_BEGIN_SCENE_EDIT = 43,
+ENGINE_HOST_OP_COMMIT_SCENE_EDIT = 44,
+ENGINE_HOST_OP_CANCEL_SCENE_EDIT = 45,
+/// P7-B: editor camera view-projection matrix (16 floats, column-major).
+ENGINE_HOST_OP_GET_EDITOR_VIEW_PROJECTION = 46,
+ENGINE_HOST_OP_GET_ENTITY_SCENE_ID = 47,
+ENGINE_HOST_OP_GET_TOTAL_ENTITY_COUNT = 48,
+ENGINE_HOST_OP_GET_ENTITY_PARENT_ID = 49,
+ENGINE_HOST_OP_GET_ENTITY_CHILD_COUNT = 50,
+ENGINE_HOST_OP_GET_ENTITY_CHILD_ID = 51,
+ENGINE_HOST_OP_GET_ENTITY_NAME_BY_ID = 52,
+ENGINE_HOST_OP_GET_ENTITY_TRANSFORM_BY_ID = 53,
+ENGINE_HOST_OP_SET_ENTITY_TRANSFORM_BY_ID = 54,
+ENGINE_HOST_OP_SET_ENTITY_PARENT = 55,
+ENGINE_HOST_OP_DELETE_ENTITY_BY_ID = 56,
+    ENGINE_HOST_OP_RENAME_ENTITY_BY_ID = 57,
+    ENGINE_HOST_OP_DUPLICATE_ENTITY = 58,
+    ENGINE_HOST_OP_GET_LAST_DUPLICATED_ENTITY_ID = 59,
+    ENGINE_HOST_OP_CREATE_PREFAB_FROM_ENTITY = 60,
+    ENGINE_HOST_OP_INSTANTIATE_PREFAB = 61,
+    ENGINE_HOST_OP_GET_LAST_INSTANTIATED_ENTITY_ID = 62,
+    ENGINE_HOST_OP_GET_PREFAB_INSTANCE_JSON = 63,
+    ENGINE_HOST_OP_REVERT_OVERRIDE = 64,
+    ENGINE_HOST_OP_APPLY_PREFAB_OVERRIDES = 65,
+    ENGINE_HOST_OP_GET_PREFAB_RECONCILIATION_STATUS = 66,
+    ENGINE_HOST_OP_PREVIEW_PREFAB_RECONCILIATION = 67,
+    ENGINE_HOST_OP_APPLY_PREFAB_RECONCILIATION = 68,
+    ENGINE_HOST_OP_RESOLVE_RECONCILIATION_CONFLICT = 69,
+    ENGINE_HOST_OP_COUNT = 70
 };
 
 /// HRC-3 P2：presentation frame packet 的静态容量常量（编译期，非 ABI 结构）。

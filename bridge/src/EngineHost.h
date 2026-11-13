@@ -365,6 +365,8 @@ private:
     Engine::EditorCameraInput m_ProductionCameraInput{};
     bool m_ProductionCameraInputPending = false;
     std::unique_ptr<EditorSession> m_Session;
+    std::atomic<uint64_t> m_LastDuplicatedEntityId{0};
+    std::atomic<uint64_t> m_LastInstantiatedEntityId{0};
     std::unique_ptr<Engine::Content::MeshAssetResolver> m_MeshResolver;
     std::unique_ptr<Engine::MeshRuntimeScene> m_MeshRuntimeScene;
     std::unique_ptr<Engine::TextureGpuCache> m_TextureGpuCache;
